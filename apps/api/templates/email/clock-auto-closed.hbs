@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clock Auto-Closed</title>
+  <style>
+    body { font-family: Arial, sans-serif; background-color: #f5f5f5; margin: 0; padding: 0; }
+    .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 8px; overflow: hidden; }
+    .header { background-color: #d97706; padding: 30px; text-align: center; }
+    .header h1 { color: #ffffff; margin: 0; font-size: 24px; }
+    .body { padding: 30px; }
+    .warning { background: #fff7ed; border-left: 4px solid #d97706; padding: 15px; margin: 20px 0; border-radius: 0 8px 8px 0; }
+    .clock-info { background: #f5f5f5; border-radius: 8px; padding: 20px; margin: 20px 0; }
+    .clock-info p { margin: 5px 0; }
+    .btn { display: inline-block; background-color: #1a56db; color: #ffffff; text-decoration: none; padding: 12px 30px; border-radius: 6px; font-weight: bold; margin: 15px 0; }
+    .footer { padding: 20px 30px; text-align: center; color: #666; font-size: 12px; border-top: 1px solid #eee; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Clock Auto-Closed</h1>
+    </div>
+    <div class="body">
+      <p>Hello {{name}},</p>
+      <div class="warning">
+        <strong>Notice:</strong> Your time clock was automatically closed because you did not clock out before the end of day.
+      </div>
+      <div class="clock-info">
+        <p><strong>Date:</strong> {{date}}</p>
+        <p><strong>Clock In:</strong> {{clockIn}}</p>
+        <p><strong>Auto Clock Out:</strong> {{clockOut}}</p>
+        <p><strong>Total Hours:</strong> {{totalHours}}</p>
+      </div>
+      <p>If the recorded hours are incorrect, please contact your supervisor to edit the time clock record.</p>
+      <a href="{{timesheetUrl}}" class="btn">View Timesheet</a>
+    </div>
+    <div class="footer">
+      <p>&copy; {{year}} AMEC Project Management. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>

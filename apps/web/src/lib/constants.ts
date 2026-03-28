@@ -1,0 +1,56 @@
+import {
+  LayoutDashboard,
+  CheckSquare,
+  Clock,
+  FolderKanban,
+  FileText,
+  Users,
+  BarChart3,
+  Layers,
+  Settings,
+  type LucideIcon,
+} from 'lucide-react';
+
+export const STATUS_COLORS: Record<string, string> = {
+  draft: 'bg-gray-100 text-gray-700',
+  active: 'bg-green-100 text-green-700',
+  on_hold: 'bg-yellow-100 text-yellow-700',
+  completed: 'bg-blue-100 text-blue-700',
+  cancelled: 'bg-red-100 text-red-700',
+  not_started: 'bg-gray-100 text-gray-700',
+  in_progress: 'bg-blue-100 text-blue-700',
+  in_review: 'bg-purple-100 text-purple-700',
+  sent: 'bg-blue-100 text-blue-700',
+  approved: 'bg-green-100 text-green-700',
+  paid: 'bg-emerald-100 text-emerald-700',
+  rejected: 'bg-red-100 text-red-700',
+};
+
+export const PRIORITY_COLORS: Record<string, string> = {
+  low: 'bg-gray-100 text-gray-700',
+  medium: 'bg-blue-100 text-blue-700',
+  high: 'bg-orange-100 text-orange-700',
+  critical: 'bg-red-100 text-red-700',
+};
+
+export interface NavItem {
+  label: string;
+  href: string;
+  icon: LucideIcon;
+  roles?: string[];
+  children?: { label: string; href: string }[];
+}
+
+export const NAV_ITEMS: NavItem[] = [
+  { label: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { label: 'Tasks', href: '/tasks', icon: CheckSquare },
+  { label: 'Time', href: '/time', icon: Clock },
+  { label: 'Projects', href: '/projects', icon: FolderKanban },
+  { label: 'Contracts', href: '/contracts', icon: FileText },
+  { label: 'People', href: '/people', icon: Users },
+  { label: 'Reports', href: '/reports', icon: BarChart3, roles: ['admin', 'manager'] },
+  { label: 'Templates', href: '/templates', icon: Layers, roles: ['admin', 'manager'] },
+  { label: 'Admin', href: '/admin', icon: Settings, roles: ['admin'] },
+];
+
+export const MOBILE_NAV_ITEMS = NAV_ITEMS.slice(0, 5);

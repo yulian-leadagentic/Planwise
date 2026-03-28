@@ -1,0 +1,829 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────
+
+enum UserType {
+  employee
+  partner
+  both
+}
+
+enum ProjectStatus {
+  draft
+  active
+  on_hold
+  completed
+  cancelled
+}
+
+enum TaskStatus {
+  not_started
+  in_progress
+  in_review
+  completed
+  on_hold
+  cancelled
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+  critical
+}
+
+enum CalendarDayType {
+  holiday
+  company_day_off
+  half_day
+  special
+}
+
+enum CalendarDayAppliesTo {
+  all
+  employees_only
+  partners_only
+}
+
+enum TimeClockStatus {
+  clocked_in
+  completed
+  auto_closed
+  edited
+  absent
+  leave
+  sick
+}
+
+enum ClockType {
+  regular
+  overtime
+  remote
+  field
+}
+
+enum ContractStatus {
+  draft
+  active
+  completed
+  cancelled
+}
+
+enum BillingType {
+  generated
+  requested
+}
+
+enum BillingStatus {
+  draft
+  sent
+  approved
+  paid
+  rejected
+}
+
+enum ExpenseType {
+  material
+  labor
+  travel
+  equipment
+  subcontractor
+  other
+}
+
+enum ActivityCategory {
+  auth
+  project
+  task
+  time
+  contract
+  user
+  system
+  admin
+}
+
+enum ActivitySeverity {
+  info
+  warn
+  error
+  critical
+}
+
+enum EmailLogStatus {
+  sent
+  failed
+}
+
+// ─── Models ─────────────────────────────────────────────────────────────────
+
+model User {
+  id           Int       @id @default(autoincrement())
+  email        String    @unique
+  password     String
+  firstName    String    @map("first_name")
+  lastName     String    @map("last_name")
+  phone        String?
+  avatarUrl    String?   @map("avatar_url")
+  roleId       Int       @map("role_id")
+  userType     UserType  @map("user_type")
+  position     String?
+  department   String?
+  companyName  String?   @map("company_name")
+  taxId        String?   @map("tax_id")
+  address      String?
+  website      String?
+  otpCode      String?   @map("otp_code")
+  otpExpiresAt DateTime? @map("otp_expires_at")
+  otpAttempts  Int       @default(0) @map("otp_attempts")
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  role Role @relation(fields: [roleId], references: [id])
+
+  projectsCreated      Project[]          @relation("ProjectCreatedBy")
+  projectMembers       ProjectMember[]
+  taskAssignees        TaskAssignee[]
+  taskComments         TaskComment[]
+  workSchedules        WorkSchedule[]
+  calendarDaysCreated  CalendarDay[]      @relation("CalendarDayCreatedBy")
+  timeClocks           TimeClock[]        @relation("TimeClockUser")
+  timeClocksApproved   TimeClock[]        @relation("TimeClockApprovedBy")
+  timeClocksEdited     TimeClock[]        @relation("TimeClockEditedBy")
+  timeEntries          TimeEntry[]
+  contractsAsPartner   Contract[]         @relation("ContractPartner")
+  contractsCreated     Contract[]         @relation("ContractCreatedBy")
+  milestonesAsPartner  LabelMilestone[]   @relation("MilestonePartner")
+  milestonesCreated    LabelMilestone[]   @relation("MilestoneCreatedBy")
+  contacts             Contact[]
+  expensesCreated      Expense[]
+  terms                Term[]
+  activityLogs         ActivityLog[]
+  notifications        Notification[]
+  billingsCreated      Billing[]
+  projectTemplates     ProjectTemplate[]
+  teamTemplates        TeamTemplate[]
+  teamTemplateMembers  TeamTemplateMember[]
+  tasksCreated         Task[]             @relation("TaskCreatedBy")
+
+  @@index([roleId])
+  @@index([email])
+  @@index([userType])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model Role {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  users       User[]
+  roleModules RoleModule[]
+
+  @@map("roles")
+}
+
+model Module {
+  id        Int      @id @default(autoincrement())
+  name      String
+  route     String
+  icon      String?
+  sortOrder Int      @default(0) @map("sort_order")
+  parentId  Int?     @map("parent_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  parent   Module?  @relation("ModuleParent", fields: [parentId], references: [id])
+  children Module[] @relation("ModuleParent")
+
+  roleModules RoleModule[]
+
+  @@index([parentId])
+  @@map("modules")
+}
+
+model RoleModule {
+  id        Int     @id @default(autoincrement())
+  roleId    Int     @map("role_id")
+  moduleId  Int     @map("module_id")
+  canRead   Boolean @default(false) @map("can_read")
+  canWrite  Boolean @default(false) @map("can_write")
+  canDelete Boolean @default(false) @map("can_delete")
+
+  role   Role   @relation(fields: [roleId], references: [id])
+  module Module @relation(fields: [moduleId], references: [id])
+
+  @@index([roleId])
+  @@index([moduleId])
+  @@map("role_modules")
+}
+
+model ProjectType {
+  id        Int      @id @default(autoincrement())
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  projects Project[]
+
+  @@map("project_types")
+}
+
+model Project {
+  id            Int           @id @default(autoincrement())
+  name          String
+  number        String?
+  description   String?
+  projectTypeId Int           @map("project_type_id")
+  status        ProjectStatus @default(draft)
+  budget        Decimal?      @db.Decimal(14, 2)
+  startDate     DateTime?     @map("start_date")
+  endDate       DateTime?     @map("end_date")
+  isArchived    Boolean       @default(false) @map("is_archived")
+  createdBy     Int           @map("created_by")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  deletedAt     DateTime?     @map("deleted_at")
+
+  projectType ProjectType @relation(fields: [projectTypeId], references: [id])
+  creator     User        @relation("ProjectCreatedBy", fields: [createdBy], references: [id])
+
+  members     ProjectMember[]
+  labels      Label[]
+  contracts   Contract[]
+  expenses    Expense[]
+  timeEntries TimeEntry[]
+
+  @@index([projectTypeId])
+  @@index([createdBy])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id        Int      @id @default(autoincrement())
+  projectId Int      @map("project_id")
+  userId    Int      @map("user_id")
+  role      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+  @@map("project_members")
+}
+
+model LabelType {
+  id        Int      @id @default(autoincrement())
+  name      String
+  color     String
+  icon      String?
+  sortOrder Int      @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  labels         Label[]
+  templateLabels TemplateLabel[]
+
+  @@map("label_types")
+}
+
+model Label {
+  id          Int       @id @default(autoincrement())
+  projectId   Int       @map("project_id")
+  parentId    Int?      @map("parent_id")
+  labelTypeId Int       @map("label_type_id")
+  name        String
+  path        String
+  depth       Int       @default(0)
+  sortOrder   Int       @default(0) @map("sort_order")
+  description String?
+  color       String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  project   Project   @relation(fields: [projectId], references: [id])
+  parent    Label?    @relation("LabelParent", fields: [parentId], references: [id])
+  children  Label[]   @relation("LabelParent")
+  labelType LabelType @relation(fields: [labelTypeId], references: [id])
+
+  tasks         Task[]
+  contractItems ContractItem[]
+  milestones    LabelMilestone[]
+
+  @@index([projectId])
+  @@index([parentId])
+  @@index([labelTypeId])
+  @@index([deletedAt])
+  @@map("labels")
+}
+
+model Task {
+  id            Int          @id @default(autoincrement())
+  labelId       Int          @map("label_id")
+  name          String
+  description   String?      @db.Text
+  status        TaskStatus   @default(not_started)
+  priority      TaskPriority @default(medium)
+  budgetHours   Decimal?     @map("budget_hours") @db.Decimal(10, 2)
+  budgetAmount  Decimal?     @map("budget_amount") @db.Decimal(14, 2)
+  startDate     DateTime?    @map("start_date")
+  endDate       DateTime?    @map("end_date")
+  completionPct Int          @default(0) @map("completion_pct")
+  isArchived    Boolean      @default(false) @map("is_archived")
+  createdBy     Int          @map("created_by")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  deletedAt     DateTime?    @map("deleted_at")
+
+  label   Label @relation(fields: [labelId], references: [id])
+  creator User  @relation("TaskCreatedBy", fields: [createdBy], references: [id])
+
+  assignees    TaskAssignee[]
+  comments     TaskComment[]
+  planTimes    TaskPlanTime[]
+  timeEntries  TimeEntry[]
+
+  @@index([labelId])
+  @@index([createdBy])
+  @@index([status])
+  @@index([priority])
+  @@index([deletedAt])
+  @@map("tasks")
+}
+
+model TaskAssignee {
+  id         Int       @id @default(autoincrement())
+  taskId     Int       @map("task_id")
+  userId     Int       @map("user_id")
+  role       String?
+  hourlyRate Decimal?  @map("hourly_rate") @db.Decimal(10, 2)
+  startDate  DateTime? @map("start_date")
+  endDate    DateTime? @map("end_date")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  deletedAt  DateTime? @map("deleted_at")
+
+  task Task @relation(fields: [taskId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([taskId, userId])
+  @@index([taskId])
+  @@index([userId])
+  @@map("task_assignees")
+}
+
+model TaskComment {
+  id        Int       @id @default(autoincrement())
+  taskId    Int       @map("task_id")
+  userId    Int       @map("user_id")
+  parentId  Int?      @map("parent_id")
+  content   String    @db.Text
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  task     Task          @relation(fields: [taskId], references: [id])
+  user     User          @relation(fields: [userId], references: [id])
+  parent   TaskComment?  @relation("CommentParent", fields: [parentId], references: [id])
+  children TaskComment[] @relation("CommentParent")
+
+  @@index([taskId])
+  @@index([userId])
+  @@index([parentId])
+  @@map("task_comments")
+}
+
+model TaskPlanTime {
+  id           Int     @id @default(autoincrement())
+  taskId       Int     @map("task_id")
+  roleTitle    String  @map("role_title")
+  plannedHours Decimal @map("planned_hours") @db.Decimal(8, 2)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  task Task @relation(fields: [taskId], references: [id])
+
+  @@index([taskId])
+  @@map("task_plan_times")
+}
+
+model WorkSchedule {
+  id             Int       @id @default(autoincrement())
+  userId         Int       @map("user_id")
+  name           String
+  dayOfWeek      Int       @map("day_of_week")
+  shiftStart     String    @map("shift_start")
+  shiftEnd       String    @map("shift_end")
+  breakMinutes   Int       @default(60) @map("break_minutes")
+  isActive       Boolean   @default(true) @map("is_active")
+  effectiveFrom  DateTime  @map("effective_from")
+  effectiveUntil DateTime? @map("effective_until")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, dayOfWeek, effectiveFrom])
+  @@index([userId])
+  @@map("work_schedules")
+}
+
+model CalendarDay {
+  id          Int                 @id @default(autoincrement())
+  date        DateTime            @unique
+  name        String
+  type        CalendarDayType
+  halfDayUntil String?            @map("half_day_until")
+  appliesTo   CalendarDayAppliesTo @default(all) @map("applies_to")
+  isRecurring Boolean             @default(false) @map("is_recurring")
+  notes       String?
+  createdBy   Int                 @map("created_by")
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+
+  creator User @relation("CalendarDayCreatedBy", fields: [createdBy], references: [id])
+
+  @@index([createdBy])
+  @@map("calendar_days")
+}
+
+model TimeClock {
+  id              Int             @id @default(autoincrement())
+  userId          Int             @map("user_id")
+  date            DateTime
+  clockIn         DateTime        @map("clock_in")
+  clockOut        DateTime?       @map("clock_out")
+  breakMinutes    Int             @default(0) @map("break_minutes")
+  status          TimeClockStatus
+  clockType       ClockType       @default(regular) @map("clock_type")
+  note            String?
+  documentUrl     String?         @map("document_url")
+  approvedBy      Int?            @map("approved_by")
+  approvedAt      DateTime?       @map("approved_at")
+  editedBy        Int?            @map("edited_by")
+  editedReason    String?         @map("edited_reason")
+  totalMinutes    Int?            @map("total_minutes")
+  expectedMinutes Int?            @map("expected_minutes")
+  overtimeMinutes Int?            @map("overtime_minutes")
+  isLate          Boolean         @default(false) @map("is_late")
+  lateMinutes     Int             @default(0) @map("late_minutes")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  user     User  @relation("TimeClockUser", fields: [userId], references: [id])
+  approver User? @relation("TimeClockApprovedBy", fields: [approvedBy], references: [id])
+  editor   User? @relation("TimeClockEditedBy", fields: [editedBy], references: [id])
+
+  timeEntries TimeEntry[]
+
+  @@unique([userId, date])
+  @@index([userId])
+  @@index([approvedBy])
+  @@index([editedBy])
+  @@index([date])
+  @@index([status])
+  @@map("time_clock")
+}
+
+model TimeEntry {
+  id          Int       @id @default(autoincrement())
+  userId      Int       @map("user_id")
+  timeClockId Int?      @map("time_clock_id")
+  projectId   Int?      @map("project_id")
+  taskId      Int?      @map("task_id")
+  date        DateTime
+  minutes     Int
+  note        String?
+  isBillable  Boolean   @default(true) @map("is_billable")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  user      User       @relation(fields: [userId], references: [id])
+  timeClock TimeClock?  @relation(fields: [timeClockId], references: [id])
+  project   Project?   @relation(fields: [projectId], references: [id])
+  task      Task?      @relation(fields: [taskId], references: [id])
+
+  @@index([userId])
+  @@index([timeClockId])
+  @@index([projectId])
+  @@index([taskId])
+  @@index([date])
+  @@index([deletedAt])
+  @@map("time_entries")
+}
+
+model Contract {
+  id          Int            @id @default(autoincrement())
+  name        String
+  projectId   Int?           @map("project_id")
+  partnerId   Int            @map("partner_id")
+  status      ContractStatus @default(draft)
+  totalAmount Decimal?       @map("total_amount") @db.Decimal(14, 2)
+  startDate   DateTime?      @map("start_date")
+  endDate     DateTime?      @map("end_date")
+  notes       String?
+  createdBy   Int            @map("created_by")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+  deletedAt   DateTime?      @map("deleted_at")
+
+  project Project? @relation(fields: [projectId], references: [id])
+  partner User     @relation("ContractPartner", fields: [partnerId], references: [id])
+  creator User     @relation("ContractCreatedBy", fields: [createdBy], references: [id])
+
+  items    ContractItem[]
+  billings Billing[]
+
+  @@index([projectId])
+  @@index([partnerId])
+  @@index([createdBy])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("contracts")
+}
+
+model ContractItem {
+  id          Int       @id @default(autoincrement())
+  contractId  Int       @map("contract_id")
+  labelId     Int?      @map("label_id")
+  milestoneId Int?      @map("milestone_id")
+  description String
+  quantity    Decimal   @default(1) @db.Decimal(10, 2)
+  unitPrice   Decimal   @map("unit_price") @db.Decimal(12, 2)
+  total       Decimal   @db.Decimal(14, 2)
+  sortOrder   Int       @default(0) @map("sort_order")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  contract  Contract        @relation(fields: [contractId], references: [id])
+  label     Label?          @relation(fields: [labelId], references: [id])
+  milestone LabelMilestone? @relation(fields: [milestoneId], references: [id])
+
+  @@index([contractId])
+  @@index([labelId])
+  @@index([milestoneId])
+  @@map("contract_items")
+}
+
+model Billing {
+  id          Int           @id @default(autoincrement())
+  contractId  Int           @map("contract_id")
+  type        BillingType
+  amount      Decimal       @db.Decimal(14, 2)
+  billingDate DateTime      @map("billing_date")
+  description String?
+  status      BillingStatus
+  pdfUrl      String?       @map("pdf_url")
+  createdBy   Int           @map("created_by")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  contract Contract @relation(fields: [contractId], references: [id])
+  creator  User     @relation(fields: [createdBy], references: [id])
+
+  @@index([contractId])
+  @@index([createdBy])
+  @@index([status])
+  @@map("billings")
+}
+
+model LabelMilestone {
+  id          Int       @id @default(autoincrement())
+  labelId     Int       @map("label_id")
+  partnerId   Int       @map("partner_id")
+  name        String
+  dueDate     DateTime? @map("due_date")
+  amount      Decimal?  @db.Decimal(14, 2)
+  isCompleted Boolean   @default(false) @map("is_completed")
+  completedAt DateTime? @map("completed_at")
+  notes       String?
+  createdBy   Int       @map("created_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  label   Label @relation(fields: [labelId], references: [id])
+  partner User  @relation("MilestonePartner", fields: [partnerId], references: [id])
+  creator User  @relation("MilestoneCreatedBy", fields: [createdBy], references: [id])
+
+  contractItems ContractItem[]
+
+  @@index([labelId])
+  @@index([partnerId])
+  @@index([createdBy])
+  @@map("label_milestones")
+}
+
+model Contact {
+  id        Int       @id @default(autoincrement())
+  partnerId Int       @map("partner_id")
+  name      String
+  email     String?
+  phone     String?
+  role      String?
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  partner User @relation(fields: [partnerId], references: [id])
+
+  @@index([partnerId])
+  @@map("contacts")
+}
+
+model Expense {
+  id          Int         @id @default(autoincrement())
+  projectId   Int         @map("project_id")
+  expenseType ExpenseType @map("expense_type")
+  amount      Decimal     @db.Decimal(14, 2)
+  date        DateTime
+  description String?
+  receiptUrl  String?     @map("receipt_url")
+  createdBy   Int         @map("created_by")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+  deletedAt   DateTime?   @map("deleted_at")
+
+  project Project @relation(fields: [projectId], references: [id])
+  creator User    @relation(fields: [createdBy], references: [id])
+
+  @@index([projectId])
+  @@index([createdBy])
+  @@index([date])
+  @@map("expenses")
+}
+
+model Term {
+  id            Int       @id @default(autoincrement())
+  userId        Int       @map("user_id")
+  title         String
+  monthlySalary Decimal?  @map("monthly_salary") @db.Decimal(12, 2)
+  hourlyRate    Decimal?  @map("hourly_rate") @db.Decimal(10, 2)
+  startDate     DateTime  @map("start_date")
+  endDate       DateTime? @map("end_date")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("terms")
+}
+
+model ActivityLog {
+  id          BigInt           @id @default(autoincrement())
+  userId      Int?             @map("user_id")
+  sessionId   String?          @map("session_id")
+  category    ActivityCategory
+  action      String
+  severity    ActivitySeverity @default(info)
+  entityType  String?          @map("entity_type")
+  entityId    Int?             @map("entity_id")
+  entityName  String?          @map("entity_name")
+  description String
+  changes     Json?
+  metadata    Json?
+  ipAddress   String?          @map("ip_address")
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([category])
+  @@index([severity])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@index([sessionId])
+  @@map("activity_logs")
+}
+
+model Notification {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  type      String
+  title     String
+  body      String?
+  data      Json?
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([readAt])
+  @@map("notifications")
+}
+
+model EmailLog {
+  id           Int            @id @default(autoincrement())
+  toEmail      String         @map("to_email")
+  subject      String
+  template     String
+  status       EmailLogStatus
+  errorMessage String?        @map("error_message")
+  createdAt    DateTime       @default(now()) @map("created_at")
+
+  @@index([toEmail])
+  @@index([status])
+  @@map("email_logs")
+}
+
+model ProjectTemplate {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  createdBy   Int      @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  creator User            @relation(fields: [createdBy], references: [id])
+  labels  TemplateLabel[]
+
+  @@index([createdBy])
+  @@map("project_templates")
+}
+
+model TemplateLabel {
+  id          Int    @id @default(autoincrement())
+  templateId  Int    @map("template_id")
+  parentId    Int?   @map("parent_id")
+  labelTypeId Int    @map("label_type_id")
+  name        String
+  sortOrder   Int    @map("sort_order")
+
+  template  ProjectTemplate @relation(fields: [templateId], references: [id])
+  parent    TemplateLabel?  @relation("TemplateLabelParent", fields: [parentId], references: [id])
+  children  TemplateLabel[] @relation("TemplateLabelParent")
+  labelType LabelType       @relation(fields: [labelTypeId], references: [id])
+
+  tasks TemplateTask[]
+
+  @@index([templateId])
+  @@index([parentId])
+  @@index([labelTypeId])
+  @@map("template_labels")
+}
+
+model TemplateTask {
+  id                  Int      @id @default(autoincrement())
+  templateLabelId     Int      @map("template_label_id")
+  name                String
+  defaultBudgetHours  Decimal? @map("default_budget_hours") @db.Decimal(10, 2)
+  defaultBudgetAmount Decimal? @map("default_budget_amount") @db.Decimal(14, 2)
+  sortOrder           Int      @map("sort_order")
+
+  templateLabel TemplateLabel @relation(fields: [templateLabelId], references: [id])
+
+  @@index([templateLabelId])
+  @@map("template_tasks")
+}
+
+model TeamTemplate {
+  id        Int      @id @default(autoincrement())
+  name      String
+  createdBy Int      @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  creator User                 @relation(fields: [createdBy], references: [id])
+  members TeamTemplateMember[]
+
+  @@index([createdBy])
+  @@map("team_templates")
+}
+
+model TeamTemplateMember {
+  id             Int     @id @default(autoincrement())
+  teamTemplateId Int     @map("team_template_id")
+  userId         Int     @map("user_id")
+  role           String?
+
+  teamTemplate TeamTemplate @relation(fields: [teamTemplateId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@index([teamTemplateId])
+  @@index([userId])
+  @@map("team_template_members")
+}

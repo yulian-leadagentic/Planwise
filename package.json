@@ -1,0 +1,40 @@
+{
+  "name": "amec",
+  "private": true,
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "test": "turbo test",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
+    "db:migrate": "pnpm --filter api prisma migrate dev",
+    "db:push": "pnpm --filter api prisma db push",
+    "db:seed": "pnpm --filter api prisma db seed",
+    "db:studio": "pnpm --filter api prisma studio",
+    "db:generate": "pnpm --filter api prisma generate",
+    "db:reset": "pnpm --filter api prisma migrate reset",
+    "generate:module": "ts-node tools/generators/new-module.ts",
+    "generate:feature": "ts-node tools/generators/new-feature.ts",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "turbo": "^1.12",
+    "prettier": "^3.2",
+    "eslint": "^8.56",
+    "husky": "^9.0",
+    "lint-staged": "^15.2",
+    "concurrently": "^8.2",
+    "dotenv-cli": "^7.3",
+    "ts-node": "^10.9",
+    "typescript": "^5.3"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": ["eslint --fix", "prettier --write"],
+    "*.{json,md}": ["prettier --write"]
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@8.15.4"
+}
