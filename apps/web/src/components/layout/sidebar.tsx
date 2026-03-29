@@ -2,7 +2,6 @@ import { NavLink } from 'react-router-dom';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { NAV_ITEMS } from '@/lib/constants';
 import { useUIStore } from '@/stores/ui.store';
-import { useAuthStore } from '@/stores/auth.store';
 import { useIsDesktop } from '@/hooks/use-media-query';
 import { cn } from '@/lib/utils';
 
@@ -10,20 +9,9 @@ export function Sidebar() {
   const isDesktop = useIsDesktop();
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUIStore((s) => s.setSidebarCollapsed);
-  const user = useAuthStore((s) => s.user);
-  const userRole = (() => {
-    if (!user) return '';
-    if (user.roleName) return user.roleName.toLowerCase();
-    if ((user as any).role?.name) return ((user as any).role.name as string).toLowerCase();
-    return '';
-  })();
 
   // On tablet, always collapsed unless toggled
   const isCollapsed = !isDesktop || sidebarCollapsed;
-
-  const filteredItems = NAV_ITEMS.filter(
-    (item) => !item.roles || item.roles.includes(userRole),
-  );
 
   return (
     <aside
@@ -45,7 +33,7 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
-        {filteredItems.map((item) => (
+        {NAV_ITEMS.map((item) => (
           <NavLink
             key={item.href}
             to={item.href}

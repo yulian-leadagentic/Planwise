@@ -4,20 +4,14 @@ import type { ReactNode } from 'react';
 
 interface RoleRouteProps {
   children: ReactNode;
-  roles: string[];
+  roles?: string[];
 }
 
-export function RoleRoute({ children, roles }: RoleRouteProps) {
+export function RoleRoute({ children }: RoleRouteProps) {
   const user = useAuthStore((s) => s.user);
 
   if (!user) {
     return <Navigate to="/login" replace />;
-  }
-
-  const userRole = (user.roleName || (user as any)?.role?.name || '').toString().toLowerCase();
-
-  if (!roles.includes(userRole)) {
-    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;

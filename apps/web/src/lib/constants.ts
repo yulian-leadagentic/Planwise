@@ -48,9 +48,9 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Projects', href: '/projects', icon: FolderKanban },
   { label: 'Contracts', href: '/contracts', icon: FileText },
   { label: 'People', href: '/people', icon: Users },
-  { label: 'Reports', href: '/reports', icon: BarChart3, roles: ['admin', 'manager'] },
-  { label: 'Templates', href: '/templates', icon: Layers, roles: ['admin', 'manager'] },
-  { label: 'Admin', href: '/admin', icon: Settings, roles: ['admin'] },
+  { label: 'Reports', href: '/reports', icon: BarChart3 },
+  { label: 'Templates', href: '/templates', icon: Layers },
+  { label: 'Admin', href: '/admin', icon: Settings },
 ];
 
 export const MOBILE_NAV_ITEMS = NAV_ITEMS.slice(0, 5);
