@@ -1,7 +1,6 @@
 FROM node:20-alpine AS base
 RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
 WORKDIR /app
-ENV PATH="/app/node_modules/.bin:$PATH"
 
 # Install all dependencies
 FROM base AS deps
@@ -16,7 +15,7 @@ RUN pnpm install --frozen-lockfile
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN vite build --config apps/web/vite.config.ts --outDir apps/web/dist
+RUN /app/node_modules/.bin/vite build --config apps/web/vite.config.ts --outDir apps/web/dist
 
 # Serve with nginx
 FROM nginx:alpine AS production
