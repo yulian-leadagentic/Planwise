@@ -11,7 +11,12 @@ export function Sidebar() {
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUIStore((s) => s.setSidebarCollapsed);
   const user = useAuthStore((s) => s.user);
-  const userRole = (user?.roleName || (user as any)?.role?.name || '').toLowerCase();
+  const userRole = (() => {
+    if (!user) return '';
+    if (user.roleName) return user.roleName.toLowerCase();
+    if ((user as any).role?.name) return ((user as any).role.name as string).toLowerCase();
+    return '';
+  })();
 
   // On tablet, always collapsed unless toggled
   const isCollapsed = !isDesktop || sidebarCollapsed;
