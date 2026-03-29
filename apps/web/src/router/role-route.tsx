@@ -14,7 +14,7 @@ export function RoleRoute({ children, roles }: RoleRouteProps) {
     return <Navigate to="/login" replace />;
   }
 
-  const userRole = user.roleName?.toLowerCase() ?? '';
+  const userRole = (user.roleName || (user as any)?.role?.name || '').toLowerCase();
 
   if (!roles.includes(userRole)) {
     return <Navigate to="/" replace />;
