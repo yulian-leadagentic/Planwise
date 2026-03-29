@@ -1,4 +1,4 @@
-FROM node:20-alpine AS build
+FROM node:20-alpine
 RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
 RUN apk add --no-cache openssl
 WORKDIR /app
@@ -6,16 +6,7 @@ COPY . .
 RUN pnpm install --frozen-lockfile
 RUN cd apps/api && pnpm exec prisma generate
 RUN cd apps/api && pnpm exec nest build
-
-FROM node:20-alpine
-RUN apk add --no-cache openssl
-WORKDIR /app
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/apps/api/dist ./dist
-COPY --from=build /app/apps/api/prisma ./prisma
-COPY --from=build /app/apps/api/templates ./templates
-COPY --from=build /app/apps/api/package.json ./package.json
 RUN mkdir -p uploads
 ENV NODE_ENV=production
 EXPOSE 3000
-CMD ["node", "dist/main.js"]
+CMD ["node", "apps/api/dist/main.js"]
