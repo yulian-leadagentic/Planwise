@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Download } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
-import { LoadingSkeleton } from '@/components/shared/loading-skeleton';
+import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { minutesToDisplay } from '@amec/shared';
 
@@ -42,7 +42,7 @@ export function OvertimeReportPage() {
       </div>
 
       {isLoading ? (
-        <LoadingSkeleton lines={8} />
+        <TableSkeleton rows={8} cols={7} />
       ) : rows.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">No overtime recorded for this period.</p>
       ) : (

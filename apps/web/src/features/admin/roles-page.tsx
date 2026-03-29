@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Shield, ChevronDown, ChevronRight, Check, X } from 'lucide-react';
 import { useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
-import { LoadingSkeleton } from '@/components/shared/loading-skeleton';
+import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
 
@@ -19,7 +19,7 @@ export function RolesPage() {
       <PageHeader title="Roles & Permissions" description="Manage user roles and module access" />
 
       {isLoading ? (
-        <LoadingSkeleton lines={5} />
+        <TableSkeleton rows={5} cols={4} />
       ) : (
         <div className="space-y-3">
           {roles.map((role: any) => (

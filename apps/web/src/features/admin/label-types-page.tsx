@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Tag, Plus } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
-import { LoadingSkeleton } from '@/components/shared/loading-skeleton';
+import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 
 export function LabelTypesPage() {
@@ -25,7 +25,7 @@ export function LabelTypesPage() {
       />
 
       {isLoading ? (
-        <LoadingSkeleton lines={5} />
+        <TableSkeleton rows={5} cols={4} />
       ) : labelTypes.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">No label types configured yet.</p>
       ) : (

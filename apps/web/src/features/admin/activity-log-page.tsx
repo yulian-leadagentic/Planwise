@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
-import { LoadingSkeleton } from '@/components/shared/loading-skeleton';
+import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
 
@@ -27,7 +27,7 @@ export function ActivityLogPage() {
       <PageHeader title="Activity Log" description="View system-wide audit trail" />
 
       {isLoading ? (
-        <LoadingSkeleton lines={10} />
+        <TableSkeleton rows={10} cols={6} />
       ) : logs.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">No activity logs yet.</p>
       ) : (

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
-import { LoadingSkeleton } from '@/components/shared/loading-skeleton';
+import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -27,7 +27,7 @@ export function WorkSchedulesPage() {
       />
 
       {isLoading ? (
-        <LoadingSkeleton lines={5} />
+        <TableSkeleton rows={5} cols={6} />
       ) : schedules.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">No work schedules configured yet.</p>
       ) : (
