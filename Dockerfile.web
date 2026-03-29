@@ -15,7 +15,8 @@ RUN pnpm install --frozen-lockfile
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN cd apps/web && npx vite build
+ENV PATH="/app/node_modules/.bin:$PATH"
+RUN vite build --config apps/web/vite.config.ts --outDir apps/web/dist
 
 # Serve with nginx
 FROM nginx:alpine AS production

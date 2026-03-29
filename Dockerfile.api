@@ -15,11 +15,13 @@ RUN pnpm install --frozen-lockfile
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN cd apps/api && npx prisma generate
-RUN cd apps/api && npx nest build
+ENV PATH="/app/node_modules/.bin:$PATH"
+RUN prisma generate --schema=apps/api/prisma/schema.prisma
+RUN nest build --path apps/api/tsconfig.build.json
 
 # Production
 FROM node:20-alpine AS production
+RUN apk add --no-cache openssl
 WORKDIR /app
 
 COPY --from=build /app/apps/api/dist ./dist
@@ -31,6 +33,7 @@ COPY --from=build /app/apps/api/package.json ./package.json
 RUN mkdir -p /app/uploads
 
 ENV NODE_ENV=production
+ENV PATH="/app/node_modules/.bin:$PATH"
 EXPOSE 3000
 
-CMD ["sh", "-c", "npx prisma db push --schema=./prisma/schema.prisma && node dist/main.js"]
+CMD ["sh", "-c", "prisma db push --schema=./prisma/schema.prisma --skip-generate && node dist/main.js"]
