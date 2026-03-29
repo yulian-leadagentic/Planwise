@@ -1,6 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { PrivateRoute } from './private-route';
-import { RoleRoute } from './role-route';
 import { AppShell } from '@/components/layout/app-shell';
 import { LoginPage } from '@/features/auth/login-page';
 import { ForgotPasswordSteps } from '@/features/auth/forgot-password-steps';
@@ -16,8 +15,18 @@ import { ProjectFormPage } from '@/features/projects/project-form-page';
 import { ContractsPage } from '@/features/contracts/contracts-page';
 import { PeoplePage } from '@/features/people/people-page';
 import { ReportsPage } from '@/features/reports/reports-page';
+import { TimesheetReportPage } from '@/features/reports/timesheet-report-page';
+import { AttendanceReportPage } from '@/features/reports/attendance-report-page';
+import { CostReportPage } from '@/features/reports/cost-report-page';
+import { OvertimeReportPage } from '@/features/reports/overtime-report-page';
 import { TemplatesPage } from '@/features/templates/templates-page';
 import { AdminPage } from '@/features/admin/admin-page';
+import { RolesPage } from '@/features/admin/roles-page';
+import { LabelTypesPage } from '@/features/admin/label-types-page';
+import { ProjectTypesPage } from '@/features/admin/project-types-page';
+import { ActivityLogPage } from '@/features/admin/activity-log-page';
+import { WorkSchedulesPage } from '@/features/admin/work-schedules-page';
+import { CalendarDaysPage } from '@/features/admin/calendar-page';
 
 export function AppRouter() {
   return (
@@ -43,14 +52,7 @@ export function AppRouter() {
         {/* Time */}
         <Route path="time" element={<MyTimePage />} />
         <Route path="time/grid" element={<TimeGridPage />} />
-        <Route
-          path="time/clock-dashboard"
-          element={
-            <RoleRoute roles={['admin', 'manager']}>
-              <ClockDashboardPage />
-            </RoleRoute>
-          }
-        />
+        <Route path="time/clock-dashboard" element={<ClockDashboardPage />} />
 
         {/* Projects */}
         <Route path="projects" element={<ProjectListPage />} />
@@ -65,34 +67,24 @@ export function AppRouter() {
         <Route path="people" element={<PeoplePage />} />
 
         {/* Reports */}
-        <Route
-          path="reports/*"
-          element={
-            <RoleRoute roles={['admin', 'manager']}>
-              <ReportsPage />
-            </RoleRoute>
-          }
-        />
+        <Route path="reports" element={<ReportsPage />} />
+        <Route path="reports/timesheet" element={<TimesheetReportPage />} />
+        <Route path="reports/attendance" element={<AttendanceReportPage />} />
+        <Route path="reports/cost" element={<CostReportPage />} />
+        <Route path="reports/overtime" element={<OvertimeReportPage />} />
 
         {/* Templates */}
-        <Route
-          path="templates"
-          element={
-            <RoleRoute roles={['admin', 'manager']}>
-              <TemplatesPage />
-            </RoleRoute>
-          }
-        />
+        <Route path="templates" element={<TemplatesPage />} />
 
         {/* Admin */}
-        <Route
-          path="admin/*"
-          element={
-            <RoleRoute roles={['admin']}>
-              <AdminPage />
-            </RoleRoute>
-          }
-        />
+        <Route path="admin" element={<AdminPage />} />
+        <Route path="admin/roles" element={<RolesPage />} />
+        <Route path="admin/label-types" element={<LabelTypesPage />} />
+        <Route path="admin/config" element={<ProjectTypesPage />} />
+        <Route path="admin/activity-log" element={<ActivityLogPage />} />
+        <Route path="admin/work-schedules" element={<WorkSchedulesPage />} />
+        <Route path="admin/calendar" element={<CalendarDaysPage />} />
+        <Route path="admin/clock-dashboard" element={<ClockDashboardPage />} />
       </Route>
 
       {/* Catch-all */}
