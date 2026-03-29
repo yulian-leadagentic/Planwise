@@ -20,6 +20,7 @@ export function WorkSchedulesPage() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'work-schedules'],
+    staleTime: 5 * 60 * 1000,
     queryFn: () => client.get('/work-schedules').then((r) => r.data.data),
   });
 

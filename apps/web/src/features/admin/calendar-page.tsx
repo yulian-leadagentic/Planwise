@@ -23,6 +23,7 @@ export function CalendarDaysPage() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'calendar'],
+    staleTime: 5 * 60 * 1000,
     queryFn: () => client.get('/calendar').then((r) => r.data.data),
   });
 

@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 export function RolesPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'roles'],
+    staleTime: 5 * 60 * 1000,
     queryFn: () => client.get('/admin/roles').then((r) => r.data.data),
   });
 

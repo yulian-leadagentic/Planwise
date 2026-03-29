@@ -28,12 +28,32 @@ export class TimeEntriesService {
   }
 
   async batchCreate(userId: number, entries: CreateTimeEntryDto[]) {
-    const results: any[] = [];
-    for (const entry of entries) {
-      const result = await this.create(userId, entry);
-      results.push(result);
-    }
-    return results;
+    const data = entries.map((dto) => ({
+      userId,
+      timeClockId: dto.timeClockId ?? null,
+      projectId: dto.projectId ?? null,
+      taskId: dto.taskId ?? null,
+      date: new Date(dto.date),
+      minutes: dto.minutes,
+      note: dto.note ?? null,
+      isBillable: dto.isBillable ?? true,
+    }));
+
+    await this.prisma.timeEntry.createMany({ data });
+
+    // Return the created entries
+    return this.prisma.timeEntry.findMany({
+      where: {
+        userId,
+        date: { in: data.map((d) => d.date) },
+      },
+      include: {
+        project: { select: { id: true, name: true } },
+        task: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: data.length,
+    });
   }
 
   async findOne(id: number) {

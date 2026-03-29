@@ -21,15 +21,10 @@ export class AuthService {
   ) {}
 
   async validateUser(email: string, password: string): Promise<any> {
+    // First: lightweight credential check (no JOINs)
     const user = await this.prisma.user.findFirst({
       where: { email, isActive: true },
-      include: {
-        role: {
-          include: {
-            roleModules: { include: { module: true } },
-          },
-        },
-      },
+      select: { id: true, password: true },
     });
 
     if (!user) {
@@ -41,7 +36,19 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const { password: _, ...result } = user;
+    // Only load full role graph after successful password check
+    const fullUser = await this.prisma.user.findFirst({
+      where: { id: user.id },
+      include: {
+        role: {
+          include: {
+            roleModules: { include: { module: true } },
+          },
+        },
+      },
+    });
+
+    const { password: _, ...result } = fullUser!;
     return result;
   }
 

@@ -13,6 +13,7 @@ export function ProjectTypesPage() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'project-types'],
+    staleTime: 5 * 60 * 1000,
     queryFn: () => client.get('/admin/config/project-types').then((r) => r.data.data),
   });
 
