@@ -2,7 +2,7 @@ FROM node:20-alpine AS base
 RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
 WORKDIR /app
 
-# Install all dependencies at workspace root
+# Install dependencies
 FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json ./apps/web/
@@ -10,14 +10,10 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/eslint-config/package.json ./packages/eslint-config/
 COPY packages/ts-config/package.json ./packages/ts-config/
 RUN pnpm install --frozen-lockfile
-# Also ensure vite is accessible
-RUN pnpm --filter @amec/web exec vite --version || true
 
 # Build
-FROM base AS build
-COPY --from=deps /app ./
+FROM deps AS build
 COPY . .
-WORKDIR /app
 RUN pnpm --filter @amec/web exec vite build
 
 # Serve with nginx

@@ -2,7 +2,7 @@ FROM node:20-alpine AS base
 RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
 WORKDIR /app
 
-# Install all dependencies at workspace root
+# Install dependencies
 FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
@@ -12,16 +12,10 @@ COPY packages/ts-config/package.json ./packages/ts-config/
 RUN pnpm install --frozen-lockfile
 
 # Build
-FROM base AS build
-COPY --from=deps /app ./
+FROM deps AS build
 COPY . .
 RUN pnpm --filter @amec/api exec prisma generate
 RUN pnpm --filter @amec/api exec nest build
-# Create a script to run prisma db push at startup
-RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
-    echo 'cd /app && node -e "require(\"@prisma/client\")" 2>/dev/null' >> /app/entrypoint.sh && \
-    echo 'node dist/main.js' >> /app/entrypoint.sh && \
-    chmod +x /app/entrypoint.sh
 
 # Production
 FROM node:20-alpine AS production
@@ -33,11 +27,9 @@ COPY --from=build /app/apps/api/prisma ./prisma
 COPY --from=build /app/apps/api/templates ./templates
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/api/package.json ./package.json
-COPY --from=build /app/entrypoint.sh ./entrypoint.sh
 
 RUN mkdir -p /app/uploads
 
 ENV NODE_ENV=production
 EXPOSE 3000
-
 CMD ["node", "dist/main.js"]
