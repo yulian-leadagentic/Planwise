@@ -15,11 +15,12 @@ RUN pnpm install --frozen-lockfile
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN /app/node_modules/.bin/vite build --config apps/web/vite.config.ts --outDir apps/web/dist
+RUN ls -la node_modules/.bin/ | head -20 || true
+RUN find /app/node_modules -name "vite" -type f | head -10 || true
+RUN node -e "console.log(require.resolve('vite/package.json'))" || true
 
 # Serve with nginx
 FROM nginx:alpine AS production
-COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
