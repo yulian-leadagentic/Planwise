@@ -54,7 +54,7 @@ export class FilesService {
   }
 
   async uploadMultiple(files: Express.Multer.File[], folder?: string) {
-    const results = [];
+    const results: { url: string; originalName: string }[] = [];
     for (const file of files) {
       const result = await this.uploadFile(file, folder);
       results.push(result);

@@ -28,7 +28,7 @@ export class TimeEntriesService {
   }
 
   async batchCreate(userId: number, entries: CreateTimeEntryDto[]) {
-    const results = [];
+    const results: any[] = [];
     for (const entry of entries) {
       const result = await this.create(userId, entry);
       results.push(result);
