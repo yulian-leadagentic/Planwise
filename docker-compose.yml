@@ -5,15 +5,20 @@ services:
     image: mysql:8.0
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${DB_NAME}
-      MYSQL_USER: ${DB_USER}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: amec
+      MYSQL_USER: amec
+      MYSQL_PASSWORD: your_password
     ports:
       - '3306:3306'
     volumes:
       - mysql_data:/var/lib/mysql
     command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7-alpine
@@ -31,9 +36,29 @@ services:
     ports:
       - '3000:3000'
     depends_on:
-      - mysql
-      - redis
-    env_file: .env
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      DATABASE_URL: mysql://amec:your_password@mysql:3306/amec
+      JWT_ACCESS_SECRET: amec-access-secret-change-in-production-32chars
+      JWT_ACCESS_EXPIRY: 1h
+      JWT_REFRESH_SECRET: amec-refresh-secret-change-in-production-32chars
+      JWT_REFRESH_EXPIRY: 7d
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      NODE_ENV: production
+      PORT: 3000
+      APP_URL: http://localhost:5173
+      API_URL: http://localhost:3000
+      MAIL_HOST: smtp.gmail.com
+      MAIL_PORT: 587
+      MAIL_USER: noreply@amec.com
+      MAIL_PASSWORD: placeholder
+      MAIL_FROM: noreply@amec.com
+      UPLOAD_DIR: /app/uploads
+      MAX_FILE_SIZE: 10485760
     volumes:
       - uploads:/app/uploads
 
