@@ -2,20 +2,18 @@ FROM node:20-alpine AS base
 RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
 WORKDIR /app
 
-# Install dependencies
+# Install all dependencies
 FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/eslint-config/package.json ./packages/eslint-config/
 COPY packages/ts-config/package.json ./packages/ts-config/
-RUN pnpm install --frozen-lockfile --ignore-scripts
-RUN cd apps/api && pnpm install --frozen-lockfile --ignore-scripts
+RUN pnpm install --frozen-lockfile
 
 # Build
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 COPY . .
 RUN cd apps/api && npx prisma generate
 RUN cd apps/api && npx nest build
@@ -35,5 +33,4 @@ RUN mkdir -p /app/uploads
 ENV NODE_ENV=production
 EXPOSE 3000
 
-# Run migrations then start the server
 CMD ["sh", "-c", "npx prisma db push --schema=./prisma/schema.prisma && node dist/main.js"]
