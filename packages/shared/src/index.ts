@@ -8,6 +8,8 @@ export * from './types/time.types';
 export * from './types/contract.types';
 export * from './types/label.types';
 export * from './types/report.types';
+export * from './types/zone.types';
+export * from './types/service.types';
 
 // Utils
 export * from './utils/date.utils';

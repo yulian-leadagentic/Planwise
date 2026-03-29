@@ -70,3 +70,48 @@ export type SeverityLevel = (typeof SEVERITY_LEVELS)[number];
 
 export const ATTENDANCE_APPLIES_TO = ['all', 'employees_only', 'partners_only'] as const;
 export type AttendanceAppliesTo = (typeof ATTENDANCE_APPLIES_TO)[number];
+
+// ─── V6 Enums (Zone/Service model) ──────────────────────────────────────
+
+export const DELIVERABLE_SCOPES = ['project', 'per_zone', 'per_building'] as const;
+export type DeliverableScope = (typeof DELIVERABLE_SCOPES)[number];
+
+export const ASSIGNMENT_STATUSES = [
+  'not_started',
+  'in_progress',
+  'in_review',
+  'completed',
+  'on_hold',
+  'cancelled',
+] as const;
+export type AssignmentStatus = (typeof ASSIGNMENT_STATUSES)[number];
+
+export const ASSIGNMENT_PRIORITIES = ['low', 'medium', 'high', 'critical'] as const;
+export type AssignmentPriority = (typeof ASSIGNMENT_PRIORITIES)[number];
+
+export const PRICING_METHODS = ['fixed_fee', 'time_materials', 'recurring'] as const;
+export type PricingMethod = (typeof PRICING_METHODS)[number];
+
+export const PAYMENT_TRIGGERS = ['upon_invoice', 'completion', 'milestones', 'monthly'] as const;
+export type PaymentTrigger = (typeof PAYMENT_TRIGGERS)[number];
+
+export const CHANGE_ORDER_STATUSES = ['pending', 'approved', 'rejected'] as const;
+export type ChangeOrderStatus = (typeof CHANGE_ORDER_STATUSES)[number];
+
+export const REVIEW_STATUSES = ['pending', 'approved', 'changes_requested'] as const;
+export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
+
+export const PROJECT_ROLES = [
+  'project_leader',
+  'bim_manager',
+  'bim_lead',
+  'mep_coordinator',
+  'mep_lead',
+  'coordinator',
+  'professional_employee',
+  'viewer',
+] as const;
+export type ProjectRole = (typeof PROJECT_ROLES)[number];
+
+export const TEMPLATE_TYPES = ['combined', 'zone_only', 'service_only', 'deliverable_only'] as const;
+export type TemplateType = (typeof TEMPLATE_TYPES)[number];
