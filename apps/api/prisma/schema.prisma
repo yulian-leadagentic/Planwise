@@ -121,6 +121,73 @@ enum EmailLogStatus {
   failed
 }
 
+// ─── V6 Enums ──────────────────────────────────────────────────────────────
+
+enum DeliverableScope {
+  project
+  per_zone
+  per_building
+}
+
+enum AssignmentStatus {
+  not_started  @map("not_started")
+  in_progress  @map("in_progress")
+  in_review    @map("in_review")
+  completed
+  on_hold      @map("on_hold")
+  cancelled
+}
+
+enum AssignmentPriority {
+  low
+  medium
+  high
+  critical
+}
+
+enum PricingMethod {
+  fixed_fee       @map("fixed_fee")
+  time_materials  @map("time_materials")
+  recurring
+}
+
+enum PaymentTrigger {
+  upon_invoice  @map("upon_invoice")
+  completion
+  milestones
+  monthly
+}
+
+enum ChangeOrderStatus {
+  pending
+  approved
+  rejected
+}
+
+enum ReviewStatus {
+  pending
+  approved
+  changes_requested @map("changes_requested")
+}
+
+enum ProjectRole {
+  project_leader        @map("project_leader")
+  bim_manager           @map("bim_manager")
+  bim_lead              @map("bim_lead")
+  mep_coordinator       @map("mep_coordinator")
+  mep_lead              @map("mep_lead")
+  coordinator
+  professional_employee @map("professional_employee")
+  viewer
+}
+
+enum TemplateType {
+  combined
+  zone_only         @map("zone_only")
+  service_only      @map("service_only")
+  deliverable_only  @map("deliverable_only")
+}
+
 // ─── Models ─────────────────────────────────────────────────────────────────
 
 model User {
@@ -174,6 +241,14 @@ model User {
   teamTemplates        TeamTemplate[]
   teamTemplateMembers  TeamTemplateMember[]
   tasksCreated         Task[]             @relation("TaskCreatedBy")
+
+  // V6 relations
+  assignmentsCreated       Assignment[]           @relation("AssignmentCreatedBy")
+  assignmentAssignees      AssignmentAssignee[]
+  assignmentComments       AssignmentComment[]
+  changeOrdersApproved     ChangeOrder[]          @relation("ChangeOrderApprovedBy")
+  changeOrdersCreated      ChangeOrder[]          @relation("ChangeOrderCreatedBy")
+  breakdownReviews         BreakdownReview[]
 
   @@index([roleId])
   @@index([email])
@@ -266,6 +341,11 @@ model Project {
   contracts   Contract[]
   expenses    Expense[]
   timeEntries TimeEntry[]
+
+  // V6 relations
+  zones            Zone[]
+  services         Service[]
+  breakdownReviews BreakdownReview[]
 
   @@index([projectTypeId])
   @@index([createdBy])
@@ -518,13 +598,18 @@ model TimeEntry {
   updatedAt   DateTime  @updatedAt @map("updated_at")
   deletedAt   DateTime? @map("deleted_at")
 
-  user      User       @relation(fields: [userId], references: [id])
-  timeClock TimeClock?  @relation(fields: [timeClockId], references: [id])
-  project   Project?   @relation(fields: [projectId], references: [id])
-  task      Task?      @relation(fields: [taskId], references: [id])
+  // V6: optional link to assignment
+  assignmentId Int?    @map("assignment_id")
+
+  user       User        @relation(fields: [userId], references: [id])
+  timeClock  TimeClock?  @relation(fields: [timeClockId], references: [id])
+  project    Project?    @relation(fields: [projectId], references: [id])
+  task       Task?       @relation(fields: [taskId], references: [id])
+  assignment Assignment? @relation(fields: [assignmentId], references: [id])
 
   @@index([userId])
   @@index([timeClockId])
+  @@index([assignmentId])
   @@index([projectId])
   @@index([taskId])
   @@index([date])
@@ -551,8 +636,13 @@ model Contract {
   partner User     @relation("ContractPartner", fields: [partnerId], references: [id])
   creator User     @relation("ContractCreatedBy", fields: [createdBy], references: [id])
 
-  items    ContractItem[]
-  billings Billing[]
+  items        ContractItem[]
+  billings     Billing[]
+  changeOrders ChangeOrder[]
+
+  // V6 fields
+  currency String? @default("ILS") @db.VarChar(3)
+  pdfUrl   String? @map("pdf_url") @db.VarChar(500)
 
   @@index([projectId])
   @@index([partnerId])
@@ -579,6 +669,15 @@ model ContractItem {
   contract  Contract        @relation(fields: [contractId], references: [id])
   label     Label?          @relation(fields: [labelId], references: [id])
   milestone LabelMilestone? @relation(fields: [milestoneId], references: [id])
+
+  // V6 fields
+  name           String?         @db.VarChar(255)
+  pricingMethod  PricingMethod?  @map("pricing_method")
+  paymentTrigger PaymentTrigger? @map("payment_trigger")
+
+  // V6 relations
+  contractAllocations ContractAllocation[]
+  contractMilestones  ContractMilestone[]
 
   @@index([contractId])
   @@index([labelId])
@@ -758,10 +857,26 @@ model ProjectTemplate {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  creator User            @relation(fields: [createdBy], references: [id])
-  labels  TemplateLabel[]
+  // V6 fields
+  code             String?          @db.VarChar(50)
+  type             TemplateType     @default(combined)
+  category         String?          @db.VarChar(100)
+  version          Int              @default(1)
+  parentTemplateId Int?             @map("parent_template_id")
+  usageCount       Int              @default(0) @map("usage_count")
+  isActive         Boolean          @default(true) @map("is_active")
+
+  creator        User               @relation(fields: [createdBy], references: [id])
+  parentTemplate ProjectTemplate?   @relation("TemplateInheritance", fields: [parentTemplateId], references: [id])
+  childTemplates ProjectTemplate[]  @relation("TemplateInheritance")
+  labels         TemplateLabel[]
+
+  // V6 relations
+  templateZones    TemplateZone[]
+  templateServices TemplateService[]
 
   @@index([createdBy])
+  @@index([parentTemplateId])
   @@map("project_templates")
 }
 
@@ -826,4 +941,365 @@ model TeamTemplateMember {
   @@index([teamTemplateId])
   @@index([userId])
   @@map("team_template_members")
+}
+
+// ─── V6 Models: Zones (spatial tree) ────────────────────────────────────────
+
+model ZoneType {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(100)
+  color     String   @db.VarChar(7)
+  icon      String?  @db.VarChar(50)
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  zones         Zone[]
+  templateZones TemplateZone[]
+
+  @@map("zone_types")
+}
+
+model Zone {
+  id           Int       @id @default(autoincrement())
+  projectId    Int       @map("project_id")
+  parentId     Int?      @map("parent_id")
+  zoneTypeId   Int       @map("zone_type_id")
+  name         String
+  code         String?   @db.VarChar(50)
+  areaSqm      Decimal?  @map("area_sqm") @db.Decimal(10, 2)
+  path         String    @db.VarChar(1000)
+  depth        Int       @default(0)
+  sortOrder    Int       @default(0) @map("sort_order")
+  description  String?   @db.Text
+  color        String?   @db.VarChar(7)
+  isTypical    Boolean   @default(false) @map("is_typical")
+  typicalCount Int       @default(1) @map("typical_count")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  project  Project  @relation(fields: [projectId], references: [id])
+  parent   Zone?    @relation("ZoneTree", fields: [parentId], references: [id])
+  children Zone[]   @relation("ZoneTree")
+  zoneType ZoneType @relation(fields: [zoneTypeId], references: [id])
+
+  assignments         Assignment[]
+  zoneAssignments     ZoneAssignment[]
+  contractAllocations ContractAllocation[]
+
+  @@index([projectId])
+  @@index([parentId])
+  @@index([zoneTypeId])
+  @@index([path])
+  @@index([deletedAt])
+  @@map("zones")
+}
+
+// ─── V6 Models: Services (work tree) ────────────────────────────────────────
+
+model Service {
+  id          Int       @id @default(autoincrement())
+  projectId   Int       @map("project_id")
+  name        String
+  code        String?   @db.VarChar(50)
+  sortOrder   Int       @default(0) @map("sort_order")
+  description String?   @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  project      Project       @relation(fields: [projectId], references: [id])
+  deliverables Deliverable[]
+
+  @@index([projectId])
+  @@map("services")
+}
+
+model Deliverable {
+  id          Int              @id @default(autoincrement())
+  serviceId   Int              @map("service_id")
+  name        String
+  code        String?          @db.VarChar(50)
+  percentage  Int?
+  scope       DeliverableScope @default(per_zone)
+  sortOrder   Int              @default(0) @map("sort_order")
+  description String?          @db.Text
+  budgetHours Decimal?         @map("budget_hours") @db.Decimal(10, 2)
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  deletedAt   DateTime?        @map("deleted_at")
+
+  service             Service              @relation(fields: [serviceId], references: [id])
+  assignments         Assignment[]
+  zoneAssignments     ZoneAssignment[]
+  contractAllocations ContractAllocation[]
+
+  @@index([serviceId])
+  @@map("deliverables")
+}
+
+model Assignment {
+  id             Int                @id @default(autoincrement())
+  deliverableId  Int                @map("deliverable_id")
+  zoneId         Int?               @map("zone_id")
+  name           String
+  description    String?            @db.Text
+  status         AssignmentStatus   @default(not_started)
+  priority       AssignmentPriority @default(medium)
+  budgetHours    Decimal?           @map("budget_hours") @db.Decimal(10, 2)
+  budgetAmount   Decimal?           @map("budget_amount") @db.Decimal(14, 2)
+  completionPct  Int                @default(0) @map("completion_pct")
+  startDate      DateTime?          @map("start_date")
+  endDate        DateTime?          @map("end_date")
+  isArchived     Boolean            @default(false) @map("is_archived")
+  createdBy      Int                @map("created_by")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+  deletedAt      DateTime?          @map("deleted_at")
+
+  deliverable Deliverable @relation(fields: [deliverableId], references: [id])
+  zone        Zone?       @relation(fields: [zoneId], references: [id])
+  creator     User        @relation("AssignmentCreatedBy", fields: [createdBy], references: [id])
+
+  assignees   AssignmentAssignee[]
+  comments    AssignmentComment[]
+  planTimes   AssignmentPlanTime[]
+  timeEntries TimeEntry[]
+
+  @@index([deliverableId])
+  @@index([zoneId])
+  @@index([status])
+  @@index([createdBy])
+  @@index([deletedAt])
+  @@map("assignments")
+}
+
+model AssignmentAssignee {
+  id           Int       @id @default(autoincrement())
+  assignmentId Int       @map("assignment_id")
+  userId       Int       @map("user_id")
+  role         String?   @db.VarChar(50)
+  hourlyRate   Decimal?  @map("hourly_rate") @db.Decimal(10, 2)
+  startDate    DateTime? @map("start_date")
+  endDate      DateTime? @map("end_date")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  assignment Assignment @relation(fields: [assignmentId], references: [id])
+  user       User       @relation(fields: [userId], references: [id])
+
+  @@unique([assignmentId, userId])
+  @@index([assignmentId])
+  @@index([userId])
+  @@map("assignment_assignees")
+}
+
+model AssignmentComment {
+  id           Int       @id @default(autoincrement())
+  assignmentId Int       @map("assignment_id")
+  userId       Int       @map("user_id")
+  parentId     Int?      @map("parent_id")
+  content      String    @db.Text
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  assignment Assignment        @relation(fields: [assignmentId], references: [id])
+  user       User              @relation(fields: [userId], references: [id])
+  parent     AssignmentComment? @relation("AssignmentCommentTree", fields: [parentId], references: [id])
+  replies    AssignmentComment[] @relation("AssignmentCommentTree")
+
+  @@index([assignmentId])
+  @@index([userId])
+  @@index([parentId])
+  @@map("assignment_comments")
+}
+
+model AssignmentPlanTime {
+  id           Int      @id @default(autoincrement())
+  assignmentId Int      @map("assignment_id")
+  roleTitle    String   @map("role_title") @db.VarChar(100)
+  plannedHours Decimal  @map("planned_hours") @db.Decimal(8, 2)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  assignment Assignment @relation(fields: [assignmentId], references: [id])
+
+  @@index([assignmentId])
+  @@map("assignment_plan_times")
+}
+
+// ─── V6 Models: Zone-Deliverable Linking ────────────────────────────────────
+
+model ZoneAssignment {
+  id            Int      @id @default(autoincrement())
+  zoneId        Int      @map("zone_id")
+  deliverableId Int      @map("deliverable_id")
+  isPrimary     Boolean  @default(false) @map("is_primary")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  zone        Zone        @relation(fields: [zoneId], references: [id])
+  deliverable Deliverable @relation(fields: [deliverableId], references: [id])
+
+  @@unique([zoneId, deliverableId])
+  @@index([zoneId])
+  @@index([deliverableId])
+  @@map("zone_assignments")
+}
+
+// ─── V6 Models: Contract Extensions ─────────────────────────────────────────
+
+model ContractAllocation {
+  id             Int      @id @default(autoincrement())
+  contractItemId Int      @map("contract_item_id")
+  deliverableId  Int      @map("deliverable_id")
+  zoneId         Int?     @map("zone_id")
+  amount         Decimal  @db.Decimal(14, 2)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  contractItem ContractItem @relation(fields: [contractItemId], references: [id])
+  deliverable  Deliverable  @relation(fields: [deliverableId], references: [id])
+  zone         Zone?        @relation(fields: [zoneId], references: [id])
+
+  @@index([contractItemId])
+  @@index([deliverableId])
+  @@index([zoneId])
+  @@map("contract_allocations")
+}
+
+model ContractMilestone {
+  id             Int       @id @default(autoincrement())
+  contractItemId Int       @map("contract_item_id")
+  name           String
+  percentage     Decimal   @db.Decimal(5, 2)
+  amount         Decimal   @db.Decimal(14, 2)
+  isCompleted    Boolean   @default(false) @map("is_completed")
+  completedAt    DateTime? @map("completed_at")
+  sortOrder      Int       @default(0) @map("sort_order")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  contractItem ContractItem @relation(fields: [contractItemId], references: [id])
+
+  @@index([contractItemId])
+  @@map("contract_milestones")
+}
+
+model ChangeOrder {
+  id          Int               @id @default(autoincrement())
+  contractId  Int               @map("contract_id")
+  name        String
+  amount      Decimal           @db.Decimal(14, 2)
+  description String?           @db.Text
+  status      ChangeOrderStatus @default(pending)
+  approvedBy  Int?              @map("approved_by")
+  approvedAt  DateTime?         @map("approved_at")
+  createdBy   Int               @map("created_by")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  contract Contract @relation(fields: [contractId], references: [id])
+  approver User?    @relation("ChangeOrderApprovedBy", fields: [approvedBy], references: [id])
+  creator  User     @relation("ChangeOrderCreatedBy", fields: [createdBy], references: [id])
+
+  @@index([contractId])
+  @@index([approvedBy])
+  @@index([createdBy])
+  @@map("change_orders")
+}
+
+// ─── V6 Models: Reviews ─────────────────────────────────────────────────────
+
+model BreakdownReview {
+  id         Int          @id @default(autoincrement())
+  projectId  Int          @map("project_id")
+  reviewerId Int          @map("reviewer_id")
+  status     ReviewStatus @default(pending)
+  notes      String?      @db.Text
+  reviewedAt DateTime?    @map("reviewed_at")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+
+  project  Project @relation(fields: [projectId], references: [id])
+  reviewer User    @relation(fields: [reviewerId], references: [id])
+
+  @@index([projectId])
+  @@index([reviewerId])
+  @@map("breakdown_reviews")
+}
+
+// ─── V6 Models: Extended Templates ──────────────────────────────────────────
+
+model TemplateZone {
+  id           Int      @id @default(autoincrement())
+  templateId   Int      @map("template_id")
+  parentId     Int?     @map("parent_id")
+  zoneTypeId   Int      @map("zone_type_id")
+  name         String
+  code         String?  @db.VarChar(50)
+  isTypical    Boolean  @default(false) @map("is_typical")
+  typicalCount Int      @default(1) @map("typical_count")
+  sortOrder    Int      @default(0) @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  template ProjectTemplate @relation(fields: [templateId], references: [id])
+  parent   TemplateZone?   @relation("TemplateZoneTree", fields: [parentId], references: [id])
+  children TemplateZone[]  @relation("TemplateZoneTree")
+  zoneType ZoneType        @relation(fields: [zoneTypeId], references: [id])
+
+  @@index([templateId])
+  @@index([parentId])
+  @@index([zoneTypeId])
+  @@map("template_zones")
+}
+
+model TemplateService {
+  id         Int      @id @default(autoincrement())
+  templateId Int      @map("template_id")
+  name       String
+  code       String?  @db.VarChar(50)
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  template     ProjectTemplate      @relation(fields: [templateId], references: [id])
+  deliverables TemplateDeliverable[]
+
+  @@index([templateId])
+  @@map("template_services")
+}
+
+model TemplateDeliverable {
+  id                Int              @id @default(autoincrement())
+  templateServiceId Int              @map("template_service_id")
+  name              String
+  code              String?          @db.VarChar(50)
+  percentage        Int?
+  scope             DeliverableScope @default(per_zone)
+  sortOrder         Int              @default(0) @map("sort_order")
+  createdAt         DateTime         @default(now()) @map("created_at")
+
+  templateService     TemplateService      @relation(fields: [templateServiceId], references: [id])
+  templateAssignments TemplateAssignment[]
+
+  @@index([templateServiceId])
+  @@map("template_deliverables")
+}
+
+model TemplateAssignment {
+  id                    Int                 @id @default(autoincrement())
+  templateDeliverableId Int                 @map("template_deliverable_id")
+  name                  String
+  description           String?             @db.Text
+  defaultBudgetHours    Decimal?            @map("default_budget_hours") @db.Decimal(10, 2)
+  defaultPriority       AssignmentPriority? @map("default_priority")
+  sortOrder             Int                 @default(0) @map("sort_order")
+  createdAt             DateTime            @default(now()) @map("created_at")
+
+  templateDeliverable TemplateDeliverable @relation(fields: [templateDeliverableId], references: [id])
+
+  @@index([templateDeliverableId])
+  @@map("template_assignments")
 }
