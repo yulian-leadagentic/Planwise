@@ -11,9 +11,11 @@ COPY packages/eslint-config/package.json ./packages/eslint-config/
 COPY packages/ts-config/package.json ./packages/ts-config/
 RUN pnpm install --frozen-lockfile
 
-# Build
+# Build - copy source files on top of deps
 FROM deps AS build
-COPY . .
+COPY tsconfig.base.json ./
+COPY packages/ ./packages/
+COPY apps/api/ ./apps/api/
 RUN pnpm --filter @amec/api exec prisma generate
 RUN pnpm --filter @amec/api exec nest build
 
@@ -21,15 +23,12 @@ RUN pnpm --filter @amec/api exec nest build
 FROM node:20-alpine AS production
 RUN apk add --no-cache openssl
 WORKDIR /app
-
+COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/api/dist ./dist
 COPY --from=build /app/apps/api/prisma ./prisma
 COPY --from=build /app/apps/api/templates ./templates
-COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/api/package.json ./package.json
-
 RUN mkdir -p /app/uploads
-
 ENV NODE_ENV=production
 EXPOSE 3000
 CMD ["node", "dist/main.js"]

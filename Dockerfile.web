@@ -11,9 +11,11 @@ COPY packages/eslint-config/package.json ./packages/eslint-config/
 COPY packages/ts-config/package.json ./packages/ts-config/
 RUN pnpm install --frozen-lockfile
 
-# Build
+# Build - copy source files on top of deps
 FROM deps AS build
-COPY . .
+COPY tsconfig.base.json ./
+COPY packages/ ./packages/
+COPY apps/web/ ./apps/web/
 RUN pnpm --filter @amec/web exec vite build
 
 # Serve with nginx
