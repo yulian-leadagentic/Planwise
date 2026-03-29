@@ -1,6 +1,7 @@
 FROM node:20-alpine AS base
 RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
 WORKDIR /app
+ENV PATH="/app/node_modules/.bin:$PATH"
 
 # Install all dependencies
 FROM base AS deps
@@ -15,7 +16,6 @@ RUN pnpm install --frozen-lockfile
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-ENV PATH="/app/node_modules/.bin:$PATH"
 RUN prisma generate --schema=apps/api/prisma/schema.prisma
 RUN nest build --path apps/api/tsconfig.build.json
 
@@ -23,6 +23,7 @@ RUN nest build --path apps/api/tsconfig.build.json
 FROM node:20-alpine AS production
 RUN apk add --no-cache openssl
 WORKDIR /app
+ENV PATH="/app/node_modules/.bin:$PATH"
 
 COPY --from=build /app/apps/api/dist ./dist
 COPY --from=build /app/apps/api/prisma ./prisma
@@ -33,7 +34,6 @@ COPY --from=build /app/apps/api/package.json ./package.json
 RUN mkdir -p /app/uploads
 
 ENV NODE_ENV=production
-ENV PATH="/app/node_modules/.bin:$PATH"
 EXPOSE 3000
 
 CMD ["sh", "-c", "prisma db push --schema=./prisma/schema.prisma --skip-generate && node dist/main.js"]
