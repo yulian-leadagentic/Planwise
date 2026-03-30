@@ -111,6 +111,41 @@ export class ConfigController {
     return { message: 'Label type deleted' };
   }
 
+  // Zone Types (v6)
+  @Get('zone-types')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'List zone types' })
+  async getZoneTypes() {
+    return this.prisma.zoneType.findMany({
+      orderBy: { sortOrder: 'asc' },
+    });
+  }
+
+  @Post('zone-types')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Create zone type' })
+  async createZoneType(
+    @Body() body: { name: string; color: string; icon?: string },
+  ) {
+    const maxOrder = await this.prisma.zoneType.aggregate({ _max: { sortOrder: true } });
+    return this.prisma.zoneType.create({
+      data: {
+        name: body.name,
+        color: body.color,
+        icon: body.icon || null,
+        sortOrder: (maxOrder._max.sortOrder ?? 0) + 1,
+      },
+    });
+  }
+
+  @Delete('zone-types/:id')
+  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @ApiOperation({ summary: 'Delete zone type' })
+  async deleteZoneType(@Param('id', ParseIntPipe) id: number) {
+    await this.prisma.zoneType.delete({ where: { id } });
+    return { message: 'Zone type deleted' };
+  }
+
   // Modules (system navigation/permissions)
   @Get('modules')
   @RequirePermissions({ module: 'admin', action: 'read' })

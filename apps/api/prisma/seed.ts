@@ -57,6 +57,21 @@ async function main() {
       { name: 'Architecture' },
       { name: 'Infrastructure' },
       { name: 'Renovation' },
+      { name: 'BIM Coordination' },
+      { name: 'BIM Management' },
+    ],
+  });
+
+  // Zone Types (v6)
+  await prisma.zoneType.createMany({
+    data: [
+      { name: 'Site', color: '#6B7280', icon: 'Map', sortOrder: 1 },
+      { name: 'Building', color: '#3B82F6', icon: 'Building2', sortOrder: 2 },
+      { name: 'Level', color: '#10B981', icon: 'Layers', sortOrder: 3 },
+      { name: 'Zone', color: '#F59E0B', icon: 'MapPin', sortOrder: 4 },
+      { name: 'Area', color: '#8B5CF6', icon: 'Square', sortOrder: 5 },
+      { name: 'Wing', color: '#EC4899', icon: 'GitBranch', sortOrder: 6 },
+      { name: 'Section', color: '#14B8A6', icon: 'LayoutGrid', sortOrder: 7 },
     ],
   });
 

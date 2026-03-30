@@ -54,5 +54,5 @@ export const projectsApi = {
 
   // Project types
   listTypes: () =>
-    client.get<ApiResponse<ProjectType[]>>('/project-types').then((r) => r.data.data),
+    client.get<ApiResponse<ProjectType[]>>('/admin/config/project-types').then((r) => r.data.data),
 };

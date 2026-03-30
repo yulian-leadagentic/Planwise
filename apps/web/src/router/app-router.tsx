@@ -28,6 +28,7 @@ import { ProjectTypesPage } from '@/features/admin/project-types-page';
 import { ActivityLogPage } from '@/features/admin/activity-log-page';
 import { WorkSchedulesPage } from '@/features/admin/work-schedules-page';
 import { CalendarDaysPage } from '@/features/admin/calendar-page';
+import { ZoneTypesPage } from '@/features/admin/zone-types-page';
 
 export function AppRouter() {
   return (
@@ -82,6 +83,7 @@ export function AppRouter() {
         <Route path="admin" element={<AdminPage />} />
         <Route path="admin/roles" element={<RolesPage />} />
         <Route path="admin/label-types" element={<LabelTypesPage />} />
+        <Route path="admin/zone-types" element={<ZoneTypesPage />} />
         <Route path="admin/config" element={<ProjectTypesPage />} />
         <Route path="admin/activity-log" element={<ActivityLogPage />} />
         <Route path="admin/work-schedules" element={<WorkSchedulesPage />} />

@@ -6,6 +6,7 @@ import {
   Settings,
   Clock,
   Calendar,
+  MapPin,
 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 
@@ -23,6 +24,13 @@ const adminCards = [
     icon: Activity,
     href: '/admin/activity-log',
     color: 'bg-purple-100 text-purple-700',
+  },
+  {
+    title: 'Zone Types',
+    description: 'Configure zone types for spatial breakdown (v6)',
+    icon: MapPin,
+    href: '/admin/zone-types',
+    color: 'bg-teal-100 text-teal-700',
   },
   {
     title: 'Label Types',
