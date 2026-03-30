@@ -30,7 +30,10 @@ export function ZoneTypesPage() {
       setColor('#3B82F6');
       setIcon('');
     },
-    onError: () => toast.error('Failed to create zone type'),
+    onError: (err: any) => {
+      const msg = err?.response?.data?.error?.message || err?.message || 'Failed to create zone type';
+      toast.error(msg);
+    },
   });
 
   const deleteMutation = useMutation({
@@ -39,7 +42,7 @@ export function ZoneTypesPage() {
       queryClient.invalidateQueries({ queryKey: ['admin', 'zone-types'] });
       toast.success('Zone type deleted');
     },
-    onError: () => toast.error('Failed to delete'),
+    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

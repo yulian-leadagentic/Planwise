@@ -30,7 +30,7 @@ export function LabelTypesPage() {
       setColor('#3B82F6');
       setIcon('');
     },
-    onError: () => toast.error('Failed to create label type'),
+    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create label type'),
   });
 
   const deleteMutation = useMutation({
@@ -39,7 +39,7 @@ export function LabelTypesPage() {
       queryClient.invalidateQueries({ queryKey: ['admin', 'label-types'] });
       toast.success('Label type deleted');
     },
-    onError: () => toast.error('Failed to delete'),
+    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

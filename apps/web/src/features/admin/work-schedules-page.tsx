@@ -31,7 +31,7 @@ export function WorkSchedulesPage() {
       toast.success('Schedule created');
       setShowForm(false);
     },
-    onError: () => toast.error('Failed to create schedule'),
+    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create schedule'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

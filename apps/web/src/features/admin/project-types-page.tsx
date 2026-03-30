@@ -26,7 +26,7 @@ export function ProjectTypesPage() {
       setShowForm(false);
       setName('');
     },
-    onError: () => toast.error('Failed to create project type'),
+    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create project type'),
   });
 
   const deleteMutation = useMutation({
@@ -35,7 +35,7 @@ export function ProjectTypesPage() {
       queryClient.invalidateQueries({ queryKey: ['admin', 'project-types'] });
       toast.success('Project type deleted');
     },
-    onError: () => toast.error('Failed to delete'),
+    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

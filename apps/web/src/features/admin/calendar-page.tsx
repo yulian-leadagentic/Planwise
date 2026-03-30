@@ -38,7 +38,7 @@ export function CalendarDaysPage() {
       setName('');
       setType('holiday');
     },
-    onError: () => toast.error('Failed to create calendar day'),
+    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create calendar day'),
   });
 
   const deleteMutation = useMutation({
@@ -47,7 +47,7 @@ export function CalendarDaysPage() {
       queryClient.invalidateQueries({ queryKey: ['admin', 'calendar'] });
       toast.success('Calendar day deleted');
     },
-    onError: () => toast.error('Failed to delete'),
+    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {
