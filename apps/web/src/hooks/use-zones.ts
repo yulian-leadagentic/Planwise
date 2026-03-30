@@ -20,8 +20,8 @@ export function useCreateZone() {
       queryClient.invalidateQueries({ queryKey: ['planning-data', variables.projectId] });
       toast.success('Zone created');
     },
-    onError: () => {
-      toast.error('Failed to create zone');
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.error?.message || 'Failed to create zone');
     },
   });
 }
