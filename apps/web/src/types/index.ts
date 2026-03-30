@@ -74,6 +74,25 @@ export type {
   ActivityLog,
 } from '@amec/shared';
 
+export type {
+  Zone,
+  ZoneType,
+} from '@amec/shared';
+
+export type {
+  Service,
+  Deliverable,
+  Assignment,
+  AssignmentAssignee,
+  PlanningData,
+} from '@amec/shared';
+
+export type {
+  DeliverableScope,
+  AssignmentStatus,
+  AssignmentPriority,
+} from '@amec/shared';
+
 export {
   minutesToDisplay,
   displayToMinutes,

@@ -16,6 +16,11 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { FilesModule } from './modules/files/files.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { ZonesModule } from './modules/zones/zones.module';
+import { ServicesModule } from './modules/services/services.module';
+import { DeliverablesModule } from './modules/deliverables/deliverables.module';
+import { AssignmentsModule } from './modules/assignments/assignments.module';
+import { PlanningModule } from './modules/planning/planning.module';
 
 @Module({
   imports: [
@@ -38,6 +43,11 @@ import { AdminModule } from './modules/admin/admin.module';
     NotificationsModule,
     FilesModule,
     AdminModule,
+    ZonesModule,
+    ServicesModule,
+    DeliverablesModule,
+    AssignmentsModule,
+    PlanningModule,
   ],
 })
 export class AppModule {}
