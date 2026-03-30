@@ -1,10 +1,11 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Edit, Users, FolderTree, CheckSquare, DollarSign } from 'lucide-react';
+import { ArrowLeft, Edit, Users, FolderTree, CheckSquare, DollarSign, LayoutGrid } from 'lucide-react';
 import { useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { ProjectTree } from './project-tree';
+import { PlanningModal } from './planning-modal';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { useProject, useProjectMembers } from '@/hooks/use-projects';
 import { useLabelTree } from '@/hooks/use-labels';
@@ -12,7 +13,7 @@ import { useTasks } from '@/hooks/use-tasks';
 import { formatDate } from '@/lib/date-utils';
 import { formatCurrency, cn } from '@/lib/utils';
 
-type Tab = 'tree' | 'tasks' | 'members' | 'costs';
+type Tab = 'tree' | 'planning' | 'tasks' | 'members' | 'costs';
 
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -32,6 +33,7 @@ export function ProjectDetailPage() {
 
   const tabs = [
     { key: 'tree' as Tab, label: 'Labels', icon: FolderTree },
+    { key: 'planning' as Tab, label: 'Planning', icon: LayoutGrid },
     { key: 'tasks' as Tab, label: 'Tasks', icon: CheckSquare, count: tasks.length },
     { key: 'members' as Tab, label: 'Members', icon: Users, count: members?.length },
     { key: 'costs' as Tab, label: 'Costs', icon: DollarSign },
@@ -122,6 +124,12 @@ export function ProjectDetailPage() {
               No labels yet. Create a label structure to organize this project.
             </p>
           )}
+        </div>
+      )}
+
+      {tab === 'planning' && (
+        <div className="-mx-4 -mb-6 sm:-mx-6 lg:-mx-8" style={{ height: 'calc(100vh - 320px)', minHeight: '500px' }}>
+          <PlanningModal projectId={projectId} onClose={() => setTab('tree')} />
         </div>
       )}
 

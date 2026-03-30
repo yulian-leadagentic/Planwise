@@ -12,6 +12,7 @@ import { ClockDashboardPage } from '@/features/time/clock-dashboard-page';
 import { ProjectListPage } from '@/features/projects/project-list-page';
 import { ProjectDetailPage } from '@/features/projects/project-detail-page';
 import { ProjectFormPage } from '@/features/projects/project-form-page';
+import { PlanningPage } from '@/features/projects/planning-modal';
 import { ContractsPage } from '@/features/contracts/contracts-page';
 import { PeoplePage } from '@/features/people/people-page';
 import { ReportsPage } from '@/features/reports/reports-page';
@@ -59,6 +60,7 @@ export function AppRouter() {
         <Route path="projects/new" element={<ProjectFormPage />} />
         <Route path="projects/:id" element={<ProjectDetailPage />} />
         <Route path="projects/:id/edit" element={<ProjectFormPage />} />
+        <Route path="projects/:id/planning" element={<PlanningPage />} />
 
         {/* Contracts */}
         <Route path="contracts" element={<ContractsPage />} />
