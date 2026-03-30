@@ -7,7 +7,8 @@ RUN pnpm install --frozen-lockfile --shamefully-hoist
 RUN cd apps/api && pnpm exec prisma generate
 RUN cd apps/api && pnpm exec nest build
 RUN mkdir -p uploads
+RUN chmod +x apps/api/entrypoint.sh
 ENV NODE_ENV=production
 EXPOSE 3000
 WORKDIR /app/apps/api
-CMD ["sh", "-c", "/app/node_modules/.bin/prisma db push --schema=./prisma/schema.prisma --skip-generate --accept-data-loss 2>&1 || echo 'prisma db push failed but continuing...' ; node dist/main.js"]
+CMD ["sh", "./entrypoint.sh"]
