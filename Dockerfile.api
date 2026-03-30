@@ -10,4 +10,4 @@ RUN mkdir -p uploads
 ENV NODE_ENV=production
 EXPOSE 3000
 WORKDIR /app/apps/api
-CMD ["node", "dist/main.js"]
+CMD ["sh", "-c", "pnpm exec prisma db push --skip-generate && node dist/main.js"]
