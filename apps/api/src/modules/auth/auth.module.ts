@@ -17,8 +17,8 @@ import { UsersModule } from '../users/users.module';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET', 'amec-secret-key'),
-        signOptions: { expiresIn: config.get<string>('JWT_EXPIRES_IN', '15m') },
+        secret: config.get<string>('JWT_ACCESS_SECRET', 'amec-access-secret-change-in-production-32chars'),
+        signOptions: { expiresIn: config.get<string>('JWT_ACCESS_EXPIRY', '1h') },
       }),
     }),
     UsersModule,

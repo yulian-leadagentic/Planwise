@@ -77,14 +77,15 @@ export class ConfigController {
   @RequirePermissions({ module: 'admin', action: 'write' })
   @ApiOperation({ summary: 'Create label type' })
   async createLabelType(
-    @Body() body: { name: string; color: string; icon?: string; sortOrder: number },
+    @Body() body: { name: string; color: string; icon?: string; sortOrder?: number },
   ) {
+    const maxOrder = await this.prisma.labelType.aggregate({ _max: { sortOrder: true } });
     return this.prisma.labelType.create({
       data: {
         name: body.name,
         color: body.color,
-        icon: body.icon,
-        sortOrder: body.sortOrder,
+        icon: body.icon || null,
+        sortOrder: body.sortOrder ?? (maxOrder._max.sortOrder ?? 0) + 1,
       },
     });
   }

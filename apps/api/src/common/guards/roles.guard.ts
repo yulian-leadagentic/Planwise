@@ -23,7 +23,11 @@ export class RolesGuard implements CanActivate {
 
     const hasPermission = requiredPermissions.every((required) => {
       const userModule = user.roleModules.find(
-        (rm: any) => rm.module.route === required.module,
+        (rm: any) => {
+          const route = rm.module?.route || '';
+          const moduleName = rm.module?.name?.toLowerCase() || '';
+          return route === required.module || route === `/${required.module}` || moduleName === required.module;
+        },
       );
       if (!userModule) return false;
 
