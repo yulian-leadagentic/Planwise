@@ -49,14 +49,7 @@ export const adminApi = {
   listActivityLogs: (params?: ActivityLogQuery) =>
     client.get<ApiResponse<ActivityLog[]>>('/admin/activity-logs', { params }).then((r) => r.data),
 
-  // Enums
+  // Enums — backend: EnumsController at /enums (not /admin/enums)
   getEnums: () =>
-    client.get<ApiResponse<Record<string, string[]>>>('/admin/enums').then((r) => r.data.data),
-
-  // Config
-  listConfig: () =>
-    client.get<ApiResponse<AppConfig[]>>('/admin/config').then((r) => r.data.data),
-
-  updateConfig: (key: string, value: string) =>
-    client.patch<ApiResponse<AppConfig>>(`/admin/config/${key}`, { value }).then((r) => r.data.data),
+    client.get<ApiResponse<Record<string, string[]>>>('/enums').then((r) => r.data.data),
 };

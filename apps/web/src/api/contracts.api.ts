@@ -39,6 +39,7 @@ export interface ContractItemPayload {
 }
 
 export interface BillingPayload {
+  contractId: number;
   type: string;
   amount: number;
   billingDate: string;
@@ -82,7 +83,7 @@ export interface TermPayload {
 }
 
 export const contractsApi = {
-  // Contracts
+  // Contracts — backend: ContractsController at /contracts
   list: (params?: ContractQuery) =>
     client.get<ApiResponse<Contract[]>>('/contracts', { params }).then((r) => r.data),
 
@@ -98,75 +99,63 @@ export const contractsApi = {
   delete: (id: number) =>
     client.delete(`/contracts/${id}`).then((r) => r.data),
 
-  // Contract items
+  // Contract items — backend: POST/PATCH/DELETE /contracts/:id/items
   listItems: (contractId: number) =>
     client.get<ApiResponse<ContractItem[]>>(`/contracts/${contractId}/items`).then((r) => r.data.data),
 
-  setItems: (contractId: number, items: ContractItemPayload[]) =>
-    client.put<ApiResponse<ContractItem[]>>(`/contracts/${contractId}/items`, { items }).then((r) => r.data.data),
+  addItem: (contractId: number, payload: ContractItemPayload) =>
+    client.post<ApiResponse<ContractItem>>(`/contracts/${contractId}/items`, payload).then((r) => r.data.data),
 
-  // Billings
-  listBillings: (contractId: number) =>
-    client.get<ApiResponse<Billing[]>>(`/contracts/${contractId}/billings`).then((r) => r.data.data),
+  updateItem: (contractId: number, itemId: number, payload: Partial<ContractItemPayload>) =>
+    client.patch<ApiResponse<ContractItem>>(`/contracts/${contractId}/items/${itemId}`, payload).then((r) => r.data.data),
 
-  createBilling: (contractId: number, payload: BillingPayload) =>
-    client.post<ApiResponse<Billing>>(`/contracts/${contractId}/billings`, payload).then((r) => r.data.data),
+  deleteItem: (contractId: number, itemId: number) =>
+    client.delete(`/contracts/${contractId}/items/${itemId}`).then((r) => r.data),
 
-  updateBilling: (contractId: number, billingId: number, payload: Partial<BillingPayload>) =>
-    client.patch<ApiResponse<Billing>>(`/contracts/${contractId}/billings/${billingId}`, payload).then((r) => r.data.data),
+  // Billings — backend: BillingsController at /billings
+  listBillings: (params?: { contractId?: number }) =>
+    client.get<ApiResponse<Billing[]>>('/billings', { params }).then((r) => r.data.data),
 
-  deleteBilling: (contractId: number, billingId: number) =>
-    client.delete(`/contracts/${contractId}/billings/${billingId}`).then((r) => r.data),
+  createBilling: (payload: BillingPayload) =>
+    client.post<ApiResponse<Billing>>('/billings', payload).then((r) => r.data.data),
 
-  // Milestones
-  listMilestones: (params?: { labelId?: number; partnerId?: number }) =>
-    client.get<ApiResponse<LabelMilestone[]>>('/milestones', { params }).then((r) => r.data.data),
+  getBilling: (id: number) =>
+    client.get<ApiResponse<Billing>>(`/billings/${id}`).then((r) => r.data.data),
 
-  createMilestone: (payload: MilestonePayload) =>
-    client.post<ApiResponse<LabelMilestone>>('/milestones', payload).then((r) => r.data.data),
+  updateBilling: (id: number, payload: Partial<BillingPayload>) =>
+    client.patch<ApiResponse<Billing>>(`/billings/${id}`, payload).then((r) => r.data.data),
+
+  // Milestones — backend: /contracts/:contractId/milestones
+  createMilestone: (contractId: number, payload: MilestonePayload) =>
+    client.post<ApiResponse<LabelMilestone>>(`/contracts/${contractId}/milestones`, payload).then((r) => r.data.data),
 
   updateMilestone: (id: number, payload: Partial<MilestonePayload & { isCompleted: boolean }>) =>
-    client.patch<ApiResponse<LabelMilestone>>(`/milestones/${id}`, payload).then((r) => r.data.data),
+    client.patch<ApiResponse<LabelMilestone>>(`/contracts/milestones/${id}`, payload).then((r) => r.data.data),
 
   deleteMilestone: (id: number) =>
-    client.delete(`/milestones/${id}`).then((r) => r.data),
+    client.delete(`/contracts/milestones/${id}`).then((r) => r.data),
 
-  // Contacts
+  // Contacts — backend: /contracts/contacts
   listContacts: (partnerId: number) =>
-    client.get<ApiResponse<Contact[]>>(`/users/${partnerId}/contacts`).then((r) => r.data.data),
+    client.get<ApiResponse<Contact[]>>(`/contracts/contacts/${partnerId}`).then((r) => r.data.data),
 
   createContact: (payload: ContactPayload) =>
-    client.post<ApiResponse<Contact>>('/contacts', payload).then((r) => r.data.data),
-
-  updateContact: (id: number, payload: Partial<ContactPayload>) =>
-    client.patch<ApiResponse<Contact>>(`/contacts/${id}`, payload).then((r) => r.data.data),
+    client.post<ApiResponse<Contact>>('/contracts/contacts', payload).then((r) => r.data.data),
 
   deleteContact: (id: number) =>
-    client.delete(`/contacts/${id}`).then((r) => r.data),
+    client.delete(`/contracts/contacts/${id}`).then((r) => r.data),
 
-  // Expenses
+  // Expenses — backend: /contracts/expenses
   listExpenses: (params?: { projectId?: number }) =>
-    client.get<ApiResponse<Expense[]>>('/expenses', { params }).then((r) => r.data.data),
+    client.get<ApiResponse<Expense[]>>('/contracts/expenses', { params }).then((r) => r.data.data),
 
   createExpense: (payload: ExpensePayload) =>
-    client.post<ApiResponse<Expense>>('/expenses', payload).then((r) => r.data.data),
+    client.post<ApiResponse<Expense>>('/contracts/expenses', payload).then((r) => r.data.data),
 
-  updateExpense: (id: number, payload: Partial<ExpensePayload>) =>
-    client.patch<ApiResponse<Expense>>(`/expenses/${id}`, payload).then((r) => r.data.data),
-
-  deleteExpense: (id: number) =>
-    client.delete(`/expenses/${id}`).then((r) => r.data),
-
-  // Terms
+  // Terms — backend: /contracts/terms
   listTerms: (userId: number) =>
-    client.get<ApiResponse<Term[]>>(`/users/${userId}/terms`).then((r) => r.data.data),
+    client.get<ApiResponse<Term[]>>(`/contracts/terms/${userId}`).then((r) => r.data.data),
 
   createTerm: (payload: TermPayload) =>
-    client.post<ApiResponse<Term>>('/terms', payload).then((r) => r.data.data),
-
-  updateTerm: (id: number, payload: Partial<TermPayload>) =>
-    client.patch<ApiResponse<Term>>(`/terms/${id}`, payload).then((r) => r.data.data),
-
-  deleteTerm: (id: number) =>
-    client.delete(`/terms/${id}`).then((r) => r.data),
+    client.post<ApiResponse<Term>>('/contracts/terms', payload).then((r) => r.data.data),
 };

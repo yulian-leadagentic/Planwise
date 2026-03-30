@@ -20,6 +20,9 @@ import { TimesheetReportPage } from '@/features/reports/timesheet-report-page';
 import { AttendanceReportPage } from '@/features/reports/attendance-report-page';
 import { CostReportPage } from '@/features/reports/cost-report-page';
 import { OvertimeReportPage } from '@/features/reports/overtime-report-page';
+import { LateArrivalsPage } from '@/features/reports/late-arrivals-page';
+import { MilestonesPage } from '@/features/reports/milestones-page';
+import { BillingForecastPage } from '@/features/reports/billing-forecast-page';
 import { TemplatesPage } from '@/features/templates/templates-page';
 import { AdminPage } from '@/features/admin/admin-page';
 import { RolesPage } from '@/features/admin/roles-page';
@@ -75,6 +78,9 @@ export function AppRouter() {
         <Route path="reports/attendance" element={<AttendanceReportPage />} />
         <Route path="reports/cost" element={<CostReportPage />} />
         <Route path="reports/overtime" element={<OvertimeReportPage />} />
+        <Route path="reports/late-arrivals" element={<LateArrivalsPage />} />
+        <Route path="reports/milestones" element={<MilestonesPage />} />
+        <Route path="reports/billing-forecast" element={<BillingForecastPage />} />
 
         {/* Templates */}
         <Route path="templates" element={<TemplatesPage />} />

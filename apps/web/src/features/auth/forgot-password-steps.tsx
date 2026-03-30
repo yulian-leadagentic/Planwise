@@ -30,7 +30,7 @@ type Step = 'email' | 'otp' | 'password';
 export function ForgotPasswordSteps() {
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
-  const [code, setCode] = useState('');
+  const [resetToken, setResetToken] = useState('');
 
   const forgotPassword = useForgotPassword();
   const verifyOtp = useVerifyOtp();
@@ -57,15 +57,19 @@ export function ForgotPasswordSteps() {
   };
 
   const handleOtpSubmit = (data: z.infer<typeof otpSchema>) => {
-    setCode(data.code);
     verifyOtp.mutate(
       { email, code: data.code },
-      { onSuccess: () => setStep('password') },
+      {
+        onSuccess: (result: any) => {
+          setResetToken(result.resetToken);
+          setStep('password');
+        },
+      },
     );
   };
 
   const handlePasswordSubmit = (data: z.infer<typeof passwordSchema>) => {
-    resetPassword.mutate({ email, code, newPassword: data.newPassword });
+    resetPassword.mutate({ resetToken, newPassword: data.newPassword });
   };
 
   return (

@@ -57,64 +57,64 @@ export interface WorkSchedulePayload {
 }
 
 export const timeApi = {
-  // Clock
+  // Clock — backend: TimeClockController at /time-clock
   clockStatus: () =>
-    client.get<ApiResponse<ClockStatusResponse>>('/time/clock/status').then((r) => r.data.data),
+    client.get<ApiResponse<ClockStatusResponse>>('/time-clock/status').then((r) => r.data.data),
 
   clockIn: (payload?: ClockInPayload) =>
-    client.post<ApiResponse<TimeClock>>('/time/clock/in', payload).then((r) => r.data.data),
+    client.post<ApiResponse<TimeClock>>('/time-clock/clock-in', payload).then((r) => r.data.data),
 
   clockOut: (payload?: ClockOutPayload) =>
-    client.post<ApiResponse<TimeClock>>('/time/clock/out', payload).then((r) => r.data.data),
+    client.post<ApiResponse<TimeClock>>('/time-clock/clock-out', payload).then((r) => r.data.data),
 
-  // Time entries
+  // Time entries — backend: TimeEntriesController at /time-entries
   listEntries: (params?: { date?: string; weekStart?: string; projectId?: number; taskId?: number }) =>
-    client.get<ApiResponse<TimeEntry[]>>('/time/entries', { params }).then((r) => r.data),
+    client.get<ApiResponse<TimeEntry[]>>('/time-entries', { params }).then((r) => r.data),
 
   createEntry: (payload: TimeEntryPayload) =>
-    client.post<ApiResponse<TimeEntry>>('/time/entries', payload).then((r) => r.data.data),
+    client.post<ApiResponse<TimeEntry>>('/time-entries', payload).then((r) => r.data.data),
 
   updateEntry: (id: number, payload: Partial<TimeEntryPayload>) =>
-    client.patch<ApiResponse<TimeEntry>>(`/time/entries/${id}`, payload).then((r) => r.data.data),
+    client.patch<ApiResponse<TimeEntry>>(`/time-entries/${id}`, payload).then((r) => r.data.data),
 
   deleteEntry: (id: number) =>
-    client.delete(`/time/entries/${id}`).then((r) => r.data),
+    client.delete(`/time-entries/${id}`).then((r) => r.data),
 
-  // Weekly grid
+  // Weekly grid — backend: GET /time-entries/weekly
   weeklyGrid: (params: WeeklyGridQuery) =>
-    client.get<ApiResponse<WeeklyGrid>>('/time/weekly-grid', { params }).then((r) => r.data.data),
+    client.get<ApiResponse<WeeklyGrid>>('/time-entries/weekly', { params }).then((r) => r.data.data),
 
-  // Daily breakdown
+  // Daily breakdown — backend: GET /time-entries/daily
   dailyBreakdown: (params: { weekStart: string }) =>
-    client.get<ApiResponse<DailyBreakdown[]>>('/time/daily-breakdown', { params }).then((r) => r.data.data),
+    client.get<ApiResponse<DailyBreakdown[]>>('/time-entries/daily', { params }).then((r) => r.data.data),
 
-  // Work schedules
+  // Work schedules — backend: WorkSchedulesController at /work-schedules
   listSchedules: (userId?: number) =>
-    client.get<ApiResponse<WorkSchedule[]>>('/time/schedules', { params: { userId } }).then((r) => r.data.data),
+    client.get<ApiResponse<WorkSchedule[]>>('/work-schedules', { params: { userId } }).then((r) => r.data.data),
 
   createSchedule: (payload: WorkSchedulePayload) =>
-    client.post<ApiResponse<WorkSchedule>>('/time/schedules', payload).then((r) => r.data.data),
+    client.post<ApiResponse<WorkSchedule>>('/work-schedules', payload).then((r) => r.data.data),
 
   updateSchedule: (id: number, payload: Partial<WorkSchedulePayload>) =>
-    client.patch<ApiResponse<WorkSchedule>>(`/time/schedules/${id}`, payload).then((r) => r.data.data),
+    client.patch<ApiResponse<WorkSchedule>>(`/work-schedules/${id}`, payload).then((r) => r.data.data),
 
   deleteSchedule: (id: number) =>
-    client.delete(`/time/schedules/${id}`).then((r) => r.data),
+    client.delete(`/work-schedules/${id}`).then((r) => r.data),
 
-  // Calendar days
+  // Calendar days — backend: CalendarController at /calendar
   listCalendarDays: (params?: { year?: number; month?: number }) =>
-    client.get<ApiResponse<CalendarDay[]>>('/time/calendar-days', { params }).then((r) => r.data.data),
+    client.get<ApiResponse<CalendarDay[]>>('/calendar', { params }).then((r) => r.data.data),
 
   createCalendarDay: (payload: CalendarDayPayload) =>
-    client.post<ApiResponse<CalendarDay>>('/time/calendar-days', payload).then((r) => r.data.data),
+    client.post<ApiResponse<CalendarDay>>('/calendar', payload).then((r) => r.data.data),
 
   updateCalendarDay: (id: number, payload: Partial<CalendarDayPayload>) =>
-    client.patch<ApiResponse<CalendarDay>>(`/time/calendar-days/${id}`, payload).then((r) => r.data.data),
+    client.patch<ApiResponse<CalendarDay>>(`/calendar/${id}`, payload).then((r) => r.data.data),
 
   deleteCalendarDay: (id: number) =>
-    client.delete(`/time/calendar-days/${id}`).then((r) => r.data),
+    client.delete(`/calendar/${id}`).then((r) => r.data),
 
-  // Team clock dashboard
+  // Team clock dashboard — backend: GET /time-clock/today
   teamDashboard: () =>
-    client.get<ApiResponse<TeamClockDashboard>>('/time/clock/dashboard').then((r) => r.data.data),
+    client.get<ApiResponse<TeamClockDashboard>>('/time-clock/today').then((r) => r.data.data),
 };

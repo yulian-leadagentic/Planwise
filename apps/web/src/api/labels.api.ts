@@ -17,11 +17,13 @@ export interface MoveLabelPayload {
 }
 
 export const labelsApi = {
+  // Backend: GET /labels?projectId=X
   listByProject: (projectId: number) =>
-    client.get<ApiResponse<Label[]>>(`/projects/${projectId}/labels`).then((r) => r.data.data),
+    client.get<ApiResponse<Label[]>>('/labels', { params: { projectId } }).then((r) => r.data.data),
 
+  // Backend: GET /labels/tree/:projectId
   tree: (projectId: number) =>
-    client.get<ApiResponse<Label[]>>(`/projects/${projectId}/labels/tree`).then((r) => r.data.data),
+    client.get<ApiResponse<Label[]>>(`/labels/tree/${projectId}`).then((r) => r.data.data),
 
   get: (id: number) =>
     client.get<ApiResponse<Label>>(`/labels/${id}`).then((r) => r.data.data),
@@ -35,10 +37,11 @@ export const labelsApi = {
   delete: (id: number) =>
     client.delete(`/labels/${id}`).then((r) => r.data),
 
+  // Backend: PATCH /labels/:id/reorder
   move: (id: number, payload: MoveLabelPayload) =>
-    client.patch<ApiResponse<Label>>(`/labels/${id}/move`, payload).then((r) => r.data.data),
+    client.patch<ApiResponse<Label>>(`/labels/${id}/reorder`, payload).then((r) => r.data.data),
 
-  // Label types
+  // Backend: GET /admin/config/label-types
   listTypes: () =>
-    client.get<ApiResponse<LabelType[]>>('/label-types').then((r) => r.data.data),
+    client.get<ApiResponse<LabelType[]>>('/admin/config/label-types').then((r) => r.data.data),
 };
