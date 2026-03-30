@@ -1,5 +1,7 @@
 #\!/bin/sh
 echo "Syncing database schema..."
-/app/node_modules/.bin/prisma db push --schema=./prisma/schema.prisma --skip-generate --accept-data-loss
+cd /app/apps/api
+/app/node_modules/.bin/prisma db push --schema=/app/apps/api/prisma/schema.prisma --skip-generate --accept-data-loss
 echo "Schema synced."
-exec node dist/main.js
+echo "Starting server..."
+exec node /app/apps/api/dist/main.js
