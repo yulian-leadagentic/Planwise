@@ -968,7 +968,7 @@ model Zone {
   name         String
   code         String?   @db.VarChar(50)
   areaSqm      Decimal?  @map("area_sqm") @db.Decimal(10, 2)
-  path         String    @db.VarChar(1000)
+  path         String    @db.VarChar(255)
   depth        Int       @default(0)
   sortOrder    Int       @default(0) @map("sort_order")
   description  String?   @db.Text
