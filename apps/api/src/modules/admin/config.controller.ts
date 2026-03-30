@@ -8,6 +8,7 @@ import {
   Param,
   ParseIntPipe,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
@@ -144,6 +145,48 @@ export class ConfigController {
   async deleteZoneType(@Param('id', ParseIntPipe) id: number) {
     await this.prisma.zoneType.delete({ where: { id } });
     return { message: 'Zone type deleted' };
+  }
+
+  // Project Templates
+  @Get('templates')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'List project templates' })
+  async getTemplates() {
+    return this.prisma.projectTemplate.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        creator: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
+  }
+
+  @Post('templates')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Create project template' })
+  async createTemplate(
+    @Body() body: { name: string; description?: string; category?: string; type?: string },
+    @Req() req: any,
+  ) {
+    return this.prisma.projectTemplate.create({
+      data: {
+        name: body.name,
+        description: body.description || null,
+        category: body.category || null,
+        type: (body.type as any) || 'combined',
+        createdBy: req.user?.id || 1,
+      },
+      include: {
+        creator: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
+  }
+
+  @Delete('templates/:id')
+  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @ApiOperation({ summary: 'Delete project template' })
+  async deleteTemplate(@Param('id', ParseIntPipe) id: number) {
+    await this.prisma.projectTemplate.delete({ where: { id } });
+    return { message: 'Template deleted' };
   }
 
   // Modules (system navigation/permissions)
