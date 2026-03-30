@@ -211,7 +211,7 @@ export class ZonesService {
       return [zone];
     }
 
-    const createdZones = [];
+    const createdZones: any[] = [];
 
     for (let i = 1; i <= zone.typicalCount; i++) {
       const created = await this.prisma.zone.create({

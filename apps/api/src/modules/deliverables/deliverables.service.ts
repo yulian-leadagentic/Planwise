@@ -119,7 +119,7 @@ export class DeliverablesService {
       throw new NotFoundException('Deliverable not found');
     }
 
-    const createdAssignments = [];
+    const createdAssignments: any[] = [];
 
     if (deliverable.scope === 'per_zone') {
       for (const za of deliverable.zoneAssignments) {
