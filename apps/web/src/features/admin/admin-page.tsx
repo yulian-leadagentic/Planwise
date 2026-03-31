@@ -2,11 +2,8 @@ import { Link } from 'react-router-dom';
 import {
   Shield,
   Activity,
-  Tag,
-  Settings,
   Clock,
   Calendar,
-  MapPin,
 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 
@@ -24,27 +21,6 @@ const adminCards = [
     icon: Activity,
     href: '/admin/activity-log',
     color: 'bg-purple-100 text-purple-700',
-  },
-  {
-    title: 'Zone Types',
-    description: 'Configure zone types for spatial breakdown (v6)',
-    icon: MapPin,
-    href: '/admin/zone-types',
-    color: 'bg-teal-100 text-teal-700',
-  },
-  {
-    title: 'Label Types',
-    description: 'Configure label type categories and colors',
-    icon: Tag,
-    href: '/admin/label-types',
-    color: 'bg-green-100 text-green-700',
-  },
-  {
-    title: 'Project Types',
-    description: 'Manage project type classifications',
-    icon: Settings,
-    href: '/admin/config',
-    color: 'bg-amber-100 text-amber-700',
   },
   {
     title: 'Team Clock Dashboard',

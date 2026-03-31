@@ -1,17 +1,19 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Copy, Users, Trash2 } from 'lucide-react';
+import { Plus, Copy, Users, Trash2, Layers, Grid3x3, Tag, ListChecks, FolderKanban, Settings } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 import { toast } from 'sonner';
 
-type Tab = 'project' | 'team';
+type Tab = 'service' | 'zone' | 'combined' | 'categories' | 'phases' | 'project-types' | 'team';
 
 export function TemplatesPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<Tab>('project');
+  const [activeTab, setActiveTab] = useState<Tab>('service');
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -54,28 +56,40 @@ export function TemplatesPage() {
 
   const templateList = templates ?? [];
 
-  const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
-    { key: 'project', label: 'Project Templates', icon: <Copy className="h-4 w-4" /> },
+  const templateTabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
+    { key: 'service', label: 'Service Templates', icon: <Copy className="h-4 w-4" /> },
+    { key: 'zone', label: 'Zone Templates', icon: <Layers className="h-4 w-4" /> },
+    { key: 'combined', label: 'Combined Templates', icon: <Grid3x3 className="h-4 w-4" /> },
+  ];
+
+  const configTabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
+    { key: 'categories', label: 'Service Categories', icon: <Tag className="h-4 w-4" /> },
+    { key: 'phases', label: 'Service Phases', icon: <ListChecks className="h-4 w-4" /> },
+    { key: 'project-types', label: 'Project Types', icon: <FolderKanban className="h-4 w-4" /> },
     { key: 'team', label: 'Team Templates', icon: <Users className="h-4 w-4" /> },
   ];
+
+  const isTemplateTab = activeTab === 'service' || activeTab === 'zone' || activeTab === 'combined';
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Templates"
-        description="Create reusable project and team templates"
+        description="Manage templates, categories, phases, and project types"
         actions={
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
-          >
-            <Plus className="h-4 w-4" />
-            New Template
-          </button>
+          isTemplateTab ? (
+            <button
+              onClick={() => setShowForm(!showForm)}
+              className="flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
+            >
+              <Plus className="h-4 w-4" />
+              New Template
+            </button>
+          ) : undefined
         }
       />
 
-      {showForm && (
+      {showForm && isTemplateTab && (
         <form onSubmit={handleSubmit} className="rounded-lg border border-border bg-background p-4 space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
@@ -115,8 +129,9 @@ export function TemplatesPage() {
         </form>
       )}
 
-      <div className="flex gap-1 border-b border-border">
-        {tabs.map((tab) => (
+      {/* Tabs */}
+      <div className="flex flex-wrap gap-1 border-b border-border">
+        {templateTabs.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
@@ -131,17 +146,44 @@ export function TemplatesPage() {
             {tab.label}
           </button>
         ))}
+        <div className="mx-2 self-stretch border-l border-border" />
+        {configTabs.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => {
+              if (tab.key === 'categories') {
+                navigate('/templates/categories');
+              } else if (tab.key === 'phases') {
+                navigate('/templates/phases');
+              } else if (tab.key === 'project-types') {
+                navigate('/templates/project-types');
+              } else {
+                setActiveTab(tab.key);
+              }
+            }}
+            className={cn(
+              'flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors',
+              activeTab === tab.key
+                ? 'border-brand-600 text-brand-600'
+                : 'border-transparent text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {tab.icon}
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      {activeTab === 'project' && (
+      {/* Template list content for service/zone/combined tabs */}
+      {isTemplateTab && (
         <>
           {isLoading ? (
             <TableSkeleton rows={3} cols={4} />
           ) : templateList.length === 0 ? (
             <div className="rounded-lg border border-border bg-background p-8 text-center">
               <Copy className="mx-auto h-12 w-12 text-muted-foreground" />
-              <h3 className="mt-3 text-sm font-medium">No project templates</h3>
-              <p className="mt-1 text-sm text-muted-foreground">Create a project template to quickly scaffold new projects with predefined zones and services.</p>
+              <h3 className="mt-3 text-sm font-medium">No {activeTab} templates</h3>
+              <p className="mt-1 text-sm text-muted-foreground">Create a template to quickly scaffold new projects with predefined zones and services.</p>
               <button
                 onClick={() => setShowForm(true)}
                 className="mt-4 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"

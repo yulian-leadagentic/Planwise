@@ -115,3 +115,30 @@ export type ProjectRole = (typeof PROJECT_ROLES)[number];
 
 export const TEMPLATE_TYPES = ['combined', 'zone_only', 'service_only', 'deliverable_only'] as const;
 export type TemplateType = (typeof TEMPLATE_TYPES)[number];
+
+// ─── V7 Enums (Zone types as constants) ─────────────────────────────────────
+
+export const ZONE_TYPES = ['site', 'building', 'level', 'zone', 'area', 'section', 'wing', 'floor'] as const;
+export type ZoneType = (typeof ZONE_TYPES)[number];
+
+export const ZONE_DISPLAY: Record<ZoneType, { icon: string; color: string }> = {
+  site: { icon: 'MapPin', color: '#6B7280' },
+  building: { icon: 'Building2', color: '#3B82F6' },
+  level: { icon: 'Layers', color: '#10B981' },
+  zone: { icon: 'Grid3x3', color: '#F59E0B' },
+  area: { icon: 'Square', color: '#8B5CF6' },
+  section: { icon: 'LayoutGrid', color: '#14B8A6' },
+  wing: { icon: 'ArrowLeftRight', color: '#EC4899' },
+  floor: { icon: 'Minus', color: '#6B7280' },
+};
+
+export const ZONE_DISPLAY: Record<ZoneType, { icon: string; color: string }> = {
+  site: { icon: 'MapPin', color: '#6B7280' },
+  building: { icon: 'Building2', color: '#3B82F6' },
+  level: { icon: 'Layers', color: '#10B981' },
+  zone: { icon: 'Grid3x3', color: '#F59E0B' },
+  area: { icon: 'Square', color: '#8B5CF6' },
+  section: { icon: 'LayoutGrid', color: '#14B8A6' },
+  wing: { icon: 'ArrowLeftRight', color: '#EC4899' },
+  floor: { icon: 'Minus', color: '#6B7280' },
+};

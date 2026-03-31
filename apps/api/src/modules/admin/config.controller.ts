@@ -189,6 +189,56 @@ export class ConfigController {
     return { message: 'Template deleted' };
   }
 
+  // Service Categories (v7)
+  @Get('service-categories')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'List service categories' })
+  async getServiceCategories() {
+    return this.prisma.serviceCategory.findMany({
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  @Post('service-categories')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Create service category' })
+  async createServiceCategory(@Body() body: { name: string }) {
+    return this.prisma.serviceCategory.create({ data: { name: body.name } });
+  }
+
+  @Delete('service-categories/:id')
+  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @ApiOperation({ summary: 'Delete service category' })
+  async deleteServiceCategory(@Param('id', ParseIntPipe) id: number) {
+    await this.prisma.serviceCategory.delete({ where: { id } });
+    return { message: 'Service category deleted' };
+  }
+
+  // Service Phases (v7)
+  @Get('service-phases')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'List service phases' })
+  async getServicePhases() {
+    return this.prisma.servicePhase.findMany({
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  @Post('service-phases')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Create service phase' })
+  async createServicePhase(@Body() body: { name: string }) {
+    return this.prisma.servicePhase.create({ data: { name: body.name } });
+  }
+
+  @Delete('service-phases/:id')
+  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @ApiOperation({ summary: 'Delete service phase' })
+  async deleteServicePhase(@Param('id', ParseIntPipe) id: number) {
+    await this.prisma.servicePhase.delete({ where: { id } });
+    return { message: 'Service phase deleted' };
+  }
+
   // Modules (system navigation/permissions)
   @Get('modules')
   @RequirePermissions({ module: 'admin', action: 'read' })

@@ -121,6 +121,19 @@ enum EmailLogStatus {
   failed
 }
 
+// ─── V7 Enums ──────────────────────────────────────────────────────────────
+
+enum ZoneTypeEnum {
+  site
+  building
+  level
+  zone
+  area
+  section
+  wing
+  floor
+}
+
 // ─── V6 Enums ──────────────────────────────────────────────────────────────
 
 enum DeliverableScope {
@@ -943,6 +956,28 @@ model TeamTemplateMember {
   @@map("team_template_members")
 }
 
+// ─── V7 Lookup Tables ──────────────────────────────────────────────────────
+
+model ServiceCategory {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique @db.VarChar(100)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  assignments Assignment[]
+
+  @@map("service_categories")
+}
+
+model ServicePhase {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique @db.VarChar(100)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  assignments Assignment[]
+
+  @@map("service_phases")
+}
+
 // ─── V6 Models: Zones (spatial tree) ────────────────────────────────────────
 
 model ZoneType {
@@ -954,35 +989,33 @@ model ZoneType {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  zones         Zone[]
   templateZones TemplateZone[]
 
   @@map("zone_types")
 }
 
 model Zone {
-  id           Int       @id @default(autoincrement())
-  projectId    Int       @map("project_id")
-  parentId     Int?      @map("parent_id")
-  zoneTypeId   Int       @map("zone_type_id")
+  id           Int          @id @default(autoincrement())
+  projectId    Int          @map("project_id")
+  parentId     Int?         @map("parent_id")
+  zoneType     ZoneTypeEnum @default(zone) @map("zone_type")
   name         String
-  code         String?   @db.VarChar(50)
-  areaSqm      Decimal?  @map("area_sqm") @db.Decimal(10, 2)
-  path         String    @db.VarChar(255)
-  depth        Int       @default(0)
-  sortOrder    Int       @default(0) @map("sort_order")
-  description  String?   @db.Text
-  color        String?   @db.VarChar(7)
-  isTypical    Boolean   @default(false) @map("is_typical")
-  typicalCount Int       @default(1) @map("typical_count")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
-  deletedAt    DateTime? @map("deleted_at")
+  code         String?      @db.VarChar(50)
+  areaSqm      Decimal?     @map("area_sqm") @db.Decimal(10, 2)
+  path         String       @db.VarChar(255)
+  depth        Int          @default(0)
+  sortOrder    Int          @default(0) @map("sort_order")
+  description  String?      @db.Text
+  color        String?      @db.VarChar(7)
+  isTypical    Boolean      @default(false) @map("is_typical")
+  typicalCount Int          @default(1) @map("typical_count")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+  deletedAt    DateTime?    @map("deleted_at")
 
-  project  Project  @relation(fields: [projectId], references: [id])
-  parent   Zone?    @relation("ZoneTree", fields: [parentId], references: [id])
-  children Zone[]   @relation("ZoneTree")
-  zoneType ZoneType @relation(fields: [zoneTypeId], references: [id])
+  project  Project @relation(fields: [projectId], references: [id])
+  parent   Zone?   @relation("ZoneTree", fields: [parentId], references: [id])
+  children Zone[]  @relation("ZoneTree")
 
   assignments         Assignment[]
   zoneAssignments     ZoneAssignment[]
@@ -990,7 +1023,6 @@ model Zone {
 
   @@index([projectId])
   @@index([parentId])
-  @@index([zoneTypeId])
   @@index([path])
   @@index([deletedAt])
   @@map("zones")
@@ -1040,27 +1072,35 @@ model Deliverable {
 }
 
 model Assignment {
-  id             Int                @id @default(autoincrement())
-  deliverableId  Int                @map("deliverable_id")
-  zoneId         Int?               @map("zone_id")
-  name           String
-  description    String?            @db.Text
-  status         AssignmentStatus   @default(not_started)
-  priority       AssignmentPriority @default(medium)
-  budgetHours    Decimal?           @map("budget_hours") @db.Decimal(10, 2)
-  budgetAmount   Decimal?           @map("budget_amount") @db.Decimal(14, 2)
-  completionPct  Int                @default(0) @map("completion_pct")
-  startDate      DateTime?          @map("start_date")
-  endDate        DateTime?          @map("end_date")
-  isArchived     Boolean            @default(false) @map("is_archived")
-  createdBy      Int                @map("created_by")
-  createdAt      DateTime           @default(now()) @map("created_at")
-  updatedAt      DateTime           @updatedAt @map("updated_at")
-  deletedAt      DateTime?          @map("deleted_at")
+  id                Int                @id @default(autoincrement())
+  deliverableId     Int                @map("deliverable_id")
+  zoneId            Int?               @map("zone_id")
+  name              String
+  description       String?            @db.Text
+  status            AssignmentStatus   @default(not_started)
+  priority          AssignmentPriority @default(medium)
+  budgetHours       Decimal?           @map("budget_hours") @db.Decimal(10, 2)
+  budgetAmount      Decimal?           @map("budget_amount") @db.Decimal(14, 2)
+  completionPct     Int                @default(0) @map("completion_pct")
+  startDate         DateTime?          @map("start_date")
+  endDate           DateTime?          @map("end_date")
+  isArchived        Boolean            @default(false) @map("is_archived")
+  createdBy         Int                @map("created_by")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+  deletedAt         DateTime?          @map("deleted_at")
 
-  deliverable Deliverable @relation(fields: [deliverableId], references: [id])
-  zone        Zone?       @relation(fields: [zoneId], references: [id])
-  creator     User        @relation("AssignmentCreatedBy", fields: [createdBy], references: [id])
+  // V7 fields
+  code              String?            @db.VarChar(50)
+  categoryId        Int?               @map("category_id")
+  phaseId           Int?               @map("phase_id")
+  templateServiceId Int?               @map("template_service_id")
+
+  deliverable Deliverable      @relation(fields: [deliverableId], references: [id])
+  zone        Zone?            @relation(fields: [zoneId], references: [id])
+  creator     User             @relation("AssignmentCreatedBy", fields: [createdBy], references: [id])
+  category    ServiceCategory? @relation(fields: [categoryId], references: [id])
+  phase       ServicePhase?    @relation(fields: [phaseId], references: [id])
 
   assignees   AssignmentAssignee[]
   comments    AssignmentComment[]
@@ -1072,6 +1112,8 @@ model Assignment {
   @@index([status])
   @@index([createdBy])
   @@index([deletedAt])
+  @@index([categoryId])
+  @@index([phaseId])
   @@map("assignments")
 }
 

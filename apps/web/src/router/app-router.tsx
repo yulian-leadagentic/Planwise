@@ -24,14 +24,14 @@ import { LateArrivalsPage } from '@/features/reports/late-arrivals-page';
 import { MilestonesPage } from '@/features/reports/milestones-page';
 import { BillingForecastPage } from '@/features/reports/billing-forecast-page';
 import { TemplatesPage } from '@/features/templates/templates-page';
+import { CategoriesPage } from '@/features/templates/categories-page';
+import { PhasesPage } from '@/features/templates/phases-page';
 import { AdminPage } from '@/features/admin/admin-page';
 import { RolesPage } from '@/features/admin/roles-page';
-import { LabelTypesPage } from '@/features/admin/label-types-page';
 import { ProjectTypesPage } from '@/features/admin/project-types-page';
 import { ActivityLogPage } from '@/features/admin/activity-log-page';
 import { WorkSchedulesPage } from '@/features/admin/work-schedules-page';
 import { CalendarDaysPage } from '@/features/admin/calendar-page';
-import { ZoneTypesPage } from '@/features/admin/zone-types-page';
 
 export function AppRouter() {
   return (
@@ -84,13 +84,13 @@ export function AppRouter() {
 
         {/* Templates */}
         <Route path="templates" element={<TemplatesPage />} />
+        <Route path="templates/categories" element={<CategoriesPage />} />
+        <Route path="templates/phases" element={<PhasesPage />} />
+        <Route path="templates/project-types" element={<ProjectTypesPage />} />
 
         {/* Admin */}
         <Route path="admin" element={<AdminPage />} />
         <Route path="admin/roles" element={<RolesPage />} />
-        <Route path="admin/label-types" element={<LabelTypesPage />} />
-        <Route path="admin/zone-types" element={<ZoneTypesPage />} />
-        <Route path="admin/config" element={<ProjectTypesPage />} />
         <Route path="admin/activity-log" element={<ActivityLogPage />} />
         <Route path="admin/work-schedules" element={<WorkSchedulesPage />} />
         <Route path="admin/calendar" element={<CalendarDaysPage />} />

@@ -75,6 +75,27 @@ async function main() {
     ],
   });
 
+  // Service Categories (v7)
+  await prisma.serviceCategory.createMany({
+    data: [
+      { name: 'BIM' },
+      { name: 'MEP' },
+      { name: 'Structural' },
+      { name: 'Architecture' },
+      { name: 'Infrastructure' },
+    ],
+  });
+
+  // Service Phases (v7)
+  await prisma.servicePhase.createMany({
+    data: [
+      { name: 'Design' },
+      { name: 'Construction' },
+      { name: 'Handover' },
+      { name: 'Pre-Sale' },
+    ],
+  });
+
   // Admin User
   const hashedPassword = await bcrypt.hash('Admin@123', 10);
   await prisma.user.create({

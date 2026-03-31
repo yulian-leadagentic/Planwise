@@ -1,6 +1,5 @@
 import {
   LayoutDashboard,
-  CheckSquare,
   Clock,
   FolderKanban,
   FileText,
@@ -43,9 +42,8 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { label: 'Tasks', href: '/tasks', icon: CheckSquare },
-  { label: 'Time', href: '/time', icon: Clock },
   { label: 'Projects', href: '/projects', icon: FolderKanban },
+  { label: 'Time', href: '/time', icon: Clock },
   { label: 'Contracts', href: '/contracts', icon: FileText },
   { label: 'People', href: '/people', icon: Users },
   { label: 'Reports', href: '/reports', icon: BarChart3 },
