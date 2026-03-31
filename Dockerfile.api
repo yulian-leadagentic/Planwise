@@ -6,9 +6,9 @@ COPY . .
 RUN pnpm install --frozen-lockfile --shamefully-hoist
 RUN cd apps/api && pnpm exec prisma generate
 RUN cd apps/api && pnpm exec nest build
+RUN ls -la apps/api/dist/ || echo "dist not found at apps/api/dist"
 RUN mkdir -p uploads
-RUN chmod +x apps/api/entrypoint.sh
 ENV NODE_ENV=production
 EXPOSE 3000
 WORKDIR /app/apps/api
-CMD ["sh", "./entrypoint.sh"]
+CMD sh -c "echo 'Syncing schema...' && /app/node_modules/.bin/prisma db push --schema=/app/apps/api/prisma/schema.prisma --skip-generate --accept-data-loss && echo 'Done.' && node /app/apps/api/dist/main.js"
