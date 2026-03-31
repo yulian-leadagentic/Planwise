@@ -734,10 +734,10 @@ function RightPanel({ planningData, isLoading }: RightPanelProps) {
 
   if (!planningData) return null;
 
-  const { project, budgetSummary, zones, assignments } = planningData;
-  const totalZones = zones.length;
-  const totalAssignments = assignments.length;
-  const completedAssignments = assignments.filter((a) => a.status === 'completed').length;
+  const { project, budgetSummary, zones = [], assignments = [] } = planningData;
+  const totalZones = zones?.length ?? 0;
+  const totalAssignments = assignments?.length ?? 0;
+  const completedAssignments = assignments?.filter((a: any) => a.status === 'completed').length ?? 0;
   const completionPct =
     totalAssignments > 0 ? Math.round((completedAssignments / totalAssignments) * 100) : 0;
 
