@@ -59,4 +59,9 @@ export class CreateZoneDto {
   @IsInt()
   @Min(1)
   typicalCount?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  sortOrder?: number;
 }
