@@ -104,13 +104,19 @@ export class ZonesService {
   async update(id: number, dto: UpdateZoneDto) {
     await this.findOne(id);
 
+    const data: any = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.code !== undefined) data.code = dto.code;
+    if (dto.description !== undefined) data.description = dto.description;
+    if (dto.zoneType !== undefined) data.zoneType = dto.zoneType;
+    if (dto.areaSqm !== undefined) data.areaSqm = dto.areaSqm;
+    if (dto.isTypical !== undefined) data.isTypical = dto.isTypical;
+    if (dto.typicalCount !== undefined) data.typicalCount = dto.typicalCount;
+    if (dto.sortOrder !== undefined) data.sortOrder = dto.sortOrder;
+
     return this.prisma.zone.update({
       where: { id },
-      data: {
-        ...dto,
-        areaSqm: dto.areaSqm !== undefined ? dto.areaSqm : undefined,
-      },
-      
+      data,
     });
   }
 

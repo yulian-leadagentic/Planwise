@@ -19,7 +19,6 @@ export class PlanningService {
     // Fetch zones and build tree
     const flatZones = await this.prisma.zone.findMany({
       where: { projectId, deletedAt: null },
-      include: { zoneType: true },
       orderBy: [{ path: 'asc' }, { sortOrder: 'asc' }],
     });
 
