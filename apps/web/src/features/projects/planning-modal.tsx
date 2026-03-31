@@ -135,22 +135,18 @@ interface ZoneTreePanelProps {
 function ZoneTreePanel({ projectId, zones, selectedZoneId, onSelectZone }: ZoneTreePanelProps) {
   const [addingZone, setAddingZone] = useState(false);
   const [newZoneName, setNewZoneName] = useState('');
-  const [newZoneTypeId, setNewZoneTypeId] = useState<number>(0);
+  const [newZoneType, setNewZoneType] = useState('zone');
   const createZone = useCreateZone();
 
-  const { data: zoneTypes } = useQuery({
-    queryKey: ['admin', 'zone-types'],
-    queryFn: () => client.get('/admin/config/zone-types').then((r: any) => r.data.data),
-    staleTime: Infinity,
-  });
+  const zoneTypeOptions = ['site', 'building', 'level', 'zone', 'area', 'section', 'wing', 'floor'];
 
   const handleAddZone = useCallback(() => {
-    if (!newZoneName.trim() || !newZoneTypeId) {
-      toast.error('Please enter a name and select a zone type');
+    if (!newZoneName.trim()) {
+      toast.error('Please enter a zone name');
       return;
     }
     createZone.mutate(
-      { projectId, name: newZoneName.trim(), zoneTypeId: newZoneTypeId },
+      { projectId, name: newZoneName.trim(), zoneType: newZoneType },
       {
         onSuccess: () => {
           setNewZoneName('');
@@ -188,13 +184,12 @@ function ZoneTreePanel({ projectId, zones, selectedZoneId, onSelectZone }: ZoneT
             autoFocus
           />
           <select
-            value={newZoneTypeId}
-            onChange={(e) => setNewZoneTypeId(Number(e.target.value))}
+            value={newZoneType}
+            onChange={(e) => setNewZoneType(e.target.value)}
             className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           >
-            <option value={0}>Select zone type...</option>
-            {(zoneTypes ?? []).map((zt: any) => (
-              <option key={zt.id} value={zt.id}>{zt.name}</option>
+            {zoneTypeOptions.map((zt) => (
+              <option key={zt} value={zt}>{zt.charAt(0).toUpperCase() + zt.slice(1)}</option>
             ))}
           </select>
           <div className="flex justify-end gap-1">
@@ -206,7 +201,7 @@ function ZoneTreePanel({ projectId, zones, selectedZoneId, onSelectZone }: ZoneT
             </button>
             <button
               onClick={handleAddZone}
-              disabled={createZone.isPending || !newZoneName.trim() || !newZoneTypeId}
+              disabled={createZone.isPending || !newZoneName.trim()}
               className="rounded bg-brand-600 px-2 py-1 text-xs text-white hover:bg-brand-700 disabled:opacity-50"
             >
               Add

@@ -19,9 +19,10 @@ export class CreateZoneDto {
   @IsInt()
   parentId?: number;
 
-  @ApiProperty()
-  @IsInt()
-  zoneTypeId: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  zoneType?: string;
 
   @ApiProperty()
   @IsString()

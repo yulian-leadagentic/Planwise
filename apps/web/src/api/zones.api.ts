@@ -4,7 +4,7 @@ export const zonesApi = {
   getTree: (projectId: number) =>
     client.get(`/zones/tree/${projectId}`).then((r) => r.data.data),
 
-  create: (data: { projectId: number; parentId?: number | null; zoneTypeId: number; name: string; code?: string; areaSqm?: number; isTypical?: boolean; typicalCount?: number }) =>
+  create: (data: { projectId: number; parentId?: number | null; zoneType?: string; name: string; code?: string; areaSqm?: number; isTypical?: boolean; typicalCount?: number }) =>
     client.post('/zones', data).then((r) => r.data.data),
 
   update: (id: number, data: Partial<{ name: string; code: string; areaSqm: number; isTypical: boolean; typicalCount: number; sortOrder: number }>) =>

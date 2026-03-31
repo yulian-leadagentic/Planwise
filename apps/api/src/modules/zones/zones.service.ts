@@ -11,7 +11,7 @@ export class ZonesService {
   async findAll(projectId: number) {
     return this.prisma.zone.findMany({
       where: { projectId, deletedAt: null },
-      include: { zoneType: true },
+      
       orderBy: [{ path: 'asc' }, { sortOrder: 'asc' }],
     });
   }
@@ -19,7 +19,7 @@ export class ZonesService {
   async findTree(projectId: number) {
     const zones = await this.prisma.zone.findMany({
       where: { projectId, deletedAt: null },
-      include: { zoneType: true },
+      
       orderBy: [{ path: 'asc' }, { sortOrder: 'asc' }],
     });
 
@@ -46,8 +46,7 @@ export class ZonesService {
     const zone = await this.prisma.zone.findFirst({
       where: { id, deletedAt: null },
       include: {
-        zoneType: true,
-        children: { where: { deletedAt: null }, include: { zoneType: true } },
+        children: { where: { deletedAt: null } },
         zoneAssignments: { include: { deliverable: true } },
       },
     });
@@ -78,7 +77,7 @@ export class ZonesService {
       data: {
         projectId: dto.projectId,
         parentId: dto.parentId ?? null,
-        zoneTypeId: dto.zoneTypeId,
+        zoneType: (dto as any).zoneType || "zone",
         name: dto.name,
         code: dto.code,
         areaSqm: dto.areaSqm,
@@ -89,7 +88,7 @@ export class ZonesService {
         path: '', // placeholder, updated below
         depth,
       },
-      include: { zoneType: true },
+      
     });
 
     // Update path to include own id
@@ -111,7 +110,7 @@ export class ZonesService {
         ...dto,
         areaSqm: dto.areaSqm !== undefined ? dto.areaSqm : undefined,
       },
-      include: { zoneType: true },
+      
     });
   }
 
@@ -155,7 +154,7 @@ export class ZonesService {
         data: {
           projectId: sourceZone.projectId,
           parentId,
-          zoneTypeId: sourceZone.zoneTypeId,
+          zoneType: sourceZone.zoneType || "zone",
           name: `${sourceZone.name} (copy)`,
           code: sourceZone.code ? `${sourceZone.code}-copy` : null,
           areaSqm: sourceZone.areaSqm,
@@ -218,7 +217,7 @@ export class ZonesService {
         data: {
           projectId: zone.projectId,
           parentId: zone.parentId,
-          zoneTypeId: zone.zoneTypeId,
+          zoneType: zone.zoneType || "zone",
           name: `${zone.name} ${i}`,
           code: zone.code ? `${zone.code}-${i}` : null,
           areaSqm: zone.areaSqm,
@@ -229,7 +228,7 @@ export class ZonesService {
           path: '',
           depth: zone.depth,
         },
-        include: { zoneType: true },
+        
       });
 
       const parentPath = zone.path.split('/').slice(0, -1).join('/');
