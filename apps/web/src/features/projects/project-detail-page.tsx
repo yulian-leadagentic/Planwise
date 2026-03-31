@@ -1,3 +1,4 @@
+import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Edit, Users, FolderTree, CheckSquare, DollarSign, LayoutGrid } from 'lucide-react';
 import { useState } from 'react';
@@ -128,9 +129,7 @@ export function ProjectDetailPage() {
       )}
 
       {tab === 'planning' && (
-        <div className="-mx-4 -mb-6 sm:-mx-6 lg:-mx-8" style={{ height: 'calc(100vh - 320px)', minHeight: '500px' }}>
-          <PlanningModal projectId={projectId} onClose={() => setTab('tree')} />
-        </div>
+        <PlanningWrapper projectId={projectId} onClose={() => setTab('tree')} />
       )}
 
       {tab === 'tasks' && (
@@ -187,4 +186,50 @@ export function ProjectDetailPage() {
       )}
     </div>
   );
+}
+
+function PlanningWrapper({ projectId, onClose }: { projectId: number; onClose: () => void }) {
+  try {
+    return (
+      <ErrorBoundary onClose={onClose}>
+        <div className="-mx-4 -mb-6 sm:-mx-6 lg:-mx-8" style={{ height: 'calc(100vh - 320px)', minHeight: '500px' }}>
+          <PlanningModal projectId={projectId} onClose={onClose} />
+        </div>
+      </ErrorBoundary>
+    );
+  } catch {
+    return (
+      <div className="py-8 text-center">
+        <p className="text-sm text-muted-foreground">Failed to load planning view.</p>
+        <button onClick={onClose} className="mt-2 text-sm text-brand-600 hover:underline">Go back</button>
+      </div>
+    );
+  }
+}
+
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode; onClose: () => void },
+  { hasError: boolean; error: string }
+> {
+  constructor(props: { children: React.ReactNode; onClose: () => void }) {
+    super(props);
+    this.state = { hasError: false, error: '' };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error: error.message };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="py-8 text-center">
+          <p className="text-sm font-medium text-red-600">Planning view encountered an error</p>
+          <p className="mt-1 text-xs text-muted-foreground">{this.state.error}</p>
+          <button onClick={this.props.onClose} className="mt-3 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
+            Go Back
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
