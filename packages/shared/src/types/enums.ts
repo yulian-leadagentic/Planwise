@@ -131,14 +131,3 @@ export const ZONE_DISPLAY: Record<ZoneType, { icon: string; color: string }> = {
   wing: { icon: 'ArrowLeftRight', color: '#EC4899' },
   floor: { icon: 'Minus', color: '#6B7280' },
 };
-
-export const ZONE_DISPLAY: Record<ZoneType, { icon: string; color: string }> = {
-  site: { icon: 'MapPin', color: '#6B7280' },
-  building: { icon: 'Building2', color: '#3B82F6' },
-  level: { icon: 'Layers', color: '#10B981' },
-  zone: { icon: 'Grid3x3', color: '#F59E0B' },
-  area: { icon: 'Square', color: '#8B5CF6' },
-  section: { icon: 'LayoutGrid', color: '#14B8A6' },
-  wing: { icon: 'ArrowLeftRight', color: '#EC4899' },
-  floor: { icon: 'Minus', color: '#6B7280' },
-};
