@@ -1,12 +1,14 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
+import { Plus, ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { toast } from 'sonner';
 
 export function ProjectTypesPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
@@ -48,18 +50,23 @@ export function ProjectTypesPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Project Types"
-        description="Manage project type classifications"
-        actions={
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
-          >
-            <Plus className="h-4 w-4" /> Add Type
-          </button>
-        }
-      />
+      <div className="flex items-center gap-3">
+        <button onClick={() => navigate('/templates')} className="rounded-md p-1.5 hover:bg-accent">
+          <ArrowLeft className="h-5 w-5" />
+        </button>
+        <PageHeader
+          title="Project Types"
+          description="Manage project type classifications"
+          actions={
+            <button
+              onClick={() => setShowForm(!showForm)}
+              className="flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
+            >
+              <Plus className="h-4 w-4" /> Add Type
+            </button>
+          }
+        />
+      </div>
 
       {showForm && (
         <form onSubmit={handleSubmit} className="rounded-lg border border-border bg-background p-4">
@@ -71,6 +78,7 @@ export function ProjectTypesPage() {
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. Civil Engineering"
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                autoFocus
               />
             </div>
             <button

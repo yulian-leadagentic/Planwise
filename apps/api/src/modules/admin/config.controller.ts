@@ -9,6 +9,7 @@ import {
   ParseIntPipe,
   UseGuards,
   Req,
+  Query,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
@@ -151,8 +152,13 @@ export class ConfigController {
   @Get('templates')
   @RequirePermissions({ module: 'admin', action: 'read' })
   @ApiOperation({ summary: 'List project templates' })
-  async getTemplates() {
+  async getTemplates(@Query('type') type?: string) {
+    const where: any = {};
+    if (type) {
+      where.type = type;
+    }
     return this.prisma.projectTemplate.findMany({
+      where,
       orderBy: { createdAt: 'desc' },
       include: {
         creator: { select: { id: true, firstName: true, lastName: true } },
@@ -164,12 +170,13 @@ export class ConfigController {
   @RequirePermissions({ module: 'admin', action: 'write' })
   @ApiOperation({ summary: 'Create project template' })
   async createTemplate(
-    @Body() body: { name: string; description?: string; category?: string; type?: string },
+    @Body() body: { name: string; code?: string; description?: string; category?: string; type?: string },
     @Req() req: any,
   ) {
     return this.prisma.projectTemplate.create({
       data: {
         name: body.name,
+        code: body.code || null,
         description: body.description || null,
         category: body.category || null,
         type: (body.type as any) || 'combined',

@@ -12,23 +12,25 @@ export function ServiceTemplatesPage() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
+  const [code, setCode] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
 
   const { data: templates, isLoading } = useQuery({
-    queryKey: ['templates'],
+    queryKey: ['templates', 'service_only'],
     staleTime: 5 * 60 * 1000,
-    queryFn: () => client.get('/admin/config/templates').then((r) => r.data.data),
+    queryFn: () => client.get('/admin/config/templates?type=service_only').then((r) => r.data.data ?? r.data),
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; description?: string; category?: string }) =>
+    mutationFn: (data: { name: string; code?: string; description?: string; category?: string; type: string }) =>
       client.post('/admin/config/templates', data).then((r) => r.data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      queryClient.invalidateQueries({ queryKey: ['templates', 'service_only'] });
       toast.success('Template created');
       setShowForm(false);
       setName('');
+      setCode('');
       setDescription('');
       setCategory('');
     },
@@ -38,7 +40,7 @@ export function ServiceTemplatesPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: number) => client.delete(`/admin/config/templates/${id}`).then((r) => r.data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      queryClient.invalidateQueries({ queryKey: ['templates', 'service_only'] });
       toast.success('Template deleted');
     },
     onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
@@ -47,7 +49,13 @@ export function ServiceTemplatesPage() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    createMutation.mutate({ name: name.trim(), description: description.trim() || undefined, category: category.trim() || undefined });
+    createMutation.mutate({
+      name: name.trim(),
+      code: code.trim() || undefined,
+      description: description.trim() || undefined,
+      category: category.trim() || undefined,
+      type: 'service_only',
+    });
   };
 
   const templateList = templates ?? [];
@@ -71,10 +79,14 @@ export function ServiceTemplatesPage() {
 
       {showForm && (
         <form onSubmit={handleSubmit} className="rounded-lg border border-border bg-background p-4 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
               <label className="block text-sm font-medium mb-1">Template Name *</label>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. BIM Coordination Standard" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" autoFocus />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Code</label>
+              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. BC.S.1" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Category</label>
@@ -111,6 +123,7 @@ export function ServiceTemplatesPage() {
                 <div className="flex items-center gap-2">
                   <Copy className="h-4 w-4 text-brand-600" />
                   <span className="text-sm font-medium">{t.name}</span>
+                  {t.code && <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">{t.code}</span>}
                   {t.category && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{t.category}</span>}
                 </div>
                 {t.description && <p className="mt-1 text-sm text-muted-foreground">{t.description}</p>}
