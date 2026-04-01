@@ -107,7 +107,7 @@ export class TimeEntriesService {
       },
       include: {
         project: { select: { id: true, name: true } },
-        task: { select: { id: true, name: true, label: { select: { name: true, path: true } } } },
+        task: { select: { id: true, name: true, code: true, zone: { select: { id: true, name: true } } } },
       },
       orderBy: { createdAt: 'asc' },
     });

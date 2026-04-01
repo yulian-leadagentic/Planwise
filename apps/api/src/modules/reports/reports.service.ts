@@ -64,7 +64,7 @@ export class ReportsService {
           select: {
             id: true,
             name: true,
-            label: { select: { id: true, name: true, path: true } },
+            zone: { select: { id: true, name: true, path: true } },
           },
         },
         user: { select: { id: true, firstName: true, lastName: true } },
@@ -73,16 +73,16 @@ export class ReportsService {
 
     const grouped: Record<number, any> = {};
     for (const entry of entries) {
-      const labelId = entry.task?.label?.id ?? 0;
-      if (!grouped[labelId]) {
-        grouped[labelId] = {
-          label: entry.task?.label || { id: 0, name: 'No Label', path: '' },
+      const zoneId = (entry.task as any)?.zone?.id ?? 0;
+      if (!grouped[zoneId]) {
+        grouped[zoneId] = {
+          zone: (entry.task as any)?.zone || { id: 0, name: 'No Zone', path: '' },
           totalMinutes: 0,
           entries: [],
         };
       }
-      grouped[labelId].totalMinutes += entry.minutes;
-      grouped[labelId].entries.push(entry);
+      grouped[zoneId].totalMinutes += entry.minutes;
+      grouped[zoneId].entries.push(entry);
     }
 
     return Object.values(grouped);
@@ -264,7 +264,7 @@ export class ReportsService {
       include: {
         task: {
           select: {
-            label: { select: { id: true, name: true, path: true } },
+            zone: { select: { id: true, name: true, path: true } },
             assignees: { select: { hourlyRate: true, userId: true } },
           },
         },
@@ -272,25 +272,25 @@ export class ReportsService {
       },
     });
 
-    const byLabel: Record<number, any> = {};
+    const byZone: Record<number, any> = {};
     for (const entry of entries) {
-      const labelId = entry.task?.label?.id ?? 0;
-      if (!byLabel[labelId]) {
-        byLabel[labelId] = {
-          label: entry.task?.label || { id: 0, name: 'Unknown' },
+      const zoneId = (entry.task as any)?.zone?.id ?? 0;
+      if (!byZone[zoneId]) {
+        byZone[zoneId] = {
+          zone: (entry.task as any)?.zone || { id: 0, name: 'Unknown' },
           totalMinutes: 0,
           estimatedCost: 0,
         };
       }
-      byLabel[labelId].totalMinutes += entry.minutes;
+      byZone[zoneId].totalMinutes += entry.minutes;
 
-      const assignee = entry.task?.assignees?.find((a) => a.userId === entry.userId);
+      const assignee = (entry.task as any)?.assignees?.find((a: any) => a.userId === entry.userId);
       if (assignee?.hourlyRate) {
-        byLabel[labelId].estimatedCost += (entry.minutes / 60) * Number(assignee.hourlyRate);
+        byZone[zoneId].estimatedCost += (entry.minutes / 60) * Number(assignee.hourlyRate);
       }
     }
 
-    return Object.values(byLabel);
+    return Object.values(byZone);
   }
 
   async costByProject(query: ReportQueryDto) {

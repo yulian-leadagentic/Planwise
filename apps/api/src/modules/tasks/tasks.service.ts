@@ -76,8 +76,8 @@ export class TasksService {
     }
     if (query.search) {
       where.OR = [
-        { name: { contains: query.search, mode: 'insensitive' } },
-        { code: { contains: query.search, mode: 'insensitive' } },
+        { name: { contains: query.search } },
+        { code: { contains: query.search } },
       ];
     }
 
@@ -151,7 +151,7 @@ export class TasksService {
           where: { parentId: null },
           include: {
             user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
-            children: {
+            replies: {
               include: {
                 user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
               },
@@ -250,7 +250,7 @@ export class TasksService {
       where: { taskId, parentId: null },
       include: {
         user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
-        children: {
+        replies: {
           include: {
             user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
           },

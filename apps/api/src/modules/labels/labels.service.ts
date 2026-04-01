@@ -33,14 +33,13 @@ export class LabelsService {
         description: dto.description,
         color: dto.color,
       },
-      include: { labelType: true, parent: true },
+      include: { parent: true },
     });
   }
 
   async findByProject(projectId: number) {
     return this.prisma.label.findMany({
       where: { projectId },
-      include: { labelType: true },
       orderBy: [{ depth: 'asc' }, { sortOrder: 'asc' }],
     });
   }
@@ -49,8 +48,7 @@ export class LabelsService {
     const labels = await this.prisma.label.findMany({
       where: { projectId },
       include: {
-        labelType: true,
-        _count: { select: { tasks: true, children: true } },
+        _count: { select: { children: true } },
       },
       orderBy: [{ depth: 'asc' }, { sortOrder: 'asc' }],
     });
@@ -71,20 +69,9 @@ export class LabelsService {
     const label = await this.prisma.label.findFirst({
       where: { id },
       include: {
-        labelType: true,
         parent: true,
         children: {
-          include: { labelType: true },
           orderBy: { sortOrder: 'asc' },
-        },
-        tasks: {
-          include: {
-            assignees: {
-              include: {
-                user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
-              },
-            },
-          },
         },
         milestones: true,
       },
@@ -118,7 +105,7 @@ export class LabelsService {
     return this.prisma.label.update({
       where: { id },
       data,
-      include: { labelType: true, parent: true },
+      include: { parent: true },
     });
   }
 
@@ -155,7 +142,6 @@ export class LabelsService {
     const updated = await this.prisma.label.update({
       where: { id },
       data: { parentId, sortOrder, path, depth },
-      include: { labelType: true },
     });
 
     // Update descendants if path changed

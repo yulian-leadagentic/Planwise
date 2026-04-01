@@ -43,7 +43,7 @@ export class PlanningService {
           include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } },
         },
       },
-      orderBy: [{ zoneId: 'asc' }, { serviceTypeId: 'asc' }, { sortOrder: 'asc' }],
+      orderBy: [{ zoneId: 'asc' }, { serviceTypeId: 'asc' }, { createdAt: 'asc' }],
     });
 
     // Lookups

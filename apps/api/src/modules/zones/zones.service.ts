@@ -48,7 +48,7 @@ export class ZonesService {
       include: {
         children: { where: { deletedAt: null } },
         zoneServiceTypes: { include: { serviceType: true } },
-        tasks: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' } },
+        tasks: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } },
       },
     });
 
@@ -83,7 +83,6 @@ export class ZonesService {
         code: dto.code,
         areaSqm: dto.areaSqm,
         description: dto.description,
-        color: dto.color,
         isTypical: dto.isTypical ?? false,
         typicalCount: dto.typicalCount ?? 1,
         path: '', // placeholder, updated below
@@ -166,7 +165,6 @@ export class ZonesService {
           code: sourceZone.code ? `${sourceZone.code}-copy` : null,
           areaSqm: sourceZone.areaSqm,
           description: sourceZone.description,
-          color: sourceZone.color,
           isTypical: sourceZone.isTypical,
           typicalCount: sourceZone.typicalCount,
           path: '',
@@ -229,7 +227,6 @@ export class ZonesService {
           code: zone.code ? `${zone.code}-${i}` : null,
           areaSqm: zone.areaSqm,
           description: zone.description,
-          color: zone.color,
           isTypical: false,
           typicalCount: 1,
           path: '',
@@ -268,7 +265,7 @@ export class ZonesService {
     });
 
     return this.prisma.$transaction(async (tx) => {
-      const createdTasks = [];
+      const createdTasks: any[] = [];
       for (const tt of template.templateTasks) {
         if (tt.serviceTypeId) {
           await tx.zoneServiceType.upsert({

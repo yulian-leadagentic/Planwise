@@ -46,11 +46,6 @@ export class CreateZoneDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
-  color?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
   @IsBoolean()
   isTypical?: boolean;
 

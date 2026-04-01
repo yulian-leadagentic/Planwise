@@ -11,9 +11,10 @@ export class CreateLabelDto {
   @IsInt()
   parentId?: number;
 
-  @ApiProperty()
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsInt()
-  labelTypeId: number;
+  labelTypeId?: number;
 
   @ApiProperty()
   @IsString()
