@@ -1,6 +1,7 @@
 import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Edit, Users, FolderTree, CheckSquare, DollarSign, LayoutGrid } from 'lucide-react';
+import { ArrowLeft, Edit, Users, FolderTree, CheckSquare, DollarSign, LayoutGrid, Plus } from 'lucide-react';
+import { toast } from 'sonner';
 import { useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { StatusBadge } from '@/components/shared/status-badge';
@@ -133,9 +134,17 @@ export function ProjectDetailPage() {
       )}
 
       {tab === 'tasks' && (
-        <div className="space-y-2">
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <button
+              onClick={() => navigate(`/tasks`)}
+              className="flex items-center gap-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700"
+            >
+              <Plus className="h-4 w-4" /> View All Tasks
+            </button>
+          </div>
           {tasks.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">No tasks yet</p>
+            <p className="py-8 text-center text-sm text-muted-foreground">No tasks yet. Use the Planning tab to create services for this project.</p>
           ) : (
             tasks.map((task) => (
               <button
@@ -155,9 +164,14 @@ export function ProjectDetailPage() {
       )}
 
       {tab === 'members' && (
-        <div className="space-y-2">
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <button className="flex items-center gap-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700" onClick={() => toast.info('Member management coming soon')}>
+              <Plus className="h-4 w-4" /> Add Member
+            </button>
+          </div>
           {!members || members.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">No members</p>
+            <p className="py-8 text-center text-sm text-muted-foreground">No members yet. Add team members to this project.</p>
           ) : (
             members.map((member) => (
               <div key={member.id} className="flex items-center gap-3 rounded-md border border-border p-3">

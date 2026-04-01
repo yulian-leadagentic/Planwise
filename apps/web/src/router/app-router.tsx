@@ -24,6 +24,10 @@ import { LateArrivalsPage } from '@/features/reports/late-arrivals-page';
 import { MilestonesPage } from '@/features/reports/milestones-page';
 import { BillingForecastPage } from '@/features/reports/billing-forecast-page';
 import { TemplatesPage } from '@/features/templates/templates-page';
+import { ServiceTemplatesPage } from '@/features/templates/service-templates-page';
+import { ZoneTemplatesPage } from '@/features/templates/zone-templates-page';
+import { CombinedTemplatesPage } from '@/features/templates/combined-templates-page';
+import { TeamTemplatesPage } from '@/features/templates/team-templates-page';
 import { CategoriesPage } from '@/features/templates/categories-page';
 import { PhasesPage } from '@/features/templates/phases-page';
 import { AdminPage } from '@/features/admin/admin-page';
@@ -84,6 +88,10 @@ export function AppRouter() {
 
         {/* Templates */}
         <Route path="templates" element={<TemplatesPage />} />
+        <Route path="templates/service" element={<ServiceTemplatesPage />} />
+        <Route path="templates/zone" element={<ZoneTemplatesPage />} />
+        <Route path="templates/combined" element={<CombinedTemplatesPage />} />
+        <Route path="templates/team" element={<TeamTemplatesPage />} />
         <Route path="templates/categories" element={<CategoriesPage />} />
         <Route path="templates/phases" element={<PhasesPage />} />
         <Route path="templates/project-types" element={<ProjectTypesPage />} />

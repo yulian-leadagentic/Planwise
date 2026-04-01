@@ -154,7 +154,7 @@ function ZoneTreePanel({ projectId, zones, selectedZoneId, onSelectZone }: ZoneT
         },
       },
     );
-  }, [newZoneName, newZoneTypeId, projectId, createZone]);
+  }, [newZoneName, newZoneType, projectId, createZone]);
 
   return (
     <div className="flex h-full flex-col">
