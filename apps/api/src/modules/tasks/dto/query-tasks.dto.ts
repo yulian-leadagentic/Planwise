@@ -1,7 +1,6 @@
 import { IsOptional, IsEnum, IsString, IsInt } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { TaskStatus, TaskPriority } from '@prisma/client';
 
 import { PaginationQueryDto } from '../../../common/dto/pagination.dto';
 
@@ -10,23 +9,35 @@ export class QueryTasksDto extends PaginationQueryDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  labelId?: number;
+  projectId?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  projectId?: number;
+  zoneId?: number;
 
-  @ApiPropertyOptional({ enum: TaskStatus })
+  @ApiPropertyOptional()
   @IsOptional()
-  @IsEnum(TaskStatus)
-  status?: TaskStatus;
+  @Type(() => Number)
+  @IsInt()
+  serviceTypeId?: number;
 
-  @ApiPropertyOptional({ enum: TaskPriority })
+  @ApiPropertyOptional()
   @IsOptional()
-  @IsEnum(TaskPriority)
-  priority?: TaskPriority;
+  @Type(() => Number)
+  @IsInt()
+  phaseId?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  priority?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

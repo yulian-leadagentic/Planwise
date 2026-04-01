@@ -17,16 +17,16 @@ export function ServiceTemplatesPage() {
   const [category, setCategory] = useState('');
 
   const { data: templates, isLoading } = useQuery({
-    queryKey: ['templates', 'service_only'],
+    queryKey: ['templates', 'task_list'],
     staleTime: 5 * 60 * 1000,
-    queryFn: () => client.get('/admin/config/templates?type=service_only').then((r) => r.data.data ?? r.data),
+    queryFn: () => client.get('/templates?type=task_list').then((r) => r.data.data ?? r.data),
   });
 
   const createMutation = useMutation({
     mutationFn: (data: { name: string; code?: string; description?: string; category?: string; type: string }) =>
-      client.post('/admin/config/templates', data).then((r) => r.data),
+      client.post('/templates', data).then((r) => r.data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['templates', 'service_only'] });
+      queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
       toast.success('Template created');
       setShowForm(false);
       setName('');
@@ -38,9 +38,9 @@ export function ServiceTemplatesPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => client.delete(`/admin/config/templates/${id}`).then((r) => r.data),
+    mutationFn: (id: number) => client.delete(`/templates/${id}`).then((r) => r.data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['templates', 'service_only'] });
+      queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
       toast.success('Template deleted');
     },
     onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
@@ -54,7 +54,7 @@ export function ServiceTemplatesPage() {
       code: code.trim() || undefined,
       description: description.trim() || undefined,
       category: category.trim() || undefined,
-      type: 'service_only',
+      type: 'task_list',
     });
   };
 
@@ -67,8 +67,8 @@ export function ServiceTemplatesPage() {
           <ArrowLeft className="h-5 w-5" />
         </button>
         <PageHeader
-          title="Service Templates"
-          description="Reusable lists of services to apply to zones"
+          title="Task Templates"
+          description="Reusable lists of tasks to apply to zones"
           actions={
             <button onClick={() => setShowForm(!showForm)} className="flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
               <Plus className="h-4 w-4" /> New Template
@@ -111,8 +111,8 @@ export function ServiceTemplatesPage() {
       ) : templateList.length === 0 ? (
         <div className="rounded-lg border border-border bg-background p-8 text-center">
           <Copy className="mx-auto h-12 w-12 text-muted-foreground" />
-          <h3 className="mt-3 text-sm font-medium">No service templates</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Create a template with predefined services to quickly set up zones.</p>
+          <h3 className="mt-3 text-sm font-medium">No task templates</h3>
+          <p className="mt-1 text-sm text-muted-foreground">Create a template with predefined tasks to quickly set up zones.</p>
           <button onClick={() => setShowForm(true)} className="mt-4 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">Create Template</button>
         </div>
       ) : (

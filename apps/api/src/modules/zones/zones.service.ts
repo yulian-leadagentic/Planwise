@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateZoneDto } from './dto/create-zone.dto';
@@ -47,7 +47,8 @@ export class ZonesService {
       where: { id, deletedAt: null },
       include: {
         children: { where: { deletedAt: null } },
-        zoneAssignments: { include: { deliverable: true } },
+        zoneServiceTypes: { include: { serviceType: true } },
+        tasks: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' } },
       },
     });
 
@@ -257,5 +258,106 @@ export class ZonesService {
     });
 
     return createdZones;
+  }
+
+  async applyTaskTemplate(zoneId: number, templateId: number, userId: number) {
+    const zone = await this.prisma.zone.findUniqueOrThrow({ where: { id: zoneId } });
+    const template = await this.prisma.template.findUniqueOrThrow({
+      where: { id: templateId },
+      include: { templateTasks: { include: { serviceType: true } } },
+    });
+
+    return this.prisma.$transaction(async (tx) => {
+      const createdTasks = [];
+      for (const tt of template.templateTasks) {
+        if (tt.serviceTypeId) {
+          await tx.zoneServiceType.upsert({
+            where: { zoneId_serviceTypeId: { zoneId, serviceTypeId: tt.serviceTypeId } },
+            create: { zoneId, serviceTypeId: tt.serviceTypeId },
+            update: {},
+          });
+        }
+        const task = await tx.task.create({
+          data: {
+            zoneId,
+            projectId: zone.projectId,
+            serviceTypeId: tt.serviceTypeId,
+            code: tt.code,
+            name: tt.name,
+            description: tt.description,
+            budgetHours: tt.defaultBudgetHours,
+            budgetAmount: tt.defaultBudgetAmount,
+            phaseId: tt.phaseId,
+            priority: tt.defaultPriority,
+            status: 'not_started',
+            createdBy: userId,
+          },
+        });
+        createdTasks.push(task);
+      }
+      await tx.template.update({
+        where: { id: templateId },
+        data: { usageCount: { increment: 1 } },
+      });
+      return createdTasks;
+    });
+  }
+
+  async duplicateZone(zoneId: number, newName: string, userId: number) {
+    const zone = await this.prisma.zone.findUniqueOrThrow({
+      where: { id: zoneId },
+      include: {
+        tasks: { where: { deletedAt: null } },
+        zoneServiceTypes: true,
+      },
+    });
+
+    const existing = await this.prisma.zone.findFirst({
+      where: { projectId: zone.projectId, name: newName, deletedAt: null },
+    });
+    if (existing) throw new ConflictException('Zone name must be unique within project');
+
+    return this.prisma.$transaction(async (tx) => {
+      const newZone = await tx.zone.create({
+        data: {
+          projectId: zone.projectId,
+          parentId: zone.parentId,
+          zoneType: zone.zoneType,
+          name: newName,
+          path: '',
+          depth: zone.depth,
+          sortOrder: zone.sortOrder + 1,
+        },
+      });
+      const parent = zone.parentId ? await tx.zone.findUnique({ where: { id: zone.parentId } }) : null;
+      const path = parent ? `${parent.path}/${newZone.id}` : `/${newZone.id}`;
+      await tx.zone.update({ where: { id: newZone.id }, data: { path } });
+
+      for (const zst of zone.zoneServiceTypes) {
+        await tx.zoneServiceType.create({
+          data: { zoneId: newZone.id, serviceTypeId: zst.serviceTypeId, sortOrder: zst.sortOrder },
+        });
+      }
+      for (const task of zone.tasks) {
+        await tx.task.create({
+          data: {
+            zoneId: newZone.id,
+            projectId: zone.projectId,
+            serviceTypeId: task.serviceTypeId,
+            code: task.code,
+            name: task.name,
+            description: task.description,
+            budgetHours: task.budgetHours,
+            budgetAmount: task.budgetAmount,
+            phaseId: task.phaseId,
+            priority: task.priority,
+            status: 'not_started',
+            completionPct: 0,
+            createdBy: userId,
+          },
+        });
+      }
+      return { ...newZone, path };
+    });
   }
 }

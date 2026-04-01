@@ -14,16 +14,16 @@ export function PhasesPage() {
   const [name, setName] = useState('');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['service-phases'],
+    queryKey: ['phases'],
     staleTime: 5 * 60 * 1000,
-    queryFn: () => client.get('/admin/config/service-phases').then((r) => r.data.data),
+    queryFn: () => client.get('/phases').then((r) => r.data.data ?? r.data),
   });
 
   const createMutation = useMutation({
     mutationFn: (data: { name: string }) =>
-      client.post('/admin/config/service-phases', data).then((r) => r.data),
+      client.post('/phases', data).then((r) => r.data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['service-phases'] });
+      queryClient.invalidateQueries({ queryKey: ['phases'] });
       toast.success('Phase created');
       setShowForm(false);
       setName('');
@@ -32,9 +32,9 @@ export function PhasesPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => client.delete(`/admin/config/service-phases/${id}`).then((r) => r.data),
+    mutationFn: (id: number) => client.delete(`/phases/${id}`).then((r) => r.data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['service-phases'] });
+      queryClient.invalidateQueries({ queryKey: ['phases'] });
       toast.success('Phase deleted');
     },
     onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),

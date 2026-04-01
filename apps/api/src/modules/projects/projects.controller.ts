@@ -51,6 +51,13 @@ export class ProjectsController {
     return this.projectsService.findOne(id);
   }
 
+  @Get(':id/budget-summary')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'Get budget summary for project' })
+  getBudgetSummary(@Param('id', ParseIntPipe) id: number) {
+    return this.projectsService.getBudgetSummary(id);
+  }
+
   @Patch(':id')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Update a project' })

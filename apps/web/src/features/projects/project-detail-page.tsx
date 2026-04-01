@@ -7,7 +7,7 @@ import { PageHeader } from '@/components/shared/page-header';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { ProjectTree } from './project-tree';
-import { PlanningModal } from './planning-modal';
+import { PlanningTab } from './planning-modal';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { useProject, useProjectMembers } from '@/hooks/use-projects';
 import { useLabelTree } from '@/hooks/use-labels';
@@ -130,7 +130,9 @@ export function ProjectDetailPage() {
       )}
 
       {tab === 'planning' && (
-        <PlanningWrapper projectId={projectId} onClose={() => setTab('tree')} />
+        <ErrorBoundary onClose={() => setTab('tree')}>
+          <PlanningTab projectId={projectId} />
+        </ErrorBoundary>
       )}
 
       {tab === 'tasks' && (
@@ -154,7 +156,7 @@ export function ProjectDetailPage() {
               >
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{task.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">{task.label?.path}</p>
+                  <p className="truncate text-xs text-muted-foreground">{task.zone?.name || task.code}</p>
                 </div>
                 <StatusBadge status={task.status} />
               </button>
@@ -200,25 +202,6 @@ export function ProjectDetailPage() {
       )}
     </div>
   );
-}
-
-function PlanningWrapper({ projectId, onClose }: { projectId: number; onClose: () => void }) {
-  try {
-    return (
-      <ErrorBoundary onClose={onClose}>
-        <div className="-mx-4 -mb-6 sm:-mx-6 lg:-mx-8" style={{ height: 'calc(100vh - 320px)', minHeight: '500px' }}>
-          <PlanningModal projectId={projectId} onClose={onClose} />
-        </div>
-      </ErrorBoundary>
-    );
-  } catch {
-    return (
-      <div className="py-8 text-center">
-        <p className="text-sm text-muted-foreground">Failed to load planning view.</p>
-        <button onClick={onClose} className="mt-2 text-sm text-brand-600 hover:underline">Go back</button>
-      </div>
-    );
-  }
 }
 
 class ErrorBoundary extends React.Component<

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { tasksApi } from '@/api/tasks.api';
-import type { TaskQuery, CreateTaskPayload, AssigneePayload, CommentPayload } from '@/api/tasks.api';
+import type { TaskQuery, CreateTaskPayload, UpdateTaskPayload } from '@/api/tasks.api';
 
 export function useTasks(params?: TaskQuery) {
   return useQuery({
@@ -25,6 +25,7 @@ export function useCreateTask() {
     mutationFn: (payload: CreateTaskPayload) => tasksApi.create(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['planning'] });
       toast.success('Task created');
     },
     onError: () => {
@@ -37,11 +38,12 @@ export function useUpdateTask() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ id, ...payload }: Partial<CreateTaskPayload> & { id: number }) =>
+    mutationFn: ({ id, ...payload }: UpdateTaskPayload & { id: number }) =>
       tasksApi.update(id, payload),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.id] });
+      queryClient.invalidateQueries({ queryKey: ['planning'] });
       toast.success('Task updated');
     },
     onError: () => {
@@ -57,6 +59,7 @@ export function useDeleteTask() {
     mutationFn: (id: number) => tasksApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['planning'] });
       toast.success('Task deleted');
     },
     onError: () => {
@@ -65,23 +68,15 @@ export function useDeleteTask() {
   });
 }
 
-export function useTaskAssignees(taskId: number) {
-  return useQuery({
-    queryKey: ['tasks', taskId, 'assignees'],
-    queryFn: () => tasksApi.listAssignees(taskId),
-    enabled: !!taskId,
-  });
-}
-
 export function useAddTaskAssignee() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ taskId, ...payload }: AssigneePayload & { taskId: number }) =>
+    mutationFn: ({ taskId, ...payload }: { taskId: number; userId: number; role?: string; hourlyRate?: number }) =>
       tasksApi.addAssignee(taskId, payload),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['tasks', variables.taskId, 'assignees'] });
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.taskId] });
+      queryClient.invalidateQueries({ queryKey: ['planning'] });
       toast.success('Assignee added');
     },
     onError: () => {
@@ -94,11 +89,11 @@ export function useRemoveTaskAssignee() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ taskId, assigneeId }: { taskId: number; assigneeId: number }) =>
-      tasksApi.removeAssignee(taskId, assigneeId),
+    mutationFn: ({ taskId, userId }: { taskId: number; userId: number }) =>
+      tasksApi.removeAssignee(taskId, userId),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['tasks', variables.taskId, 'assignees'] });
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.taskId] });
+      queryClient.invalidateQueries({ queryKey: ['planning'] });
       toast.success('Assignee removed');
     },
     onError: () => {
@@ -110,7 +105,15 @@ export function useRemoveTaskAssignee() {
 export function useTaskComments(taskId: number) {
   return useQuery({
     queryKey: ['tasks', taskId, 'comments'],
-    queryFn: () => tasksApi.listComments(taskId),
+    queryFn: () => tasksApi.getComments(taskId),
+    enabled: !!taskId,
+  });
+}
+
+export function useTaskAssignees(taskId: number) {
+  return useQuery({
+    queryKey: ['tasks', taskId, 'assignees'],
+    queryFn: () => tasksApi.get(taskId).then((r: any) => (r?.data ?? r)?.assignees ?? []),
     enabled: !!taskId,
   });
 }
@@ -119,8 +122,8 @@ export function useCreateComment() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ taskId, ...payload }: CommentPayload & { taskId: number }) =>
-      tasksApi.createComment(taskId, payload),
+    mutationFn: ({ taskId, ...payload }: { taskId: number; content: string; parentId?: number }) =>
+      tasksApi.addComment(taskId, payload),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.taskId, 'comments'] });
       toast.success('Comment added');
@@ -136,7 +139,7 @@ export function useDeleteComment() {
 
   return useMutation({
     mutationFn: ({ taskId, commentId }: { taskId: number; commentId: number }) =>
-      tasksApi.deleteComment(taskId, commentId),
+      tasksApi.delete(commentId),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.taskId, 'comments'] });
       toast.success('Comment deleted');
@@ -144,13 +147,5 @@ export function useDeleteComment() {
     onError: () => {
       toast.error('Failed to delete comment');
     },
-  });
-}
-
-export function useTaskPlanTimes(taskId: number) {
-  return useQuery({
-    queryKey: ['tasks', taskId, 'plan-times'],
-    queryFn: () => tasksApi.listPlanTimes(taskId),
-    enabled: !!taskId,
   });
 }

@@ -17,10 +17,10 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { FilesModule } from './modules/files/files.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { ZonesModule } from './modules/zones/zones.module';
-import { ServicesModule } from './modules/services/services.module';
-import { DeliverablesModule } from './modules/deliverables/deliverables.module';
-import { AssignmentsModule } from './modules/assignments/assignments.module';
 import { PlanningModule } from './modules/planning/planning.module';
+import { ServiceTypesModule } from './modules/service-types/service-types.module';
+import { PhasesModule } from './modules/phases/phases.module';
+import { TemplatesModule } from './modules/templates/templates.module';
 
 @Module({
   imports: [
@@ -44,10 +44,10 @@ import { PlanningModule } from './modules/planning/planning.module';
     FilesModule,
     AdminModule,
     ZonesModule,
-    ServicesModule,
-    DeliverablesModule,
-    AssignmentsModule,
     PlanningModule,
+    ServiceTypesModule,
+    PhasesModule,
+    TemplatesModule,
   ],
 })
 export class AppModule {}

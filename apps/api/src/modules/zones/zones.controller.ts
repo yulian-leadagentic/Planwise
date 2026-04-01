@@ -10,6 +10,7 @@ import {
   ParseIntPipe,
   UseGuards,
 } from '@nestjs/common';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { ZonesService } from './zones.service';
@@ -76,5 +77,25 @@ export class ZonesController {
   @ApiOperation({ summary: 'Explode typical zone into individual zones' })
   explodeTypical(@Param('id', ParseIntPipe) id: number) {
     return this.zonesService.explodeTypical(id);
+  }
+
+  @Post(':id/apply-task-template')
+  @ApiOperation({ summary: 'Apply a task template to a zone' })
+  applyTaskTemplate(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('templateId', ParseIntPipe) templateId: number,
+    @CurrentUser() user: any,
+  ) {
+    return this.zonesService.applyTaskTemplate(id, templateId, user.id);
+  }
+
+  @Post(':id/duplicate')
+  @ApiOperation({ summary: 'Duplicate a zone with its tasks and service types' })
+  duplicateZone(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('newName') newName: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.zonesService.duplicateZone(id, newName, user.id);
   }
 }

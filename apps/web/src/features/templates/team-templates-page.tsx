@@ -17,7 +17,7 @@ export function TeamTemplatesPage() {
   const { data: templates, isLoading } = useQuery({
     queryKey: ['team-templates'],
     staleTime: 5 * 60 * 1000,
-    queryFn: () => client.get('/admin/config/templates?type=team').then((r) => {
+    queryFn: () => client.get('/templates?type=combined').then((r) => {
       const d = r.data.data ?? r.data;
       return Array.isArray(d) ? d : [];
     }),
@@ -25,7 +25,7 @@ export function TeamTemplatesPage() {
 
   const createMutation = useMutation({
     mutationFn: (data: { name: string; description?: string; type: string }) =>
-      client.post('/admin/config/templates', data).then((r) => r.data),
+      client.post('/templates', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['team-templates'] });
       toast.success('Team template created');
@@ -37,7 +37,7 @@ export function TeamTemplatesPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => client.delete(`/admin/config/templates/${id}`).then((r) => r.data),
+    mutationFn: (id: number) => client.delete(`/templates/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['team-templates'] });
       toast.success('Template deleted');

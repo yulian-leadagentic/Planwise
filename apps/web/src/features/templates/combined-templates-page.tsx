@@ -19,12 +19,12 @@ export function CombinedTemplatesPage() {
   const { data: templates, isLoading } = useQuery({
     queryKey: ['templates', 'combined'],
     staleTime: 5 * 60 * 1000,
-    queryFn: () => client.get('/admin/config/templates?type=combined').then((r) => r.data.data ?? r.data),
+    queryFn: () => client.get('/templates?type=combined').then((r) => r.data.data ?? r.data),
   });
 
   const createMutation = useMutation({
     mutationFn: (data: { name: string; code?: string; description?: string; category?: string; type: string }) =>
-      client.post('/admin/config/templates', data).then((r) => r.data),
+      client.post('/templates', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'combined'] });
       toast.success('Combined template created');
@@ -38,7 +38,7 @@ export function CombinedTemplatesPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => client.delete(`/admin/config/templates/${id}`).then((r) => r.data),
+    mutationFn: (id: number) => client.delete(`/templates/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'combined'] });
       toast.success('Template deleted');

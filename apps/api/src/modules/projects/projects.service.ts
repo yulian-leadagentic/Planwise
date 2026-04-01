@@ -86,7 +86,6 @@ export class ProjectsService {
         },
         labels: {
           where: { parentId: null },
-          include: { labelType: true },
           orderBy: { sortOrder: 'asc' },
         },
       },
@@ -155,5 +154,75 @@ export class ProjectsService {
       where: { projectId_userId: { projectId, userId } },
     });
     return { message: 'Member removed' };
+  }
+
+  async getBudgetSummary(projectId: number) {
+    const project = await this.prisma.project.findFirstOrThrow({
+      where: { id: projectId },
+      include: { contracts: { where: { deletedAt: null } } },
+    });
+
+    const totals = await this.prisma.task.aggregate({
+      where: { projectId, deletedAt: null, isArchived: false },
+      _sum: { budgetHours: true, budgetAmount: true },
+      _count: true,
+    });
+
+    const byZone = await this.prisma.$queryRaw`
+      SELECT z.id, z.name, z.path, z.depth,
+        COALESCE(SUM(t.budget_hours), 0) as total_hours,
+        COALESCE(SUM(t.budget_amount), 0) as total_amount,
+        COUNT(t.id) as task_count
+      FROM zones z
+      LEFT JOIN tasks t ON t.zone_id = z.id AND t.deleted_at IS NULL AND t.is_archived = false
+      WHERE z.project_id = ${projectId} AND z.deleted_at IS NULL
+      GROUP BY z.id ORDER BY z.path
+    `;
+
+    const byServiceType = await this.prisma.$queryRaw`
+      SELECT st.id, st.name, st.code, st.color,
+        COALESCE(SUM(t.budget_hours), 0) as total_hours,
+        COALESCE(SUM(t.budget_amount), 0) as total_amount,
+        COUNT(t.id) as task_count
+      FROM tasks t
+      LEFT JOIN service_types st ON st.id = t.service_type_id
+      WHERE t.project_id = ${projectId} AND t.deleted_at IS NULL AND t.is_archived = false
+      GROUP BY st.id
+    `;
+
+    const byPhase = await this.prisma.$queryRaw`
+      SELECT p.id, p.name,
+        COALESCE(SUM(t.budget_hours), 0) as total_hours,
+        COALESCE(SUM(t.budget_amount), 0) as total_amount
+      FROM tasks t
+      LEFT JOIN phases p ON p.id = t.phase_id
+      WHERE t.project_id = ${projectId} AND t.deleted_at IS NULL AND t.is_archived = false
+      GROUP BY p.id
+    `;
+
+    const contractTotal = (project.contracts || []).reduce(
+      (sum: number, c: any) => sum + Number(c.totalAmount || 0), 0
+    );
+
+    return {
+      project: { id: project.id, name: project.name, budget: project.budget },
+      totals: {
+        hours: Number(totals._sum.budgetHours || 0),
+        amount: Number(totals._sum.budgetAmount || 0),
+        taskCount: totals._count,
+      },
+      byZone,
+      byServiceType,
+      byPhase,
+      comparison: {
+        contractAmount: contractTotal,
+        tasksTotal: Number(totals._sum.budgetAmount || 0),
+        remaining: contractTotal - Number(totals._sum.budgetAmount || 0),
+        remainingPct: contractTotal > 0
+          ? Number(((contractTotal - Number(totals._sum.budgetAmount || 0)) / contractTotal * 100).toFixed(1))
+          : null,
+        status: Number(totals._sum.budgetAmount || 0) > contractTotal ? 'over_budget' : 'within_budget',
+      },
+    };
   }
 }

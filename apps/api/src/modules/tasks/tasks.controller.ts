@@ -44,6 +44,13 @@ export class TasksController {
     return this.tasksService.findAll(query);
   }
 
+  @Get('mine')
+  @RequirePermissions({ module: 'tasks', action: 'read' })
+  @ApiOperation({ summary: 'List tasks assigned to current user' })
+  findMine(@CurrentUser() user: any) {
+    return this.tasksService.findMine(user.id);
+  }
+
   @Get(':id')
   @RequirePermissions({ module: 'tasks', action: 'read' })
   @ApiOperation({ summary: 'Get task by ID' })
@@ -86,21 +93,22 @@ export class TasksController {
     return this.tasksService.removeAssignee(taskId, userId);
   }
 
-  // Plan Times
-  @Post(':id/plan-times')
-  @RequirePermissions({ module: 'tasks', action: 'write' })
-  @ApiOperation({ summary: 'Add planned time for task' })
-  addPlanTime(
-    @Param('id', ParseIntPipe) taskId: number,
-    @Body() body: { roleTitle: string; plannedHours: number },
-  ) {
-    return this.tasksService.addPlanTime(taskId, body);
+  // Comments
+  @Get(':id/comments')
+  @RequirePermissions({ module: 'tasks', action: 'read' })
+  @ApiOperation({ summary: 'List task comments' })
+  getComments(@Param('id', ParseIntPipe) taskId: number) {
+    return this.tasksService.getComments(taskId);
   }
 
-  @Delete(':id/plan-times/:planTimeId')
+  @Post(':id/comments')
   @RequirePermissions({ module: 'tasks', action: 'write' })
-  @ApiOperation({ summary: 'Remove planned time' })
-  removePlanTime(@Param('planTimeId', ParseIntPipe) planTimeId: number) {
-    return this.tasksService.removePlanTime(planTimeId);
+  @ApiOperation({ summary: 'Add comment to task' })
+  addComment(
+    @Param('id', ParseIntPipe) taskId: number,
+    @CurrentUser() user: any,
+    @Body() body: { content: string; parentId?: number },
+  ) {
+    return this.tasksService.addComment(taskId, user.id, body);
   }
 }

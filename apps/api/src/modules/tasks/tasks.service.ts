@@ -11,21 +11,46 @@ export class TasksService {
   constructor(private prisma: PrismaService) {}
 
   async create(userId: number, dto: CreateTaskDto) {
+    const zone = await this.prisma.zone.findFirst({ where: { id: dto.zoneId } });
+    if (!zone) {
+      throw new NotFoundException('Zone not found');
+    }
+
+    // If serviceTypeId provided, upsert the ZoneServiceType junction row
+    if (dto.serviceTypeId) {
+      await this.prisma.zoneServiceType.upsert({
+        where: {
+          zoneId_serviceTypeId: {
+            zoneId: dto.zoneId,
+            serviceTypeId: dto.serviceTypeId,
+          },
+        },
+        create: {
+          zoneId: dto.zoneId,
+          serviceTypeId: dto.serviceTypeId,
+        },
+        update: {},
+      });
+    }
+
     return this.prisma.task.create({
       data: {
-        labelId: dto.labelId,
+        zoneId: dto.zoneId,
+        projectId: zone.projectId,
+        serviceTypeId: dto.serviceTypeId,
+        code: dto.code,
         name: dto.name,
         description: dto.description,
-        status: dto.status,
-        priority: dto.priority,
         budgetHours: dto.budgetHours,
         budgetAmount: dto.budgetAmount,
-        startDate: dto.startDate ? new Date(dto.startDate) : undefined,
-        endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+        phaseId: dto.phaseId,
+        priority: dto.priority as any,
         createdBy: userId,
       },
       include: {
-        label: { include: { labelType: true } },
+        zone: true,
+        serviceType: true,
+        phase: true,
         assignees: {
           include: {
             user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
@@ -36,19 +61,24 @@ export class TasksService {
   }
 
   async findAll(query: QueryTasksDto) {
-    const where: Prisma.TaskWhereInput = {};
+    const where: Prisma.TaskWhereInput = {
+      deletedAt: null,
+    };
 
-    if (query.labelId) where.labelId = query.labelId;
-    if (query.status) where.status = query.status;
-    if (query.priority) where.priority = query.priority;
+    if (query.projectId) where.projectId = query.projectId;
+    if (query.zoneId) where.zoneId = query.zoneId;
+    if (query.serviceTypeId) where.serviceTypeId = query.serviceTypeId;
+    if (query.phaseId) where.phaseId = query.phaseId;
+    if (query.status) where.status = query.status as any;
+    if (query.priority) where.priority = query.priority as any;
     if (query.assigneeId) {
       where.assignees = { some: { userId: query.assigneeId } };
     }
     if (query.search) {
-      where.name = { contains: query.search };
-    }
-    if (query.projectId) {
-      where.label = { projectId: query.projectId };
+      where.OR = [
+        { name: { contains: query.search, mode: 'insensitive' } },
+        { code: { contains: query.search, mode: 'insensitive' } },
+      ];
     }
 
     const [data, total] = await Promise.all([
@@ -58,7 +88,9 @@ export class TasksService {
         take: query.take,
         orderBy: { createdAt: 'desc' },
         include: {
-          label: { select: { id: true, name: true, path: true, labelType: true } },
+          zone: { select: { id: true, name: true } },
+          serviceType: { select: { id: true, name: true } },
+          phase: { select: { id: true, name: true } },
           assignees: {
             include: {
               user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
@@ -81,18 +113,40 @@ export class TasksService {
     };
   }
 
+  async findMine(userId: number) {
+    return this.prisma.task.findMany({
+      where: {
+        deletedAt: null,
+        assignees: { some: { userId } },
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        zone: { select: { id: true, name: true } },
+        serviceType: { select: { id: true, name: true } },
+        phase: { select: { id: true, name: true } },
+        assignees: {
+          include: {
+            user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+          },
+        },
+      },
+    });
+  }
+
   async findOne(id: number) {
     const task = await this.prisma.task.findFirst({
-      where: { id },
+      where: { id, deletedAt: null },
       include: {
-        label: { include: { labelType: true, project: true } },
+        zone: true,
+        project: true,
+        serviceType: true,
+        phase: true,
         creator: { select: { id: true, firstName: true, lastName: true } },
         assignees: {
           include: {
             user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
           },
         },
-        planTimes: true,
         comments: {
           where: { parentId: null },
           include: {
@@ -119,15 +173,21 @@ export class TasksService {
   async update(id: number, dto: UpdateTaskDto) {
     await this.findOne(id);
 
+    const { startDate, endDate, ...rest } = dto;
+
     return this.prisma.task.update({
       where: { id },
       data: {
-        ...dto,
-        startDate: dto.startDate ? new Date(dto.startDate) : undefined,
-        endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+        ...rest,
+        status: dto.status as any,
+        priority: dto.priority as any,
+        startDate: startDate ? new Date(startDate) : undefined,
+        endDate: endDate ? new Date(endDate) : undefined,
       },
       include: {
-        label: { include: { labelType: true } },
+        zone: true,
+        serviceType: true,
+        phase: true,
         assignees: {
           include: {
             user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
@@ -139,7 +199,12 @@ export class TasksService {
 
   async remove(id: number) {
     await this.findOne(id);
-    await this.prisma.task.delete({ where: { id } });
+
+    await this.prisma.task.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+
     return { message: 'Task deleted' };
   }
 
@@ -180,20 +245,35 @@ export class TasksService {
     return { message: 'Assignee removed' };
   }
 
-  async addPlanTime(taskId: number, data: { roleTitle: string; plannedHours: number }) {
-    await this.findOne(taskId);
-
-    return this.prisma.taskPlanTime.create({
-      data: {
-        taskId,
-        roleTitle: data.roleTitle,
-        plannedHours: data.plannedHours,
+  async getComments(taskId: number) {
+    return this.prisma.taskComment.findMany({
+      where: { taskId, parentId: null },
+      include: {
+        user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+        children: {
+          include: {
+            user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
       },
+      orderBy: { createdAt: 'desc' },
     });
   }
 
-  async removePlanTime(planTimeId: number) {
-    await this.prisma.taskPlanTime.delete({ where: { id: planTimeId } });
-    return { message: 'Plan time removed' };
+  async addComment(taskId: number, userId: number, data: { content: string; parentId?: number }) {
+    await this.findOne(taskId);
+
+    return this.prisma.taskComment.create({
+      data: {
+        taskId,
+        userId,
+        content: data.content,
+        parentId: data.parentId,
+      },
+      include: {
+        user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+      },
+    });
   }
 }

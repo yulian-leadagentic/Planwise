@@ -71,36 +71,6 @@ export type SeverityLevel = (typeof SEVERITY_LEVELS)[number];
 export const ATTENDANCE_APPLIES_TO = ['all', 'employees_only', 'partners_only'] as const;
 export type AttendanceAppliesTo = (typeof ATTENDANCE_APPLIES_TO)[number];
 
-// ─── V6 Enums (Zone/Service model) ──────────────────────────────────────
-
-export const DELIVERABLE_SCOPES = ['project', 'per_zone', 'per_building'] as const;
-export type DeliverableScope = (typeof DELIVERABLE_SCOPES)[number];
-
-export const ASSIGNMENT_STATUSES = [
-  'not_started',
-  'in_progress',
-  'in_review',
-  'completed',
-  'on_hold',
-  'cancelled',
-] as const;
-export type AssignmentStatus = (typeof ASSIGNMENT_STATUSES)[number];
-
-export const ASSIGNMENT_PRIORITIES = ['low', 'medium', 'high', 'critical'] as const;
-export type AssignmentPriority = (typeof ASSIGNMENT_PRIORITIES)[number];
-
-export const PRICING_METHODS = ['fixed_fee', 'time_materials', 'recurring'] as const;
-export type PricingMethod = (typeof PRICING_METHODS)[number];
-
-export const PAYMENT_TRIGGERS = ['upon_invoice', 'completion', 'milestones', 'monthly'] as const;
-export type PaymentTrigger = (typeof PAYMENT_TRIGGERS)[number];
-
-export const CHANGE_ORDER_STATUSES = ['pending', 'approved', 'rejected'] as const;
-export type ChangeOrderStatus = (typeof CHANGE_ORDER_STATUSES)[number];
-
-export const REVIEW_STATUSES = ['pending', 'approved', 'changes_requested'] as const;
-export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
-
 export const PROJECT_ROLES = [
   'project_leader',
   'bim_manager',
@@ -113,21 +83,31 @@ export const PROJECT_ROLES = [
 ] as const;
 export type ProjectRole = (typeof PROJECT_ROLES)[number];
 
-export const TEMPLATE_TYPES = ['combined', 'zone_only', 'service_only', 'deliverable_only'] as const;
-export type TemplateType = (typeof TEMPLATE_TYPES)[number];
-
-// ─── V7 Enums (Zone types as constants) ─────────────────────────────────────
+// ─── V8 Enums ───────────────────────────────────────────────────────────────
 
 export const ZONE_TYPES = ['site', 'building', 'level', 'zone', 'area', 'section', 'wing', 'floor'] as const;
 export type ZoneType = (typeof ZONE_TYPES)[number];
 
-export const ZONE_DISPLAY: Record<ZoneType, { icon: string; color: string }> = {
-  site: { icon: 'MapPin', color: '#6B7280' },
-  building: { icon: 'Building2', color: '#3B82F6' },
-  level: { icon: 'Layers', color: '#10B981' },
-  zone: { icon: 'Grid3x3', color: '#F59E0B' },
-  area: { icon: 'Square', color: '#8B5CF6' },
-  section: { icon: 'LayoutGrid', color: '#14B8A6' },
-  wing: { icon: 'ArrowLeftRight', color: '#EC4899' },
-  floor: { icon: 'Minus', color: '#6B7280' },
+export const ZONE_DISPLAY: Record<ZoneType, { icon: string; color: string; label: string }> = {
+  site: { icon: 'MapPin', color: '#6B7280', label: 'Site' },
+  building: { icon: 'Building2', color: '#3B82F6', label: 'Building' },
+  level: { icon: 'Layers', color: '#10B981', label: 'Level' },
+  zone: { icon: 'Grid3x3', color: '#F59E0B', label: 'Zone' },
+  area: { icon: 'Square', color: '#8B5CF6', label: 'Area' },
+  section: { icon: 'LayoutGrid', color: '#14B8A6', label: 'Section' },
+  wing: { icon: 'ArrowLeftRight', color: '#EC4899', label: 'Wing' },
+  floor: { icon: 'Minus', color: '#6B7280', label: 'Floor' },
+};
+
+export const TEMPLATE_TYPES = ['task_list', 'zone', 'combined'] as const;
+export type TemplateType = (typeof TEMPLATE_TYPES)[number];
+
+export const SERVICE_TYPE_COLORS: Record<string, string> = {
+  BIM: '#3B82F6',
+  MEP: '#10B981',
+  STR: '#EF4444',
+  ARCH: '#8B5CF6',
+  INFRA: '#F59E0B',
+  FIRE: '#DC2626',
+  ACO: '#06B6D4',
 };

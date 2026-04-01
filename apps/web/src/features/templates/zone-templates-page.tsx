@@ -17,16 +17,16 @@ export function ZoneTemplatesPage() {
   const [category, setCategory] = useState('');
 
   const { data: templates, isLoading } = useQuery({
-    queryKey: ['templates', 'zone_only'],
+    queryKey: ['templates', 'zone'],
     staleTime: 5 * 60 * 1000,
-    queryFn: () => client.get('/admin/config/templates?type=zone_only').then((r) => r.data.data ?? r.data),
+    queryFn: () => client.get('/templates?type=zone').then((r) => r.data.data ?? r.data),
   });
 
   const createMutation = useMutation({
     mutationFn: (data: { name: string; code?: string; description?: string; category?: string; type: string }) =>
-      client.post('/admin/config/templates', data).then((r) => r.data),
+      client.post('/templates', data).then((r) => r.data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['templates', 'zone_only'] });
+      queryClient.invalidateQueries({ queryKey: ['templates', 'zone'] });
       toast.success('Zone template created');
       setShowForm(false);
       setName('');
@@ -38,9 +38,9 @@ export function ZoneTemplatesPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => client.delete(`/admin/config/templates/${id}`).then((r) => r.data),
+    mutationFn: (id: number) => client.delete(`/templates/${id}`).then((r) => r.data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['templates', 'zone_only'] });
+      queryClient.invalidateQueries({ queryKey: ['templates', 'zone'] });
       toast.success('Template deleted');
     },
     onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
@@ -54,7 +54,7 @@ export function ZoneTemplatesPage() {
       code: code.trim() || undefined,
       description: description.trim() || undefined,
       category: category.trim() || undefined,
-      type: 'zone_only',
+      type: 'zone',
     });
   };
 

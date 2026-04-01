@@ -12,8 +12,8 @@ import { PageHeader } from '@/components/shared/page-header';
 
 const templateCards = [
   {
-    title: 'Service Templates',
-    description: 'Reusable lists of services to apply to zones',
+    title: 'Task Templates',
+    description: 'Reusable lists of tasks to apply to zones',
     icon: Copy,
     href: '/templates/service',
     color: 'bg-blue-100 text-blue-700',
@@ -33,8 +33,8 @@ const templateCards = [
     color: 'bg-purple-100 text-purple-700',
   },
   {
-    title: 'Service Categories',
-    description: 'Manage categories: BIM, MEP, Structural',
+    title: 'Service Types',
+    description: 'Manage service types: BIM, MEP, Structural',
     icon: Tag,
     href: '/templates/categories',
     color: 'bg-amber-100 text-amber-700',

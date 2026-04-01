@@ -1,14 +1,24 @@
-import { IsString, IsOptional, IsInt, IsEnum, IsNumber, IsDateString } from 'class-validator';
+import { IsInt, IsOptional, IsString, IsNumber, MaxLength, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { TaskStatus, TaskPriority } from '@prisma/client';
 
 export class CreateTaskDto {
   @ApiProperty()
   @IsInt()
-  labelId: number;
+  zoneId: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  serviceTypeId?: number;
 
   @ApiProperty()
   @IsString()
+  @MaxLength(50)
+  code: string;
+
+  @ApiProperty()
+  @IsString()
+  @MaxLength(255)
   name: string;
 
   @ApiPropertyOptional()
@@ -16,33 +26,25 @@ export class CreateTaskDto {
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional({ enum: TaskStatus })
-  @IsOptional()
-  @IsEnum(TaskStatus)
-  status?: TaskStatus;
-
-  @ApiPropertyOptional({ enum: TaskPriority })
-  @IsOptional()
-  @IsEnum(TaskPriority)
-  priority?: TaskPriority;
-
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
   budgetHours?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
   budgetAmount?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsDateString()
-  startDate?: string;
+  @IsInt()
+  phaseId?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsDateString()
-  endDate?: string;
+  @IsString()
+  priority?: string;
 }
