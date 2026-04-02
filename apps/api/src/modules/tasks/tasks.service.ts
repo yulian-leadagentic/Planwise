@@ -89,7 +89,7 @@ export class TasksService {
         orderBy: { createdAt: 'desc' },
         include: {
           zone: { select: { id: true, name: true } },
-          serviceType: { select: { id: true, name: true } },
+          serviceType: { select: { id: true, name: true, code: true, color: true } },
           phase: { select: { id: true, name: true } },
           assignees: {
             include: {
@@ -122,7 +122,7 @@ export class TasksService {
       orderBy: { createdAt: 'desc' },
       include: {
         zone: { select: { id: true, name: true } },
-        serviceType: { select: { id: true, name: true } },
+        serviceType: { select: { id: true, name: true, code: true, color: true } },
         phase: { select: { id: true, name: true } },
         assignees: {
           include: {

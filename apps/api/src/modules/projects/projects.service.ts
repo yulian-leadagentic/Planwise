@@ -168,7 +168,17 @@ export class ProjectsService {
       _count: true,
     });
 
-    const byZone = await this.prisma.$queryRaw`
+    // Helper to convert BigInt values to numbers in raw query results
+    const serializeRaw = (rows: any[]) =>
+      rows.map((row: any) => {
+        const obj: any = {};
+        for (const [k, v] of Object.entries(row)) {
+          obj[k] = typeof v === 'bigint' ? Number(v) : v;
+        }
+        return obj;
+      });
+
+    const byZone = serializeRaw(await this.prisma.$queryRaw`
       SELECT z.id, z.name, z.path, z.depth,
         COALESCE(SUM(t.budget_hours), 0) as total_hours,
         COALESCE(SUM(t.budget_amount), 0) as total_amount,
@@ -177,9 +187,9 @@ export class ProjectsService {
       LEFT JOIN tasks t ON t.zone_id = z.id AND t.deleted_at IS NULL AND t.is_archived = false
       WHERE z.project_id = ${projectId} AND z.deleted_at IS NULL
       GROUP BY z.id ORDER BY z.path
-    `;
+    `);
 
-    const byServiceType = await this.prisma.$queryRaw`
+    const byServiceType = serializeRaw(await this.prisma.$queryRaw`
       SELECT st.id, st.name, st.code, st.color,
         COALESCE(SUM(t.budget_hours), 0) as total_hours,
         COALESCE(SUM(t.budget_amount), 0) as total_amount,
@@ -188,9 +198,9 @@ export class ProjectsService {
       LEFT JOIN service_types st ON st.id = t.service_type_id
       WHERE t.project_id = ${projectId} AND t.deleted_at IS NULL AND t.is_archived = false
       GROUP BY st.id
-    `;
+    `);
 
-    const byPhase = await this.prisma.$queryRaw`
+    const byPhase = serializeRaw(await this.prisma.$queryRaw`
       SELECT p.id, p.name,
         COALESCE(SUM(t.budget_hours), 0) as total_hours,
         COALESCE(SUM(t.budget_amount), 0) as total_amount
@@ -198,7 +208,7 @@ export class ProjectsService {
       LEFT JOIN phases p ON p.id = t.phase_id
       WHERE t.project_id = ${projectId} AND t.deleted_at IS NULL AND t.is_archived = false
       GROUP BY p.id
-    `;
+    `);
 
     const contractTotal = (project.contracts || []).reduce(
       (sum: number, c: any) => sum + Number(c.totalAmount || 0), 0
