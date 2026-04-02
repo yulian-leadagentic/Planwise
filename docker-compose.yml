@@ -7,8 +7,8 @@ services:
       MYSQL_DATABASE: amec
       MYSQL_USER: amec
       MYSQL_PASSWORD: your_password
-    ports:
-      - '3306:3306'
+    expose:
+      - '3306'
     volumes:
       - mysql_data:/var/lib/mysql
     command: --default-authentication-plugin=mysql_native_password
@@ -21,8 +21,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports:
-      - '6379:6379'
+    expose:
+      - '6379'
     volumes:
       - redis_data:/data
 
@@ -31,8 +31,8 @@ services:
       context: .
       dockerfile: Dockerfile.api
     restart: unless-stopped
-    ports:
-      - '3000:3000'
+    expose:
+      - '3000'
     depends_on:
       mysql:
         condition: service_healthy
