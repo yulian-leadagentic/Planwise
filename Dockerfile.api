@@ -3,11 +3,13 @@ RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
 RUN apk add --no-cache openssl
 WORKDIR /app
 COPY . .
-RUN pnpm install --frozen-lockfile --shamefully-hoist
+RUN pnpm install --no-frozen-lockfile --shamefully-hoist
 RUN cd apps/api && pnpm exec prisma generate
 RUN cd apps/api && pnpm exec nest build
 RUN mkdir -p uploads
 ENV NODE_ENV=production
 EXPOSE 3000
 WORKDIR /app/apps/api
-CMD ["node", "dist/main.js"]
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+CMD ["/app/docker-entrypoint.sh"]

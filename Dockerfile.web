@@ -2,7 +2,7 @@ FROM node:20-alpine AS build
 RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
 WORKDIR /app
 COPY . .
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --no-frozen-lockfile --shamefully-hoist
 RUN cd apps/web && pnpm exec vite build
 
 FROM nginx:alpine

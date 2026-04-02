@@ -38,6 +38,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/v1/service-types',r=>{process.exit(r.statusCode===401?0:r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     environment:
       DATABASE_URL: mysql://amec:your_password@mysql:3306/amec
       JWT_ACCESS_SECRET: amec-access-secret-change-in-production-32chars
@@ -68,7 +74,8 @@ services:
     ports:
       - '5173:80'
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   mysql_data:
