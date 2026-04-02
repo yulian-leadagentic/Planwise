@@ -7,8 +7,9 @@ RUN pnpm install --no-frozen-lockfile --shamefully-hoist
 RUN cd apps/api && npx prisma generate
 RUN cd apps/api && npx nest build
 RUN mkdir -p uploads
+RUN dos2unix docker-entrypoint.sh 2>/dev/null || sed -i 's/\r$//' docker-entrypoint.sh
 RUN chmod +x docker-entrypoint.sh
 ENV NODE_ENV=production
 EXPOSE 3000
 WORKDIR /app/apps/api
-ENTRYPOINT ["/bin/sh", "/app/docker-entrypoint.sh"]
+CMD ["sh", "/app/docker-entrypoint.sh"]

@@ -1,13 +1,13 @@
 #!/bin/sh
 
-echo "=== AMEC API Starting ==="
+echo "Waiting for MySQL..."
+sleep 5
 
-echo "Step 1: Database migration..."
-cd /app/apps/api
-npx prisma db push --accept-data-loss --skip-generate 2>&1 || true
+echo "Running prisma db push..."
+npx prisma db push --accept-data-loss --skip-generate || true
 
-echo "Step 2: Seeding data..."
-node /app/apps/api/seed-runner.js 2>&1 || true
+echo "Running seed..."
+node /app/apps/api/seed-runner.js || true
 
-echo "Step 3: Starting NestJS..."
+echo "Starting API server..."
 exec node dist/main.js
