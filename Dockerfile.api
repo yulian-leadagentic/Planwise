@@ -4,12 +4,11 @@ RUN apk add --no-cache openssl
 WORKDIR /app
 COPY . .
 RUN pnpm install --no-frozen-lockfile --shamefully-hoist
-RUN cd apps/api && pnpm exec prisma generate
-RUN cd apps/api && pnpm exec nest build
+RUN cd apps/api && npx prisma generate
+RUN cd apps/api && npx nest build
 RUN mkdir -p uploads
+RUN chmod +x docker-entrypoint.sh
 ENV NODE_ENV=production
 EXPOSE 3000
 WORKDIR /app/apps/api
-COPY docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN chmod +x /app/docker-entrypoint.sh
-CMD ["/app/docker-entrypoint.sh"]
+ENTRYPOINT ["/bin/sh", "/app/docker-entrypoint.sh"]
