@@ -405,6 +405,7 @@ function PlanningView({ projectId }: { projectId: number }) {
   const [newZoneType, setNewZoneType] = useState('zone');
   const [duplicateModal, setDuplicateModal] = useState<any>(null);
   const [duplicateName, setDuplicateName] = useState('');
+  const [showProjectTemplateMenu, setShowProjectTemplateMenu] = useState(false);
 
   const zoneTypeOptions = ['site', 'building', 'level', 'zone', 'area', 'section', 'wing', 'floor'];
 
@@ -421,9 +422,28 @@ function PlanningView({ projectId }: { projectId: number }) {
   const phases = pd?.phases ?? [];
   const budgetSummary = pd?.budgetSummary;
 
+  const { data: zoneTemplatesRaw } = useQuery({
+    queryKey: ['templates', 'zone'],
+    queryFn: () => templatesApi.list('zone'),
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: combinedTemplatesRaw } = useQuery({
+    queryKey: ['templates', 'combined'],
+    queryFn: () => templatesApi.list('combined'),
+    staleTime: 5 * 60 * 1000,
+  });
+  const projectZoneTemplates = Array.isArray(zoneTemplatesRaw) ? zoneTemplatesRaw : (zoneTemplatesRaw as any)?.data ?? [];
+  const projectCombinedTemplates = Array.isArray(combinedTemplatesRaw) ? combinedTemplatesRaw : (combinedTemplatesRaw as any)?.data ?? [];
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
   };
+
+  const applyProjectTemplate = useMutation({
+    mutationFn: (templateId: number) => planningApi.applyProjectTemplate(projectId, templateId),
+    onSuccess: () => { invalidate(); setShowProjectTemplateMenu(false); toast.success('Template applied — zones and tasks created'); },
+    onError: () => toast.error('Failed to apply template'),
+  });
 
   const createZone = useMutation({
     mutationFn: (data: any) => zonesApi.create(data),
@@ -458,9 +478,39 @@ function PlanningView({ projectId }: { projectId: number }) {
         <div className="w-64 shrink-0 border-r border-border flex flex-col">
           <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
             <h3 className="text-sm font-semibold">Zones</h3>
-            <button onClick={() => setAddingZone(!addingZone)} className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground" title="Add zone">
-              <Plus className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              <div className="relative">
+                <button onClick={() => setShowProjectTemplateMenu(!showProjectTemplateMenu)} className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground" title="Apply zone/combined template">
+                  <Copy className="h-4 w-4" />
+                </button>
+                {showProjectTemplateMenu && (
+                  <div className="absolute right-0 top-full z-50 mt-1 w-60 rounded-md border border-border bg-background shadow-lg">
+                    {projectZoneTemplates.length > 0 && (
+                      <>
+                        <p className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase">Zone Templates</p>
+                        {projectZoneTemplates.map((t: any) => (
+                          <button key={t.id} onClick={() => applyProjectTemplate.mutate(t.id)} className="block w-full px-3 py-2 text-left text-sm hover:bg-accent">{t.name}</button>
+                        ))}
+                      </>
+                    )}
+                    {projectCombinedTemplates.length > 0 && (
+                      <>
+                        <p className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase border-t border-border">Combined Templates</p>
+                        {projectCombinedTemplates.map((t: any) => (
+                          <button key={t.id} onClick={() => applyProjectTemplate.mutate(t.id)} className="block w-full px-3 py-2 text-left text-sm hover:bg-accent">{t.name}</button>
+                        ))}
+                      </>
+                    )}
+                    {projectZoneTemplates.length === 0 && projectCombinedTemplates.length === 0 && (
+                      <p className="p-3 text-xs text-muted-foreground">No zone or combined templates available. Create one in Templates.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button onClick={() => setAddingZone(!addingZone)} className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground" title="Add zone">
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
           </div>
 
           {addingZone && (

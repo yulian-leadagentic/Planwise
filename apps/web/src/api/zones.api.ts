@@ -79,6 +79,16 @@ export const templatesApi = {
   removeTask: (taskId: number) =>
     client.delete(`/templates/tasks/${taskId}`).then((r) => r.data),
 
+  // Zone management within templates
+  addZone: (templateId: number, data: any) =>
+    client.post(`/templates/${templateId}/zones`, data).then((r) => r.data),
+
+  updateZone: (zoneId: number, data: any) =>
+    client.patch(`/templates/zones/${zoneId}`, data).then((r) => r.data),
+
+  removeZone: (zoneId: number) =>
+    client.delete(`/templates/zones/${zoneId}`).then((r) => r.data),
+
   duplicate: (id: number, data: { name: string; code: string }) =>
     client.post(`/templates/${id}/duplicate`, data).then((r) => r.data),
 };
@@ -91,4 +101,7 @@ export const budgetApi = {
 export const planningApi = {
   getData: (projectId: number) =>
     client.get(`/projects/${projectId}/planning-data`).then((r) => r.data),
+
+  applyProjectTemplate: (projectId: number, templateId: number) =>
+    client.post('/zones/apply-project-template', { projectId, templateId }).then((r) => r.data),
 };

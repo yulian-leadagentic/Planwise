@@ -357,4 +357,119 @@ export class ZonesService {
       return { ...newZone, path };
     });
   }
+
+  async applyProjectTemplate(projectId: number, templateId: number, userId: number) {
+    const template = await this.prisma.template.findUniqueOrThrow({
+      where: { id: templateId },
+      include: {
+        templateZones: {
+          include: {
+            templateZoneTasks: true,
+            linkedTaskTemplate: {
+              include: { templateTasks: true },
+            },
+            children: {
+              include: {
+                templateZoneTasks: true,
+                linkedTaskTemplate: { include: { templateTasks: true } },
+                children: {
+                  include: {
+                    templateZoneTasks: true,
+                    linkedTaskTemplate: { include: { templateTasks: true } },
+                  },
+                },
+              },
+            },
+          },
+          where: { parentId: null },
+          orderBy: { sortOrder: 'asc' },
+        },
+      },
+    });
+
+    return this.prisma.$transaction(async (tx) => {
+      const createdZones: any[] = [];
+
+      const createZoneRecursive = async (tz: any, parentId: number | null, parentPath: string, depth: number) => {
+        const zone = await tx.zone.create({
+          data: {
+            projectId,
+            parentId,
+            zoneType: tz.zoneType || 'zone',
+            name: tz.name,
+            code: tz.code,
+            isTypical: tz.isTypical || false,
+            typicalCount: tz.typicalCount || 1,
+            path: '',
+            depth,
+          },
+        });
+
+        const path = parentPath ? `${parentPath}/${zone.id}` : `${zone.id}`;
+        await tx.zone.update({ where: { id: zone.id }, data: { path } });
+        createdZones.push({ ...zone, path });
+
+        // Create tasks from linked task template
+        if (tz.linkedTaskTemplate?.templateTasks) {
+          for (const tt of tz.linkedTaskTemplate.templateTasks) {
+            await tx.task.create({
+              data: {
+                zoneId: zone.id,
+                projectId,
+                serviceTypeId: tt.serviceTypeId,
+                code: tt.code,
+                name: tt.name,
+                description: tt.description,
+                budgetHours: tt.defaultBudgetHours,
+                budgetAmount: tt.defaultBudgetAmount,
+                phaseId: tt.phaseId,
+                priority: tt.defaultPriority,
+                status: 'not_started',
+                createdBy: userId,
+              },
+            });
+          }
+        }
+
+        // Create tasks from templateZoneTasks (for combined templates)
+        if (tz.templateZoneTasks?.length) {
+          for (const tzt of tz.templateZoneTasks) {
+            await tx.task.create({
+              data: {
+                zoneId: zone.id,
+                projectId,
+                serviceTypeId: tzt.serviceTypeId,
+                code: tzt.code,
+                name: tzt.name,
+                description: tzt.description,
+                budgetHours: tzt.defaultBudgetHours,
+                budgetAmount: tzt.defaultBudgetAmount,
+                phaseId: tzt.phaseId,
+                priority: tzt.defaultPriority,
+                status: 'not_started',
+                createdBy: userId,
+              },
+            });
+          }
+        }
+
+        // Recurse into children
+        for (const child of (tz.children || [])) {
+          await createZoneRecursive(child, zone.id, path, depth + 1);
+        }
+      };
+
+      for (const rootZone of template.templateZones) {
+        await createZoneRecursive(rootZone, null, '', 0);
+      }
+
+      // Increment usage count
+      await tx.template.update({
+        where: { id: templateId },
+        data: { usageCount: { increment: 1 } },
+      });
+
+      return createdZones;
+    });
+  }
 }

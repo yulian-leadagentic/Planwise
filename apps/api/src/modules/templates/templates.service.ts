@@ -69,7 +69,19 @@ export class TemplatesService {
         },
         templateZones: {
           include: {
-            children: true,
+            children: {
+              include: {
+                linkedTaskTemplate: { select: { id: true, name: true, code: true } },
+                templateZoneTasks: { include: { serviceType: true, phase: true } },
+                children: {
+                  include: {
+                    linkedTaskTemplate: { select: { id: true, name: true, code: true } },
+                    templateZoneTasks: { include: { serviceType: true, phase: true } },
+                  },
+                },
+              },
+            },
+            linkedTaskTemplate: { select: { id: true, name: true, code: true } },
             templateZoneTasks: { include: { serviceType: true, phase: true } },
           },
           where: { parentId: null },
@@ -155,6 +167,54 @@ export class TemplatesService {
   async removeTask(taskId: number) {
     await this.prisma.templateTask.delete({ where: { id: taskId } });
     return { message: 'Template task removed' };
+  }
+
+  async addZone(templateId: number, body: any) {
+    await this.findOne(templateId); // verify template exists
+    const maxOrder = await this.prisma.templateZone.aggregate({
+      where: { templateId, parentId: body.parentId || null },
+      _max: { sortOrder: true },
+    });
+    return this.prisma.templateZone.create({
+      data: {
+        templateId,
+        parentId: body.parentId || null,
+        zoneType: body.zoneType || 'zone',
+        name: body.name,
+        code: body.code || null,
+        isTypical: body.isTypical || false,
+        typicalCount: body.typicalCount || 1,
+        sortOrder: body.sortOrder ?? (maxOrder._max.sortOrder ?? 0) + 1,
+        linkedTaskTemplateId: body.linkedTaskTemplateId || null,
+      },
+      include: {
+        linkedTaskTemplate: { select: { id: true, name: true, code: true } },
+      },
+    });
+  }
+
+  async updateZone(zoneId: number, body: any) {
+    return this.prisma.templateZone.update({
+      where: { id: zoneId },
+      data: {
+        name: body.name,
+        code: body.code,
+        zoneType: body.zoneType,
+        isTypical: body.isTypical,
+        typicalCount: body.typicalCount,
+        sortOrder: body.sortOrder,
+        linkedTaskTemplateId: body.linkedTaskTemplateId,
+      },
+      include: {
+        linkedTaskTemplate: { select: { id: true, name: true, code: true } },
+      },
+    });
+  }
+
+  async removeZone(zoneId: number) {
+    // Cascade will delete children and templateZoneTasks
+    await this.prisma.templateZone.delete({ where: { id: zoneId } });
+    return { message: 'Template zone deleted' };
   }
 
   async duplicate(id: number, userId: number, body: { name: string; code: string }) {
