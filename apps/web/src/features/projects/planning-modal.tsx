@@ -105,6 +105,7 @@ function AddTaskForm({ zoneId, serviceTypes, phases, onSave, onCancel, isPending
   const [budgetAmount, setBudgetAmount] = useState('');
   const [serviceTypeId, setServiceTypeId] = useState('');
   const [phaseId, setPhaseId] = useState('');
+  const [priority, setPriority] = useState('medium');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -120,12 +121,13 @@ function AddTaskForm({ zoneId, serviceTypes, phases, onSave, onCancel, isPending
       budgetAmount: budgetAmount ? Number(budgetAmount) : undefined,
       serviceTypeId: serviceTypeId ? Number(serviceTypeId) : undefined,
       phaseId: phaseId ? Number(phaseId) : undefined,
+      priority,
     });
   };
 
   return (
     <form onSubmit={handleSubmit} className="border border-border rounded-md p-3 bg-muted/20 space-y-2">
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
         <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code *" className="rounded-md border border-input bg-background px-2 py-1.5 text-sm" autoFocus />
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name *" className="rounded-md border border-input bg-background px-2 py-1.5 text-sm" />
         <input value={budgetHours} onChange={(e) => setBudgetHours(e.target.value)} placeholder="Hours" type="number" className="rounded-md border border-input bg-background px-2 py-1.5 text-sm" />
@@ -137,6 +139,12 @@ function AddTaskForm({ zoneId, serviceTypes, phases, onSave, onCancel, isPending
         <select value={phaseId} onChange={(e) => setPhaseId(e.target.value)} className="rounded-md border border-input bg-background px-2 py-1.5 text-sm">
           <option value="">Phase</option>
           {phases.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        <select value={priority} onChange={(e) => setPriority(e.target.value)} className="rounded-md border border-input bg-background px-2 py-1.5 text-sm">
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="critical">Critical</option>
         </select>
       </div>
       <div className="flex gap-2">
