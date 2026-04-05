@@ -299,7 +299,7 @@ function EditorView({
 
   // ---- header editing ----
   const [editingHeader, setEditingHeader] = useState(false);
-  const [headerForm, setHeaderForm] = useState({ name: '', code: '', category: '', description: '' });
+  const [headerForm, setHeaderForm] = useState({ name: '', code: '', description: '' });
 
   const updateTemplateMutation = useMutation({
     mutationFn: (data: Record<string, any>) =>
@@ -319,7 +319,6 @@ function EditorView({
     updateTemplateMutation.mutate({
       name: headerForm.name.trim(),
       code: headerForm.code.trim() || undefined,
-      category: headerForm.category.trim() || undefined,
       description: headerForm.description.trim() || undefined,
     });
   };
@@ -329,7 +328,6 @@ function EditorView({
     setHeaderForm({
       name: template.name ?? '',
       code: template.code ?? '',
-      category: template.category ?? '',
       description: template.description ?? '',
     });
     setEditingHeader(true);
@@ -361,7 +359,7 @@ function EditorView({
       {/* Template header */}
       {editingHeader ? (
         <form onSubmit={handleSaveHeader} className="rounded-lg border border-border bg-background p-4 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-sm font-medium mb-1">Name *</label>
               <input value={headerForm.name} onChange={(e) => setHeaderForm((p) => ({ ...p, name: e.target.value }))} className={inputClass} autoFocus />
@@ -369,10 +367,6 @@ function EditorView({
             <div>
               <label className="block text-sm font-medium mb-1">Code</label>
               <input value={headerForm.code} onChange={(e) => setHeaderForm((p) => ({ ...p, code: e.target.value }))} className={inputClass} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Category</label>
-              <input value={headerForm.category} onChange={(e) => setHeaderForm((p) => ({ ...p, category: e.target.value }))} className={inputClass} />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Description</label>
@@ -394,7 +388,6 @@ function EditorView({
                 <Layers className="h-5 w-5 text-green-600" />
                 <h2 className="text-lg font-semibold">{template.name}</h2>
                 {template.code && <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">{template.code}</span>}
-                {template.category && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{template.category}</span>}
               </div>
               {template.description && <p className="mt-1 text-sm text-muted-foreground">{template.description}</p>}
               <p className="mt-1 text-xs text-muted-foreground">
@@ -462,7 +455,6 @@ export function ZoneTemplatesPage() {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [description, setDescription] = useState('');
-  const [category, setCategory] = useState('');
 
   const { data: templates, isLoading } = useQuery({
     queryKey: ['templates', 'zone'],
@@ -471,7 +463,7 @@ export function ZoneTemplatesPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; code?: string; description?: string; category?: string; type: string }) =>
+    mutationFn: (data: { name: string; code?: string; description?: string; type: string }) =>
       client.post('/templates', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'zone'] });
@@ -501,7 +493,6 @@ export function ZoneTemplatesPage() {
       name: name.trim(),
       code: code.trim() || undefined,
       description: description.trim() || undefined,
-      category: category.trim() || undefined,
       type: 'zone',
     });
   };
@@ -533,7 +524,7 @@ export function ZoneTemplatesPage() {
 
       {showForm && (
         <form onSubmit={handleSubmit} className="rounded-lg border border-border bg-background p-4 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-sm font-medium mb-1">Template Name *</label>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Office Tower Standard" className={inputClass} autoFocus />
@@ -541,10 +532,6 @@ export function ZoneTemplatesPage() {
             <div>
               <label className="block text-sm font-medium mb-1">Code</label>
               <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. ZT.OT.1" className={inputClass} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Category</label>
-              <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. Commercial, Residential" className={inputClass} />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Description</label>
@@ -582,7 +569,6 @@ export function ZoneTemplatesPage() {
                   <Layers className="h-4 w-4 flex-shrink-0 text-green-600" />
                   <span className="text-sm font-medium">{t.name}</span>
                   {t.code && <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">{t.code}</span>}
-                  {t.category && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{t.category}</span>}
                 </div>
                 {t.description && <p className="mt-1 text-sm text-muted-foreground">{t.description}</p>}
                 <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">

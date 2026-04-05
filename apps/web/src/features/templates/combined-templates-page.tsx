@@ -265,7 +265,7 @@ function EditorView({
 
   // ---- header editing ----
   const [editingHeader, setEditingHeader] = useState(false);
-  const [headerForm, setHeaderForm] = useState({ name: '', code: '', category: '', description: '' });
+  const [headerForm, setHeaderForm] = useState({ name: '', code: '', description: '' });
 
   const updateTemplateMutation = useMutation({
     mutationFn: (data: Record<string, any>) =>
@@ -351,7 +351,7 @@ function EditorView({
     updateTemplateMutation.mutate({
       name: headerForm.name.trim(),
       code: headerForm.code.trim() || undefined,
-      category: headerForm.category.trim() || undefined,
+
       description: headerForm.description.trim() || undefined,
     });
   };
@@ -361,7 +361,7 @@ function EditorView({
     setHeaderForm({
       name: template.name ?? '',
       code: template.code ?? '',
-      category: template.category ?? '',
+
       description: template.description ?? '',
     });
     setEditingHeader(true);
@@ -393,10 +393,6 @@ function EditorView({
               <input value={headerForm.code} onChange={(e) => setHeaderForm((p) => ({ ...p, code: e.target.value }))} className={inputClass} />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Category</label>
-              <input value={headerForm.category} onChange={(e) => setHeaderForm((p) => ({ ...p, category: e.target.value }))} className={inputClass} />
-            </div>
-            <div>
               <label className="block text-sm font-medium mb-1">Description</label>
               <input value={headerForm.description} onChange={(e) => setHeaderForm((p) => ({ ...p, description: e.target.value }))} className={inputClass} />
             </div>
@@ -416,7 +412,6 @@ function EditorView({
                 <Grid3x3 className="h-5 w-5 text-purple-600" />
                 <h2 className="text-lg font-semibold">{template.name}</h2>
                 {template.code && <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs text-purple-700">{template.code}</span>}
-                {template.category && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{template.category}</span>}
               </div>
               {template.description && <p className="mt-1 text-sm text-muted-foreground">{template.description}</p>}
               <p className="mt-1 text-xs text-muted-foreground">
@@ -531,7 +526,6 @@ export function CombinedTemplatesPage() {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [description, setDescription] = useState('');
-  const [category, setCategory] = useState('');
 
   const { data: templates, isLoading } = useQuery({
     queryKey: ['templates', 'combined'],
@@ -540,7 +534,7 @@ export function CombinedTemplatesPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; code?: string; description?: string; category?: string; type: string }) =>
+    mutationFn: (data: { name: string; code?: string; description?: string; type: string }) =>
       client.post('/templates', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'combined'] });
@@ -570,7 +564,6 @@ export function CombinedTemplatesPage() {
       name: name.trim(),
       code: code.trim() || undefined,
       description: description.trim() || undefined,
-      category: category.trim() || undefined,
       type: 'combined',
     });
   };
@@ -612,10 +605,6 @@ export function CombinedTemplatesPage() {
               <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. CT.SOB.1" className={inputClass} />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Category</label>
-              <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. BIM, MEP" className={inputClass} />
-            </div>
-            <div>
               <label className="block text-sm font-medium mb-1">Description</label>
               <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Brief description" className={inputClass} />
             </div>
@@ -651,7 +640,6 @@ export function CombinedTemplatesPage() {
                   <Grid3x3 className="h-4 w-4 flex-shrink-0 text-purple-600" />
                   <span className="text-sm font-medium">{t.name}</span>
                   {t.code && <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs text-purple-700">{t.code}</span>}
-                  {t.category && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{t.category}</span>}
                 </div>
                 {t.description && <p className="mt-1 text-sm text-muted-foreground">{t.description}</p>}
                 <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
