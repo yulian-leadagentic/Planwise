@@ -12,6 +12,7 @@ export function PhasesPage() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
+  const [code, setCode] = useState('');
 
   const { data, isLoading } = useQuery({
     queryKey: ['phases'],
@@ -20,13 +21,14 @@ export function PhasesPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: { name: string }) =>
+    mutationFn: (data: { name: string; code?: string }) =>
       client.post('/phases', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['phases'] });
       toast.success('Phase created');
       setShowForm(false);
       setName('');
+      setCode('');
     },
     onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create'),
   });
@@ -43,7 +45,7 @@ export function PhasesPage() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    createMutation.mutate({ name: name.trim() });
+    createMutation.mutate({ name: name.trim(), code: code.trim() || undefined });
   };
 
   const phases = data ?? [];
@@ -72,6 +74,10 @@ export function PhasesPage() {
               <label className="block text-sm font-medium mb-1">Phase Name *</label>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Design, Construction, Handover" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" autoFocus />
             </div>
+            <div className="w-32">
+              <label className="block text-sm font-medium mb-1">Phase Code</label>
+              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. DSN" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+            </div>
             <button type="submit" disabled={createMutation.isPending} className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
               {createMutation.isPending ? 'Creating...' : 'Create'}
             </button>
@@ -89,6 +95,7 @@ export function PhasesPage() {
           {phases.map((p: any, i: number) => (
             <div key={p.id} className={`flex items-center justify-between px-4 py-3 ${i < phases.length - 1 ? 'border-b border-border' : ''} hover:bg-muted/30`}>
               <span className="text-sm font-medium">{p.name}</span>
+              {p.code && <span className="ml-2 rounded-full bg-cyan-100 px-2 py-0.5 text-xs text-cyan-700">{p.code}</span>}
               <button onClick={() => { if (confirm(`Delete "${p.name}"?`)) deleteMutation.mutate(p.id); }} className="text-xs text-red-600 hover:underline">Delete</button>
             </div>
           ))}

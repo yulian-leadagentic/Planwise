@@ -12,6 +12,7 @@ export function ProjectTypesPage() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
+  const [code, setCode] = useState('');
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'project-types'],
@@ -20,13 +21,14 @@ export function ProjectTypesPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: { name: string }) =>
+    mutationFn: (data: { name: string; code?: string }) =>
       client.post('/admin/config/project-types', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'project-types'] });
       toast.success('Project type created');
       setShowForm(false);
       setName('');
+      setCode('');
     },
     onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create project type'),
   });
@@ -43,7 +45,7 @@ export function ProjectTypesPage() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    createMutation.mutate({ name: name.trim() });
+    createMutation.mutate({ name: name.trim(), code: code.trim() || undefined });
   };
 
   const types = data ?? [];
@@ -81,6 +83,15 @@ export function ProjectTypesPage() {
                 autoFocus
               />
             </div>
+            <div className="w-32">
+              <label className="block text-sm font-medium mb-1">Code</label>
+              <input
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="e.g. BIM"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
             <button
               type="submit"
               disabled={createMutation.isPending}
@@ -111,6 +122,7 @@ export function ProjectTypesPage() {
               className={`flex items-center justify-between px-4 py-3 ${i < types.length - 1 ? 'border-b border-border' : ''} hover:bg-muted/30`}
             >
               <span className="text-sm font-medium">{t.name}</span>
+              {t.code && <span className="ml-2 rounded-full bg-orange-100 px-2 py-0.5 text-xs text-orange-700">{t.code}</span>}
               <button
                 onClick={() => { if (confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id); }}
                 className="text-xs text-red-600 hover:underline"

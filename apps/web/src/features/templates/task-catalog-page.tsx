@@ -11,9 +11,7 @@ const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-
 const btnPrimary = 'flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
 const btnSecondary = 'rounded-md border border-border px-4 py-2 text-sm hover:bg-accent';
 
-const PRIORITY_OPTIONS = ['low', 'medium', 'high', 'critical'] as const;
-
-type SortField = 'code' | 'name' | 'defaultBudgetHours' | 'defaultBudgetAmount' | 'serviceType' | 'phase' | 'defaultPriority';
+type SortField = 'code' | 'name' | 'defaultBudgetHours' | 'defaultBudgetAmount' | 'phase';
 type SortDir = 'asc' | 'desc';
 
 const emptyTask = {
@@ -22,9 +20,7 @@ const emptyTask = {
   description: '',
   defaultBudgetHours: '',
   defaultBudgetAmount: '',
-  serviceTypeId: '',
   phaseId: '',
-  defaultPriority: 'medium' as string,
 };
 
 type TaskForm = typeof emptyTask;
@@ -57,20 +53,10 @@ function compareTasks(a: any, b: any, field: SortField, dir: SortDir): number {
       valA = Number(a[field]) || 0;
       valB = Number(b[field]) || 0;
       break;
-    case 'serviceType':
-      valA = (a.serviceType?.name ?? '').toLowerCase();
-      valB = (b.serviceType?.name ?? '').toLowerCase();
-      break;
     case 'phase':
       valA = (a.phase?.name ?? '').toLowerCase();
       valB = (b.phase?.name ?? '').toLowerCase();
       break;
-    case 'defaultPriority': {
-      const order: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
-      valA = order[a.defaultPriority ?? ''] ?? 0;
-      valB = order[b.defaultPriority ?? ''] ?? 0;
-      break;
-    }
   }
 
   if (valA < valB) return dir === 'asc' ? -1 : 1;
@@ -112,12 +98,6 @@ export function TaskCatalogPage() {
   });
 
   // ---- lookups ----
-  const { data: serviceTypes = [] } = useQuery({
-    queryKey: ['service-types'],
-    staleTime: 10 * 60 * 1000,
-    queryFn: () => client.get('/service-types').then((r) => r.data.data ?? r.data),
-  });
-
   const { data: phases = [] } = useQuery({
     queryKey: ['phases'],
     staleTime: 10 * 60 * 1000,
@@ -205,9 +185,7 @@ export function TaskCatalogPage() {
     description: form.description.trim() || undefined,
     defaultBudgetHours: form.defaultBudgetHours ? Number(form.defaultBudgetHours) : undefined,
     defaultBudgetAmount: form.defaultBudgetAmount ? Number(form.defaultBudgetAmount) : undefined,
-    serviceTypeId: form.serviceTypeId ? Number(form.serviceTypeId) : undefined,
     phaseId: form.phaseId ? Number(form.phaseId) : undefined,
-    defaultPriority: form.defaultPriority || undefined,
   });
 
   const handleAddTask = (e: React.FormEvent) => {
@@ -230,9 +208,7 @@ export function TaskCatalogPage() {
       description: task.description ?? '',
       defaultBudgetHours: task.defaultBudgetHours != null ? String(task.defaultBudgetHours) : '',
       defaultBudgetAmount: task.defaultBudgetAmount != null ? String(task.defaultBudgetAmount) : '',
-      serviceTypeId: task.serviceType?.id != null ? String(task.serviceType.id) : (task.serviceTypeId != null ? String(task.serviceTypeId) : ''),
       phaseId: task.phase?.id != null ? String(task.phase.id) : (task.phaseId != null ? String(task.phaseId) : ''),
-      defaultPriority: task.defaultPriority ?? 'medium',
     });
   };
 
@@ -271,25 +247,10 @@ export function TaskCatalogPage() {
         <input type="number" step="any" min="0" value={form.defaultBudgetAmount} onChange={(e) => setForm((p) => ({ ...p, defaultBudgetAmount: e.target.value }))} placeholder="0" className={`${inputClass} text-right`} />
       </td>
       <td className="px-3 py-2">
-        <select value={form.serviceTypeId} onChange={(e) => setForm((p) => ({ ...p, serviceTypeId: e.target.value }))} className={inputClass}>
-          <option value="">-- none --</option>
-          {(serviceTypes as any[]).map((st: any) => (
-            <option key={st.id} value={st.id}>{st.name}</option>
-          ))}
-        </select>
-      </td>
-      <td className="px-3 py-2">
         <select value={form.phaseId} onChange={(e) => setForm((p) => ({ ...p, phaseId: e.target.value }))} className={inputClass}>
           <option value="">-- none --</option>
           {(phases as any[]).map((ph: any) => (
-            <option key={ph.id} value={ph.id}>{ph.name}</option>
-          ))}
-        </select>
-      </td>
-      <td className="px-3 py-2">
-        <select value={form.defaultPriority} onChange={(e) => setForm((p) => ({ ...p, defaultPriority: e.target.value }))} className={inputClass}>
-          {PRIORITY_OPTIONS.map((p) => (
-            <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
+            <option key={ph.id} value={ph.id}>{ph.name}{ph.code ? ` (${ph.code})` : ''}</option>
           ))}
         </select>
       </td>
@@ -363,14 +324,8 @@ export function TaskCatalogPage() {
                 <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('defaultBudgetAmount')}>
                   Amount{sortIcon('defaultBudgetAmount')}
                 </th>
-                <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('serviceType')}>
-                  Service Type{sortIcon('serviceType')}
-                </th>
                 <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('phase')}>
-                  Phase{sortIcon('phase')}
-                </th>
-                <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('defaultPriority')}>
-                  Priority{sortIcon('defaultPriority')}
+                  Service Phase{sortIcon('phase')}
                 </th>
                 <th className="px-3 py-2 text-center font-medium">Actions</th>
               </tr>
@@ -391,7 +346,7 @@ export function TaskCatalogPage() {
               {/* Empty state */}
               {filteredTasks.length === 0 && !showAddTask && (
                 <tr>
-                  <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
+                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
                     <BookOpen className="mx-auto h-10 w-10 text-muted-foreground/50" />
                     <p className="mt-2">
                       {search ? 'No tasks match your search.' : 'No tasks in the catalog yet. Click "Add Task" to get started.'}
@@ -423,27 +378,7 @@ export function TaskCatalogPage() {
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetHours != null ? Number(task.defaultBudgetHours).toFixed(1) : '-'}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
-                    <td className="px-3 py-2">
-                      {task.serviceType ? (
-                        <span className="inline-flex items-center gap-1">
-                          {task.serviceType.color && <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: task.serviceType.color }} />}
-                          {task.serviceType.name}
-                        </span>
-                      ) : '-'}
-                    </td>
-                    <td className="px-3 py-2">{task.phase?.name ?? '-'}</td>
-                    <td className="px-3 py-2">
-                      {task.defaultPriority ? (
-                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
-                          task.defaultPriority === 'critical' ? 'bg-red-100 text-red-700' :
-                          task.defaultPriority === 'high' ? 'bg-orange-100 text-orange-700' :
-                          task.defaultPriority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                          'bg-green-100 text-green-700'
-                        }`}>
-                          {task.defaultPriority.charAt(0).toUpperCase() + task.defaultPriority.slice(1)}
-                        </span>
-                      ) : '-'}
-                    </td>
+                    <td className="px-3 py-2">{task.phase?.name ?? '-'}{task.phase?.code ? ` (${task.phase.code})` : ''}</td>
                     <td className="px-3 py-2 text-center">
                       <div className="flex items-center justify-center gap-1">
                         <button
@@ -473,8 +408,6 @@ export function TaskCatalogPage() {
                   <td className="px-3 py-2 text-right">Totals</td>
                   <td className="px-3 py-2 text-right tabular-nums">{totals.hours.toFixed(1)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{totals.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="px-3 py-2" />
-                  <td className="px-3 py-2" />
                   <td className="px-3 py-2" />
                   <td className="px-3 py-2" />
                 </tr>

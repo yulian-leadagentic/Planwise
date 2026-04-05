@@ -262,6 +262,7 @@ model RoleModule {
 model ProjectType {
   id        Int      @id @default(autoincrement())
   name      String   @unique
+  code      String?  @db.VarChar(20)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -776,6 +777,7 @@ model ZoneServiceType {
 model Phase {
   id        Int      @id @default(autoincrement())
   name      String   @unique @db.VarChar(100)
+  code      String?  @db.VarChar(20)
   sortOrder Int      @default(0) @map("sort_order")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

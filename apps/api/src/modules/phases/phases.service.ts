@@ -33,6 +33,7 @@ export class PhasesService {
     return this.prisma.phase.create({
       data: {
         name: dto.name,
+        code: dto.code ?? null,
         sortOrder: dto.sortOrder ?? 0,
       },
     });

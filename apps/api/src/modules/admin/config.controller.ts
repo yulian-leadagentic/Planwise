@@ -37,8 +37,8 @@ export class ConfigController {
   @Post('project-types')
   @RequirePermissions({ module: 'admin', action: 'write' })
   @ApiOperation({ summary: 'Create project type' })
-  async createProjectType(@Body() body: { name: string }) {
-    return this.prisma.projectType.create({ data: { name: body.name } });
+  async createProjectType(@Body() body: { name: string; code?: string }) {
+    return this.prisma.projectType.create({ data: { name: body.name, code: body.code || null } });
   }
 
   @Patch('project-types/:id')
@@ -46,11 +46,11 @@ export class ConfigController {
   @ApiOperation({ summary: 'Update project type' })
   async updateProjectType(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { name: string },
+    @Body() body: { name?: string; code?: string },
   ) {
     return this.prisma.projectType.update({
       where: { id },
-      data: { name: body.name },
+      data: { name: body.name, code: body.code },
     });
   }
 
