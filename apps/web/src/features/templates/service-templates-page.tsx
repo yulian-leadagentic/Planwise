@@ -11,8 +11,6 @@ const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-
 const btnPrimary = 'flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
 const btnSecondary = 'rounded-md border border-border px-4 py-2 text-sm hover:bg-accent';
 
-const PRIORITY_OPTIONS = ['low', 'medium', 'high', 'critical'] as const;
-
 // ---------------------------------------------------------------------------
 // Catalog Picker Modal
 // ---------------------------------------------------------------------------
@@ -30,8 +28,9 @@ function CatalogPickerModal({
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [adding, setAdding] = useState(false);
+  const [sortField, setSortField] = useState<'code' | 'name' | 'hours' | 'amount' | 'phase'>('name');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
-  // Fetch all task_list templates to find the catalog
   const { data: allTemplates = [] } = useQuery({
     queryKey: ['templates', 'task_list'],
     staleTime: 5 * 60 * 1000,
@@ -40,7 +39,6 @@ function CatalogPickerModal({
 
   const catalogEntry = (allTemplates as any[]).find((t: any) => t.code === '__TASK_CATALOG__');
 
-  // Fetch catalog detail to get its tasks
   const { data: catalog, isLoading: catalogLoading } = useQuery({
     queryKey: ['templates', catalogEntry?.id],
     enabled: !!catalogEntry?.id,
@@ -50,20 +48,41 @@ function CatalogPickerModal({
   const catalogTasks: any[] = catalog?.templateTasks ?? [];
 
   const filteredTasks = useMemo(() => {
-    if (!search.trim()) return catalogTasks;
-    const q = search.toLowerCase();
-    return catalogTasks.filter(
-      (t: any) =>
-        (t.name && t.name.toLowerCase().includes(q)) ||
-        (t.code && t.code.toLowerCase().includes(q)),
-    );
-  }, [catalogTasks, search]);
+    let result = catalogTasks;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(
+        (t: any) =>
+          (t.name && t.name.toLowerCase().includes(q)) ||
+          (t.code && t.code.toLowerCase().includes(q)),
+      );
+    }
+    return [...result].sort((a, b) => {
+      let valA: any, valB: any;
+      switch (sortField) {
+        case 'code': valA = (a.code ?? '').toLowerCase(); valB = (b.code ?? '').toLowerCase(); break;
+        case 'name': valA = (a.name ?? '').toLowerCase(); valB = (b.name ?? '').toLowerCase(); break;
+        case 'hours': valA = Number(a.defaultBudgetHours) || 0; valB = Number(b.defaultBudgetHours) || 0; break;
+        case 'amount': valA = Number(a.defaultBudgetAmount) || 0; valB = Number(b.defaultBudgetAmount) || 0; break;
+        case 'phase': valA = (a.phase?.name ?? '').toLowerCase(); valB = (b.phase?.name ?? '').toLowerCase(); break;
+      }
+      if (valA < valB) return sortDir === 'asc' ? -1 : 1;
+      if (valA > valB) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [catalogTasks, search, sortField, sortDir]);
+
+  const handleSort = (field: typeof sortField) => {
+    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortField(field); setSortDir('asc'); }
+  };
+
+  const sortIcon = (field: typeof sortField) => sortField === field ? (sortDir === 'asc' ? ' \u25B2' : ' \u25BC') : '';
 
   const toggleTask = (taskId: number) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(taskId)) next.delete(taskId);
-      else next.add(taskId);
+      next.has(taskId) ? next.delete(taskId) : next.add(taskId);
       return next;
     });
   };
@@ -71,7 +90,6 @@ function CatalogPickerModal({
   const handleAddSelected = async () => {
     const tasksToAdd = catalogTasks.filter((t: any) => selected.has(t.id));
     if (tasksToAdd.length === 0) return;
-
     setAdding(true);
     try {
       for (const ct of tasksToAdd) {
@@ -80,9 +98,7 @@ function CatalogPickerModal({
           name: ct.name,
           defaultBudgetHours: ct.defaultBudgetHours,
           defaultBudgetAmount: ct.defaultBudgetAmount,
-          serviceTypeId: ct.serviceTypeId,
           phaseId: ct.phaseId,
-          defaultPriority: ct.defaultPriority,
         });
       }
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
@@ -99,7 +115,7 @@ function CatalogPickerModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
-        className="relative mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-border bg-background shadow-xl"
+        className="relative mx-4 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-lg border border-border bg-background shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -124,12 +140,12 @@ function CatalogPickerModal({
           </div>
         </div>
 
-        {/* Task list */}
-        <div className="flex-1 overflow-y-auto px-5 py-3">
+        {/* Task table */}
+        <div className="flex-1 overflow-y-auto">
           {catalogLoading || !catalogEntry ? (
             <div className="py-8 text-center text-sm text-muted-foreground">
               {!catalogEntry && !catalogLoading
-                ? 'No task catalog found. Create a template with code "__TASK_CATALOG__" first.'
+                ? 'No task catalog found. Create tasks in the Task Catalog first.'
                 : 'Loading catalog...'}
             </div>
           ) : filteredTasks.length === 0 ? (
@@ -137,62 +153,64 @@ function CatalogPickerModal({
               {search ? 'No tasks match your search.' : 'The catalog has no tasks yet.'}
             </div>
           ) : (
-            <div className="space-y-1">
-              {filteredTasks.map((task: any) => {
-                const alreadyExists = task.code ? existingTaskCodes.has(task.code) : false;
-                const isSelected = selected.has(task.id);
-                return (
-                  <label
-                    key={task.id}
-                    className={`flex cursor-pointer items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors ${
-                      isSelected ? 'bg-brand-50 ring-1 ring-brand-200' : 'hover:bg-muted/50'
-                    } ${alreadyExists ? 'opacity-50' : ''}`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      disabled={alreadyExists}
-                      onChange={() => toggleTask(task.id)}
-                      className="h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
-                    />
-                    <span className="min-w-[5rem] font-mono text-xs text-muted-foreground">
-                      {task.code || '-'}
-                    </span>
-                    <span className="flex-1 font-medium">{task.name}</span>
-                    <span className="tabular-nums text-muted-foreground">
-                      {task.defaultBudgetHours != null ? `${Number(task.defaultBudgetHours).toFixed(0)}h` : ''}
-                    </span>
-                    <span className="min-w-[5rem] text-right tabular-nums text-muted-foreground">
-                      {task.defaultBudgetAmount != null
-                        ? `\u20AA${Number(task.defaultBudgetAmount).toLocaleString()}`
-                        : ''}
-                    </span>
-                    {alreadyExists && (
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                        already added
-                      </span>
-                    )}
-                  </label>
-                );
-              })}
-            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/50 text-xs">
+                  <th className="px-3 py-2 text-left font-medium w-10"></th>
+                  <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('code')}>Code{sortIcon('code')}</th>
+                  <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('name')}>Name{sortIcon('name')}</th>
+                  <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
+                  <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
+                  <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('phase')}>Service Phase{sortIcon('phase')}</th>
+                  <th className="px-3 py-2 text-left font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredTasks.map((task: any) => {
+                  const alreadyExists = task.code ? existingTaskCodes.has(task.code) : false;
+                  const isSelected = selected.has(task.id);
+                  return (
+                    <tr
+                      key={task.id}
+                      className={`border-b border-border last:border-0 cursor-pointer ${isSelected ? 'bg-brand-50' : 'hover:bg-muted/30'} ${alreadyExists ? 'opacity-50' : ''}`}
+                      onClick={() => !alreadyExists && toggleTask(task.id)}
+                    >
+                      <td className="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          disabled={alreadyExists}
+                          onChange={() => toggleTask(task.id)}
+                          className="h-4 w-4 rounded border-gray-300"
+                        />
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{task.code || '-'}</td>
+                      <td className="px-3 py-2 font-medium">{task.name}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetHours != null ? Number(task.defaultBudgetHours).toFixed(0) : '-'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString() : '-'}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{task.phase?.name ?? '-'}</td>
+                      <td className="px-3 py-2">
+                        {alreadyExists && (
+                          <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">already added</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-4">
-          <button onClick={onClose} className={btnSecondary}>
-            Cancel
-          </button>
-          <button
-            onClick={handleAddSelected}
-            disabled={selected.size === 0 || adding}
-            className={btnPrimary}
-          >
-            {adding
-              ? 'Adding...'
-              : `Add ${selected.size} Selected Task${selected.size !== 1 ? 's' : ''}`}
-          </button>
+        <div className="flex items-center justify-between border-t border-border px-5 py-4">
+          <span className="text-xs text-muted-foreground">{filteredTasks.length} tasks{search ? ` matching "${search}"` : ''}</span>
+          <div className="flex gap-3">
+            <button onClick={onClose} className={btnSecondary}>Cancel</button>
+            <button onClick={handleAddSelected} disabled={selected.size === 0 || adding} className={btnPrimary}>
+              {adding ? 'Adding...' : `Add ${selected.size} Selected Task${selected.size !== 1 ? 's' : ''}`}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -213,17 +231,9 @@ function EditorView({
   const queryClient = useQueryClient();
   const [showCatalogPicker, setShowCatalogPicker] = useState(false);
 
-  // ---- fetch template detail ----
   const { data: template, isLoading } = useQuery({
     queryKey: ['templates', templateId],
     queryFn: () => client.get(`/templates/${templateId}`).then((r) => r.data.data ?? r.data),
-  });
-
-  // ---- lookups ----
-  const { data: serviceTypes = [] } = useQuery({
-    queryKey: ['service-types'],
-    staleTime: 10 * 60 * 1000,
-    queryFn: () => client.get('/service-types').then((r) => r.data.data ?? r.data),
   });
 
   const { data: phases = [] } = useQuery({
@@ -234,7 +244,7 @@ function EditorView({
 
   // ---- header editing ----
   const [editingHeader, setEditingHeader] = useState(false);
-  const [headerForm, setHeaderForm] = useState({ name: '', code: '', category: '', description: '' });
+  const [headerForm, setHeaderForm] = useState({ name: '', code: '', description: '' });
 
   const updateTemplateMutation = useMutation({
     mutationFn: (data: Record<string, any>) =>
@@ -250,15 +260,7 @@ function EditorView({
 
   // ---- add task form ----
   const [showAddTask, setShowAddTask] = useState(false);
-  const emptyTask = {
-    code: '',
-    name: '',
-    defaultBudgetHours: '',
-    defaultBudgetAmount: '',
-    serviceTypeId: '',
-    phaseId: '',
-    defaultPriority: 'medium' as string,
-  };
+  const emptyTask = { code: '', name: '', defaultBudgetHours: '', defaultBudgetAmount: '', phaseId: '' };
   const [newTask, setNewTask] = useState(emptyTask);
 
   const addTaskMutation = useMutation({
@@ -297,7 +299,6 @@ function EditorView({
     return { hours, amount };
   }, [tasks]);
 
-  // ---- existing task codes for duplicate detection in picker ----
   const existingTaskCodes = useMemo(
     () => new Set(tasks.map((t: any) => t.code).filter(Boolean)),
     [tasks],
@@ -312,9 +313,7 @@ function EditorView({
       name: newTask.name.trim(),
       defaultBudgetHours: newTask.defaultBudgetHours ? Number(newTask.defaultBudgetHours) : undefined,
       defaultBudgetAmount: newTask.defaultBudgetAmount ? Number(newTask.defaultBudgetAmount) : undefined,
-      serviceTypeId: newTask.serviceTypeId ? Number(newTask.serviceTypeId) : undefined,
       phaseId: newTask.phaseId ? Number(newTask.phaseId) : undefined,
-      defaultPriority: newTask.defaultPriority || undefined,
     });
   };
 
@@ -324,7 +323,6 @@ function EditorView({
     updateTemplateMutation.mutate({
       name: headerForm.name.trim(),
       code: headerForm.code.trim() || undefined,
-      category: headerForm.category.trim() || undefined,
       description: headerForm.description.trim() || undefined,
     });
   };
@@ -334,13 +332,12 @@ function EditorView({
     setHeaderForm({
       name: template.name ?? '',
       code: template.code ?? '',
-      category: template.category ?? '',
       description: template.description ?? '',
     });
     setEditingHeader(true);
   };
 
-  if (isLoading) return <TableSkeleton rows={5} cols={7} />;
+  if (isLoading) return <TableSkeleton rows={5} cols={5} />;
   if (!template) return <div className="p-8 text-center text-muted-foreground">Template not found.</div>;
 
   return (
@@ -353,7 +350,7 @@ function EditorView({
       {/* Template header */}
       {editingHeader ? (
         <form onSubmit={handleSaveHeader} className="rounded-lg border border-border bg-background p-4 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-sm font-medium mb-1">Name *</label>
               <input value={headerForm.name} onChange={(e) => setHeaderForm((p) => ({ ...p, name: e.target.value }))} className={inputClass} autoFocus />
@@ -361,10 +358,6 @@ function EditorView({
             <div>
               <label className="block text-sm font-medium mb-1">Code</label>
               <input value={headerForm.code} onChange={(e) => setHeaderForm((p) => ({ ...p, code: e.target.value }))} className={inputClass} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Category</label>
-              <input value={headerForm.category} onChange={(e) => setHeaderForm((p) => ({ ...p, category: e.target.value }))} className={inputClass} />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Description</label>
@@ -386,7 +379,6 @@ function EditorView({
                 <Copy className="h-5 w-5 text-brand-600" />
                 <h2 className="text-lg font-semibold">{template.name}</h2>
                 {template.code && <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">{template.code}</span>}
-                {template.category && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{template.category}</span>}
               </div>
               {template.description && <p className="mt-1 text-sm text-muted-foreground">{template.description}</p>}
               <p className="mt-1 text-xs text-muted-foreground">{tasks.length} task{tasks.length !== 1 ? 's' : ''} &middot; Used {template.usageCount ?? 0} time{(template.usageCount ?? 0) !== 1 ? 's' : ''}</p>
@@ -420,9 +412,7 @@ function EditorView({
                 <th className="px-3 py-2 text-left font-medium">Name</th>
                 <th className="px-3 py-2 text-right font-medium">Hours</th>
                 <th className="px-3 py-2 text-right font-medium">Amount</th>
-                <th className="px-3 py-2 text-left font-medium">Service Type</th>
-                <th className="px-3 py-2 text-left font-medium">Phase</th>
-                <th className="px-3 py-2 text-left font-medium">Priority</th>
+                <th className="px-3 py-2 text-left font-medium">Service Phase</th>
                 <th className="px-3 py-2 text-center font-medium">Actions</th>
               </tr>
             </thead>
@@ -443,25 +433,10 @@ function EditorView({
                     <input type="number" step="any" min="0" value={newTask.defaultBudgetAmount} onChange={(e) => setNewTask((p) => ({ ...p, defaultBudgetAmount: e.target.value }))} placeholder="0" className={`${inputClass} text-right`} />
                   </td>
                   <td className="px-3 py-2">
-                    <select value={newTask.serviceTypeId} onChange={(e) => setNewTask((p) => ({ ...p, serviceTypeId: e.target.value }))} className={inputClass}>
-                      <option value="">-- none --</option>
-                      {(serviceTypes as any[]).map((st: any) => (
-                        <option key={st.id} value={st.id}>{st.name}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-3 py-2">
                     <select value={newTask.phaseId} onChange={(e) => setNewTask((p) => ({ ...p, phaseId: e.target.value }))} className={inputClass}>
                       <option value="">-- none --</option>
                       {(phases as any[]).map((ph: any) => (
-                        <option key={ph.id} value={ph.id}>{ph.name}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-3 py-2">
-                    <select value={newTask.defaultPriority} onChange={(e) => setNewTask((p) => ({ ...p, defaultPriority: e.target.value }))} className={inputClass}>
-                      {PRIORITY_OPTIONS.map((p) => (
-                        <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
+                        <option key={ph.id} value={ph.id}>{ph.name}{ph.code ? ` (${ph.code})` : ''}</option>
                       ))}
                     </select>
                   </td>
@@ -479,7 +454,7 @@ function EditorView({
               {/* Existing tasks */}
               {tasks.length === 0 && !showAddTask && (
                 <tr>
-                  <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
+                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
                     No tasks yet. Click "Add Task" or "Pick from Catalog" to get started.
                   </td>
                 </tr>
@@ -491,27 +466,7 @@ function EditorView({
                   <td className="px-3 py-2 font-medium">{task.name}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetHours != null ? Number(task.defaultBudgetHours).toFixed(1) : '-'}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
-                  <td className="px-3 py-2">
-                    {task.serviceType ? (
-                      <span className="inline-flex items-center gap-1">
-                        {task.serviceType.color && <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: task.serviceType.color }} />}
-                        {task.serviceType.name}
-                      </span>
-                    ) : '-'}
-                  </td>
-                  <td className="px-3 py-2">{task.phase?.name ?? '-'}</td>
-                  <td className="px-3 py-2">
-                    {task.defaultPriority ? (
-                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
-                        task.defaultPriority === 'critical' ? 'bg-red-100 text-red-700' :
-                        task.defaultPriority === 'high' ? 'bg-orange-100 text-orange-700' :
-                        task.defaultPriority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                        'bg-green-100 text-green-700'
-                      }`}>
-                        {task.defaultPriority.charAt(0).toUpperCase() + task.defaultPriority.slice(1)}
-                      </span>
-                    ) : '-'}
-                  </td>
+                  <td className="px-3 py-2">{task.phase?.name ?? '-'}{task.phase?.code ? ` (${task.phase.code})` : ''}</td>
                   <td className="px-3 py-2 text-center">
                     <button
                       onClick={() => { if (confirm(`Delete task "${task.name}"?`)) deleteTaskMutation.mutate(task.id); }}
@@ -530,8 +485,6 @@ function EditorView({
                   <td className="px-3 py-2 text-right">Totals</td>
                   <td className="px-3 py-2 text-right tabular-nums">{totals.hours.toFixed(1)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{totals.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="px-3 py-2" />
-                  <td className="px-3 py-2" />
                   <td className="px-3 py-2" />
                   <td className="px-3 py-2" />
                 </tr>
@@ -566,18 +519,15 @@ export function ServiceTemplatesPage() {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [description, setDescription] = useState('');
-  const [category, setCategory] = useState('');
 
-  // ---- list query ----
   const { data: templates, isLoading } = useQuery({
     queryKey: ['templates', 'task_list'],
     staleTime: 5 * 60 * 1000,
     queryFn: () => client.get('/templates?type=task_list').then((r) => r.data.data ?? r.data),
   });
 
-  // ---- create ----
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; code?: string; description?: string; category?: string; type: string }) =>
+    mutationFn: (data: { name: string; code?: string; description?: string; type: string }) =>
       client.post('/templates', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
@@ -586,12 +536,10 @@ export function ServiceTemplatesPage() {
       setName('');
       setCode('');
       setDescription('');
-      setCategory('');
     },
     onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create'),
   });
 
-  // ---- delete ----
   const deleteMutation = useMutation({
     mutationFn: (id: number) => client.delete(`/templates/${id}`).then((r) => r.data),
     onSuccess: () => {
@@ -608,18 +556,14 @@ export function ServiceTemplatesPage() {
       name: name.trim(),
       code: code.trim() || undefined,
       description: description.trim() || undefined,
-      category: category.trim() || undefined,
       type: 'task_list',
     });
   };
 
-  // ---- Editor View ----
   if (selectedTemplateId !== null) {
     return <EditorView templateId={selectedTemplateId} onBack={() => setSelectedTemplateId(null)} />;
   }
 
-  // ---- List View ----
-  // Filter out the task catalog entry
   const templateList = ((templates ?? []) as any[]).filter((t: any) => t.code !== '__TASK_CATALOG__');
 
   return (
@@ -641,7 +585,7 @@ export function ServiceTemplatesPage() {
 
       {showForm && (
         <form onSubmit={handleSubmit} className="rounded-lg border border-border bg-background p-4 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-sm font-medium mb-1">Template Name *</label>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. BIM Coordination Standard" className={inputClass} autoFocus />
@@ -649,10 +593,6 @@ export function ServiceTemplatesPage() {
             <div>
               <label className="block text-sm font-medium mb-1">Code</label>
               <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. BC.S.1" className={inputClass} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Category</label>
-              <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. BIM, MEP" className={inputClass} />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Description</label>
@@ -669,12 +609,12 @@ export function ServiceTemplatesPage() {
       )}
 
       {isLoading ? (
-        <TableSkeleton rows={3} cols={4} />
+        <TableSkeleton rows={3} cols={3} />
       ) : templateList.length === 0 ? (
         <div className="rounded-lg border border-border bg-background p-8 text-center">
           <Copy className="mx-auto h-12 w-12 text-muted-foreground" />
           <h3 className="mt-3 text-sm font-medium">No service templates</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Create a service template to group tasks from the catalog for a service.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Create a service template to group tasks from the catalog.</p>
           <button onClick={() => setShowForm(true)} className="mt-4 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">Create Service Template</button>
         </div>
       ) : (
@@ -690,7 +630,6 @@ export function ServiceTemplatesPage() {
                   <Copy className="h-4 w-4 flex-shrink-0 text-brand-600" />
                   <span className="text-sm font-medium">{t.name}</span>
                   {t.code && <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">{t.code}</span>}
-                  {t.category && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{t.category}</span>}
                 </div>
                 {t.description && <p className="mt-1 text-sm text-muted-foreground">{t.description}</p>}
                 <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
