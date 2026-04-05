@@ -1,12 +1,8 @@
 FROM node:20-alpine AS build
 RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/web/package.json apps/web/
-COPY apps/api/package.json apps/api/
-COPY packages/shared/package.json packages/shared/
-RUN pnpm install --no-frozen-lockfile --shamefully-hoist
 COPY . .
+RUN pnpm install --no-frozen-lockfile --shamefully-hoist
 ARG CACHEBUST=1
 RUN echo "Build: $CACHEBUST" && cd apps/web && pnpm exec vite build
 
