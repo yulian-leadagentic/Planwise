@@ -287,12 +287,15 @@ function EditorView({
     queryFn: () => client.get(`/templates/${templateId}`).then((r) => r.data.data ?? r.data),
   });
 
-  // ---- fetch task_list templates for linking ----
-  const { data: taskTemplates = [] } = useQuery({
+  // ---- fetch service templates for linking (exclude task catalog) ----
+  const { data: rawTaskTemplates = [] } = useQuery({
     queryKey: ['templates', 'task_list'],
     staleTime: 10 * 60 * 1000,
     queryFn: () => client.get('/templates?type=task_list').then((r) => r.data.data ?? r.data),
   });
+  const taskTemplates = Array.isArray(rawTaskTemplates)
+    ? rawTaskTemplates.filter((t: any) => t.code !== '__TASK_CATALOG__')
+    : [];
 
   // ---- header editing ----
   const [editingHeader, setEditingHeader] = useState(false);

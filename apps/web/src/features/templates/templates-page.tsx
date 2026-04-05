@@ -1,9 +1,8 @@
 import { Link } from 'react-router-dom';
 import {
+  BookOpen,
   Copy,
   Layers,
-  Grid3x3,
-  Tag,
   ListChecks,
   FolderKanban,
   Users,
@@ -12,32 +11,25 @@ import { PageHeader } from '@/components/shared/page-header';
 
 const templateCards = [
   {
-    title: 'Task Templates',
-    description: 'Reusable lists of tasks to apply to zones',
-    icon: Copy,
-    href: '/templates/service',
+    title: 'Task Catalog',
+    description: 'Standalone task library — all reusable task definitions',
+    icon: BookOpen,
+    href: '/templates/task-catalog',
     color: 'bg-blue-100 text-blue-700',
   },
   {
+    title: 'Service Templates',
+    description: 'Groups of tasks from the catalog assigned to a service',
+    icon: Copy,
+    href: '/templates/service',
+    color: 'bg-amber-100 text-amber-700',
+  },
+  {
     title: 'Zone Templates',
-    description: 'Reusable zone structures for projects',
+    description: 'Zone hierarchy with services and tasks assigned',
     icon: Layers,
     href: '/templates/zone',
     color: 'bg-green-100 text-green-700',
-  },
-  {
-    title: 'Combined Templates',
-    description: 'Zone structures with services pre-assigned',
-    icon: Grid3x3,
-    href: '/templates/combined',
-    color: 'bg-purple-100 text-purple-700',
-  },
-  {
-    title: 'Service Types',
-    description: 'Manage service types: BIM, MEP, Structural',
-    icon: Tag,
-    href: '/templates/categories',
-    color: 'bg-amber-100 text-amber-700',
   },
   {
     title: 'Service Phases',
@@ -65,7 +57,7 @@ const templateCards = [
 export function TemplatesPage() {
   return (
     <div className="space-y-6">
-      <PageHeader title="Templates" description="Manage templates, categories, phases, and project types" />
+      <PageHeader title="Templates" description="Manage task catalog, service templates, zone templates, and configurations" />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {templateCards.map((card) => (
