@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft, Trash2, Copy } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Copy, Search, X, BookOpen } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
@@ -12,6 +12,192 @@ const btnPrimary = 'flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 te
 const btnSecondary = 'rounded-md border border-border px-4 py-2 text-sm hover:bg-accent';
 
 const PRIORITY_OPTIONS = ['low', 'medium', 'high', 'critical'] as const;
+
+// ---------------------------------------------------------------------------
+// Catalog Picker Modal
+// ---------------------------------------------------------------------------
+
+function CatalogPickerModal({
+  templateId,
+  existingTaskCodes,
+  onClose,
+}: {
+  templateId: number;
+  existingTaskCodes: Set<string>;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [adding, setAdding] = useState(false);
+
+  // Fetch all task_list templates to find the catalog
+  const { data: allTemplates = [] } = useQuery({
+    queryKey: ['templates', 'task_list'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/templates?type=task_list').then((r) => r.data.data ?? r.data),
+  });
+
+  const catalogEntry = (allTemplates as any[]).find((t: any) => t.code === '__TASK_CATALOG__');
+
+  // Fetch catalog detail to get its tasks
+  const { data: catalog, isLoading: catalogLoading } = useQuery({
+    queryKey: ['templates', catalogEntry?.id],
+    enabled: !!catalogEntry?.id,
+    queryFn: () => client.get(`/templates/${catalogEntry.id}`).then((r) => r.data.data ?? r.data),
+  });
+
+  const catalogTasks: any[] = catalog?.templateTasks ?? [];
+
+  const filteredTasks = useMemo(() => {
+    if (!search.trim()) return catalogTasks;
+    const q = search.toLowerCase();
+    return catalogTasks.filter(
+      (t: any) =>
+        (t.name && t.name.toLowerCase().includes(q)) ||
+        (t.code && t.code.toLowerCase().includes(q)),
+    );
+  }, [catalogTasks, search]);
+
+  const toggleTask = (taskId: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  };
+
+  const handleAddSelected = async () => {
+    const tasksToAdd = catalogTasks.filter((t: any) => selected.has(t.id));
+    if (tasksToAdd.length === 0) return;
+
+    setAdding(true);
+    try {
+      for (const ct of tasksToAdd) {
+        await client.post(`/templates/${templateId}/tasks`, {
+          code: ct.code,
+          name: ct.name,
+          defaultBudgetHours: ct.defaultBudgetHours,
+          defaultBudgetAmount: ct.defaultBudgetAmount,
+          serviceTypeId: ct.serviceTypeId,
+          phaseId: ct.phaseId,
+          defaultPriority: ct.defaultPriority,
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
+      queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
+      toast.success(`Added ${tasksToAdd.length} task${tasksToAdd.length !== 1 ? 's' : ''}`);
+      onClose();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error?.message || 'Failed to add tasks');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div
+        className="relative mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-border bg-background shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <h2 className="text-lg font-semibold">Pick Tasks from Catalog</h2>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Search */}
+        <div className="border-b border-border px-5 py-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search tasks by name or code..."
+              className={`${inputClass} pl-9`}
+              autoFocus
+            />
+          </div>
+        </div>
+
+        {/* Task list */}
+        <div className="flex-1 overflow-y-auto px-5 py-3">
+          {catalogLoading || !catalogEntry ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              {!catalogEntry && !catalogLoading
+                ? 'No task catalog found. Create a template with code "__TASK_CATALOG__" first.'
+                : 'Loading catalog...'}
+            </div>
+          ) : filteredTasks.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              {search ? 'No tasks match your search.' : 'The catalog has no tasks yet.'}
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {filteredTasks.map((task: any) => {
+                const alreadyExists = task.code ? existingTaskCodes.has(task.code) : false;
+                const isSelected = selected.has(task.id);
+                return (
+                  <label
+                    key={task.id}
+                    className={`flex cursor-pointer items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors ${
+                      isSelected ? 'bg-brand-50 ring-1 ring-brand-200' : 'hover:bg-muted/50'
+                    } ${alreadyExists ? 'opacity-50' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      disabled={alreadyExists}
+                      onChange={() => toggleTask(task.id)}
+                      className="h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+                    />
+                    <span className="min-w-[5rem] font-mono text-xs text-muted-foreground">
+                      {task.code || '-'}
+                    </span>
+                    <span className="flex-1 font-medium">{task.name}</span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {task.defaultBudgetHours != null ? `${Number(task.defaultBudgetHours).toFixed(0)}h` : ''}
+                    </span>
+                    <span className="min-w-[5rem] text-right tabular-nums text-muted-foreground">
+                      {task.defaultBudgetAmount != null
+                        ? `\u20AA${Number(task.defaultBudgetAmount).toLocaleString()}`
+                        : ''}
+                    </span>
+                    {alreadyExists && (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                        already added
+                      </span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-4">
+          <button onClick={onClose} className={btnSecondary}>
+            Cancel
+          </button>
+          <button
+            onClick={handleAddSelected}
+            disabled={selected.size === 0 || adding}
+            className={btnPrimary}
+          >
+            {adding
+              ? 'Adding...'
+              : `Add ${selected.size} Selected Task${selected.size !== 1 ? 's' : ''}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Editor View
@@ -25,6 +211,7 @@ function EditorView({
   onBack: () => void;
 }) {
   const queryClient = useQueryClient();
+  const [showCatalogPicker, setShowCatalogPicker] = useState(false);
 
   // ---- fetch template detail ----
   const { data: template, isLoading } = useQuery({
@@ -60,49 +247,6 @@ function EditorView({
     },
     onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to update template'),
   });
-
-  // ---- catalog picker ----
-  const [showCatalogPicker, setShowCatalogPicker] = useState(false);
-  const [catalogSearch, setCatalogSearch] = useState('');
-  const [selectedCatalogTasks, setSelectedCatalogTasks] = useState<Set<number>>(new Set());
-
-  const { data: catalogRaw } = useQuery({
-    queryKey: ['templates', 'task_list'],
-    staleTime: 5 * 60 * 1000,
-    queryFn: () => client.get('/templates?type=task_list').then((r) => r.data.data ?? r.data),
-    enabled: showCatalogPicker,
-  });
-
-  const catalogTemplate = (Array.isArray(catalogRaw) ? catalogRaw : []).find((t: any) => t.code === '__TASK_CATALOG__');
-
-  const { data: catalogDetail } = useQuery({
-    queryKey: ['templates', catalogTemplate?.id],
-    queryFn: () => client.get(`/templates/${catalogTemplate.id}`).then((r) => r.data.data ?? r.data),
-    enabled: !!catalogTemplate?.id && showCatalogPicker,
-  });
-
-  const catalogTasks: any[] = catalogDetail?.templateTasks ?? [];
-  const filteredCatalogTasks = catalogSearch
-    ? catalogTasks.filter((t: any) => t.name.toLowerCase().includes(catalogSearch.toLowerCase()) || t.code?.toLowerCase().includes(catalogSearch.toLowerCase()))
-    : catalogTasks;
-
-  const handlePickFromCatalog = async () => {
-    const tasksToAdd = catalogTasks.filter((t: any) => selectedCatalogTasks.has(t.id));
-    for (const t of tasksToAdd) {
-      await addTaskMutation.mutateAsync({
-        code: t.code,
-        name: t.name,
-        defaultBudgetHours: t.defaultBudgetHours ? Number(t.defaultBudgetHours) : undefined,
-        defaultBudgetAmount: t.defaultBudgetAmount ? Number(t.defaultBudgetAmount) : undefined,
-        serviceTypeId: t.serviceTypeId || undefined,
-        phaseId: t.phaseId || undefined,
-        defaultPriority: t.defaultPriority || undefined,
-      });
-    }
-    setShowCatalogPicker(false);
-    setSelectedCatalogTasks(new Set());
-    setCatalogSearch('');
-  };
 
   // ---- add task form ----
   const [showAddTask, setShowAddTask] = useState(false);
@@ -153,6 +297,12 @@ function EditorView({
     return { hours, amount };
   }, [tasks]);
 
+  // ---- existing task codes for duplicate detection in picker ----
+  const existingTaskCodes = useMemo(
+    () => new Set(tasks.map((t: any) => t.code).filter(Boolean)),
+    [tasks],
+  );
+
   // ---- handlers ----
   const handleAddTask = (e: React.FormEvent) => {
     e.preventDefault();
@@ -197,7 +347,7 @@ function EditorView({
     <div className="space-y-6">
       {/* Back button */}
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="h-4 w-4" /> Back to templates
+        <ArrowLeft className="h-4 w-4" /> Back to service templates
       </button>
 
       {/* Template header */}
@@ -251,15 +401,13 @@ function EditorView({
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold">Template Tasks</h3>
           <div className="flex items-center gap-2">
+            <button onClick={() => setShowCatalogPicker(true)} className={btnSecondary + ' flex items-center gap-2'}>
+              <BookOpen className="h-4 w-4" /> Pick from Catalog
+            </button>
             {!showAddTask && (
-              <>
-                <button onClick={() => setShowCatalogPicker(true)} className={btnSecondary}>
-                  Pick from Catalog
-                </button>
-                <button onClick={() => setShowAddTask(true)} className={btnPrimary}>
-                  <Plus className="h-4 w-4" /> Add Task
-                </button>
-              </>
+              <button onClick={() => setShowAddTask(true)} className={btnPrimary}>
+                <Plus className="h-4 w-4" /> Add Task
+              </button>
             )}
           </div>
         </div>
@@ -332,7 +480,7 @@ function EditorView({
               {tasks.length === 0 && !showAddTask && (
                 <tr>
                   <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
-                    No tasks yet. Click "Add Task" to get started.
+                    No tasks yet. Click "Add Task" or "Pick from Catalog" to get started.
                   </td>
                 </tr>
               )}
@@ -393,53 +541,13 @@ function EditorView({
         </div>
       </div>
 
-      {/* Catalog Picker Modal */}
+      {/* Catalog picker modal */}
       {showCatalogPicker && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="w-[600px] max-h-[80vh] flex flex-col rounded-lg bg-background shadow-xl">
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <h3 className="text-sm font-semibold">Pick Tasks from Catalog</h3>
-              <button onClick={() => { setShowCatalogPicker(false); setSelectedCatalogTasks(new Set()); setCatalogSearch(''); }} className="text-muted-foreground hover:text-foreground">&times;</button>
-            </div>
-            <div className="px-4 py-2">
-              <input value={catalogSearch} onChange={(e) => setCatalogSearch(e.target.value)} placeholder="Search tasks..." className={inputClass} />
-            </div>
-            <div className="flex-1 overflow-y-auto px-4">
-              {filteredCatalogTasks.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">{catalogTasks.length === 0 ? 'No tasks in catalog. Add tasks in the Task Catalog first.' : 'No tasks match your search.'}</p>
-              ) : (
-                filteredCatalogTasks.map((t: any) => (
-                  <label key={t.id} className="flex items-center gap-3 py-2 border-b border-border last:border-0 cursor-pointer hover:bg-muted/30 px-1 rounded">
-                    <input
-                      type="checkbox"
-                      checked={selectedCatalogTasks.has(t.id)}
-                      onChange={() => {
-                        const next = new Set(selectedCatalogTasks);
-                        next.has(t.id) ? next.delete(t.id) : next.add(t.id);
-                        setSelectedCatalogTasks(next);
-                      }}
-                      className="h-4 w-4 rounded border-input"
-                    />
-                    <span className="font-mono text-xs text-muted-foreground w-16">{t.code}</span>
-                    <span className="flex-1 text-sm">{t.name}</span>
-                    <span className="text-xs text-muted-foreground">{t.defaultBudgetHours ? `${Number(t.defaultBudgetHours)}h` : ''}</span>
-                    <span className="text-xs text-muted-foreground">{t.defaultBudgetAmount ? `${Number(t.defaultBudgetAmount).toLocaleString()}` : ''}</span>
-                  </label>
-                ))
-              )}
-            </div>
-            <div className="border-t border-border px-4 py-3 flex justify-end gap-2">
-              <button onClick={() => { setShowCatalogPicker(false); setSelectedCatalogTasks(new Set()); }} className={btnSecondary}>Cancel</button>
-              <button
-                onClick={handlePickFromCatalog}
-                disabled={selectedCatalogTasks.size === 0 || addTaskMutation.isPending}
-                className={btnPrimary}
-              >
-                {addTaskMutation.isPending ? 'Adding...' : `Add ${selectedCatalogTasks.size} Selected Task${selectedCatalogTasks.size !== 1 ? 's' : ''}`}
-              </button>
-            </div>
-          </div>
-        </div>
+        <CatalogPickerModal
+          templateId={templateId}
+          existingTaskCodes={existingTaskCodes}
+          onClose={() => setShowCatalogPicker(false)}
+        />
       )}
     </div>
   );
@@ -473,7 +581,7 @@ export function ServiceTemplatesPage() {
       client.post('/templates', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
-      toast.success('Template created');
+      toast.success('Service template created');
       setShowForm(false);
       setName('');
       setCode('');
@@ -488,7 +596,7 @@ export function ServiceTemplatesPage() {
     mutationFn: (id: number) => client.delete(`/templates/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
-      toast.success('Template deleted');
+      toast.success('Service template deleted');
     },
     onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
   });
@@ -511,6 +619,7 @@ export function ServiceTemplatesPage() {
   }
 
   // ---- List View ----
+  // Filter out the task catalog entry
   const templateList = ((templates ?? []) as any[]).filter((t: any) => t.code !== '__TASK_CATALOG__');
 
   return (
@@ -524,7 +633,7 @@ export function ServiceTemplatesPage() {
           description="Groups of tasks from the catalog assigned to a service"
           actions={
             <button onClick={() => setShowForm(!showForm)} className={btnPrimary}>
-              <Plus className="h-4 w-4" /> New Template
+              <Plus className="h-4 w-4" /> New Service Template
             </button>
           }
         />
@@ -565,8 +674,8 @@ export function ServiceTemplatesPage() {
         <div className="rounded-lg border border-border bg-background p-8 text-center">
           <Copy className="mx-auto h-12 w-12 text-muted-foreground" />
           <h3 className="mt-3 text-sm font-medium">No service templates</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Create a service template with tasks from the catalog.</p>
-          <button onClick={() => setShowForm(true)} className="mt-4 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">Create Template</button>
+          <p className="mt-1 text-sm text-muted-foreground">Create a service template to group tasks from the catalog for a service.</p>
+          <button onClick={() => setShowForm(true)} className="mt-4 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">Create Service Template</button>
         </div>
       ) : (
         <div className="space-y-2">
