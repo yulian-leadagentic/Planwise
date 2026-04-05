@@ -448,7 +448,7 @@ function PlanningView({ projectId }: { projectId: number }) {
   const createZone = useMutation({
     mutationFn: (data: any) => zonesApi.create(data),
     onSuccess: () => { invalidate(); setNewZoneName(''); setAddingZone(false); toast.success('Zone created'); },
-    onError: () => toast.error('Failed to create zone'),
+    onError: (err: any) => toast.error(err?.response?.data?.error?.message || err?.response?.data?.message || 'Failed to create zone'),
   });
 
   const duplicateZone = useMutation({

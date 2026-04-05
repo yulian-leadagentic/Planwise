@@ -552,82 +552,83 @@ function ZoneTreeNode({
   };
 
   return (
-    <div style={{ marginLeft: depth > 0 ? 20 : 0 }}>
+    <div style={{ marginLeft: depth > 0 ? 24 : 0 }} className="border-l-2 border-border pl-2 mb-1">
       {/* Node row */}
-      <div className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40">
-        {/* Expand/collapse toggle */}
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-          style={{ visibility: hasContent || showAddChild || showAddTask ? 'visible' : 'hidden' }}
-        >
-          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        </button>
+      <div className="flex flex-col rounded-md border border-border bg-background p-2 mb-1">
+        <div className="flex items-center gap-2">
+          {/* Expand/collapse toggle */}
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+          >
+            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </button>
 
-        {/* Zone info */}
-        <ZoneTypeBadge zoneType={zone.zoneType} />
-        <span className="text-sm font-medium">{zone.name}</span>
-        {zone.code && <span className="text-xs text-muted-foreground">({zone.code})</span>}
-        {zone.isTypical && (
-          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
-            Typical{zone.typicalCount ? ` x${zone.typicalCount}` : ''}
-          </span>
-        )}
+          {/* Zone info */}
+          <ZoneTypeBadge zoneType={zone.zoneType} />
+          <span className="text-sm font-semibold">{zone.name}</span>
+          {zone.code && <span className="text-xs text-muted-foreground">({zone.code})</span>}
+          {zone.isTypical && (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
+              Typical{zone.typicalCount ? ` x${zone.typicalCount}` : ''}
+            </span>
+          )}
 
-        {/* Linked template badge */}
-        {zone.linkedTaskTemplate && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
-            <Link className="h-3 w-3" />
-            {zone.linkedTaskTemplate.name}
-          </span>
-        )}
+          {/* Linked template badge */}
+          {zone.linkedTaskTemplate && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
+              <Link className="h-3 w-3" />
+              {zone.linkedTaskTemplate.name}
+            </span>
+          )}
 
-        {/* Actions (visible on hover) */}
-        <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          {/* Link service template dropdown */}
+          {/* Delete button */}
+          <button
+            onClick={() => { if (confirm(`Delete zone "${zone.name}" and all its children?`)) deleteMutation.mutate(); }}
+            className="ml-auto rounded-md p-1 text-muted-foreground hover:bg-red-100 hover:text-red-600"
+            title="Delete zone"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        {/* Actions bar — always visible */}
+        <div className="flex flex-wrap items-center gap-1.5 mt-1.5 pl-7">
+          {/* Link service template */}
           <select
             value={zone.linkedTaskTemplate?.id ?? zone.linkedTaskTemplateId ?? ''}
             onChange={handleLinkChange}
             className="h-7 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
             title="Link Service Template"
           >
-            <option value="">-- Link Template --</option>
+            <option value="">-- Service Template --</option>
             {taskTemplates.map((tt: any) => (
               <option key={tt.id} value={tt.id}>{tt.name}</option>
             ))}
           </select>
 
           <button
+            onClick={() => { setShowAddChild(true); setExpanded(true); }}
+            className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
+            title="Add child zone"
+          >
+            <Plus className="h-3 w-3" /> Child Zone
+          </button>
+
+          <button
             onClick={() => { setShowAddTask(true); setExpanded(true); }}
-            className="rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
             title="Add task to zone"
           >
-            + Add Task
+            <Plus className="h-3 w-3" /> Task
           </button>
 
           <button
             onClick={() => setShowCatalogPicker(true)}
-            className="rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
             title="Pick tasks from catalog"
           >
-            <BookOpen className="inline h-3 w-3 mr-0.5" />
-            Pick Catalog
-          </button>
-
-          <button
-            onClick={() => setShowAddChild(true)}
-            className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            title="Add child zone"
-          >
-            <Plus className="h-4 w-4" />
-          </button>
-
-          <button
-            onClick={() => { if (confirm(`Delete zone "${zone.name}" and all its children?`)) deleteMutation.mutate(); }}
-            className="rounded-md p-1 text-muted-foreground hover:bg-red-100 hover:text-red-600"
-            title="Delete zone"
-          >
-            <Trash2 className="h-4 w-4" />
+            <BookOpen className="h-3 w-3" /> Pick Catalog
           </button>
         </div>
       </div>
