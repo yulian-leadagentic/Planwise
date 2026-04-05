@@ -134,6 +134,366 @@ function AddZoneForm({
 }
 
 // ---------------------------------------------------------------------------
+// Add Zone Task Form (inline)
+// ---------------------------------------------------------------------------
+
+function AddZoneTaskForm({
+  zoneId,
+  templateId,
+  phases,
+  onDone,
+}: {
+  zoneId: number;
+  templateId: number;
+  phases: any[];
+  onDone: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [code, setCode] = useState('');
+  const [name, setName] = useState('');
+  const [hours, setHours] = useState('');
+  const [amount, setAmount] = useState('');
+  const [phaseId, setPhaseId] = useState('');
+
+  const addMutation = useMutation({
+    mutationFn: (data: Record<string, any>) =>
+      client.post(`/templates/zones/${zoneId}/tasks`, data).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
+      toast.success('Task added to zone');
+      onDone();
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to add task'),
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!code.trim() || !name.trim()) return;
+    addMutation.mutate({
+      code: code.trim(),
+      name: name.trim(),
+      defaultBudgetHours: hours ? Number(hours) : undefined,
+      defaultBudgetAmount: amount ? Number(amount) : undefined,
+      phaseId: phaseId ? Number(phaseId) : undefined,
+    });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-1 rounded-md border border-border bg-muted/30 p-2 space-y-2">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        <div>
+          <label className="block text-xs font-medium mb-0.5">Code *</label>
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. BIM-CD" className={inputClass} autoFocus />
+        </div>
+        <div>
+          <label className="block text-xs font-medium mb-0.5">Name *</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Clash Detection" className={inputClass} />
+        </div>
+        <div>
+          <label className="block text-xs font-medium mb-0.5">Hours</label>
+          <input type="number" min="0" step="0.5" value={hours} onChange={(e) => setHours(e.target.value)} placeholder="0" className={inputClass} />
+        </div>
+        <div>
+          <label className="block text-xs font-medium mb-0.5">Amount</label>
+          <input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className={inputClass} />
+        </div>
+        <div>
+          <label className="block text-xs font-medium mb-0.5">Phase</label>
+          <select value={phaseId} onChange={(e) => setPhaseId(e.target.value)} className={inputClass}>
+            <option value="">-- None --</option>
+            {phases.map((p: any) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button type="submit" disabled={addMutation.isPending} className="rounded-md bg-brand-600 px-3 py-1 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50">
+          {addMutation.isPending ? 'Adding...' : 'Add Task'}
+        </button>
+        <button type="button" onClick={onDone} className="rounded-md border border-border px-3 py-1 text-xs hover:bg-accent">
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Zone Catalog Picker Modal
+// ---------------------------------------------------------------------------
+
+function ZoneCatalogPickerModal({
+  zoneId,
+  templateId,
+  existingTaskCodes,
+  onClose,
+}: {
+  zoneId: number;
+  templateId: number;
+  existingTaskCodes: Set<string>;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [adding, setAdding] = useState(false);
+  const [sortField, setSortField] = useState<'code' | 'name' | 'hours' | 'amount' | 'phase'>('name');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  const { data: allTemplates = [] } = useQuery({
+    queryKey: ['templates', 'task_list'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/templates?type=task_list').then((r) => r.data.data ?? r.data),
+  });
+
+  const catalogEntry = (allTemplates as any[]).find((t: any) => t.code === '__TASK_CATALOG__');
+
+  const { data: catalog, isLoading: catalogLoading } = useQuery({
+    queryKey: ['templates', catalogEntry?.id],
+    enabled: !!catalogEntry?.id,
+    queryFn: () => client.get(`/templates/${catalogEntry.id}`).then((r) => r.data.data ?? r.data),
+  });
+
+  const catalogTasks: any[] = catalog?.templateTasks ?? [];
+
+  const filteredTasks = useMemo(() => {
+    let result = catalogTasks;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(
+        (t: any) =>
+          (t.name && t.name.toLowerCase().includes(q)) ||
+          (t.code && t.code.toLowerCase().includes(q)),
+      );
+    }
+    return [...result].sort((a, b) => {
+      let valA: any, valB: any;
+      switch (sortField) {
+        case 'code': valA = (a.code ?? '').toLowerCase(); valB = (b.code ?? '').toLowerCase(); break;
+        case 'name': valA = (a.name ?? '').toLowerCase(); valB = (b.name ?? '').toLowerCase(); break;
+        case 'hours': valA = Number(a.defaultBudgetHours) || 0; valB = Number(b.defaultBudgetHours) || 0; break;
+        case 'amount': valA = Number(a.defaultBudgetAmount) || 0; valB = Number(b.defaultBudgetAmount) || 0; break;
+        case 'phase': valA = (a.phase?.name ?? '').toLowerCase(); valB = (b.phase?.name ?? '').toLowerCase(); break;
+      }
+      if (valA < valB) return sortDir === 'asc' ? -1 : 1;
+      if (valA > valB) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [catalogTasks, search, sortField, sortDir]);
+
+  const handleSort = (field: typeof sortField) => {
+    if (sortField === field) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortField(field); setSortDir('asc'); }
+  };
+
+  const sortIcon = (field: typeof sortField) => (sortField === field ? (sortDir === 'asc' ? ' \u25B2' : ' \u25BC') : '');
+
+  const toggleTask = (taskId: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(taskId) ? next.delete(taskId) : next.add(taskId);
+      return next;
+    });
+  };
+
+  const handleAddSelected = async () => {
+    const tasksToAdd = catalogTasks.filter((t: any) => selected.has(t.id));
+    if (tasksToAdd.length === 0) return;
+    setAdding(true);
+    try {
+      for (const ct of tasksToAdd) {
+        await client.post(`/templates/zones/${zoneId}/tasks`, {
+          code: ct.code,
+          name: ct.name,
+          defaultBudgetHours: ct.defaultBudgetHours,
+          defaultBudgetAmount: ct.defaultBudgetAmount,
+          phaseId: ct.phaseId,
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
+      toast.success(`Added ${tasksToAdd.length} task${tasksToAdd.length !== 1 ? 's' : ''} to zone`);
+      onClose();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error?.message || 'Failed to add tasks');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div
+        className="relative mx-4 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-lg border border-border bg-background shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <h2 className="text-lg font-semibold">Pick Tasks from Catalog</h2>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Search */}
+        <div className="border-b border-border px-5 py-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search tasks by name or code..."
+              className={`${inputClass} pl-9`}
+              autoFocus
+            />
+          </div>
+        </div>
+
+        {/* Task table */}
+        <div className="flex-1 overflow-y-auto">
+          {catalogLoading || !catalogEntry ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              {!catalogEntry && !catalogLoading
+                ? 'No task catalog found. Create tasks in the Task Catalog first.'
+                : 'Loading catalog...'}
+            </div>
+          ) : filteredTasks.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              {search ? 'No tasks match your search.' : 'The catalog has no tasks yet.'}
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/50 text-xs">
+                  <th className="px-3 py-2 text-left font-medium w-10"></th>
+                  <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('code')}>Code{sortIcon('code')}</th>
+                  <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('name')}>Name{sortIcon('name')}</th>
+                  <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
+                  <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
+                  <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('phase')}>Phase{sortIcon('phase')}</th>
+                  <th className="px-3 py-2 text-left font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredTasks.map((task: any) => {
+                  const alreadyExists = task.code ? existingTaskCodes.has(task.code) : false;
+                  const isSelected = selected.has(task.id);
+                  return (
+                    <tr
+                      key={task.id}
+                      className={`border-b border-border last:border-0 cursor-pointer ${isSelected ? 'bg-brand-50' : 'hover:bg-muted/30'} ${alreadyExists ? 'opacity-50' : ''}`}
+                      onClick={() => !alreadyExists && toggleTask(task.id)}
+                    >
+                      <td className="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          disabled={alreadyExists}
+                          onChange={() => toggleTask(task.id)}
+                          className="h-4 w-4 rounded border-gray-300"
+                        />
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{task.code || '-'}</td>
+                      <td className="px-3 py-2 font-medium">{task.name}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetHours != null ? Number(task.defaultBudgetHours).toFixed(0) : '-'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString() : '-'}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{task.phase?.name ?? '-'}</td>
+                      <td className="px-3 py-2">
+                        {alreadyExists && (
+                          <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">already added</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-border px-5 py-4">
+          <span className="text-xs text-muted-foreground">{filteredTasks.length} tasks{search ? ` matching "${search}"` : ''}</span>
+          <div className="flex gap-3">
+            <button onClick={onClose} className={btnSecondary}>Cancel</button>
+            <button onClick={handleAddSelected} disabled={selected.size === 0 || adding} className={btnPrimary}>
+              {adding ? 'Adding...' : `Add ${selected.size} Selected Task${selected.size !== 1 ? 's' : ''}`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Zone Tasks Table (compact, displayed under zone node)
+// ---------------------------------------------------------------------------
+
+function ZoneTasksTable({
+  tasks,
+  templateId,
+}: {
+  tasks: any[];
+  templateId: number;
+}) {
+  const queryClient = useQueryClient();
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => client.delete(`/templates/zone-tasks/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
+      toast.success('Task removed');
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete task'),
+  });
+
+  if (tasks.length === 0) return null;
+
+  return (
+    <div className="mt-1 mb-1 ml-7">
+      <div className="text-xs font-medium text-muted-foreground mb-0.5">Tasks:</div>
+      <table className="w-full text-xs border border-border rounded-md overflow-hidden">
+        <thead>
+          <tr className="bg-muted/50 border-b border-border">
+            <th className="px-2 py-1 text-left font-medium">Code</th>
+            <th className="px-2 py-1 text-left font-medium">Name</th>
+            <th className="px-2 py-1 text-right font-medium">Hours</th>
+            <th className="px-2 py-1 text-right font-medium">Amount</th>
+            <th className="px-2 py-1 text-left font-medium">Phase</th>
+            <th className="px-2 py-1 text-center font-medium w-8"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {tasks.map((task: any) => (
+            <tr key={task.id} className="border-b border-border last:border-0 hover:bg-muted/30">
+              <td className="px-2 py-1 font-mono text-muted-foreground">{task.code || '-'}</td>
+              <td className="px-2 py-1 font-medium">{task.name}</td>
+              <td className="px-2 py-1 text-right tabular-nums">
+                {task.defaultBudgetHours != null ? `${Number(task.defaultBudgetHours).toFixed(0)}h` : '-'}
+              </td>
+              <td className="px-2 py-1 text-right tabular-nums">
+                {task.defaultBudgetAmount != null ? `\u20AA${Number(task.defaultBudgetAmount).toLocaleString()}` : '-'}
+              </td>
+              <td className="px-2 py-1 text-muted-foreground">{task.phase?.name ?? '-'}</td>
+              <td className="px-2 py-1 text-center">
+                <button
+                  onClick={() => { if (confirm(`Remove task "${task.name}"?`)) deleteMutation.mutate(task.id); }}
+                  className="rounded p-0.5 text-muted-foreground hover:bg-red-100 hover:text-red-600"
+                  title="Remove task"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Zone Tree Node (recursive)
 // ---------------------------------------------------------------------------
 
@@ -141,19 +501,30 @@ function ZoneTreeNode({
   zone,
   templateId,
   taskTemplates,
+  phases,
   depth,
 }: {
   zone: any;
   templateId: number;
   taskTemplates: any[];
+  phases: any[];
   depth: number;
 }) {
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(true);
   const [showAddChild, setShowAddChild] = useState(false);
+  const [showAddTask, setShowAddTask] = useState(false);
+  const [showCatalogPicker, setShowCatalogPicker] = useState(false);
 
   const children: any[] = zone.children ?? [];
+  const zoneTasks: any[] = zone.templateZoneTasks ?? [];
   const hasChildren = children.length > 0;
+  const hasContent = hasChildren || zoneTasks.length > 0;
+
+  const existingTaskCodes = useMemo(
+    () => new Set(zoneTasks.map((t: any) => t.code).filter(Boolean)),
+    [zoneTasks],
+  );
 
   const deleteMutation = useMutation({
     mutationFn: () => client.delete(`/templates/zones/${zone.id}`).then((r) => r.data),
@@ -188,7 +559,7 @@ function ZoneTreeNode({
         <button
           onClick={() => setExpanded(!expanded)}
           className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-          style={{ visibility: hasChildren || showAddChild ? 'visible' : 'hidden' }}
+          style={{ visibility: hasContent || showAddChild || showAddTask ? 'visible' : 'hidden' }}
         >
           {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
@@ -227,6 +598,23 @@ function ZoneTreeNode({
           </select>
 
           <button
+            onClick={() => { setShowAddTask(true); setExpanded(true); }}
+            className="rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            title="Add task to zone"
+          >
+            + Add Task
+          </button>
+
+          <button
+            onClick={() => setShowCatalogPicker(true)}
+            className="rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            title="Pick tasks from catalog"
+          >
+            <BookOpen className="inline h-3 w-3 mr-0.5" />
+            Pick Catalog
+          </button>
+
+          <button
             onClick={() => setShowAddChild(true)}
             className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
             title="Add child zone"
@@ -244,6 +632,21 @@ function ZoneTreeNode({
         </div>
       </div>
 
+      {/* Zone tasks table */}
+      {expanded && <ZoneTasksTable tasks={zoneTasks} templateId={templateId} />}
+
+      {/* Inline add task form */}
+      {expanded && showAddTask && (
+        <div className="ml-7">
+          <AddZoneTaskForm
+            zoneId={zone.id}
+            templateId={templateId}
+            phases={phases}
+            onDone={() => setShowAddTask(false)}
+          />
+        </div>
+      )}
+
       {/* Children */}
       {expanded && (
         <>
@@ -253,6 +656,7 @@ function ZoneTreeNode({
               zone={child}
               templateId={templateId}
               taskTemplates={taskTemplates}
+              phases={phases}
               depth={depth + 1}
             />
           ))}
@@ -262,6 +666,16 @@ function ZoneTreeNode({
             </div>
           )}
         </>
+      )}
+
+      {/* Catalog picker modal */}
+      {showCatalogPicker && (
+        <ZoneCatalogPickerModal
+          zoneId={zone.id}
+          templateId={templateId}
+          existingTaskCodes={existingTaskCodes}
+          onClose={() => setShowCatalogPicker(false)}
+        />
       )}
     </div>
   );
@@ -296,6 +710,13 @@ function EditorView({
   const taskTemplates = Array.isArray(rawTaskTemplates)
     ? rawTaskTemplates.filter((t: any) => t.code !== '__TASK_CATALOG__')
     : [];
+
+  // ---- fetch phases for task form dropdown ----
+  const { data: phases = [] } = useQuery({
+    queryKey: ['phases'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () => client.get('/phases').then((r) => r.data.data ?? r.data),
+  });
 
   // ---- header editing ----
   const [editingHeader, setEditingHeader] = useState(false);
@@ -427,6 +848,7 @@ function EditorView({
                   zone={z}
                   templateId={templateId}
                   taskTemplates={taskTemplates as any[]}
+                  phases={phases as any[]}
                   depth={0}
                 />
               ))}
