@@ -115,22 +115,35 @@ export function ProjectTypesPage() {
       ) : types.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">No project types configured yet. Click "Add Type" to create one.</p>
       ) : (
-        <div className="rounded-lg border border-border">
-          {types.map((t: any, i: number) => (
-            <div
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/50">
+                <th className="px-4 py-2.5 text-left font-medium">Type Name</th>
+                <th className="px-4 py-2.5 text-left font-medium">Code</th>
+                <th className="px-4 py-2.5 text-right font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+          {types.map((t: any) => (
+            <tr
               key={t.id}
-              className={`flex items-center justify-between px-4 py-3 ${i < types.length - 1 ? 'border-b border-border' : ''} hover:bg-muted/30`}
+              className="border-b border-border last:border-0 hover:bg-muted/30"
             >
-              <span className="text-sm font-medium">{t.name}</span>
-              {t.code && <span className="ml-2 rounded-full bg-orange-100 px-2 py-0.5 text-xs text-orange-700">{t.code}</span>}
+              <td className="px-4 py-3 font-medium">{t.name}</td>
+              <td className="px-4 py-3">{t.code ? <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs text-orange-700">{t.code}</span> : <span className="text-muted-foreground">-</span>}</td>
+              <td className="px-4 py-3 text-right">
               <button
                 onClick={() => { if (confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id); }}
                 className="text-xs text-red-600 hover:underline"
               >
                 Delete
               </button>
-            </div>
+              </td>
+            </tr>
           ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

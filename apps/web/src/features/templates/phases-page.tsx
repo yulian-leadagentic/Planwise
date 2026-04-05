@@ -91,14 +91,27 @@ export function PhasesPage() {
       ) : phases.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">No service phases yet. Click "Add Phase" to create one.</p>
       ) : (
-        <div className="rounded-lg border border-border">
-          {phases.map((p: any, i: number) => (
-            <div key={p.id} className={`flex items-center justify-between px-4 py-3 ${i < phases.length - 1 ? 'border-b border-border' : ''} hover:bg-muted/30`}>
-              <span className="text-sm font-medium">{p.name}</span>
-              {p.code && <span className="ml-2 rounded-full bg-cyan-100 px-2 py-0.5 text-xs text-cyan-700">{p.code}</span>}
-              <button onClick={() => { if (confirm(`Delete "${p.name}"?`)) deleteMutation.mutate(p.id); }} className="text-xs text-red-600 hover:underline">Delete</button>
-            </div>
-          ))}
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/50">
+                <th className="px-4 py-2.5 text-left font-medium">Phase Name</th>
+                <th className="px-4 py-2.5 text-left font-medium">Code</th>
+                <th className="px-4 py-2.5 text-right font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {phases.map((p: any) => (
+                <tr key={p.id} className="border-b border-border last:border-0 hover:bg-muted/30">
+                  <td className="px-4 py-3 font-medium">{p.name}</td>
+                  <td className="px-4 py-3">{p.code ? <span className="rounded-full bg-cyan-100 px-2 py-0.5 text-xs text-cyan-700">{p.code}</span> : <span className="text-muted-foreground">-</span>}</td>
+                  <td className="px-4 py-3 text-right">
+                    <button onClick={() => { if (confirm(`Delete "${p.name}"?`)) deleteMutation.mutate(p.id); }} className="text-xs text-red-600 hover:underline">Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

@@ -106,19 +106,33 @@ export function CategoriesPage() {
       ) : serviceTypes.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">No service types yet. Click "Add Service Type" to create one.</p>
       ) : (
-        <div className="rounded-lg border border-border">
-          {serviceTypes.map((c: any, i: number) => (
-            <div key={c.id} className={`flex items-center justify-between px-4 py-3 ${i < serviceTypes.length - 1 ? 'border-b border-border' : ''} hover:bg-muted/30`}>
-              <div className="flex items-center gap-2">
-                {c.color && (
-                  <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: c.color.startsWith('#') ? c.color : `#${c.color}` }} />
-                )}
-                <span className="text-sm font-medium">{c.name}</span>
-                {c.code && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{c.code}</span>}
-              </div>
-              <button onClick={() => { if (confirm(`Delete "${c.name}"?`)) deleteMutation.mutate(c.id); }} className="text-xs text-red-600 hover:underline">Delete</button>
-            </div>
-          ))}
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/50">
+                <th className="px-4 py-2.5 text-left font-medium">Color</th>
+                <th className="px-4 py-2.5 text-left font-medium">Service Type Name</th>
+                <th className="px-4 py-2.5 text-left font-medium">Code</th>
+                <th className="px-4 py-2.5 text-right font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {serviceTypes.map((c: any) => (
+                <tr key={c.id} className="border-b border-border last:border-0 hover:bg-muted/30">
+                  <td className="px-4 py-3 w-12">
+                    {c.color ? (
+                      <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: c.color.startsWith('#') ? c.color : `#${c.color}` }} />
+                    ) : <span className="text-muted-foreground">-</span>}
+                  </td>
+                  <td className="px-4 py-3 font-medium">{c.name}</td>
+                  <td className="px-4 py-3">{c.code ? <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{c.code}</span> : <span className="text-muted-foreground">-</span>}</td>
+                  <td className="px-4 py-3 text-right">
+                    <button onClick={() => { if (confirm(`Delete "${c.name}"?`)) deleteMutation.mutate(c.id); }} className="text-xs text-red-600 hover:underline">Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

@@ -91,6 +91,12 @@ export const templatesApi = {
 
   duplicate: (id: number, data: { name: string; code: string }) =>
     client.post(`/templates/${id}/duplicate`, data).then((r) => r.data),
+
+  addZoneTask: (zoneId: number, data: any) =>
+    client.post(`/templates/zones/${zoneId}/tasks`, data).then((r) => r.data),
+
+  removeZoneTask: (id: number) =>
+    client.delete(`/templates/zone-tasks/${id}`).then((r) => r.data),
 };
 
 export const budgetApi = {

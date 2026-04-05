@@ -217,6 +217,33 @@ export class TemplatesService {
     return { message: 'Template zone deleted' };
   }
 
+  async addZoneTask(templateZoneId: number, body: any) {
+    const maxOrder = await this.prisma.templateZoneTask.aggregate({
+      where: { templateZoneId },
+      _max: { sortOrder: true },
+    });
+    return this.prisma.templateZoneTask.create({
+      data: {
+        templateZoneId,
+        code: body.code,
+        name: body.name,
+        description: body.description || null,
+        defaultBudgetHours: body.defaultBudgetHours || null,
+        defaultBudgetAmount: body.defaultBudgetAmount || null,
+        phaseId: body.phaseId || null,
+        serviceTypeId: body.serviceTypeId || null,
+        defaultPriority: body.defaultPriority || 'medium',
+        sortOrder: body.sortOrder ?? (maxOrder._max.sortOrder ?? 0) + 1,
+      },
+      include: { phase: true },
+    });
+  }
+
+  async removeZoneTask(id: number) {
+    await this.prisma.templateZoneTask.delete({ where: { id } });
+    return { message: 'Zone task deleted' };
+  }
+
   async duplicate(id: number, userId: number, body: { name: string; code: string }) {
     const source = await this.findOne(id);
 

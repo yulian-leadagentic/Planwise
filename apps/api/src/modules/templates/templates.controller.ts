@@ -95,6 +95,21 @@ export class TemplatesController {
     return this.templatesService.removeZone(zoneId);
   }
 
+  // Zone Task management
+  @Post('zones/:zoneId/tasks')
+  @RequirePermissions({ module: 'templates', action: 'write' })
+  @ApiOperation({ summary: 'Add a task to a template zone' })
+  addZoneTask(@Param('zoneId', ParseIntPipe) zoneId: number, @Body() body: any) {
+    return this.templatesService.addZoneTask(zoneId, body);
+  }
+
+  @Delete('zone-tasks/:id')
+  @RequirePermissions({ module: 'templates', action: 'delete' })
+  @ApiOperation({ summary: 'Delete a template zone task' })
+  removeZoneTask(@Param('id', ParseIntPipe) id: number) {
+    return this.templatesService.removeZoneTask(id);
+  }
+
   @Post(':id/duplicate')
   @RequirePermissions({ module: 'templates', action: 'write' })
   @ApiOperation({ summary: 'Duplicate a template' })

@@ -260,6 +260,7 @@ function EditorView({
 
   // ---- add task form ----
   const [showAddTask, setShowAddTask] = useState(false);
+  const [addToCatalog, setAddToCatalog] = useState(true);
   const emptyTask = { code: '', name: '', defaultBudgetHours: '', defaultBudgetAmount: '', phaseId: '' };
   const [newTask, setNewTask] = useState(emptyTask);
 
@@ -305,16 +306,28 @@ function EditorView({
   );
 
   // ---- handlers ----
-  const handleAddTask = (e: React.FormEvent) => {
+  const handleAddTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTask.name.trim()) return;
-    addTaskMutation.mutate({
+    const payload = {
       code: newTask.code.trim() || undefined,
       name: newTask.name.trim(),
       defaultBudgetHours: newTask.defaultBudgetHours ? Number(newTask.defaultBudgetHours) : undefined,
       defaultBudgetAmount: newTask.defaultBudgetAmount ? Number(newTask.defaultBudgetAmount) : undefined,
       phaseId: newTask.phaseId ? Number(newTask.phaseId) : undefined,
-    });
+    };
+    // Also add to catalog if checkbox is checked
+    if (addToCatalog) {
+      try {
+        const allTpls = await client.get('/templates?type=task_list').then((r) => r.data.data ?? r.data);
+        const catalog = (Array.isArray(allTpls) ? allTpls : []).find((t: any) => t.code === '__TASK_CATALOG__');
+        if (catalog) {
+          await client.post(`/templates/${catalog.id}/tasks`, payload);
+          queryClient.invalidateQueries({ queryKey: ['templates', catalog.id] });
+        }
+      } catch { /* ignore catalog errors */ }
+    }
+    addTaskMutation.mutate(payload);
   };
 
   const handleSaveHeader = (e: React.FormEvent) => {
@@ -441,11 +454,17 @@ function EditorView({
                     </select>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <button onClick={handleAddTask} disabled={addTaskMutation.isPending} className="rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50">
-                        {addTaskMutation.isPending ? 'Saving...' : 'Save'}
-                      </button>
-                      <button onClick={() => { setShowAddTask(false); setNewTask(emptyTask); }} className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent">Cancel</button>
+                    <div className="flex flex-col items-center gap-1.5">
+                      <div className="flex items-center gap-1">
+                        <button onClick={handleAddTask} disabled={addTaskMutation.isPending} className="rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50">
+                          {addTaskMutation.isPending ? 'Saving...' : 'Save'}
+                        </button>
+                        <button onClick={() => { setShowAddTask(false); setNewTask(emptyTask); }} className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent">Cancel</button>
+                      </div>
+                      <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer">
+                        <input type="checkbox" checked={addToCatalog} onChange={(e) => setAddToCatalog(e.target.checked)} className="h-3 w-3 rounded border-input" />
+                        Also add to catalog
+                      </label>
                     </div>
                   </td>
                 </tr>
