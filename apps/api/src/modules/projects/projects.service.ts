@@ -11,11 +11,12 @@ export class ProjectsService {
   constructor(private prisma: PrismaService) {}
 
   async create(userId: number, dto: CreateProjectDto) {
-    const { memberIds, ...rest } = dto;
+    const { memberIds, leaderId, ...rest } = dto;
 
     const project = await this.prisma.project.create({
       data: {
         ...rest,
+        leaderId: leaderId && leaderId > 0 ? leaderId : null,
         createdBy: userId,
         startDate: dto.startDate ? new Date(dto.startDate) : undefined,
         endDate: dto.endDate ? new Date(dto.endDate) : undefined,

@@ -19,7 +19,7 @@ const projectSchema = z.object({
   budget: z.coerce.number().optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
-  leaderId: z.coerce.number().optional(),
+  leaderId: z.preprocess((v) => (v === '' || v === 0 || v === '0' ? undefined : Number(v)), z.number().optional()),
 });
 
 type ProjectFormData = z.infer<typeof projectSchema>;
@@ -50,11 +50,12 @@ export function ProjectFormPage() {
   const updateProject = useUpdateProject();
 
   const { data: users } = useQuery<User[]>({
-    queryKey: ['users'],
+    queryKey: ['users', 'active'],
     queryFn: () =>
-      client.get('/users').then((r) => {
+      client.get('/users?isActive=true').then((r) => {
         const d = r.data.data ?? r.data;
-        return d.data ?? d;
+        const list = d.data ?? d;
+        return Array.isArray(list) ? list.filter((u: any) => u.isActive !== false) : [];
       }),
   });
 
