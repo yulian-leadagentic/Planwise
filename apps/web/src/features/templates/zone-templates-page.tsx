@@ -176,8 +176,8 @@ function ZoneTemplatePicker({
                 <th className="px-3 py-2 text-left font-medium">Name</th>
                 <th className="px-3 py-2 text-left font-medium">Code</th>
                 <th className="px-3 py-2 text-right font-medium">Zones</th>
+                <th className="px-3 py-2 text-right font-medium">Services</th>
                 <th className="px-3 py-2 text-right font-medium">Tasks</th>
-                <th className="px-3 py-2 text-right font-medium">Used</th>
               </tr>
             </thead>
             <tbody>
@@ -199,8 +199,8 @@ function ZoneTemplatePicker({
                     </td>
                     <td className="px-3 py-2 text-muted-foreground">{tpl.code || '-'}</td>
                     <td className="px-3 py-2 text-right">{tpl._count?.templateZones ?? 0}</td>
-                    <td className="px-3 py-2 text-right">{tpl._count?.templateTasks ?? 0}</td>
-                    <td className="px-3 py-2 text-right">{tpl.usageCount ?? 0}x</td>
+                    <td className="px-3 py-2 text-right">{(tpl.templateTasks ?? []).filter((tk: any) => tk.description?.startsWith('[SERVICE:')).length}</td>
+                    <td className="px-3 py-2 text-right">{tpl._count?.templateTasks ?? tpl.templateTasks?.length ?? 0}</td>
                   </tr>
                 );
               })}
@@ -1737,7 +1737,9 @@ export function ZoneTemplatesPage() {
                 <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                   <span className="inline-flex items-center gap-1"><Layers className="h-3 w-3 text-amber-500" />{t._count?.templateZones ?? 0} zones</span>
                   <span>&middot;</span>
-                  <span className="inline-flex items-center gap-1"><CheckSquare className="h-3 w-3 text-green-500" />{t._count?.templateTasks ?? 0} tasks</span>
+                  <span className="inline-flex items-center gap-1"><Copy className="h-3 w-3 text-blue-500" />{(t.templateTasks ?? []).filter((tk: any) => tk.description?.startsWith('[SERVICE:')).length} services</span>
+                  <span>&middot;</span>
+                  <span className="inline-flex items-center gap-1"><CheckSquare className="h-3 w-3 text-green-500" />{t._count?.templateTasks ?? t.templateTasks?.length ?? 0} tasks</span>
                   <span>&middot;</span>
                   <span>Used {t.usageCount ?? 0}x</span>
                 </div>

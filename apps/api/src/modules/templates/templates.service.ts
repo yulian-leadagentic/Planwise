@@ -15,6 +15,7 @@ export class TemplatesService {
       include: {
         creator: { select: { id: true, firstName: true, lastName: true } },
         _count: { select: { templateTasks: true, templateZones: true } },
+        templateTasks: { select: { id: true, description: true }, take: 100 },
       },
     });
   }
