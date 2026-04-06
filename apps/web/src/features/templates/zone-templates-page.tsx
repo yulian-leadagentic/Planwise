@@ -1155,7 +1155,6 @@ function RootCatalogPickerModal({
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [adding, setAdding] = useState(false);
-  const [zoneName, setZoneName] = useState('');
 
   const { data: allTemplates = [] } = useQuery({
     queryKey: ['templates', 'task_list'],
@@ -1246,7 +1245,7 @@ function RootCatalogPickerModal({
         </div>
         <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-4">
           <button onClick={onClose} className={btnSecondary}>Cancel</button>
-          <button onClick={handleAddSelected} disabled={selected.size === 0 || !zoneName.trim() || adding} className={btnPrimary}>
+          <button onClick={handleAddSelected} disabled={selected.size === 0 || adding} className={btnPrimary}>
             {adding ? 'Adding...' : `Add ${selected.size} Task${selected.size !== 1 ? 's' : ''}`}
           </button>
         </div>
