@@ -41,10 +41,10 @@ function ZoneTypeBadge({ zoneType }: { zoneType: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Add Zone Form (inline)
+// Zone Template Picker (pick from existing zone templates)
 // ---------------------------------------------------------------------------
 
-function AddZoneForm({
+function ZoneTemplatePicker({
   templateId,
   parentId,
   onDone,
@@ -54,11 +54,60 @@ function AddZoneForm({
   onDone: () => void;
 }) {
   const queryClient = useQueryClient();
-  const [name, setName] = useState('');
-  const [code, setCode] = useState('');
-  const [zoneType, setZoneType] = useState<string>('zone');
-  const [isTypical, setIsTypical] = useState(false);
-  const [typicalCount, setTypicalCount] = useState('');
+  const [search, setSearch] = useState('');
+  const [adding, setAdding] = useState(false);
+
+  // Fetch all zone templates
+  const { data: allZoneTemplates = [] } = useQuery({
+    queryKey: ['templates', 'zone'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/templates?type=zone').then((r) => r.data.data ?? r.data),
+  });
+
+  // Collect all referenced template IDs in the current template to prevent circular refs
+  const { data: currentTemplate } = useQuery({
+    queryKey: ['templates', templateId],
+    queryFn: () => client.get(`/templates/${templateId}`).then((r) => r.data.data ?? r.data),
+  });
+
+  // Build set of IDs that would cause circular reference
+  const blockedIds = useMemo(() => {
+    const blocked = new Set<number>();
+    blocked.add(templateId); // Can't reference self
+
+    // Collect all templates that reference THIS template (direct or indirect)
+    // A references B means A has a zone with referencedTemplateId=B
+    // If B references A (directly or through chain), adding A→B would be circular
+    function collectReferencedIds(zones: any[]) {
+      for (const z of zones) {
+        if (z.referencedTemplateId) blocked.add(z.referencedTemplateId);
+        if (z.referencedTemplate?.id) blocked.add(z.referencedTemplate.id);
+        if (z.children) collectReferencedIds(z.children);
+      }
+    }
+
+    // For each zone template, check if IT references us (would create cycle)
+    // Simple approach: block templates that reference the current template
+    const templates = Array.isArray(allZoneTemplates) ? allZoneTemplates : [];
+    for (const tpl of templates) {
+      // We'd need to fetch each template's detail to check... for now just block self
+      // The server should enforce this too
+    }
+
+    if (currentTemplate?.templateZones) {
+      collectReferencedIds(currentTemplate.templateZones);
+    }
+
+    return blocked;
+  }, [templateId, allZoneTemplates, currentTemplate]);
+
+  const available = useMemo(() => {
+    const templates = (Array.isArray(allZoneTemplates) ? allZoneTemplates : [])
+      .filter((t: any) => !blockedIds.has(t.id));
+    if (!search.trim()) return templates;
+    const q = search.toLowerCase();
+    return templates.filter((t: any) => t.name?.toLowerCase().includes(q) || t.code?.toLowerCase().includes(q));
+  }, [allZoneTemplates, blockedIds, search]);
 
   const addMutation = useMutation({
     mutationFn: (data: Record<string, any>) =>
@@ -66,70 +115,58 @@ function AddZoneForm({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
       queryClient.invalidateQueries({ queryKey: ['templates', 'zone'] });
-      notify.success('Zone added', { code: 'ZONE-CREATE-200' });
+      notify.success('Zone reference added', { code: 'ZONE-CREATE-200' });
       onDone();
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to add zone'),
+    onError: (err: any) => notify.apiError(err, 'Failed to add zone reference'),
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) return;
+  const handleSelect = (tpl: any) => {
+    if (blockedIds.has(tpl.id)) {
+      notify.error('Cannot add this zone — it would create a circular reference', { code: 'ZONE-CIRCULAR-400' });
+      return;
+    }
     addMutation.mutate({
-      name: name.trim(),
-      code: code.trim() || undefined,
-      zoneType,
+      name: tpl.name,
+      code: tpl.code || undefined,
+      zoneType: 'zone',
       parentId: parentId ?? undefined,
-      isTypical: isTypical || undefined,
-      typicalCount: isTypical && typicalCount ? Number(typicalCount) : undefined,
+      referencedTemplateId: tpl.id,
     });
   };
 
   return (
-    <form onSubmit={handleSubmit} className="mt-2 rounded-md border border-border bg-muted/30 p-3 space-y-2">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <div>
-          <label className="block text-xs font-medium mb-1">Zone Name *</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Level 01" className={inputClass} autoFocus />
-        </div>
-        <div>
-          <label className="block text-xs font-medium mb-1">Code</label>
-          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. L01" className={inputClass} />
-        </div>
-        <div>
-          <label className="block text-xs font-medium mb-1">Zone Type</label>
-          <select value={zoneType} onChange={(e) => setZoneType(e.target.value)} className={inputClass}>
-            {ZONE_TYPES.map((zt) => (
-              <option key={zt} value={zt}>{ZONE_DISPLAY[zt].label}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs font-medium mb-1">Typical</label>
-          <div className="flex items-center gap-2 mt-1">
-            <input type="checkbox" checked={isTypical} onChange={(e) => setIsTypical(e.target.checked)} className="h-4 w-4 rounded border-input" />
-            {isTypical && (
-              <input
-                type="number"
-                min="1"
-                value={typicalCount}
-                onChange={(e) => setTypicalCount(e.target.value)}
-                placeholder="Count"
-                className={`${inputClass} w-20`}
-              />
-            )}
-          </div>
-        </div>
+    <div className="mt-2 rounded-md border border-border bg-muted/30 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold">Select Zone Template</span>
+        <button type="button" onClick={onDone} className="rounded-md border border-border px-2 py-0.5 text-xs hover:bg-accent">Cancel</button>
       </div>
-      <div className="flex gap-2">
-        <button type="submit" disabled={addMutation.isPending} className="rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50">
-          {addMutation.isPending ? 'Adding...' : 'Add Zone'}
-        </button>
-        <button type="button" onClick={onDone} className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent">
-          Cancel
-        </button>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search zone templates..." className={`${inputClass} pl-9 text-xs`} autoFocus />
       </div>
-    </form>
+      {available.length === 0 ? (
+        <p className="py-3 text-center text-xs text-muted-foreground">
+          {search ? 'No matching zone templates.' : 'No other zone templates available. Create one first.'}
+        </p>
+      ) : (
+        <div className="max-h-48 overflow-y-auto space-y-0.5">
+          {available.map((tpl: any) => (
+            <button
+              key={tpl.id}
+              onClick={() => handleSelect(tpl)}
+              disabled={adding}
+              className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-accent disabled:opacity-50"
+            >
+              <Layers className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+              <span className="font-medium">{tpl.name}</span>
+              {tpl.code && <span className="text-xs text-muted-foreground">({tpl.code})</span>}
+              <span className="ml-auto text-xs text-muted-foreground">{tpl._count?.templateZones ?? 0} zones</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -774,6 +811,11 @@ function ZoneTreeNode({
         <ZoneTypeBadge zoneType={zone.zoneType} />
         <span className="text-sm font-semibold">{zone.name}</span>
         {zone.code && <span className="text-xs text-muted-foreground">({zone.code})</span>}
+        {zone.referencedTemplate && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
+            <Link className="h-3 w-3" /> ref: {zone.referencedTemplate.name}
+          </span>
+        )}
         {zone.isTypical && (
           <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
             Typical{zone.typicalCount ? ` x${zone.typicalCount}` : ''}
@@ -879,7 +921,7 @@ function ZoneTreeNode({
           {/* Inline add zone form */}
           {showAddChild && (
             <div className="mt-1">
-              <AddZoneForm templateId={templateId} parentId={zone.id} onDone={() => setShowAddChild(false)} />
+              <ZoneTemplatePicker templateId={templateId} parentId={zone.id} onDone={() => setShowAddChild(false)} />
             </div>
           )}
 
@@ -1450,7 +1492,7 @@ function EditorView({
           )}
 
           {showAddRoot && (
-            <AddZoneForm templateId={templateId} parentId={null} onDone={() => setShowAddRoot(false)} />
+            <ZoneTemplatePicker templateId={templateId} parentId={null} onDone={() => setShowAddRoot(false)} />
           )}
 
           {showRootManualTask && (

@@ -72,16 +72,19 @@ export class TemplatesService {
             children: {
               include: {
                 linkedTaskTemplate: { select: { id: true, name: true, code: true } },
+                referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
                 templateZoneTasks: { include: { serviceType: true, phase: true } },
                 children: {
                   include: {
                     linkedTaskTemplate: { select: { id: true, name: true, code: true } },
+                    referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
                     templateZoneTasks: { include: { serviceType: true, phase: true } },
                   },
                 },
               },
             },
             linkedTaskTemplate: { select: { id: true, name: true, code: true } },
+            referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
             templateZoneTasks: { include: { serviceType: true, phase: true } },
           },
           where: { parentId: null },
@@ -186,9 +189,11 @@ export class TemplatesService {
         typicalCount: body.typicalCount || 1,
         sortOrder: body.sortOrder ?? (maxOrder._max.sortOrder ?? 0) + 1,
         linkedTaskTemplateId: body.linkedTaskTemplateId || null,
+        referencedTemplateId: body.referencedTemplateId || null,
       },
       include: {
         linkedTaskTemplate: { select: { id: true, name: true, code: true } },
+        referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
       },
     });
   }
@@ -204,9 +209,11 @@ export class TemplatesService {
         typicalCount: body.typicalCount,
         sortOrder: body.sortOrder,
         linkedTaskTemplateId: body.linkedTaskTemplateId,
+        referencedTemplateId: body.referencedTemplateId,
       },
       include: {
         linkedTaskTemplate: { select: { id: true, name: true, code: true } },
+        referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
       },
     });
   }
