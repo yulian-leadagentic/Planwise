@@ -822,31 +822,14 @@ function ZoneTreeNode({
           </span>
         )}
 
-        {/* [+ Add] dropdown */}
-        <div className="relative ml-auto">
-          <button
-            onClick={() => setShowAddMenu(!showAddMenu)}
-            className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
-          >
-            <Plus className="h-3 w-3" /> Add
-          </button>
-          {showAddMenu && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-44 rounded-md border border-border bg-background shadow-lg">
-              <button onClick={() => { setShowAddChild(true); setShowAddMenu(false); setExpanded(true); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
-                <Layers className="h-3.5 w-3.5 text-amber-600" /> Zone
-              </button>
-              <button onClick={() => { setShowServicePicker(true); setShowAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
-                <Copy className="h-3.5 w-3.5 text-blue-600" /> Service Template
-              </button>
-              <button onClick={() => { setShowCatalogPicker(true); setShowAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
-                <CheckSquare className="h-3.5 w-3.5 text-green-600" /> Task from Catalog
-              </button>
-              <button onClick={() => { setShowAddTask(true); setShowAddMenu(false); setExpanded(true); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
-                <Plus className="h-3.5 w-3.5 text-green-600" /> Manual Task
-              </button>
-            </div>
-          )}
-        </div>
+        {/* [+ Add Zone] button — sub-zones only contain other zones */}
+        <button
+          onClick={() => { setShowAddChild(true); setExpanded(true); }}
+          className="ml-auto flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
+          title="Add child zone"
+        >
+          <Plus className="h-3 w-3" /> Add Zone
+        </button>
 
         <button
           onClick={() => { if (confirm(`Delete zone "${zone.name}" and all its children?`)) deleteMutation.mutate(); }}
@@ -857,56 +840,9 @@ function ZoneTreeNode({
         </button>
       </div>
 
-      {/* Tree items (expanded) */}
-      {expanded && (() => {
-        // Group tasks by service tag
-        const serviceGroups = new Map<string, any[]>();
-        const ungroupedTasks: any[] = [];
-        for (const task of zoneTasks) {
-          const match = task.description?.match(/^\[SERVICE:(.+)\]$/);
-          if (match) {
-            const svcName = match[1];
-            if (!serviceGroups.has(svcName)) serviceGroups.set(svcName, []);
-            serviceGroups.get(svcName)!.push(task);
-          } else {
-            ungroupedTasks.push(task);
-          }
-        }
-
-        return (
+      {/* Children zones only (sub-zones can only contain other zones) */}
+      {expanded && (
         <div className="ml-6 border-l-2 border-border pl-3 space-y-0.5 mb-2">
-          {/* Service groups (expandable) */}
-          {Array.from(serviceGroups.entries()).map(([svcName, svcTasks]) => (
-            <ServiceGroupItem key={svcName} serviceName={svcName} tasks={svcTasks} templateId={templateId} onDeleteAll={() => {
-              if (confirm(`Remove service "${svcName}" and all its ${svcTasks.length} tasks?`)) {
-                Promise.all(svcTasks.map((t: any) => client.delete(`/templates/zone-tasks/${t.id}`))).then(() => {
-                  queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
-                  notify.success(`Removed service: ${svcName}`, { code: 'SVC-DELETE-200' });
-                });
-              }
-            }} />
-          ))}
-
-          {/* Ungrouped task items */}
-          {ungroupedTasks.map((task: any) => (
-            <div key={task.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-green-50">
-              <CheckSquare className="h-3.5 w-3.5 shrink-0 text-green-600" />
-              <span className="font-mono text-xs text-muted-foreground w-16">{task.code || '-'}</span>
-              <span className="text-sm">{task.name}</span>
-              {task.defaultBudgetHours != null && <span className="text-xs text-muted-foreground">{Number(task.defaultBudgetHours)}h</span>}
-              {task.defaultBudgetAmount != null && <span className="text-xs text-muted-foreground">{'\u20AA'}{Number(task.defaultBudgetAmount).toLocaleString()}</span>}
-              {task.phase?.name && <span className="text-xs text-muted-foreground">({task.phase.name})</span>}
-              <button
-                onClick={() => { if (confirm(`Remove task "${task.name}"?`)) deleteTaskMutation.mutate(task.id); }}
-                className="ml-auto rounded p-0.5 text-muted-foreground hover:bg-red-100 hover:text-red-600"
-                title="Remove task"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          ))}
-
-          {/* Child zones (recursive) */}
           {children.map((child: any) => (
             <ZoneTreeNode
               key={child.id}
@@ -918,47 +854,18 @@ function ZoneTreeNode({
             />
           ))}
 
-          {/* Inline add zone form */}
           {showAddChild && (
             <div className="mt-1">
               <ZoneTemplatePicker templateId={templateId} parentId={zone.id} onDone={() => setShowAddChild(false)} />
             </div>
           )}
 
-          {/* Inline add task form */}
-          {showAddTask && (
-            <div className="mt-1">
-              <AddZoneTaskForm zoneId={zone.id} templateId={templateId} phases={phases} onDone={() => setShowAddTask(false)} />
-            </div>
-          )}
-
-          {/* Empty state */}
-          {zoneTasks.length === 0 && children.length === 0 && !showAddChild && !showAddTask && (
-            <p className="py-2 text-xs text-muted-foreground italic">No items. Click [+ Add] to add zones, services, or tasks.</p>
+          {children.length === 0 && !showAddChild && (
+            <p className="py-2 text-xs text-muted-foreground italic">No child zones. Click [+ Add Zone] to add.</p>
           )}
         </div>
-        );
-      })()}
-
-      {/* Service picker modal */}
-      {showServicePicker && (
-        <ServicePickerModal
-          zoneId={zone.id}
-          templateId={templateId}
-          templates={taskTemplates}
-          onClose={() => setShowServicePicker(false)}
-        />
       )}
 
-      {/* Catalog picker modal */}
-      {showCatalogPicker && (
-        <ZoneCatalogPickerModal
-          zoneId={zone.id}
-          templateId={templateId}
-          existingTaskCodes={existingTaskCodes}
-          onClose={() => setShowCatalogPicker(false)}
-        />
-      )}
     </div>
   );
 }
@@ -1648,10 +1555,12 @@ export function ZoneTemplatesPage() {
                   {t.code && <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">{t.code}</span>}
                 </div>
                 {t.description && <p className="mt-1 text-sm text-muted-foreground">{t.description}</p>}
-                <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
-                  <span>{t._count?.templateZones ?? 0} zone{(t._count?.templateZones ?? 0) !== 1 ? 's' : ''}</span>
+                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="inline-flex items-center gap-1"><Layers className="h-3 w-3 text-amber-500" />{t._count?.templateZones ?? 0} zones</span>
                   <span>&middot;</span>
-                  <span>Used {t.usageCount ?? 0} time{(t.usageCount ?? 0) !== 1 ? 's' : ''}</span>
+                  <span className="inline-flex items-center gap-1"><CheckSquare className="h-3 w-3 text-green-500" />{t._count?.templateTasks ?? 0} tasks</span>
+                  <span>&middot;</span>
+                  <span>Used {t.usageCount ?? 0}x</span>
                 </div>
               </div>
               <button
