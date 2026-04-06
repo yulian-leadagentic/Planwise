@@ -199,7 +199,7 @@ function ZoneTemplatePicker({
                     </td>
                     <td className="px-3 py-2 text-muted-foreground">{tpl.code || '-'}</td>
                     <td className="px-3 py-2 text-right">{tpl._count?.templateZones ?? 0}</td>
-                    <td className="px-3 py-2 text-right">{(tpl.templateTasks ?? []).filter((tk: any) => tk.description?.startsWith('[SERVICE:')).length}</td>
+                    <td className="px-3 py-2 text-right">{new Set((tpl.templateTasks ?? []).map((tk: any) => tk.description?.match(/^\[SERVICE:(.+)\]$/)?.[1]).filter(Boolean)).size}</td>
                     <td className="px-3 py-2 text-right">{tpl._count?.templateTasks ?? tpl.templateTasks?.length ?? 0}</td>
                   </tr>
                 );
@@ -1737,7 +1737,7 @@ export function ZoneTemplatesPage() {
                 <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                   <span className="inline-flex items-center gap-1"><Layers className="h-3 w-3 text-amber-500" />{t._count?.templateZones ?? 0} zones</span>
                   <span>&middot;</span>
-                  <span className="inline-flex items-center gap-1"><Copy className="h-3 w-3 text-blue-500" />{(t.templateTasks ?? []).filter((tk: any) => tk.description?.startsWith('[SERVICE:')).length} services</span>
+                  <span className="inline-flex items-center gap-1"><Copy className="h-3 w-3 text-blue-500" />{new Set((t.templateTasks ?? []).map((tk: any) => tk.description?.match(/^\[SERVICE:(.+)\]$/)?.[1]).filter(Boolean)).size} services</span>
                   <span>&middot;</span>
                   <span className="inline-flex items-center gap-1"><CheckSquare className="h-3 w-3 text-green-500" />{t._count?.templateTasks ?? t.templateTasks?.length ?? 0} tasks</span>
                   <span>&middot;</span>
