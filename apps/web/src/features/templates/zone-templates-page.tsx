@@ -1284,6 +1284,15 @@ function EditorView({
     setEditingHeader(true);
   };
 
+  const deleteRootTaskMutation = useMutation({
+    mutationFn: (taskId: number) => client.delete(`/templates/tasks/${taskId}`).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
+      notify.success('Task removed', { code: 'TASK-DELETE-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to remove task'),
+  });
+
   if (isLoading) return <TableSkeleton rows={5} cols={4} />;
   if (!template) return <div className="p-8 text-center text-muted-foreground">Template not found.</div>;
 
@@ -1303,15 +1312,6 @@ function EditorView({
       rootUngroupedTasks.push(task);
     }
   }
-
-  const deleteRootTaskMutation = useMutation({
-    mutationFn: (taskId: number) => client.delete(`/templates/tasks/${taskId}`).then((r) => r.data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
-      notify.success('Task removed', { code: 'TASK-DELETE-200' });
-    },
-    onError: (err: any) => notify.apiError(err, 'Failed to remove task'),
-  });
 
   const totalItems = zones.length + rootTasks.length;
 
