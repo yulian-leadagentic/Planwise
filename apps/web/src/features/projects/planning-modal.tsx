@@ -159,12 +159,13 @@ function AddTaskForm({ zoneId, serviceTypes, phases, onSave, onCancel, isPending
 
 // ─── Tasks Panel ─────────────────────────────────────────────────────────────
 
-function TasksPanel({ selectedZone, allTasks, serviceTypes, phases, projectId }: {
+function TasksPanel({ selectedZone, allTasks, serviceTypes, phases, projectId, members }: {
   selectedZone: any;
   allTasks: any[];
   serviceTypes: any[];
   phases: any[];
   projectId: number;
+  members: any[];
 }) {
   const queryClient = useQueryClient();
   const [showAddTask, setShowAddTask] = useState(false);
@@ -184,6 +185,12 @@ function TasksPanel({ selectedZone, allTasks, serviceTypes, phases, projectId }:
     mutationFn: (data: CreateTaskPayload) => tasksApi.create(data),
     onSuccess: () => { invalidate(); setShowAddTask(false); notify.success('Task created', { code: 'TASK-CREATE-200' }); },
     onError: (err: any) => notify.apiError(err, 'Failed to create task'),
+  });
+
+  const updateTask = useMutation({
+    mutationFn: ({ id, ...data }: { id: number } & Record<string, any>) => tasksApi.update(id, data),
+    onSuccess: () => invalidate(),
+    onError: (err: any) => notify.apiError(err, 'Failed to update task'),
   });
 
   const deleteTask = useMutation({
@@ -285,7 +292,7 @@ function TasksPanel({ selectedZone, allTasks, serviceTypes, phases, projectId }:
         )}
 
         {grouped.map(({ serviceType, tasks }) => (
-          <ServiceTypeGroup key={serviceType?.id || 'ungrouped'} serviceType={serviceType} tasks={tasks} phases={phases} onDelete={(id) => deleteTask.mutate(id)} />
+          <ServiceTypeGroup key={serviceType?.id || 'ungrouped'} serviceType={serviceType} tasks={tasks} phases={phases} onDelete={(id) => deleteTask.mutate(id)} onUpdate={(id, data) => updateTask.mutate({ id, ...data })} members={members} />
         ))}
       </div>
     </div>
@@ -294,69 +301,134 @@ function TasksPanel({ selectedZone, allTasks, serviceTypes, phases, projectId }:
 
 // ─── Service Type Group ──────────────────────────────────────────────────────
 
-function ServiceTypeGroup({ serviceType, tasks, phases, onDelete }: {
+function ServiceTypeGroup({ serviceType, tasks, phases, onDelete, onUpdate, members }: {
   serviceType: any;
   tasks: any[];
   phases: any[];
   onDelete: (id: number) => void;
+  onUpdate: (id: number, data: any) => void;
+  members: any[];
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const groupHours = tasks.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
   const groupAmount = tasks.reduce((s: number, t: any) => s + Number(t.budgetAmount || 0), 0);
 
   return (
-    <div className="rounded-md border border-border">
+    <div className="rounded-[14px] border border-slate-200 bg-white">
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/30"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 rounded-t-[14px]"
       >
-        {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        {collapsed ? <ChevronRight className="h-3.5 w-3.5 text-slate-400" /> : <ChevronDown className="h-3.5 w-3.5 text-slate-400" />}
         {serviceType?.color && <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: serviceType.color }} />}
-        <span className="text-sm font-medium">{serviceType?.name || 'Ungrouped'}</span>
-        {serviceType?.code && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{serviceType.code}</span>}
-        <span className="ml-auto text-xs text-muted-foreground">{tasks.length} tasks &middot; {groupHours}h &middot; {groupAmount.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })}</span>
+        <span className="text-[13px] font-semibold text-slate-900">{serviceType?.name || 'Ungrouped'}</span>
+        {serviceType?.code && <span className="rounded-[5px] bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-slate-500">{serviceType.code}</span>}
+        <span className="ml-auto text-[11px] font-medium text-slate-400">{tasks.length} tasks &middot; {groupHours}h &middot; {groupAmount.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })}</span>
       </button>
 
       {!collapsed && (
-        <div className="border-t border-border">
-          <table className="w-full text-sm">
+        <div className="border-t border-slate-100">
+          <table className="w-full text-[13px]">
             <thead>
-              <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground">
-                <th className="px-3 py-1.5 text-left font-medium">Code</th>
-                <th className="px-3 py-1.5 text-left font-medium">Name</th>
-                <th className="px-3 py-1.5 text-right font-medium">Hours</th>
-                <th className="px-3 py-1.5 text-right font-medium">Amount</th>
-                <th className="px-3 py-1.5 text-left font-medium">Phase</th>
-                <th className="px-3 py-1.5 text-left font-medium">Status</th>
-                <th className="px-3 py-1.5 text-center font-medium w-10"></th>
+              <tr className="bg-[#FAFBFC] border-b border-slate-100">
+                <th className="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Code</th>
+                <th className="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Name</th>
+                <th className="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Assignee</th>
+                <th className="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Start</th>
+                <th className="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">End</th>
+                <th className="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Priority</th>
+                <th className="px-3 py-1.5 text-right text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Hours</th>
+                <th className="px-3 py-1.5 text-right text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Amount</th>
+                <th className="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Status</th>
+                <th className="px-3 py-1.5 w-8"></th>
               </tr>
             </thead>
             <tbody>
-              {tasks.map((task: any) => (
-                <tr key={task.id} className="border-b border-border last:border-0 hover:bg-muted/20">
-                  <td className="px-3 py-2 font-mono text-xs">{task.code}</td>
-                  <td className="px-3 py-2">{task.name}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{task.budgetHours ? Number(task.budgetHours) : '-'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{task.budgetAmount ? Number(task.budgetAmount).toLocaleString() : '-'}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{task.phase?.name || '-'}</td>
+              {tasks.map((task: any) => {
+                const assignee = task.assignees?.[0]?.user;
+                return (
+                <tr key={task.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 group">
+                  <td className="px-3 py-2 text-xs font-medium font-mono text-slate-500">{task.code}</td>
+                  <td className="px-3 py-2 font-medium text-slate-900">{task.name}</td>
                   <td className="px-3 py-2">
-                    <span className={cn(
-                      'inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium',
-                      task.status === 'completed' && 'bg-green-100 text-green-700',
-                      task.status === 'in_progress' && 'bg-blue-100 text-blue-700',
-                      task.status === 'not_started' && 'bg-gray-100 text-gray-600',
-                      task.status === 'on_hold' && 'bg-amber-100 text-amber-700',
-                    )}>
-                      {(task.status || 'not_started').replace(/_/g, ' ')}
-                    </span>
+                    {assignee ? (
+                      <span className="inline-flex items-center gap-1.5 text-[13px] text-slate-700">
+                        <span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-semibold flex items-center justify-center">
+                          {assignee.firstName?.[0]}{assignee.lastName?.[0]}
+                        </span>
+                        {assignee.firstName}
+                      </span>
+                    ) : (
+                      <select
+                        className="w-full text-[12px] text-slate-400 bg-transparent border-none cursor-pointer hover:text-slate-600 focus:outline-none"
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            tasksApi.addAssignee(task.id, { userId: Number(e.target.value) });
+                            onUpdate(task.id, {});
+                          }
+                        }}
+                      >
+                        <option value="">+ assign</option>
+                        {members.map((m: any) => (
+                          <option key={m.user?.id ?? m.id} value={m.user?.id ?? m.id}>
+                            {m.user?.firstName ?? m.firstName} {m.user?.lastName ?? m.lastName}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="date"
+                      defaultValue={task.startDate?.split('T')[0] || ''}
+                      className="w-24 text-[12px] text-slate-600 bg-transparent border-none focus:outline-none cursor-pointer"
+                      onChange={(e) => onUpdate(task.id, { startDate: e.target.value || null })}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="date"
+                      defaultValue={task.endDate?.split('T')[0] || ''}
+                      className="w-24 text-[12px] text-slate-600 bg-transparent border-none focus:outline-none cursor-pointer"
+                      onChange={(e) => onUpdate(task.id, { endDate: e.target.value || null })}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <select
+                      value={task.priority || 'medium'}
+                      className="text-[12px] bg-transparent border-none cursor-pointer focus:outline-none"
+                      onChange={(e) => onUpdate(task.id, { priority: e.target.value })}
+                    >
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High</option>
+                      <option value="critical">Critical</option>
+                    </select>
+                  </td>
+                  <td className="px-3 py-2 text-right text-xs font-medium font-mono tabular-nums text-slate-700">{task.budgetHours ? Number(task.budgetHours) : '-'}</td>
+                  <td className="px-3 py-2 text-right text-xs font-semibold font-mono tabular-nums text-slate-700">{task.budgetAmount ? Number(task.budgetAmount).toLocaleString() : '-'}</td>
+                  <td className="px-3 py-2">
+                    <select
+                      value={task.status || 'not_started'}
+                      className="text-[12px] bg-transparent border-none cursor-pointer focus:outline-none"
+                      onChange={(e) => onUpdate(task.id, { status: e.target.value })}
+                    >
+                      <option value="not_started">Not Started</option>
+                      <option value="in_progress">In Progress</option>
+                      <option value="in_review">In Review</option>
+                      <option value="completed">Completed</option>
+                      <option value="on_hold">On Hold</option>
+                    </select>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <button onClick={() => { if (confirm(`Delete "${task.name}"?`)) onDelete(task.id); }} className="rounded p-1 text-muted-foreground hover:bg-red-100 hover:text-red-600">
+                    <button onClick={() => { if (confirm(`Delete "${task.name}"?`)) onDelete(task.id); }} className="opacity-0 group-hover:opacity-100 rounded-[7px] p-1 text-slate-300 hover:bg-red-50 hover:text-red-600 transition-all duration-150">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -569,6 +641,7 @@ function PlanningView({ projectId }: { projectId: number }) {
             serviceTypes={serviceTypes}
             phases={phases}
             projectId={projectId}
+            members={pd?.members ?? []}
           />
         </div>
       </div>
