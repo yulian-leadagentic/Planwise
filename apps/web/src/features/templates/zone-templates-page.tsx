@@ -893,7 +893,7 @@ function ZoneTreeNode({
 
   // Fetch referenced template content if this zone references another template
   const refTemplateId = zone.referencedTemplateId ?? zone.referencedTemplate?.id;
-  const { data: refTemplateDetail } = useQuery({
+  const { data: refTemplateDetail, isLoading: refLoading } = useQuery({
     queryKey: ['templates', refTemplateId],
     enabled: !!refTemplateId,
     staleTime: 5 * 60 * 1000,
@@ -964,9 +964,9 @@ function ZoneTreeNode({
         <ZoneTypeBadge zoneType={zone.zoneType} />
         <span className="text-sm font-semibold">{zone.name}</span>
         {zone.code && <span className="text-xs text-muted-foreground">({zone.code})</span>}
-        {zone.referencedTemplate && (
+        {(zone.referencedTemplate || refTemplateId) && (
           <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
-            <Link className="h-3 w-3" /> ref: {zone.referencedTemplate.name}
+            <Link className="h-3 w-3" /> ref: {zone.referencedTemplate?.name || refTemplateDetail?.name || `#${refTemplateId}`}
           </span>
         )}
         {zone.isTypical && (
@@ -1036,7 +1036,11 @@ function ZoneTreeNode({
           )}
 
           {children.length === 0 && !hasRefContent && !showAddChild && (
-            <p className="py-2 text-xs text-muted-foreground italic">Empty zone. Click [+ Add Zone] to add child zones.</p>
+            refTemplateId && refLoading
+              ? <p className="py-2 text-xs text-muted-foreground italic">Loading zone content...</p>
+              : !refTemplateId
+                ? <p className="py-2 text-xs text-muted-foreground italic">Empty zone. Click [+ Add Zone] to add child zones.</p>
+                : <p className="py-2 text-xs text-muted-foreground italic">Referenced zone has no content.</p>
           )}
         </div>
       )}
