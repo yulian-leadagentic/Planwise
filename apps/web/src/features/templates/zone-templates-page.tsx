@@ -1503,7 +1503,6 @@ export function ZoneTemplatesPage() {
       setName('');
       setCode('');
       setDescription('');
-      setCategory('');
     },
     onError: (err: any) => notify.apiError(err, 'Failed to create'),
   });
