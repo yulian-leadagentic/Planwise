@@ -445,7 +445,7 @@ function BudgetSummaryBar({ summary }: { summary: any }) {
   const isOver = remaining < 0;
 
   return (
-    <div className="flex flex-wrap items-center gap-4 border-t border-border bg-muted/30 px-4 py-2.5 text-xs">
+    <div className="flex flex-wrap items-center gap-4 border-t border-slate-100 bg-[#FAFBFC] px-6 py-2.5 text-xs rounded-b-[14px]">
       <span>
         <span className="text-muted-foreground">Project Total: </span>
         <span className="font-semibold tabular-nums">{totalHours}h</span>
@@ -544,72 +544,73 @@ function PlanningView({ projectId }: { projectId: number }) {
   }
 
   return (
-    <div className="flex h-[calc(100vh-12rem)] flex-col rounded-lg border border-border">
+    <div className="flex h-[calc(100vh-12rem)] flex-col rounded-[14px] border border-slate-200 bg-white">
       <div className="flex flex-1 overflow-hidden">
         {/* Left: Zone tree */}
-        <div className="w-64 shrink-0 border-r border-border flex flex-col">
-          <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
-            <h3 className="text-sm font-semibold">Zones</h3>
+        <div className="w-72 shrink-0 border-r border-slate-200 flex flex-col bg-white">
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <h3 className="text-[15px] font-bold text-slate-900">Zones</h3>
             <div className="flex items-center gap-1">
               <div className="relative">
-                <button onClick={() => setShowProjectTemplateMenu(!showProjectTemplateMenu)} className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground" title="Apply zone/combined template">
-                  <Copy className="h-4 w-4" />
+                <button onClick={() => setShowProjectTemplateMenu(!showProjectTemplateMenu)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600" title="Apply template">
+                  <Copy className="h-3.5 w-3.5" />
                 </button>
                 {showProjectTemplateMenu && (
-                  <div className="absolute right-0 top-full z-50 mt-1 w-60 rounded-md border border-border bg-background shadow-lg">
+                  <div className="absolute right-0 top-full z-50 mt-1 w-60 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-1.5">
                     {projectZoneTemplates.length > 0 && (
                       <>
-                        <p className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase">Zone Templates</p>
+                        <p className="px-3 py-1.5 text-[11px] font-bold tracking-wide text-slate-400 uppercase">Zone Templates</p>
                         {projectZoneTemplates.map((t: any) => (
-                          <button key={t.id} onClick={() => applyProjectTemplate.mutate(t.id)} className="block w-full px-3 py-2 text-left text-sm hover:bg-accent">{t.name}</button>
+                          <button key={t.id} onClick={() => applyProjectTemplate.mutate(t.id)} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 hover:bg-slate-50">{t.name}</button>
                         ))}
                       </>
                     )}
                     {projectCombinedTemplates.length > 0 && (
                       <>
-                        <p className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase border-t border-border">Combined Templates</p>
+                        <div className="h-px bg-slate-100 my-1" />
+                        <p className="px-3 py-1.5 text-[11px] font-bold tracking-wide text-slate-400 uppercase">Combined Templates</p>
                         {projectCombinedTemplates.map((t: any) => (
-                          <button key={t.id} onClick={() => applyProjectTemplate.mutate(t.id)} className="block w-full px-3 py-2 text-left text-sm hover:bg-accent">{t.name}</button>
+                          <button key={t.id} onClick={() => applyProjectTemplate.mutate(t.id)} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 hover:bg-slate-50">{t.name}</button>
                         ))}
                       </>
                     )}
                     {projectZoneTemplates.length === 0 && projectCombinedTemplates.length === 0 && (
-                      <p className="p-3 text-xs text-muted-foreground">No zone or combined templates available. Create one in Templates.</p>
+                      <p className="p-3 text-[13px] text-slate-400">No templates available.</p>
                     )}
                   </div>
                 )}
               </div>
-              <button onClick={() => setAddingZone(!addingZone)} className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground" title="Add zone">
-                <Plus className="h-4 w-4" />
+              <button onClick={() => setAddingZone(!addingZone)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600" title="Add zone">
+                <Plus className="h-3.5 w-3.5" />
               </button>
             </div>
           </div>
 
           {addingZone && (
-            <div className="border-b border-border p-2 space-y-1.5">
+            <div className="border-b border-slate-100 p-3 space-y-2">
               <input
                 type="text" value={newZoneName}
                 onChange={(e) => setNewZoneName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleAddZone(); if (e.key === 'Escape') setAddingZone(false); }}
                 placeholder="Zone name..." autoFocus
-                className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm"
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
               />
-              <select value={newZoneType} onChange={(e) => setNewZoneType(e.target.value)} className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm">
+              <select value={newZoneType} onChange={(e) => setNewZoneType(e.target.value)} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none">
                 {zoneTypeOptions.map((zt) => <option key={zt} value={zt}>{zt.charAt(0).toUpperCase() + zt.slice(1)}</option>)}
               </select>
-              <div className="flex justify-end gap-1">
-                <button onClick={() => setAddingZone(false)} className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent">Cancel</button>
-                <button onClick={handleAddZone} disabled={createZone.isPending || !newZoneName.trim()} className="rounded bg-brand-600 px-2 py-1 text-xs text-white hover:bg-brand-700 disabled:opacity-50">Add</button>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setAddingZone(false)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
+                <button onClick={handleAddZone} disabled={createZone.isPending || !newZoneName.trim()} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50">Add</button>
               </div>
             </div>
           )}
 
-          <div className="flex-1 overflow-y-auto p-1.5">
+          <div className="flex-1 overflow-y-auto p-2">
             <button
               onClick={() => setSelectedZone(null)}
               className={cn(
-                'flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
-                !selectedZone ? 'bg-brand-50 text-brand-700' : 'text-muted-foreground hover:bg-muted',
+                'flex w-full items-center gap-1.5 px-2.5 py-[7px] rounded-lg text-[13px] font-medium transition-all duration-150',
+                !selectedZone ? 'bg-blue-50 border border-blue-200 text-blue-700' : 'text-slate-500 hover:bg-slate-50',
               )}
             >
               <Layers className="h-3.5 w-3.5 shrink-0" /> All Zones
@@ -622,10 +623,10 @@ function PlanningView({ projectId }: { projectId: number }) {
 
           {/* Duplicate zone action */}
           {selectedZone && (
-            <div className="border-t border-border p-2">
+            <div className="border-t border-slate-100 p-3">
               <button
                 onClick={() => { setDuplicateModal(selectedZone); setDuplicateName(`${selectedZone.name} (copy)`); }}
-                className="w-full rounded-md border border-border px-2.5 py-1.5 text-xs hover:bg-accent"
+                className="w-full border border-dashed border-slate-300 hover:border-blue-500 bg-transparent hover:bg-blue-50 text-slate-500 hover:text-blue-600 text-[13px] font-semibold px-3 py-2 rounded-[7px] transition-all duration-150"
               >
                 Duplicate Zone
               </button>
@@ -634,7 +635,7 @@ function PlanningView({ projectId }: { projectId: number }) {
         </div>
 
         {/* Right: Tasks panel */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 bg-slate-50">
           <TasksPanel
             selectedZone={selectedZone}
             allTasks={tasks}
