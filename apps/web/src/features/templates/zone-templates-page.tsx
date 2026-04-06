@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft, Trash2, Layers, ChevronRight, ChevronDown, Link, X, Search, BookOpen } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Layers, ChevronRight, ChevronDown, Link, X, Search, BookOpen, Copy, CheckSquare } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
@@ -494,6 +494,56 @@ function ZoneTasksTable({
 }
 
 // ---------------------------------------------------------------------------
+// Service Picker Modal
+// ---------------------------------------------------------------------------
+
+function ServicePickerModal({
+  templates,
+  currentLinkedId,
+  onSelect,
+  onClose,
+}: {
+  templates: any[];
+  currentLinkedId?: number | null;
+  onSelect: (serviceId: number) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="mx-4 w-full max-w-md rounded-lg border border-border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <h2 className="text-lg font-semibold">Select Service Template</h2>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="max-h-[60vh] overflow-y-auto p-3">
+          {templates.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No service templates available. Create one first.</p>
+          ) : (
+            <div className="space-y-1">
+              {templates.map((t: any) => (
+                <button
+                  key={t.id}
+                  onClick={() => onSelect(t.id)}
+                  className={`flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors ${t.id === currentLinkedId ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-muted/50'}`}
+                >
+                  <Copy className="h-4 w-4 shrink-0 text-blue-600" />
+                  <div className="flex-1">
+                    <span className="font-medium">{t.name}</span>
+                    {t.code && <span className="ml-2 text-xs text-muted-foreground">({t.code})</span>}
+                    <p className="text-xs text-muted-foreground">{t._count?.templateTasks ?? 0} tasks</p>
+                  </div>
+                  {t.id === currentLinkedId && <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">current</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Zone Tree Node (recursive)
 // ---------------------------------------------------------------------------
 
@@ -515,16 +565,26 @@ function ZoneTreeNode({
   const [showAddChild, setShowAddChild] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showCatalogPicker, setShowCatalogPicker] = useState(false);
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const [showServicePicker, setShowServicePicker] = useState(false);
 
   const children: any[] = zone.children ?? [];
   const zoneTasks: any[] = zone.templateZoneTasks ?? [];
-  const hasChildren = children.length > 0;
-  const hasContent = hasChildren || zoneTasks.length > 0;
+  const linkedService = zone.linkedTaskTemplate;
 
   const existingTaskCodes = useMemo(
     () => new Set(zoneTasks.map((t: any) => t.code).filter(Boolean)),
     [zoneTasks],
   );
+
+  const deleteTaskMutation = useMutation({
+    mutationFn: (id: number) => client.delete(`/templates/zone-tasks/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
+      toast.success('Task removed');
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to remove task'),
+  });
 
   const deleteMutation = useMutation({
     mutationFn: () => client.delete(`/templates/zones/${zone.id}`).then((r) => r.data),
@@ -552,105 +612,95 @@ function ZoneTreeNode({
   };
 
   return (
-    <div style={{ marginLeft: depth > 0 ? 24 : 0 }} className="border-l-2 border-border pl-2 mb-1">
-      {/* Node row */}
-      <div className="flex flex-col rounded-md border border-border bg-background p-2 mb-1">
-        <div className="flex items-center gap-2">
-          {/* Expand/collapse toggle */}
+    <div style={{ marginLeft: depth > 0 ? 24 : 0 }}>
+      {/* Zone header row */}
+      <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 mb-1">
+        <button onClick={() => setExpanded(!expanded)} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground">
+          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </button>
+        <ZoneTypeBadge zoneType={zone.zoneType} />
+        <span className="text-sm font-semibold">{zone.name}</span>
+        {zone.code && <span className="text-xs text-muted-foreground">({zone.code})</span>}
+        {zone.isTypical && (
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
+            Typical{zone.typicalCount ? ` x${zone.typicalCount}` : ''}
+          </span>
+        )}
+
+        {/* [+ Add] dropdown */}
+        <div className="relative ml-auto">
           <button
-            onClick={() => setExpanded(!expanded)}
-            className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+            onClick={() => setShowAddMenu(!showAddMenu)}
+            className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
           >
-            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            <Plus className="h-3 w-3" /> Add
           </button>
-
-          {/* Zone info */}
-          <ZoneTypeBadge zoneType={zone.zoneType} />
-          <span className="text-sm font-semibold">{zone.name}</span>
-          {zone.code && <span className="text-xs text-muted-foreground">({zone.code})</span>}
-          {zone.isTypical && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
-              Typical{zone.typicalCount ? ` x${zone.typicalCount}` : ''}
-            </span>
+          {showAddMenu && (
+            <div className="absolute right-0 top-full z-50 mt-1 w-44 rounded-md border border-border bg-background shadow-lg">
+              <button onClick={() => { setShowAddChild(true); setShowAddMenu(false); setExpanded(true); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
+                <Layers className="h-3.5 w-3.5 text-amber-600" /> Zone
+              </button>
+              <button onClick={() => { setShowServicePicker(true); setShowAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
+                <Copy className="h-3.5 w-3.5 text-blue-600" /> Service Template
+              </button>
+              <button onClick={() => { setShowCatalogPicker(true); setShowAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
+                <CheckSquare className="h-3.5 w-3.5 text-green-600" /> Task from Catalog
+              </button>
+              <button onClick={() => { setShowAddTask(true); setShowAddMenu(false); setExpanded(true); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left border-t border-border">
+                <Plus className="h-3.5 w-3.5 text-muted-foreground" /> Manual Task
+              </button>
+            </div>
           )}
-
-          {/* Linked template badge */}
-          {zone.linkedTaskTemplate && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
-              <Link className="h-3 w-3" />
-              {zone.linkedTaskTemplate.name}
-            </span>
-          )}
-
-          {/* Delete button */}
-          <button
-            onClick={() => { if (confirm(`Delete zone "${zone.name}" and all its children?`)) deleteMutation.mutate(); }}
-            className="ml-auto rounded-md p-1 text-muted-foreground hover:bg-red-100 hover:text-red-600"
-            title="Delete zone"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
         </div>
 
-        {/* Actions bar — always visible */}
-        <div className="flex flex-wrap items-center gap-1.5 mt-1.5 pl-7">
-          {/* Link service template */}
-          <select
-            value={zone.linkedTaskTemplate?.id ?? zone.linkedTaskTemplateId ?? ''}
-            onChange={handleLinkChange}
-            className="h-7 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-            title="Link Service Template"
-          >
-            <option value="">-- Service Template --</option>
-            {taskTemplates.map((tt: any) => (
-              <option key={tt.id} value={tt.id}>{tt.name}</option>
-            ))}
-          </select>
-
-          <button
-            onClick={() => { setShowAddChild(true); setExpanded(true); }}
-            className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
-            title="Add child zone"
-          >
-            <Plus className="h-3 w-3" /> Child Zone
-          </button>
-
-          <button
-            onClick={() => { setShowAddTask(true); setExpanded(true); }}
-            className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
-            title="Add task to zone"
-          >
-            <Plus className="h-3 w-3" /> Task
-          </button>
-
-          <button
-            onClick={() => setShowCatalogPicker(true)}
-            className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
-            title="Pick tasks from catalog"
-          >
-            <BookOpen className="h-3 w-3" /> Pick Catalog
-          </button>
-        </div>
+        <button
+          onClick={() => { if (confirm(`Delete zone "${zone.name}" and all its children?`)) deleteMutation.mutate(); }}
+          className="rounded-md p-1 text-muted-foreground hover:bg-red-100 hover:text-red-600"
+          title="Delete zone"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
       </div>
 
-      {/* Zone tasks table */}
-      {expanded && <ZoneTasksTable tasks={zoneTasks} templateId={templateId} />}
-
-      {/* Inline add task form */}
-      {expanded && showAddTask && (
-        <div className="ml-7">
-          <AddZoneTaskForm
-            zoneId={zone.id}
-            templateId={templateId}
-            phases={phases}
-            onDone={() => setShowAddTask(false)}
-          />
-        </div>
-      )}
-
-      {/* Children */}
+      {/* Tree items (expanded) */}
       {expanded && (
-        <>
+        <div className="ml-6 border-l-2 border-border pl-3 space-y-0.5 mb-2">
+          {/* Service template item */}
+          {linkedService && (
+            <div className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-blue-50">
+              <Copy className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+              <span className="text-sm text-blue-700 font-medium">Service: {linkedService.name}</span>
+              {linkedService.code && <span className="text-xs text-blue-500">({linkedService.code})</span>}
+              <button
+                onClick={() => updateMutation.mutate({ linkedTaskTemplateId: null })}
+                className="ml-auto rounded p-0.5 text-muted-foreground hover:bg-red-100 hover:text-red-600"
+                title="Unlink service template"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+
+          {/* Task items */}
+          {zoneTasks.map((task: any) => (
+            <div key={task.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-green-50">
+              <CheckSquare className="h-3.5 w-3.5 shrink-0 text-green-600" />
+              <span className="font-mono text-xs text-muted-foreground w-16">{task.code || '-'}</span>
+              <span className="text-sm">{task.name}</span>
+              {task.defaultBudgetHours != null && <span className="text-xs text-muted-foreground">{Number(task.defaultBudgetHours)}h</span>}
+              {task.defaultBudgetAmount != null && <span className="text-xs text-muted-foreground">{'\u20AA'}{Number(task.defaultBudgetAmount).toLocaleString()}</span>}
+              {task.phase?.name && <span className="text-xs text-muted-foreground">({task.phase.name})</span>}
+              <button
+                onClick={() => { if (confirm(`Remove task "${task.name}"?`)) deleteTaskMutation.mutate(task.id); }}
+                className="ml-auto rounded p-0.5 text-muted-foreground hover:bg-red-100 hover:text-red-600"
+                title="Remove task"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+
+          {/* Child zones (recursive) */}
           {children.map((child: any) => (
             <ZoneTreeNode
               key={child.id}
@@ -661,12 +711,39 @@ function ZoneTreeNode({
               depth={depth + 1}
             />
           ))}
+
+          {/* Inline add zone form */}
           {showAddChild && (
-            <div style={{ marginLeft: 20 }}>
+            <div className="mt-1">
               <AddZoneForm templateId={templateId} parentId={zone.id} onDone={() => setShowAddChild(false)} />
             </div>
           )}
-        </>
+
+          {/* Inline add task form */}
+          {showAddTask && (
+            <div className="mt-1">
+              <AddZoneTaskForm zoneId={zone.id} templateId={templateId} phases={phases} onDone={() => setShowAddTask(false)} />
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!linkedService && zoneTasks.length === 0 && children.length === 0 && !showAddChild && !showAddTask && (
+            <p className="py-2 text-xs text-muted-foreground italic">No items. Click [+ Add] to add zones, services, or tasks.</p>
+          )}
+        </div>
+      )}
+
+      {/* Service picker modal */}
+      {showServicePicker && (
+        <ServicePickerModal
+          templates={taskTemplates}
+          currentLinkedId={zone.linkedTaskTemplate?.id ?? zone.linkedTaskTemplateId}
+          onSelect={(serviceId) => {
+            updateMutation.mutate({ linkedTaskTemplateId: serviceId });
+            setShowServicePicker(false);
+          }}
+          onClose={() => setShowServicePicker(false)}
+        />
       )}
 
       {/* Catalog picker modal */}
