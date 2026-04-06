@@ -1,4 +1,6 @@
-import { Plus, Users } from 'lucide-react';
+import { useState } from 'react';
+import { Plus, Users, X } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
 import { FilterBar } from '@/components/shared/filter-bar';
 import { DataTable } from '@/components/shared/data-table';
@@ -8,6 +10,8 @@ import { useUsers } from '@/hooks/use-users';
 import { useFilterStore } from '@/stores/filter.store';
 import { useDebounce } from '@/hooks/use-debounce';
 import { cn } from '@/lib/utils';
+import { notify } from '@/lib/notify';
+import client from '@/api/client';
 import type { UserListItem } from '@/types';
 import type { ColumnDef } from '@tanstack/react-table';
 
@@ -76,8 +80,43 @@ const columns: ColumnDef<UserListItem, unknown>[] = [
   },
 ];
 
+const emptyPerson = { email: '', password: '', firstName: '', lastName: '', phone: '', roleId: '', userType: 'employee' as string, position: '', department: '', companyName: '' };
+
 export function PeoplePage() {
+  const queryClient = useQueryClient();
   const { peopleTab, peopleSearch, setPeopleFilters } = useFilterStore();
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState({ ...emptyPerson });
+
+  const { data: roles = [] } = useQuery({
+    queryKey: ['roles'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () => client.get('/admin/roles').then((r) => { const d = r.data.data ?? r.data; return Array.isArray(d) ? d : []; }),
+  });
+
+  const createUser = useMutation({
+    mutationFn: (data: any) => client.post('/users', data).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      notify.success('Person created', { code: 'USER-CREATE-200' });
+      setShowCreate(false);
+      setForm({ ...emptyPerson });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to create person'),
+  });
+
+  const handleCreateSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.email || !form.firstName || !form.lastName || !form.password || !form.roleId) {
+      notify.warning('Please fill all required fields', { code: 'USER-CREATE-400' });
+      return;
+    }
+    createUser.mutate({
+      ...form,
+      roleId: Number(form.roleId),
+      userType: peopleTab === 'partners' ? 'partner' : 'employee',
+    });
+  };
   const debouncedSearch = useDebounce(peopleSearch, 300);
 
   const userType = peopleTab === 'employees' ? 'employee' : 'partner';
@@ -99,7 +138,7 @@ export function PeoplePage() {
         title="People"
         description="Manage employees and partners"
         actions={
-          <button className="flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
+          <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-[13px] font-semibold text-white">
             <Plus className="h-4 w-4" />
             Add Person
           </button>
@@ -173,6 +212,75 @@ export function PeoplePage() {
           )}
           emptyMessage="No users found"
         />
+      )}
+
+      {/* Create Person Modal */}
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={() => setShowCreate(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[480px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <h2 className="text-base font-bold text-slate-900">Add {peopleTab === 'partners' ? 'Partner' : 'Employee'}</h2>
+              <button onClick={() => setShowCreate(false)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <form onSubmit={handleCreateSubmit} className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">First Name *</label>
+                  <input value={form.firstName} onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Last Name *</label>
+                  <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Email *</label>
+                <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+              </div>
+              <div>
+                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Password *</label>
+                <input type="password" value={form.password} onChange={(e) => setForm(f => ({ ...f, password: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Role *</label>
+                  <select value={form.roleId} onChange={(e) => setForm(f => ({ ...f, roleId: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none">
+                    <option value="">Select role</option>
+                    {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Phone</label>
+                  <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Position</label>
+                  <input value={form.position} onChange={(e) => setForm(f => ({ ...f, position: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Department</label>
+                  <input value={form.department} onChange={(e) => setForm(f => ({ ...f, department: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                </div>
+              </div>
+              {peopleTab === 'partners' && (
+                <div>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Company Name</label>
+                  <input value={form.companyName} onChange={(e) => setForm(f => ({ ...f, companyName: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                </div>
+              )}
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button type="button" onClick={() => setShowCreate(false)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+                <button type="submit" disabled={createUser.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
+                  {createUser.isPending ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );
