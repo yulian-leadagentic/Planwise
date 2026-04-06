@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { projectsApi } from '@/api/projects.api';
 import type { ProjectQuery, CreateProjectPayload, AddMemberPayload } from '@/api/projects.api';
 
@@ -25,10 +25,10 @@ export function useCreateProject() {
     mutationFn: (payload: CreateProjectPayload) => projectsApi.create(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
-      toast.success('Project created');
+      notify.success('Project created', { code: 'PROJECT-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to create project');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to create project');
     },
   });
 }
@@ -42,10 +42,10 @@ export function useUpdateProject() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
       queryClient.invalidateQueries({ queryKey: ['projects', variables.id] });
-      toast.success('Project updated');
+      notify.success('Project updated', { code: 'PROJECT-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to update project');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to update project');
     },
   });
 }
@@ -57,10 +57,10 @@ export function useDeleteProject() {
     mutationFn: (id: number) => projectsApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
-      toast.success('Project deleted');
+      notify.success('Project deleted', { code: 'PROJECT-DELETE-200' });
     },
-    onError: () => {
-      toast.error('Failed to delete project');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to delete project');
     },
   });
 }
@@ -81,10 +81,10 @@ export function useAddProjectMember() {
       projectsApi.addMember(projectId, payload),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['projects', variables.projectId, 'members'] });
-      toast.success('Member added');
+      notify.success('Member added', { code: 'PROJECT-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to add member');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to add member');
     },
   });
 }
@@ -97,10 +97,10 @@ export function useRemoveProjectMember() {
       projectsApi.removeMember(projectId, memberId),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['projects', variables.projectId, 'members'] });
-      toast.success('Member removed');
+      notify.success('Member removed', { code: 'PROJECT-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to remove member');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to remove member');
     },
   });
 }

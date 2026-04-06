@@ -5,7 +5,7 @@ import { Plus, ArrowLeft, Trash2, Grid3x3, ChevronRight, ChevronDown, Link2 } fr
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 
 const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 const btnPrimary = 'flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
@@ -273,10 +273,10 @@ function EditorView({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
       queryClient.invalidateQueries({ queryKey: ['templates', 'combined'] });
-      toast.success('Template updated');
+      notify.success('Template updated', { code: 'TPL-UPDATE-200' });
       setEditingHeader(false);
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to update template'),
+    onError: (err: any) => notify.apiError(err, 'Failed to update template'),
   });
 
   // ---- add zone form ----
@@ -289,11 +289,11 @@ function EditorView({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
       queryClient.invalidateQueries({ queryKey: ['templates', 'combined'] });
-      toast.success('Zone added');
+      notify.success('Zone added', { code: 'ZONE-CREATE-200' });
       setNewZone({ name: '', zoneType: 'zone', linkedTaskTemplateId: '' });
       setAddingZoneParentId(null);
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to add zone'),
+    onError: (err: any) => notify.apiError(err, 'Failed to add zone'),
   });
 
   const updateZoneMutation = useMutation({
@@ -302,9 +302,9 @@ function EditorView({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
       queryClient.invalidateQueries({ queryKey: ['templates', 'combined'] });
-      toast.success('Zone updated');
+      notify.success('Zone updated', { code: 'ZONE-UPDATE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to update zone'),
+    onError: (err: any) => notify.apiError(err, 'Failed to update zone'),
   });
 
   const deleteZoneMutation = useMutation({
@@ -313,9 +313,9 @@ function EditorView({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
       queryClient.invalidateQueries({ queryKey: ['templates', 'combined'] });
-      toast.success('Zone deleted');
+      notify.success('Zone deleted', { code: 'ZONE-DELETE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete zone'),
+    onError: (err: any) => notify.apiError(err, 'Failed to delete zone'),
   });
 
   // ---- handlers ----
@@ -538,23 +538,23 @@ export function CombinedTemplatesPage() {
       client.post('/templates', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'combined'] });
-      toast.success('Combined template created');
+      notify.success('Combined template created', { code: 'TPL-CREATE-200' });
       setShowForm(false);
       setName('');
       setCode('');
       setDescription('');
       setCategory('');
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create'),
+    onError: (err: any) => notify.apiError(err, 'Failed to create'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => client.delete(`/templates/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'combined'] });
-      toast.success('Template deleted');
+      notify.success('Template deleted', { code: 'TPL-DELETE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
+    onError: (err: any) => notify.apiError(err, 'Failed to delete'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

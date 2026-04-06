@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 
 const TYPE_STYLES: Record<string, string> = {
@@ -32,22 +32,22 @@ export function CalendarDaysPage() {
       client.post('/calendar', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'calendar'] });
-      toast.success('Calendar day created');
+      notify.success('Calendar day created', { code: 'TIME-CREATE-200' });
       setShowForm(false);
       setDate('');
       setName('');
       setType('holiday');
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create calendar day'),
+    onError: (err: any) => notify.apiError(err, 'Failed to create calendar day'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => client.delete(`/calendar/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'calendar'] });
-      toast.success('Calendar day deleted');
+      notify.success('Calendar day deleted', { code: 'TIME-DELETE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
+    onError: (err: any) => notify.apiError(err, 'Failed to delete'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

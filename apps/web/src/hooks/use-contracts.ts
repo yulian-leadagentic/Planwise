@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { contractsApi } from '@/api/contracts.api';
 import type { ContractQuery, CreateContractPayload, BillingPayload } from '@/api/contracts.api';
 
@@ -25,10 +25,10 @@ export function useCreateContract() {
     mutationFn: (payload: CreateContractPayload) => contractsApi.create(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['contracts'] });
-      toast.success('Contract created');
+      notify.success('Contract created', { code: 'CONTRACT-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to create contract');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to create contract');
     },
   });
 }
@@ -42,10 +42,10 @@ export function useUpdateContract() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['contracts'] });
       queryClient.invalidateQueries({ queryKey: ['contracts', variables.id] });
-      toast.success('Contract updated');
+      notify.success('Contract updated', { code: 'CONTRACT-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to update contract');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to update contract');
     },
   });
 }
@@ -57,10 +57,10 @@ export function useDeleteContract() {
     mutationFn: (id: number) => contractsApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['contracts'] });
-      toast.success('Contract deleted');
+      notify.success('Contract deleted', { code: 'CONTRACT-DELETE-200' });
     },
-    onError: () => {
-      toast.error('Failed to delete contract');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to delete contract');
     },
   });
 }
@@ -81,10 +81,10 @@ export function useCreateBilling() {
       contractsApi.createBilling(contractId, payload),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['contracts', variables.contractId, 'billings'] });
-      toast.success('Billing created');
+      notify.success('Billing created', { code: 'CONTRACT-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to create billing');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to create billing');
     },
   });
 }

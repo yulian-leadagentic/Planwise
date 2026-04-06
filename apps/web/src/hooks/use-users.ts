@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { usersApi } from '@/api/users.api';
 import type { UserQuery, CreateUserPayload } from '@/api/users.api';
 
@@ -25,10 +25,10 @@ export function useCreateUser() {
     mutationFn: (payload: CreateUserPayload) => usersApi.create(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success('User created');
+      notify.success('User created', { code: 'USER-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to create user');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to create user');
     },
   });
 }
@@ -42,10 +42,10 @@ export function useUpdateUser() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
       queryClient.invalidateQueries({ queryKey: ['users', variables.id] });
-      toast.success('User updated');
+      notify.success('User updated', { code: 'USER-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to update user');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to update user');
     },
   });
 }
@@ -57,10 +57,10 @@ export function useDeleteUser() {
     mutationFn: (id: number) => usersApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success('User deleted');
+      notify.success('User deleted', { code: 'USER-DELETE-200' });
     },
-    onError: () => {
-      toast.error('Failed to delete user');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to delete user');
     },
   });
 }
@@ -74,10 +74,10 @@ export function useToggleUserActive() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
       queryClient.invalidateQueries({ queryKey: ['users', variables.id] });
-      toast.success(variables.isActive ? 'User deactivated' : 'User activated');
+      notify.success(variables.isActive ? 'User deactivated' : 'User activated', { code: 'USER-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to update user status');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to update user status');
     },
   });
 }

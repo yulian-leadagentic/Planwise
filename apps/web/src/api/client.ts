@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { useAuthStore } from '@/stores/auth.store';
+import { notify, getErrorCode, getErrorMessage } from '@/lib/notify';
 
 const client = axios.create({
   baseURL: '/api/v1',

@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 
 export function PhasesPage() {
   const navigate = useNavigate();
@@ -25,21 +25,21 @@ export function PhasesPage() {
       client.post('/phases', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['phases'] });
-      toast.success('Phase created');
+      notify.success('Phase created', { code: 'PHASE-CREATE-200' });
       setShowForm(false);
       setName('');
       setCode('');
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create'),
+    onError: (err: any) => notify.apiError(err, 'Failed to create'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => client.delete(`/phases/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['phases'] });
-      toast.success('Phase deleted');
+      notify.success('Phase deleted', { code: 'PHASE-DELETE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
+    onError: (err: any) => notify.apiError(err, 'Failed to delete'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

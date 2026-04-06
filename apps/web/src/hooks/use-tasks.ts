@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { tasksApi } from '@/api/tasks.api';
 import type { TaskQuery, CreateTaskPayload, UpdateTaskPayload } from '@/api/tasks.api';
 
@@ -26,10 +26,10 @@ export function useCreateTask() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['planning'] });
-      toast.success('Task created');
+      notify.success('Task created', { code: 'TASK-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to create task');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to create task');
     },
   });
 }
@@ -44,10 +44,10 @@ export function useUpdateTask() {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.id] });
       queryClient.invalidateQueries({ queryKey: ['planning'] });
-      toast.success('Task updated');
+      notify.success('Task updated', { code: 'TASK-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to update task');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to update task');
     },
   });
 }
@@ -60,10 +60,10 @@ export function useDeleteTask() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['planning'] });
-      toast.success('Task deleted');
+      notify.success('Task deleted', { code: 'TASK-DELETE-200' });
     },
-    onError: () => {
-      toast.error('Failed to delete task');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to delete task');
     },
   });
 }
@@ -77,10 +77,10 @@ export function useAddTaskAssignee() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.taskId] });
       queryClient.invalidateQueries({ queryKey: ['planning'] });
-      toast.success('Assignee added');
+      notify.success('Assignee added', { code: 'TASK-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to add assignee');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to add assignee');
     },
   });
 }
@@ -94,10 +94,10 @@ export function useRemoveTaskAssignee() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.taskId] });
       queryClient.invalidateQueries({ queryKey: ['planning'] });
-      toast.success('Assignee removed');
+      notify.success('Assignee removed', { code: 'TASK-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to remove assignee');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to remove assignee');
     },
   });
 }
@@ -126,10 +126,10 @@ export function useCreateComment() {
       tasksApi.addComment(taskId, payload),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.taskId, 'comments'] });
-      toast.success('Comment added');
+      notify.success('Comment added', { code: 'TASK-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to add comment');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to add comment');
     },
   });
 }
@@ -142,10 +142,10 @@ export function useDeleteComment() {
       tasksApi.delete(commentId),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.taskId, 'comments'] });
-      toast.success('Comment deleted');
+      notify.success('Comment deleted', { code: 'TASK-DELETE-200' });
     },
-    onError: () => {
-      toast.error('Failed to delete comment');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to delete comment');
     },
   });
 }

@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 
 export function CategoriesPage() {
   const navigate = useNavigate();
@@ -26,22 +26,22 @@ export function CategoriesPage() {
       client.post('/service-types', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['service-types'] });
-      toast.success('Service type created');
+      notify.success('Service type created', { code: 'SVCTYPE-CREATE-200' });
       setShowForm(false);
       setName('');
       setCode('');
       setColor('');
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create'),
+    onError: (err: any) => notify.apiError(err, 'Failed to create'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => client.delete(`/service-types/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['service-types'] });
-      toast.success('Service type deleted');
+      notify.success('Service type deleted', { code: 'SVCTYPE-DELETE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
+    onError: (err: any) => notify.apiError(err, 'Failed to delete'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

@@ -5,7 +5,7 @@ import { Plus, ArrowLeft, Trash2, Layers, ChevronRight, ChevronDown, Link, X, Se
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 
 const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 const btnPrimary = 'flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
@@ -66,10 +66,10 @@ function AddZoneForm({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
       queryClient.invalidateQueries({ queryKey: ['templates', 'zone'] });
-      toast.success('Zone added');
+      notify.success('Zone added', { code: 'ZONE-CREATE-200' });
       onDone();
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to add zone'),
+    onError: (err: any) => notify.apiError(err, 'Failed to add zone'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -161,10 +161,10 @@ function AddZoneTaskForm({
       client.post(`/templates/zones/${zoneId}/tasks`, data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
-      toast.success('Task added to zone');
+      notify.success('Task added to zone', { code: 'TASK-ADD-200' });
       onDone();
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to add task'),
+    onError: (err: any) => notify.apiError(err, 'Failed to add task'),
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -331,10 +331,10 @@ function ZoneCatalogPickerModal({
         });
       }
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
-      toast.success(`Added ${tasksToAdd.length} task${tasksToAdd.length !== 1 ? 's' : ''} to zone`);
+      notify.success(`Added ${tasksToAdd.length} task${tasksToAdd.length !== 1 ? 's' : ''} to zone`, { code: 'TASK-ADD-200' });
       onClose();
     } catch (err: any) {
-      toast.error(err?.response?.data?.error?.message || 'Failed to add tasks');
+      notify.apiError(err, 'Failed to add tasks');
     } finally {
       setAdding(false);
     }
@@ -462,9 +462,9 @@ function ZoneTasksTable({
     mutationFn: (id: number) => client.delete(`/templates/zone-tasks/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
-      toast.success('Task removed');
+      notify.success('Task removed', { code: 'TASK-DELETE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete task'),
+    onError: (err: any) => notify.apiError(err, 'Failed to delete task'),
   });
 
   if (tasks.length === 0) return null;
@@ -600,9 +600,9 @@ function ZoneTreeNode({
     mutationFn: (id: number) => client.delete(`/templates/zone-tasks/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
-      toast.success('Task removed');
+      notify.success('Task removed', { code: 'TASK-DELETE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to remove task'),
+    onError: (err: any) => notify.apiError(err, 'Failed to remove task'),
   });
 
   const deleteMutation = useMutation({
@@ -610,9 +610,9 @@ function ZoneTreeNode({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
       queryClient.invalidateQueries({ queryKey: ['templates', 'zone'] });
-      toast.success('Zone deleted');
+      notify.success('Zone deleted', { code: 'ZONE-DELETE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete zone'),
+    onError: (err: any) => notify.apiError(err, 'Failed to delete zone'),
   });
 
   const updateMutation = useMutation({
@@ -620,9 +620,9 @@ function ZoneTreeNode({
       client.patch(`/templates/zones/${zone.id}`, data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
-      toast.success('Zone updated');
+      notify.success('Zone updated', { code: 'ZONE-UPDATE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to update zone'),
+    onError: (err: any) => notify.apiError(err, 'Failed to update zone'),
   });
 
   const handleLinkChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -804,10 +804,10 @@ function RootServicePickerModal({
         linkedTaskTemplateId: serviceTemplate.id,
       });
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
-      toast.success(`Added service: ${serviceTemplate.name}`);
+      notify.success(`Added service: ${serviceTemplate.name}`, { code: 'ZONE-CREATE-200' });
       onClose();
     } catch (err: any) {
-      toast.error(err?.response?.data?.error?.message || 'Failed to add service');
+      notify.apiError(err, 'Failed to add service');
     } finally {
       setAdding(false);
     }
@@ -885,7 +885,7 @@ function RootCatalogPickerModal({
     : catalogTasks;
 
   const handleAddSelected = async () => {
-    if (!zoneName.trim()) { toast.error('Enter a zone name'); return; }
+    if (!zoneName.trim()) { notify.warning('Enter a zone name', { code: 'ZONE-CREATE-400' }); return; }
     const tasksToAdd = catalogTasks.filter((t: any) => selected.has(t.id));
     if (tasksToAdd.length === 0) return;
     setAdding(true);
@@ -907,10 +907,10 @@ function RootCatalogPickerModal({
         });
       }
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
-      toast.success(`Added ${tasksToAdd.length} tasks to zone "${zoneName.trim()}"`);
+      notify.success(`Added ${tasksToAdd.length} tasks to zone "${zoneName.trim()}"`, { code: 'TASK-ADD-200' });
       onClose();
     } catch (err: any) {
-      toast.error(err?.response?.data?.error?.message || 'Failed to add tasks');
+      notify.apiError(err, 'Failed to add tasks');
     } finally {
       setAdding(false);
     }
@@ -1025,10 +1025,10 @@ function EditorView({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
       queryClient.invalidateQueries({ queryKey: ['templates', 'zone'] });
-      toast.success('Template updated');
+      notify.success('Template updated', { code: 'TPL-UPDATE-200' });
       setEditingHeader(false);
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to update template'),
+    onError: (err: any) => notify.apiError(err, 'Failed to update template'),
   });
 
   const handleSaveHeader = (e: React.FormEvent) => {
@@ -1233,23 +1233,23 @@ export function ZoneTemplatesPage() {
       client.post('/templates', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'zone'] });
-      toast.success('Zone template created');
+      notify.success('Zone template created', { code: 'TPL-CREATE-200' });
       setShowForm(false);
       setName('');
       setCode('');
       setDescription('');
       setCategory('');
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create'),
+    onError: (err: any) => notify.apiError(err, 'Failed to create'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => client.delete(`/templates/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'zone'] });
-      toast.success('Template deleted');
+      notify.success('Template deleted', { code: 'TPL-DELETE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
+    onError: (err: any) => notify.apiError(err, 'Failed to delete'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

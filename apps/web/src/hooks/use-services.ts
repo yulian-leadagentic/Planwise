@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { servicesApi, deliverablesApi, assignmentsApi, planningApi } from '@/api/services.api';
 
 // ─── Services ──────────────────────────────────────────────────────────────
@@ -21,10 +21,10 @@ export function useCreateService(projectId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['services', projectId] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Service created');
+      notify.success('Service created', { code: 'SERVICE-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to create service');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to create service');
     },
   });
 }
@@ -38,10 +38,10 @@ export function useUpdateService(projectId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['services', projectId] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Service updated');
+      notify.success('Service updated', { code: 'SERVICE-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to update service');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to update service');
     },
   });
 }
@@ -54,10 +54,10 @@ export function useDeleteService(projectId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['services', projectId] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Service deleted');
+      notify.success('Service deleted', { code: 'SERVICE-DELETE-200' });
     },
-    onError: () => {
-      toast.error('Failed to delete service');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to delete service');
     },
   });
 }
@@ -82,10 +82,10 @@ export function useCreateDeliverable(projectId: number) {
       queryClient.invalidateQueries({ queryKey: ['deliverables'] });
       queryClient.invalidateQueries({ queryKey: ['services', projectId] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Deliverable created');
+      notify.success('Deliverable created', { code: 'SERVICE-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to create deliverable');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to create deliverable');
     },
   });
 }
@@ -100,10 +100,10 @@ export function useUpdateDeliverable(projectId: number) {
       queryClient.invalidateQueries({ queryKey: ['deliverables'] });
       queryClient.invalidateQueries({ queryKey: ['services', projectId] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Deliverable updated');
+      notify.success('Deliverable updated', { code: 'SERVICE-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to update deliverable');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to update deliverable');
     },
   });
 }
@@ -117,10 +117,10 @@ export function useDeleteDeliverable(projectId: number) {
       queryClient.invalidateQueries({ queryKey: ['deliverables'] });
       queryClient.invalidateQueries({ queryKey: ['services', projectId] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Deliverable deleted');
+      notify.success('Deliverable deleted', { code: 'SERVICE-DELETE-200' });
     },
-    onError: () => {
-      toast.error('Failed to delete deliverable');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to delete deliverable');
     },
   });
 }
@@ -134,10 +134,10 @@ export function useLinkZones(projectId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['deliverables'] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Zones linked');
+      notify.success('Zones linked', { code: 'SERVICE-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to link zones');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to link zones');
     },
   });
 }
@@ -150,10 +150,10 @@ export function useInstantiateDeliverable(projectId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['assignments'] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Assignments instantiated');
+      notify.success('Assignments instantiated', { code: 'SERVICE-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to instantiate deliverable');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to instantiate deliverable');
     },
   });
 }
@@ -177,10 +177,10 @@ export function useCreateAssignment(projectId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['assignments'] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Assignment created');
+      notify.success('Assignment created', { code: 'SERVICE-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to create assignment');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to create assignment');
     },
   });
 }
@@ -194,10 +194,10 @@ export function useUpdateAssignment(projectId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['assignments'] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Assignment updated');
+      notify.success('Assignment updated', { code: 'SERVICE-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to update assignment');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to update assignment');
     },
   });
 }
@@ -210,10 +210,10 @@ export function useDeleteAssignment(projectId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['assignments'] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Assignment deleted');
+      notify.success('Assignment deleted', { code: 'SERVICE-DELETE-200' });
     },
-    onError: () => {
-      toast.error('Failed to delete assignment');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to delete assignment');
     },
   });
 }
@@ -227,10 +227,10 @@ export function useAddAssignee(projectId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['assignments'] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Assignee added');
+      notify.success('Assignee added', { code: 'SERVICE-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to add assignee');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to add assignee');
     },
   });
 }
@@ -244,10 +244,10 @@ export function useRemoveAssignee(projectId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['assignments'] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Assignee removed');
+      notify.success('Assignee removed', { code: 'SERVICE-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to remove assignee');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to remove assignee');
     },
   });
 }

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { authApi } from '@/api/auth.api';
 import type { LoginPayload, ForgotPasswordPayload, VerifyOtpPayload, ResetPasswordPayload } from '@/api/auth.api';
 import { useAuthStore } from '@/stores/auth.store';
@@ -14,10 +14,10 @@ export function useLogin() {
     onSuccess: (data) => {
       setAuth(data.accessToken, data.user);
       navigate('/');
-      toast.success('Welcome back!');
+      notify.success('Welcome back!', { code: 'AUTH-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Invalid email or password');
+    onError: (err: any) => {
+      notify.apiError(err, 'Invalid email or password');
     },
   });
 }
@@ -60,10 +60,10 @@ export function useUpdateMe() {
     mutationFn: (payload: Parameters<typeof authApi.updateMe>[0]) => authApi.updateMe(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['me'] });
-      toast.success('Profile updated');
+      notify.success('Profile updated', { code: 'AUTH-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to update profile');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to update profile');
     },
   });
 }
@@ -72,10 +72,10 @@ export function useUpdatePassword() {
   return useMutation({
     mutationFn: (payload: Parameters<typeof authApi.updatePassword>[0]) => authApi.updatePassword(payload),
     onSuccess: () => {
-      toast.success('Password updated');
+      notify.success('Password updated', { code: 'AUTH-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to update password');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to update password');
     },
   });
 }
@@ -87,10 +87,10 @@ export function useUploadAvatar() {
     mutationFn: (file: File) => authApi.uploadAvatar(file),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['me'] });
-      toast.success('Avatar updated');
+      notify.success('Avatar updated', { code: 'AUTH-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to upload avatar');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to upload avatar');
     },
   });
 }
@@ -99,10 +99,10 @@ export function useForgotPassword() {
   return useMutation({
     mutationFn: (payload: ForgotPasswordPayload) => authApi.forgotPassword(payload),
     onSuccess: () => {
-      toast.success('OTP sent to your email');
+      notify.success('OTP sent to your email', { code: 'AUTH-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to send OTP');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to send OTP');
     },
   });
 }
@@ -110,8 +110,8 @@ export function useForgotPassword() {
 export function useVerifyOtp() {
   return useMutation({
     mutationFn: (payload: VerifyOtpPayload) => authApi.verifyOtp(payload),
-    onError: () => {
-      toast.error('Invalid or expired code');
+    onError: (err: any) => {
+      notify.apiError(err, 'Invalid or expired code');
     },
   });
 }
@@ -122,11 +122,11 @@ export function useResetPassword() {
   return useMutation({
     mutationFn: (payload: ResetPasswordPayload) => authApi.resetPassword(payload),
     onSuccess: () => {
-      toast.success('Password reset successfully');
+      notify.success('Password reset successfully', { code: 'AUTH-UPDATE-200' });
       navigate('/login');
     },
-    onError: () => {
-      toast.error('Failed to reset password');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to reset password');
     },
   });
 }

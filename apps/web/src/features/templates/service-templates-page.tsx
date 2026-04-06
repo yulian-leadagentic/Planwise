@@ -5,7 +5,7 @@ import { Plus, ArrowLeft, Trash2, Copy, Search, X, BookOpen } from 'lucide-react
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 
 const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 const btnPrimary = 'flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
@@ -103,10 +103,10 @@ function CatalogPickerModal({
       }
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
       queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
-      toast.success(`Added ${tasksToAdd.length} task${tasksToAdd.length !== 1 ? 's' : ''}`);
+      notify.success(`Added ${tasksToAdd.length} task${tasksToAdd.length !== 1 ? 's' : ''}`, { code: 'TASK-ADD-200' });
       onClose();
     } catch (err: any) {
-      toast.error(err?.response?.data?.error?.message || 'Failed to add tasks');
+      notify.apiError(err, 'Failed to add tasks');
     } finally {
       setAdding(false);
     }
@@ -252,10 +252,10 @@ function EditorView({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
       queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
-      toast.success('Template updated');
+      notify.success('Template updated', { code: 'TPL-UPDATE-200' });
       setEditingHeader(false);
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to update template'),
+    onError: (err: any) => notify.apiError(err, 'Failed to update template'),
   });
 
   // ---- add task form ----
@@ -270,11 +270,11 @@ function EditorView({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
       queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
-      toast.success('Task added');
+      notify.success('Task added', { code: 'TASK-ADD-200' });
       setNewTask(emptyTask);
       setShowAddTask(false);
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to add task'),
+    onError: (err: any) => notify.apiError(err, 'Failed to add task'),
   });
 
   const deleteTaskMutation = useMutation({
@@ -283,9 +283,9 @@ function EditorView({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
       queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
-      toast.success('Task deleted');
+      notify.success('Task deleted', { code: 'TASK-DELETE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete task'),
+    onError: (err: any) => notify.apiError(err, 'Failed to delete task'),
   });
 
   // ---- totals ----
@@ -550,22 +550,22 @@ export function ServiceTemplatesPage() {
       client.post('/templates', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
-      toast.success('Service template created');
+      notify.success('Service template created', { code: 'TPL-CREATE-200' });
       setShowForm(false);
       setName('');
       setCode('');
       setDescription('');
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create'),
+    onError: (err: any) => notify.apiError(err, 'Failed to create'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => client.delete(`/templates/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
-      toast.success('Service template deleted');
+      notify.success('Service template deleted', { code: 'TPL-DELETE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
+    onError: (err: any) => notify.apiError(err, 'Failed to delete'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

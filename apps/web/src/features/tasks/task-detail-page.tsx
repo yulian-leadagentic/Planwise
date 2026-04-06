@@ -18,7 +18,7 @@ import { useTimeEntries } from '@/hooks/use-time';
 import { formatDate } from '@/lib/date-utils';
 import { minutesToDisplay } from '@/types';
 import { useState, useEffect, useRef, type ReactNode } from 'react';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 
 /* -------------------------------------------------------------------------- */
 /*  Inline‑editable primitives                                                */

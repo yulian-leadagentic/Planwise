@@ -5,7 +5,7 @@ import { ArrowLeft, Plus, Trash2, Pencil, BookOpen } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 
 const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 const btnPrimary = 'flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
@@ -115,11 +115,11 @@ export function TaskCatalogPage() {
       client.post(`/templates/${catalogId}/tasks`, data).then((r) => r.data),
     onSuccess: () => {
       invalidateCatalog();
-      toast.success('Task added to catalog');
+      notify.success('Task added to catalog', { code: 'TASK-ADD-200' });
       setNewTask({ ...emptyTask });
       setShowAddTask(false);
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to add task'),
+    onError: (err: any) => notify.apiError(err, 'Failed to add task'),
   });
 
   const updateTaskMutation = useMutation({
@@ -127,10 +127,10 @@ export function TaskCatalogPage() {
       client.patch(`/templates/tasks/${taskId}`, data).then((r) => r.data),
     onSuccess: () => {
       invalidateCatalog();
-      toast.success('Task updated');
+      notify.success('Task updated', { code: 'TASK-UPDATE-200' });
       setEditingTaskId(null);
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to update task'),
+    onError: (err: any) => notify.apiError(err, 'Failed to update task'),
   });
 
   const deleteTaskMutation = useMutation({
@@ -138,9 +138,9 @@ export function TaskCatalogPage() {
       client.delete(`/templates/tasks/${taskId}`).then((r) => r.data),
     onSuccess: () => {
       invalidateCatalog();
-      toast.success('Task deleted');
+      notify.success('Task deleted', { code: 'TASK-DELETE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete task'),
+    onError: (err: any) => notify.apiError(err, 'Failed to delete task'),
   });
 
   // ---- derived data ----

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { zonesApi } from '@/api/zones.api';
 
 export function useZoneTree(projectId: number) {
@@ -18,10 +18,10 @@ export function useCreateZone() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['zones', 'tree', variables.projectId] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', variables.projectId] });
-      toast.success('Zone created');
+      notify.success('Zone created', { code: 'ZONE-CREATE-200' });
     },
     onError: (err: any) => {
-      toast.error(err?.response?.data?.error?.message || 'Failed to create zone');
+      notify.apiError(err, 'Failed to create zone');
     },
   });
 }
@@ -35,10 +35,10 @@ export function useUpdateZone(projectId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['zones', 'tree', projectId] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Zone updated');
+      notify.success('Zone updated', { code: 'ZONE-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to update zone');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to update zone');
     },
   });
 }
@@ -51,10 +51,10 @@ export function useDeleteZone(projectId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['zones', 'tree', projectId] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Zone deleted');
+      notify.success('Zone deleted', { code: 'ZONE-DELETE-200' });
     },
-    onError: () => {
-      toast.error('Failed to delete zone');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to delete zone');
     },
   });
 }
@@ -67,10 +67,10 @@ export function useCopyZoneStructure(projectId: number) {
       zonesApi.copyStructure(id, parentId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['zones', 'tree', projectId] });
-      toast.success('Zone structure copied');
+      notify.success('Zone structure copied', { code: 'ZONE-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to copy zone structure');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to copy zone structure');
     },
   });
 }
@@ -83,10 +83,10 @@ export function useExplodeTypical(projectId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['zones', 'tree', projectId] });
       queryClient.invalidateQueries({ queryKey: ['planning-data', projectId] });
-      toast.success('Typical zone exploded');
+      notify.success('Typical zone exploded', { code: 'ZONE-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to explode typical zone');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to explode typical zone');
     },
   });
 }

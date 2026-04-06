@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -28,10 +28,10 @@ export function WorkSchedulesPage() {
     mutationFn: (data: any) => client.post('/work-schedules', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'work-schedules'] });
-      toast.success('Schedule created');
+      notify.success('Schedule created', { code: 'TIME-CREATE-200' });
       setShowForm(false);
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create schedule'),
+    onError: (err: any) => notify.apiError(err, 'Failed to create schedule'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

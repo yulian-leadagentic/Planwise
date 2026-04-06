@@ -9,7 +9,7 @@ import {
   Copy,
   Trash2,
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { planningApi, zonesApi, templatesApi } from '@/api/zones.api';
@@ -110,7 +110,7 @@ function AddTaskForm({ zoneId, serviceTypes, phases, onSave, onCancel, isPending
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!code.trim() || !name.trim()) {
-      toast.error('Code and name are required');
+      notify.error('Code and name are required');
       return;
     }
     onSave({
@@ -182,20 +182,20 @@ function TasksPanel({ selectedZone, allTasks, serviceTypes, phases, projectId }:
 
   const createTask = useMutation({
     mutationFn: (data: CreateTaskPayload) => tasksApi.create(data),
-    onSuccess: () => { invalidate(); setShowAddTask(false); toast.success('Task created'); },
-    onError: () => toast.error('Failed to create task'),
+    onSuccess: () => { invalidate(); setShowAddTask(false); notify.success('Task created', { code: 'TASK-CREATE-200' }); },
+    onError: (err: any) => notify.apiError(err, 'Failed to create task'),
   });
 
   const deleteTask = useMutation({
     mutationFn: (id: number) => tasksApi.delete(id),
-    onSuccess: () => { invalidate(); toast.success('Task deleted'); },
-    onError: () => toast.error('Failed to delete task'),
+    onSuccess: () => { invalidate(); notify.success('Task deleted', { code: 'TASK-DELETE-200' }); },
+    onError: (err: any) => notify.apiError(err, 'Failed to delete task'),
   });
 
   const applyTemplate = useMutation({
     mutationFn: (templateId: number) => zonesApi.applyTaskTemplate(selectedZone.id, templateId),
-    onSuccess: () => { invalidate(); setShowTemplateDropdown(false); toast.success('Template applied'); },
-    onError: () => toast.error('Failed to apply template'),
+    onSuccess: () => { invalidate(); setShowTemplateDropdown(false); notify.success('Template applied', { code: 'ZONE-APPLY-200' }); },
+    onError: (err: any) => notify.apiError(err, 'Failed to apply template'),
   });
 
   // Filter tasks for selected zone
@@ -441,20 +441,20 @@ function PlanningView({ projectId }: { projectId: number }) {
 
   const applyProjectTemplate = useMutation({
     mutationFn: (templateId: number) => planningApi.applyProjectTemplate(projectId, templateId),
-    onSuccess: () => { invalidate(); setShowProjectTemplateMenu(false); toast.success('Template applied — zones and tasks created'); },
-    onError: () => toast.error('Failed to apply template'),
+    onSuccess: () => { invalidate(); setShowProjectTemplateMenu(false); notify.success('Template applied — zones and tasks created', { code: 'PROJECT-APPLY-200' }); },
+    onError: (err: any) => notify.apiError(err, 'Failed to apply template'),
   });
 
   const createZone = useMutation({
     mutationFn: (data: any) => zonesApi.create(data),
-    onSuccess: () => { invalidate(); setNewZoneName(''); setAddingZone(false); toast.success('Zone created'); },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || err?.response?.data?.message || 'Failed to create zone'),
+    onSuccess: () => { invalidate(); setNewZoneName(''); setAddingZone(false); notify.success('Zone created', { code: 'ZONE-CREATE-200' }); },
+    onError: (err: any) => notify.apiError(err, 'Failed to create zone'),
   });
 
   const duplicateZone = useMutation({
     mutationFn: ({ zoneId, newName }: { zoneId: number; newName: string }) => zonesApi.duplicate(zoneId, newName),
-    onSuccess: () => { invalidate(); setDuplicateModal(null); setDuplicateName(''); toast.success('Zone duplicated'); },
-    onError: () => toast.error('Failed to duplicate zone'),
+    onSuccess: () => { invalidate(); setDuplicateModal(null); setDuplicateName(''); notify.success('Zone duplicated', { code: 'ZONE-DUPLICATE-200' }); },
+    onError: (err: any) => notify.apiError(err, 'Failed to duplicate zone'),
   });
 
   const handleAddZone = () => {

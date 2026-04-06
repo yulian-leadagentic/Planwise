@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { timeApi } from '@/api/time.api';
 import type { ClockInPayload, ClockOutPayload, TimeEntryPayload, WeeklyGridQuery } from '@/api/time.api';
 
@@ -19,10 +19,10 @@ export function useClockIn() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clock-status'] });
       queryClient.invalidateQueries({ queryKey: ['time'] });
-      toast.success('Clocked in');
+      notify.success('Clocked in', { code: 'TIME-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to clock in');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to clock in');
     },
   });
 }
@@ -35,10 +35,10 @@ export function useClockOut() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clock-status'] });
       queryClient.invalidateQueries({ queryKey: ['time'] });
-      toast.success('Clocked out');
+      notify.success('Clocked out', { code: 'TIME-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to clock out');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to clock out');
     },
   });
 }
@@ -57,10 +57,10 @@ export function useCreateTimeEntry() {
     mutationFn: (payload: TimeEntryPayload) => timeApi.createEntry(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['time'] });
-      toast.success('Time entry created');
+      notify.success('Time entry created', { code: 'TIME-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to create time entry');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to create time entry');
     },
   });
 }
@@ -73,10 +73,10 @@ export function useUpdateTimeEntry() {
       timeApi.updateEntry(id, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['time'] });
-      toast.success('Time entry updated');
+      notify.success('Time entry updated', { code: 'TIME-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to update time entry');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to update time entry');
     },
   });
 }
@@ -88,10 +88,10 @@ export function useDeleteTimeEntry() {
     mutationFn: (id: number) => timeApi.deleteEntry(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['time'] });
-      toast.success('Time entry deleted');
+      notify.success('Time entry deleted', { code: 'TIME-DELETE-200' });
     },
-    onError: () => {
-      toast.error('Failed to delete time entry');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to delete time entry');
     },
   });
 }

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { labelsApi } from '@/api/labels.api';
 import type { CreateLabelPayload, MoveLabelPayload } from '@/api/labels.api';
 
@@ -26,10 +26,10 @@ export function useCreateLabel() {
     mutationFn: (payload: CreateLabelPayload) => labelsApi.create(payload),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['labels', variables.projectId] });
-      toast.success('Label created');
+      notify.success('Label created', { code: 'LABEL-CREATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to create label');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to create label');
     },
   });
 }
@@ -42,10 +42,10 @@ export function useUpdateLabel() {
       labelsApi.update(id, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['labels'] });
-      toast.success('Label updated');
+      notify.success('Label updated', { code: 'LABEL-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to update label');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to update label');
     },
   });
 }
@@ -57,10 +57,10 @@ export function useDeleteLabel() {
     mutationFn: (id: number) => labelsApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['labels'] });
-      toast.success('Label deleted');
+      notify.success('Label deleted', { code: 'LABEL-DELETE-200' });
     },
-    onError: () => {
-      toast.error('Failed to delete label');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to delete label');
     },
   });
 }
@@ -73,10 +73,10 @@ export function useMoveLabel() {
       labelsApi.move(id, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['labels'] });
-      toast.success('Label moved');
+      notify.success('Label moved', { code: 'LABEL-UPDATE-200' });
     },
-    onError: () => {
-      toast.error('Failed to move label');
+    onError: (err: any) => {
+      notify.apiError(err, 'Failed to move label');
     },
   });
 }

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 
 export function ZoneTypesPage() {
   const queryClient = useQueryClient();
@@ -24,15 +24,14 @@ export function ZoneTypesPage() {
       client.post('/admin/config/zone-types', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'zone-types'] });
-      toast.success('Zone type created');
+      notify.success('Zone type created', { code: 'ZONE-CREATE-200' });
       setShowForm(false);
       setName('');
       setColor('#3B82F6');
       setIcon('');
     },
     onError: (err: any) => {
-      const msg = err?.response?.data?.error?.message || err?.message || 'Failed to create zone type';
-      toast.error(msg);
+      notify.apiError(err, 'Failed to create zone type');
     },
   });
 
@@ -40,9 +39,9 @@ export function ZoneTypesPage() {
     mutationFn: (id: number) => client.delete(`/admin/config/zone-types/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'zone-types'] });
-      toast.success('Zone type deleted');
+      notify.success('Zone type deleted', { code: 'ZONE-DELETE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
+    onError: (err: any) => notify.apiError(err, 'Failed to delete'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 
 export function LabelTypesPage() {
   const queryClient = useQueryClient();
@@ -24,22 +24,22 @@ export function LabelTypesPage() {
       client.post('/admin/config/label-types', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'label-types'] });
-      toast.success('Label type created');
+      notify.success('Label type created', { code: 'PROJECT-CREATE-200' });
       setShowForm(false);
       setName('');
       setColor('#3B82F6');
       setIcon('');
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create label type'),
+    onError: (err: any) => notify.apiError(err, 'Failed to create label type'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => client.delete(`/admin/config/label-types/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'label-types'] });
-      toast.success('Label type deleted');
+      notify.success('Label type deleted', { code: 'PROJECT-DELETE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
+    onError: (err: any) => notify.apiError(err, 'Failed to delete'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {

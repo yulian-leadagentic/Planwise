@@ -1,7 +1,7 @@
 import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Edit, Users, FolderTree, CheckSquare, DollarSign, LayoutGrid, Plus } from 'lucide-react';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 import { useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { StatusBadge } from '@/components/shared/status-badge';
@@ -168,7 +168,7 @@ export function ProjectDetailPage() {
       {tab === 'members' && (
         <div className="space-y-4">
           <div className="flex justify-end">
-            <button className="flex items-center gap-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700" onClick={() => toast.info('Member management coming soon')}>
+            <button className="flex items-center gap-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700" onClick={() => notify.info('Member management coming soon')}>
               <Plus className="h-4 w-4" /> Add Member
             </button>
           </div>

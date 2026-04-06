@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
-import { toast } from 'sonner';
+import { notify } from '@/lib/notify';
 
 export function ProjectTypesPage() {
   const navigate = useNavigate();
@@ -25,21 +25,21 @@ export function ProjectTypesPage() {
       client.post('/admin/config/project-types', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'project-types'] });
-      toast.success('Project type created');
+      notify.success('Project type created', { code: 'PROJECT-CREATE-200' });
       setShowForm(false);
       setName('');
       setCode('');
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to create project type'),
+    onError: (err: any) => notify.apiError(err, 'Failed to create project type'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => client.delete(`/admin/config/project-types/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'project-types'] });
-      toast.success('Project type deleted');
+      notify.success('Project type deleted', { code: 'PROJECT-DELETE-200' });
     },
-    onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to delete'),
+    onError: (err: any) => notify.apiError(err, 'Failed to delete'),
   });
 
   const handleSubmit = (e: React.FormEvent) => {
