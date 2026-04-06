@@ -673,11 +673,12 @@ function ServicePickerModal({
 // Service Group Item (expandable, view-only tasks)
 // ---------------------------------------------------------------------------
 
-function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll }: {
+function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, readOnly }: {
   serviceName: string;
   tasks: any[];
   templateId: number;
   onDeleteAll: () => void;
+  readOnly?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const totalHours = tasks.reduce((s: number, t: any) => s + Number(t.defaultBudgetHours || 0), 0);
@@ -695,13 +696,13 @@ function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll }: {
         <span className="text-xs text-muted-foreground">
           {tasks.length} task{tasks.length !== 1 ? 's' : ''} &middot; {totalHours}h &middot; {'\u20AA'}{totalAmount.toLocaleString()}
         </span>
-        <button
+        {!readOnly && <button
           onClick={(e) => { e.stopPropagation(); onDeleteAll(); }}
           className="ml-auto rounded p-0.5 text-muted-foreground hover:bg-red-100 hover:text-red-600"
           title="Remove this service and all its tasks"
         >
           <X className="h-3 w-3" />
-        </button>
+        </button>}
       </div>
       {expanded && (
         <div className="ml-6 border-l border-blue-200 pl-3 mb-1">
@@ -753,19 +754,37 @@ function ZoneTreeNode({
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(true);
   const [showAddChild, setShowAddChild] = useState(false);
-  const [showAddTask, setShowAddTask] = useState(false);
-  const [showCatalogPicker, setShowCatalogPicker] = useState(false);
-  const [showAddMenu, setShowAddMenu] = useState(false);
-  const [showServicePicker, setShowServicePicker] = useState(false);
 
   const children: any[] = zone.children ?? [];
-  const zoneTasks: any[] = zone.templateZoneTasks ?? [];
-  const linkedService = zone.linkedTaskTemplate;
 
-  const existingTaskCodes = useMemo(
-    () => new Set(zoneTasks.map((t: any) => t.code).filter(Boolean)),
-    [zoneTasks],
-  );
+  // Fetch referenced template content if this zone references another template
+  const refTemplateId = zone.referencedTemplateId ?? zone.referencedTemplate?.id;
+  const { data: refTemplateDetail } = useQuery({
+    queryKey: ['templates', refTemplateId],
+    enabled: !!refTemplateId,
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get(`/templates/${refTemplateId}`).then((r) => r.data.data ?? r.data),
+  });
+
+  // Extract content from referenced template
+  const refTasks: any[] = refTemplateDetail?.templateTasks ?? [];
+  const refZones: any[] = refTemplateDetail?.templateZones ?? [];
+
+  // Group referenced tasks by service tag
+  const refServiceGroups = new Map<string, any[]>();
+  const refUngroupedTasks: any[] = [];
+  for (const task of refTasks) {
+    const match = task.description?.match(/^\[SERVICE:(.+)\]$/);
+    if (match) {
+      const svcName = match[1];
+      if (!refServiceGroups.has(svcName)) refServiceGroups.set(svcName, []);
+      refServiceGroups.get(svcName)!.push(task);
+    } else {
+      refUngroupedTasks.push(task);
+    }
+  }
+
+  const hasRefContent = refTasks.length > 0 || refZones.length > 0;
 
   const deleteTaskMutation = useMutation({
     mutationFn: (id: number) => client.delete(`/templates/zone-tasks/${id}`).then((r) => r.data),
@@ -840,9 +859,35 @@ function ZoneTreeNode({
         </button>
       </div>
 
-      {/* Children zones only (sub-zones can only contain other zones) */}
+      {/* Expanded: referenced content (view-only) + child zones */}
       {expanded && (
         <div className="ml-6 border-l-2 border-border pl-3 space-y-0.5 mb-2">
+          {/* View-only: services from referenced template */}
+          {Array.from(refServiceGroups.entries()).map(([svcName, svcTasks]) => (
+            <ServiceGroupItem key={`ref-svc-${svcName}`} serviceName={svcName} tasks={svcTasks} templateId={templateId} onDeleteAll={() => {}} readOnly />
+          ))}
+
+          {/* View-only: ungrouped tasks from referenced template */}
+          {refUngroupedTasks.map((task: any) => (
+            <div key={`ref-task-${task.id}`} className="flex items-center gap-2 rounded-md px-2 py-1.5 bg-muted/20">
+              <CheckSquare className="h-3.5 w-3.5 shrink-0 text-green-400" />
+              <span className="font-mono text-xs text-muted-foreground w-16">{task.code || '-'}</span>
+              <span className="text-sm text-muted-foreground">{task.name}</span>
+              {task.defaultBudgetHours != null && <span className="text-xs text-muted-foreground">{Number(task.defaultBudgetHours)}h</span>}
+              {task.defaultBudgetAmount != null && <span className="text-xs text-muted-foreground">{'\u20AA'}{Number(task.defaultBudgetAmount).toLocaleString()}</span>}
+            </div>
+          ))}
+
+          {/* View-only: zones from referenced template */}
+          {refZones.map((rz: any) => (
+            <div key={`ref-zone-${rz.id}`} className="flex items-center gap-2 rounded-md px-2 py-1.5 bg-muted/20">
+              <Layers className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+              <span className="text-sm text-muted-foreground">{rz.name}</span>
+              {rz.code && <span className="text-xs text-muted-foreground">({rz.code})</span>}
+            </div>
+          ))}
+
+          {/* Editable: child zones in this template */}
           {children.map((child: any) => (
             <ZoneTreeNode
               key={child.id}
@@ -860,8 +905,8 @@ function ZoneTreeNode({
             </div>
           )}
 
-          {children.length === 0 && !showAddChild && (
-            <p className="py-2 text-xs text-muted-foreground italic">No child zones. Click [+ Add Zone] to add.</p>
+          {children.length === 0 && !hasRefContent && !showAddChild && (
+            <p className="py-2 text-xs text-muted-foreground italic">Empty zone. Click [+ Add Zone] to add child zones.</p>
           )}
         </div>
       )}
