@@ -1,232 +1,410 @@
-import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Edit, Users, FolderTree, CheckSquare, DollarSign, LayoutGrid, Plus } from 'lucide-react';
-import { notify } from '@/lib/notify';
+import { ArrowLeft, Settings, Plus, UserPlus, X } from 'lucide-react';
 import { useState } from 'react';
-import { PageHeader } from '@/components/shared/page-header';
-import { StatusBadge } from '@/components/shared/status-badge';
-import { UserAvatar } from '@/components/shared/user-avatar';
-import { ProjectTree } from './project-tree';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { PlanningTab } from './planning-modal';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
-import { useProject, useProjectMembers } from '@/hooks/use-projects';
-import { useLabelTree } from '@/hooks/use-labels';
-import { useTasks } from '@/hooks/use-tasks';
+import { useProject, useProjectMembers, useAddProjectMember, useRemoveProjectMember } from '@/hooks/use-projects';
+import { cn } from '@/lib/utils';
+import { notify } from '@/lib/notify';
+import client from '@/api/client';
 import { formatDate } from '@/lib/date-utils';
-import { formatCurrency, cn } from '@/lib/utils';
 
-type Tab = 'tree' | 'planning' | 'tasks' | 'members' | 'costs';
+type Tab = 'planning' | 'team';
+
+interface User {
+  id: number;
+  firstName: string;
+  lastName: string;
+  role?: string;
+  avatarUrl?: string | null;
+}
+
+function getInitials(firstName: string, lastName: string) {
+  return `${firstName?.[0] ?? ''}${lastName?.[0] ?? ''}`.toUpperCase();
+}
+
+function formatShortDate(dateStr: string | null) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+}
+
+function formatBudget(amount: number) {
+  return new Intl.NumberFormat('he-IL', {
+    style: 'decimal',
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
 
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const projectId = Number(id);
-  const [tab, setTab] = useState<Tab>('tree');
+  const [tab, setTab] = useState<Tab>('planning');
+  const [showAddMember, setShowAddMember] = useState(false);
 
   const { data: project, isLoading } = useProject(projectId);
-  const { data: tree } = useLabelTree(projectId);
   const { data: members } = useProjectMembers(projectId);
-  const { data: tasksData } = useTasks({ projectId, perPage: 100 });
 
   if (isLoading) return <PageSkeleton />;
-  if (!project) return <p className="py-8 text-center text-muted-foreground">Project not found</p>;
+  if (!project) return <p className="py-8 text-center text-slate-400">Project not found</p>;
 
-  const tasks = tasksData?.data ?? [];
+  const leader = members?.find((m) => m.role?.toLowerCase() === 'leader' || m.role?.toLowerCase() === 'project leader');
+  const memberCount = members?.length ?? 0;
+  const startLabel = formatShortDate(project.startDate);
+  const endLabel = formatShortDate(project.endDate);
+  const timeline = startLabel && endLabel ? `${startLabel} \u2014 ${endLabel}` : startLabel || endLabel || null;
 
-  const tabs = [
-    { key: 'tree' as Tab, label: 'Labels', icon: FolderTree },
-    { key: 'planning' as Tab, label: 'Planning', icon: LayoutGrid },
-    { key: 'tasks' as Tab, label: 'Tasks', icon: CheckSquare, count: tasks.length },
-    { key: 'members' as Tab, label: 'Members', icon: Users, count: members?.length },
-    { key: 'costs' as Tab, label: 'Costs', icon: DollarSign },
+  const tabs: { key: Tab; label: string }[] = [
+    { key: 'planning', label: 'Planning' },
+    { key: 'team', label: 'Team' },
   ];
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <button onClick={() => navigate('/projects')} className="rounded-md p-1.5 hover:bg-accent">
-          <ArrowLeft className="h-5 w-5" />
-        </button>
-        <PageHeader
-          title={project.name}
-          description={project.description ?? undefined}
-          actions={
-            <div className="flex items-center gap-2">
-              <StatusBadge status={project.status} />
-              <button
-                onClick={() => navigate(`/projects/${projectId}/edit`)}
-                className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent"
-              >
-                <Edit className="h-4 w-4" />
-                Edit
-              </button>
-            </div>
-          }
-          className="flex-1"
-        />
-      </div>
-
-      {/* Project info */}
-      <div className="grid gap-3 sm:grid-cols-4">
-        {project.number && (
-          <div className="rounded-lg border border-border p-3">
-            <p className="text-xs text-muted-foreground">Number</p>
-            <p className="text-sm font-medium">{project.number}</p>
-          </div>
-        )}
-        {project.budget != null && (
-          <div className="rounded-lg border border-border p-3">
-            <p className="text-xs text-muted-foreground">Budget</p>
-            <p className="text-sm font-medium">{formatCurrency(project.budget)}</p>
-          </div>
-        )}
-        {project.startDate && (
-          <div className="rounded-lg border border-border p-3">
-            <p className="text-xs text-muted-foreground">Start Date</p>
-            <p className="text-sm font-medium">{formatDate(project.startDate)}</p>
-          </div>
-        )}
-        {project.endDate && (
-          <div className="rounded-lg border border-border p-3">
-            <p className="text-xs text-muted-foreground">End Date</p>
-            <p className="text-sm font-medium">{formatDate(project.endDate)}</p>
-          </div>
-        )}
-      </div>
-
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-border">
-        {tabs.map((t) => (
+    <div className="min-h-screen bg-slate-50">
+      {/* Header */}
+      <div className="bg-white border-b border-slate-200">
+        <div className="mx-auto max-w-7xl px-6 pt-5 pb-0">
+          {/* Back link */}
           <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={cn(
-              'flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors',
-              tab === t.key
-                ? 'border-brand-600 text-brand-600'
-                : 'border-transparent text-muted-foreground hover:text-foreground',
-            )}
+            onClick={() => navigate('/projects')}
+            className="mb-3 flex items-center gap-1 text-[13px] text-slate-400 hover:text-slate-600 transition-colors"
           >
-            <t.icon className="h-4 w-4" />
-            {t.label}
-            {t.count != null && (
-              <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs">{t.count}</span>
-            )}
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Projects
           </button>
-        ))}
+
+          {/* Title row */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <h1 className="text-xl font-bold tracking-tight text-slate-900">
+                {project.name}
+              </h1>
+              <span className="rounded-[5px] bg-blue-50 px-2.5 py-1 text-[11px] font-bold tracking-wide text-blue-600 uppercase">
+                {project.status}
+              </span>
+              {project.number && (
+                <span className="text-[13px] text-slate-400 font-mono">
+                  {project.number}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => navigate(`/projects/${projectId}/edit`)}
+              className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+            >
+              <Settings className="h-4 w-4" />
+              Settings
+            </button>
+          </div>
+
+          {/* Meta row */}
+          <div className="mt-3 mb-4 flex items-center gap-3 text-xs text-slate-500">
+            {/* Leader */}
+            {leader && leader.user && (
+              <>
+                <div className="flex items-center gap-1.5">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-100 text-[9px] font-semibold text-indigo-600">
+                    {getInitials(leader.user.firstName, leader.user.lastName)}
+                  </div>
+                  <span className="text-slate-700 text-xs font-medium">
+                    {leader.user.firstName} {leader.user.lastName}
+                  </span>
+                  <span className="text-slate-400 text-xs">Leader</span>
+                </div>
+                <span className="text-slate-300">|</span>
+              </>
+            )}
+
+            {/* Team count with stacked avatars */}
+            <div className="flex items-center gap-1.5">
+              <div className="flex -space-x-1.5">
+                {(members ?? []).slice(0, 3).map((m) => (
+                  <div
+                    key={m.id}
+                    className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[8px] font-semibold text-slate-600 ring-2 ring-white"
+                  >
+                    {getInitials(m.user?.firstName ?? '', m.user?.lastName ?? '')}
+                  </div>
+                ))}
+              </div>
+              <span className="text-slate-500 text-xs">{memberCount} members</span>
+            </div>
+
+            {/* Budget */}
+            {project.budget != null && (
+              <>
+                <span className="text-slate-300">|</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-500 text-xs">Budget:</span>
+                  <span className="font-mono text-xs font-semibold text-slate-900">
+                    &#8362;{formatBudget(project.budget)}
+                  </span>
+                </div>
+              </>
+            )}
+
+            {/* Timeline */}
+            {timeline && (
+              <>
+                <span className="text-slate-300">|</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-500 text-xs">Timeline:</span>
+                  <span className="text-xs text-slate-700">{timeline}</span>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Tab bar */}
+      <div className="bg-white border-b border-slate-200">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="flex gap-6">
+            {tabs.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={cn(
+                  'border-b-2 px-1 py-2.5 text-[13px] font-semibold transition-colors',
+                  tab === t.key
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-slate-400 hover:text-slate-600',
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Tab content */}
-      {tab === 'tree' && (
-        <div>
-          {tree && tree.length > 0 ? (
-            <ProjectTree labels={tree} />
-          ) : (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              No labels yet. Create a label structure to organize this project.
-            </p>
-          )}
-        </div>
-      )}
+      <div className="mx-auto max-w-7xl px-6 py-6">
+        {tab === 'planning' && <PlanningTab projectId={projectId} />}
+        {tab === 'team' && (
+          <TeamTab
+            projectId={projectId}
+            members={members ?? []}
+            showAddMember={showAddMember}
+            onToggleAddMember={setShowAddMember}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
 
-      {tab === 'planning' && (
-        <ErrorBoundary onClose={() => setTab('tree')}>
-          <PlanningTab projectId={projectId} />
-        </ErrorBoundary>
-      )}
+/* ─── Team Tab ──────────────────────────────────────────────────────────────── */
 
-      {tab === 'tasks' && (
-        <div className="space-y-4">
-          <div className="flex justify-end">
-            <button
-              onClick={() => navigate(`/tasks`)}
-              className="flex items-center gap-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700"
+interface ProjectMember {
+  id: number;
+  projectId: number;
+  userId: number;
+  role: string | null;
+  user?: {
+    id: number;
+    firstName: string;
+    lastName: string;
+    avatarUrl: string | null;
+  };
+  createdAt: string;
+}
+
+function TeamTab({
+  projectId,
+  members,
+  showAddMember,
+  onToggleAddMember,
+}: {
+  projectId: number;
+  members: ProjectMember[];
+  showAddMember: boolean;
+  onToggleAddMember: (v: boolean) => void;
+}) {
+  const removeMember = useRemoveProjectMember();
+
+  const handleRemove = (memberId: number) => {
+    removeMember.mutate(
+      { projectId, memberId },
+      {
+        onError: () => notify.error('Failed to remove member'),
+      },
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-slate-700">Team Members</h2>
+        <button
+          onClick={() => onToggleAddMember(true)}
+          className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
+        >
+          <UserPlus className="h-3.5 w-3.5" />
+          Add Member
+        </button>
+      </div>
+
+      {members.length === 0 ? (
+        <p className="py-8 text-center text-sm text-slate-400">
+          No members yet. Add team members to this project.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {members.map((member) => (
+            <div
+              key={member.id}
+              className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-3"
             >
-              <Plus className="h-4 w-4" /> View All Tasks
-            </button>
-          </div>
-          {tasks.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">No tasks yet. Use the Planning tab to create services for this project.</p>
-          ) : (
-            tasks.map((task) => (
-              <button
-                key={task.id}
-                onClick={() => navigate(`/tasks/${task.id}`)}
-                className="flex w-full items-center justify-between rounded-md border border-border p-3 text-left hover:bg-muted/50"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{task.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">{task.zone?.name || task.code}</p>
-                </div>
-                <StatusBadge status={task.status} />
-              </button>
-            ))
-          )}
-        </div>
-      )}
-
-      {tab === 'members' && (
-        <div className="space-y-4">
-          <div className="flex justify-end">
-            <button className="flex items-center gap-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700" onClick={() => notify.info('Member management coming soon')}>
-              <Plus className="h-4 w-4" /> Add Member
-            </button>
-          </div>
-          {!members || members.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">No members yet. Add team members to this project.</p>
-          ) : (
-            members.map((member) => (
-              <div key={member.id} className="flex items-center gap-3 rounded-md border border-border p-3">
-                <UserAvatar
-                  firstName={member.user?.firstName ?? ''}
-                  lastName={member.user?.lastName ?? ''}
-                  avatarUrl={member.user?.avatarUrl}
-                  size="sm"
-                />
-                <div className="flex-1">
-                  <p className="text-sm font-medium">
-                    {member.user?.firstName} {member.user?.lastName}
-                  </p>
-                  {member.role && <p className="text-xs text-muted-foreground">{member.role}</p>}
-                </div>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-semibold text-indigo-600">
+                {getInitials(member.user?.firstName ?? '', member.user?.lastName ?? '')}
               </div>
-            ))
-          )}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-slate-900 truncate">
+                  {member.user?.firstName} {member.user?.lastName}
+                </p>
+                {member.role && (
+                  <p className="text-xs text-slate-400">{member.role}</p>
+                )}
+              </div>
+              <button
+                onClick={() => handleRemove(member.id)}
+                className="rounded p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                title="Remove member"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
-      {tab === 'costs' && (
-        <div className="py-8 text-center text-sm text-muted-foreground">
-          Cost overview coming soon
-        </div>
+      {/* Add Member Dialog */}
+      {showAddMember && (
+        <AddMemberDialog
+          projectId={projectId}
+          existingMemberIds={members.map((m) => m.userId)}
+          onClose={() => onToggleAddMember(false)}
+        />
       )}
     </div>
   );
 }
 
-class ErrorBoundary extends React.Component<
-  { children: React.ReactNode; onClose: () => void },
-  { hasError: boolean; error: string }
-> {
-  constructor(props: { children: React.ReactNode; onClose: () => void }) {
-    super(props);
-    this.state = { hasError: false, error: '' };
-  }
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error: error.message };
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="py-8 text-center">
-          <p className="text-sm font-medium text-red-600">Planning view encountered an error</p>
-          <p className="mt-1 text-xs text-muted-foreground">{this.state.error}</p>
-          <button onClick={this.props.onClose} className="mt-3 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
-            Go Back
+/* ─── Add Member Dialog ─────────────────────────────────────────────────────── */
+
+function AddMemberDialog({
+  projectId,
+  existingMemberIds,
+  onClose,
+}: {
+  projectId: number;
+  existingMemberIds: number[];
+  onClose: () => void;
+}) {
+  const [search, setSearch] = useState('');
+  const queryClient = useQueryClient();
+
+  const { data: usersResponse, isLoading: loadingUsers } = useQuery({
+    queryKey: ['users', 'active'],
+    queryFn: () => client.get('/users?isActive=true').then((r) => r.data),
+  });
+
+  const addMember = useAddProjectMember();
+
+  const users: User[] = usersResponse?.data ?? usersResponse ?? [];
+  const filteredUsers = users.filter((u: User) => {
+    if (existingMemberIds.includes(u.id)) return false;
+    if (!search) return true;
+    const full = `${u.firstName} ${u.lastName}`.toLowerCase();
+    return full.includes(search.toLowerCase());
+  });
+
+  const handleAdd = (user: User) => {
+    addMember.mutate(
+      { projectId, userId: user.id, role: user.role ?? undefined },
+      {
+        onSuccess: () => {
+          notify.success(`Added ${user.firstName} ${user.lastName}`);
+        },
+        onError: () => {
+          notify.error(`Failed to add ${user.firstName} ${user.lastName}`);
+        },
+      },
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="w-full max-w-md rounded-xl bg-white shadow-2xl">
+        {/* Dialog header */}
+        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+          <h3 className="text-sm font-bold text-slate-900">Add Team Member</h3>
+          <button
+            onClick={onClose}
+            className="rounded p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+          >
+            <X className="h-4 w-4" />
           </button>
         </div>
-      );
-    }
-    return this.props.children;
-  }
+
+        {/* Search */}
+        <div className="px-5 pt-4">
+          <input
+            type="text"
+            placeholder="Search employees..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100"
+            autoFocus
+          />
+        </div>
+
+        {/* User list */}
+        <div className="max-h-64 overflow-y-auto px-5 py-3">
+          {loadingUsers ? (
+            <p className="py-4 text-center text-xs text-slate-400">Loading...</p>
+          ) : filteredUsers.length === 0 ? (
+            <p className="py-4 text-center text-xs text-slate-400">
+              {search ? 'No matching employees' : 'No available employees'}
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {filteredUsers.map((user) => (
+                <div
+                  key={user.id}
+                  className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50"
+                >
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-[9px] font-semibold text-indigo-600">
+                    {getInitials(user.firstName, user.lastName)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">
+                      {user.firstName} {user.lastName}
+                    </p>
+                    {user.role && (
+                      <p className="text-xs text-slate-400">{user.role}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => handleAdd(user)}
+                    disabled={addMember.isPending}
+                    className="rounded-md bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-600 hover:bg-blue-100 transition-colors disabled:opacity-50"
+                  >
+                    Add
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Dialog footer spacer */}
+        <div className="h-3" />
+      </div>
+    </div>
+  );
 }
