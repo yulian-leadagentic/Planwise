@@ -154,6 +154,7 @@ function AddZoneTaskForm({
   const [hours, setHours] = useState('');
   const [amount, setAmount] = useState('');
   const [phaseId, setPhaseId] = useState('');
+  const [saveToCatalog, setSaveToCatalog] = useState(true);
 
   const addMutation = useMutation({
     mutationFn: (data: Record<string, any>) =>
@@ -166,16 +167,28 @@ function AddZoneTaskForm({
     onError: (err: any) => toast.error(err?.response?.data?.error?.message || 'Failed to add task'),
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!code.trim() || !name.trim()) return;
-    addMutation.mutate({
+    const payload = {
       code: code.trim(),
       name: name.trim(),
       defaultBudgetHours: hours ? Number(hours) : undefined,
       defaultBudgetAmount: amount ? Number(amount) : undefined,
       phaseId: phaseId ? Number(phaseId) : undefined,
-    });
+    };
+    // Also save to catalog if checked
+    if (saveToCatalog) {
+      try {
+        const allTpls = await client.get('/templates?type=task_list').then((r) => r.data.data ?? r.data);
+        const catalog = (Array.isArray(allTpls) ? allTpls : []).find((t: any) => t.code === '__TASK_CATALOG__');
+        if (catalog) {
+          await client.post(`/templates/${catalog.id}/tasks`, payload);
+          queryClient.invalidateQueries({ queryKey: ['templates', catalog.id] });
+        }
+      } catch { /* ignore catalog errors */ }
+    }
+    addMutation.mutate(payload);
   };
 
   return (
@@ -207,13 +220,19 @@ function AddZoneTaskForm({
           </select>
         </div>
       </div>
-      <div className="flex gap-2">
-        <button type="submit" disabled={addMutation.isPending} className="rounded-md bg-brand-600 px-3 py-1 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50">
-          {addMutation.isPending ? 'Adding...' : 'Add Task'}
-        </button>
-        <button type="button" onClick={onDone} className="rounded-md border border-border px-3 py-1 text-xs hover:bg-accent">
-          Cancel
-        </button>
+      <div className="flex items-center gap-3">
+        <div className="flex gap-2">
+          <button type="submit" disabled={addMutation.isPending} className="rounded-md bg-brand-600 px-3 py-1 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50">
+            {addMutation.isPending ? 'Adding...' : 'Add Task'}
+          </button>
+          <button type="button" onClick={onDone} className="rounded-md border border-border px-3 py-1 text-xs hover:bg-accent">
+            Cancel
+          </button>
+        </div>
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+          <input type="checkbox" checked={saveToCatalog} onChange={(e) => setSaveToCatalog(e.target.checked)} className="h-3 w-3 rounded border-input" />
+          Also save to catalog
+        </label>
       </div>
     </form>
   );
@@ -760,6 +779,202 @@ function ZoneTreeNode({
 }
 
 // ---------------------------------------------------------------------------
+// Root-level Service Picker (creates zone + links service)
+// ---------------------------------------------------------------------------
+
+function RootServicePickerModal({
+  templateId,
+  templates,
+  onClose,
+}: {
+  templateId: number;
+  templates: any[];
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [adding, setAdding] = useState(false);
+
+  const handleSelect = async (serviceTemplate: any) => {
+    setAdding(true);
+    try {
+      // Create a root zone named after the service template and link it
+      await client.post(`/templates/${templateId}/zones`, {
+        name: serviceTemplate.name,
+        zoneType: 'zone',
+        linkedTaskTemplateId: serviceTemplate.id,
+      });
+      queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
+      toast.success(`Added service: ${serviceTemplate.name}`);
+      onClose();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error?.message || 'Failed to add service');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="mx-4 w-full max-w-md rounded-lg border border-border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <h2 className="text-lg font-semibold">Add Service Template</h2>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="max-h-[60vh] overflow-y-auto p-3">
+          {templates.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No service templates available.</p>
+          ) : (
+            <div className="space-y-1">
+              {templates.map((t: any) => (
+                <button
+                  key={t.id}
+                  onClick={() => handleSelect(t)}
+                  disabled={adding}
+                  className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm hover:bg-muted/50 disabled:opacity-50"
+                >
+                  <Copy className="h-4 w-4 shrink-0 text-blue-600" />
+                  <div className="flex-1">
+                    <span className="font-medium">{t.name}</span>
+                    {t.code && <span className="ml-2 text-xs text-muted-foreground">({t.code})</span>}
+                    <p className="text-xs text-muted-foreground">{t._count?.templateTasks ?? 0} tasks</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Root-level Catalog Picker (creates zone + adds tasks)
+// ---------------------------------------------------------------------------
+
+function RootCatalogPickerModal({
+  templateId,
+  onClose,
+}: {
+  templateId: number;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [adding, setAdding] = useState(false);
+  const [zoneName, setZoneName] = useState('');
+
+  const { data: allTemplates = [] } = useQuery({
+    queryKey: ['templates', 'task_list'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/templates?type=task_list').then((r) => r.data.data ?? r.data),
+  });
+
+  const catalogEntry = (allTemplates as any[]).find((t: any) => t.code === '__TASK_CATALOG__');
+
+  const { data: catalog, isLoading } = useQuery({
+    queryKey: ['templates', catalogEntry?.id],
+    enabled: !!catalogEntry?.id,
+    queryFn: () => client.get(`/templates/${catalogEntry.id}`).then((r) => r.data.data ?? r.data),
+  });
+
+  const catalogTasks: any[] = catalog?.templateTasks ?? [];
+  const filtered = search.trim()
+    ? catalogTasks.filter((t: any) => t.name?.toLowerCase().includes(search.toLowerCase()) || t.code?.toLowerCase().includes(search.toLowerCase()))
+    : catalogTasks;
+
+  const handleAddSelected = async () => {
+    if (!zoneName.trim()) { toast.error('Enter a zone name'); return; }
+    const tasksToAdd = catalogTasks.filter((t: any) => selected.has(t.id));
+    if (tasksToAdd.length === 0) return;
+    setAdding(true);
+    try {
+      // Create a zone to hold the tasks
+      const zoneRes = await client.post(`/templates/${templateId}/zones`, {
+        name: zoneName.trim(),
+        zoneType: 'zone',
+      });
+      const newZone = zoneRes.data.data ?? zoneRes.data;
+      // Add tasks to the zone
+      for (const t of tasksToAdd) {
+        await client.post(`/templates/zones/${newZone.id}/tasks`, {
+          code: t.code,
+          name: t.name,
+          defaultBudgetHours: t.defaultBudgetHours,
+          defaultBudgetAmount: t.defaultBudgetAmount,
+          phaseId: t.phaseId,
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
+      toast.success(`Added ${tasksToAdd.length} tasks to zone "${zoneName.trim()}"`);
+      onClose();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error?.message || 'Failed to add tasks');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="mx-4 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-lg border border-border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <h2 className="text-lg font-semibold">Add Tasks from Catalog</h2>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="border-b border-border px-5 py-3 space-y-2">
+          <div>
+            <label className="block text-xs font-medium mb-1">Zone Name * (tasks will be placed in this zone)</label>
+            <input value={zoneName} onChange={(e) => setZoneName(e.target.value)} placeholder="e.g. General Tasks" className={inputClass} />
+          </div>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tasks..." className={`${inputClass} pl-9`} />
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {isLoading ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">Loading catalog...</p>
+          ) : filtered.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">{search ? 'No tasks match.' : 'No tasks in catalog.'}</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/50 text-xs">
+                  <th className="px-3 py-2 w-10"></th>
+                  <th className="px-3 py-2 text-left font-medium">Code</th>
+                  <th className="px-3 py-2 text-left font-medium">Name</th>
+                  <th className="px-3 py-2 text-right font-medium">Hours</th>
+                  <th className="px-3 py-2 text-right font-medium">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((t: any) => (
+                  <tr key={t.id} className={`border-b border-border cursor-pointer ${selected.has(t.id) ? 'bg-brand-50' : 'hover:bg-muted/30'}`} onClick={() => { const n = new Set(selected); n.has(t.id) ? n.delete(t.id) : n.add(t.id); setSelected(n); }}>
+                    <td className="px-3 py-2"><input type="checkbox" checked={selected.has(t.id)} onChange={() => {}} className="h-4 w-4" /></td>
+                    <td className="px-3 py-2 font-mono text-xs">{t.code || '-'}</td>
+                    <td className="px-3 py-2">{t.name}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetHours ? `${Number(t.defaultBudgetHours)}` : '-'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetAmount ? Number(t.defaultBudgetAmount).toLocaleString() : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-4">
+          <button onClick={onClose} className={btnSecondary}>Cancel</button>
+          <button onClick={handleAddSelected} disabled={selected.size === 0 || !zoneName.trim() || adding} className={btnPrimary}>
+            {adding ? 'Adding...' : `Add ${selected.size} Task${selected.size !== 1 ? 's' : ''}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Editor View
 // ---------------------------------------------------------------------------
 
@@ -772,6 +987,10 @@ function EditorView({
 }) {
   const queryClient = useQueryClient();
   const [showAddRoot, setShowAddRoot] = useState(false);
+  const [showRootAddMenu, setShowRootAddMenu] = useState(false);
+  const [showRootServicePicker, setShowRootServicePicker] = useState(false);
+  const [showRootCatalogPicker, setShowRootCatalogPicker] = useState(false);
+  const [showRootManualTask, setShowRootManualTask] = useState(false);
 
   // ---- fetch template detail ----
   const { data: template, isLoading } = useQuery({
@@ -901,22 +1120,36 @@ function EditorView({
       {/* Zone tree editor */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Zone Tree</h3>
-          {!showAddRoot && (
-            <button onClick={() => setShowAddRoot(true)} className={btnPrimary}>
-              <Plus className="h-4 w-4" /> Add Root Zone
+          <h3 className="text-sm font-semibold">Template Items</h3>
+          <div className="relative">
+            <button onClick={() => setShowRootAddMenu(!showRootAddMenu)} className={btnPrimary}>
+              <Plus className="h-4 w-4" /> Add
             </button>
-          )}
+            {showRootAddMenu && (
+              <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-md border border-border bg-background shadow-lg">
+                <button onClick={() => { setShowAddRoot(true); setShowRootAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
+                  <Layers className="h-3.5 w-3.5 text-amber-600" /> Zone
+                </button>
+                <button onClick={() => { setShowRootServicePicker(true); setShowRootAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
+                  <Copy className="h-3.5 w-3.5 text-blue-600" /> Service Template
+                </button>
+                <button onClick={() => { setShowRootCatalogPicker(true); setShowRootAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
+                  <CheckSquare className="h-3.5 w-3.5 text-green-600" /> Task from Catalog
+                </button>
+                <button onClick={() => { setShowRootManualTask(true); setShowRootAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left border-t border-border">
+                  <Plus className="h-3.5 w-3.5 text-muted-foreground" /> Manual Task
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="rounded-lg border border-border bg-background p-4">
-          {zones.length === 0 && !showAddRoot ? (
+          {/* Root-level service templates (zones with linkedTaskTemplate that are auto-created) */}
+          {zones.length === 0 && !showAddRoot && !showRootManualTask ? (
             <div className="py-8 text-center">
               <Layers className="mx-auto h-10 w-10 text-muted-foreground" />
-              <p className="mt-2 text-sm text-muted-foreground">No zones yet. Click "Add Root Zone" to start building the zone hierarchy.</p>
-              <button onClick={() => setShowAddRoot(true)} className="mt-3 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
-                <span className="flex items-center gap-2"><Plus className="h-4 w-4" /> Add Root Zone</span>
-              </button>
+              <p className="mt-2 text-sm text-muted-foreground">No items yet. Click [+ Add] to add zones, service templates, or tasks.</p>
             </div>
           ) : (
             <div className="space-y-0.5">
@@ -936,8 +1169,41 @@ function EditorView({
           {showAddRoot && (
             <AddZoneForm templateId={templateId} parentId={null} onDone={() => setShowAddRoot(false)} />
           )}
+
+          {showRootManualTask && zones.length > 0 && (
+            <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3">
+              <p className="text-xs text-amber-700 mb-2">Tasks must belong to a zone. Select a zone above and use its [+ Add] button, or create a zone first.</p>
+              <button onClick={() => setShowRootManualTask(false)} className={btnSecondary + ' text-xs'}>OK</button>
+            </div>
+          )}
+          {showRootManualTask && zones.length === 0 && (
+            <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3">
+              <p className="text-xs text-amber-700 mb-2">Create a zone first, then add tasks to it.</p>
+              <button onClick={() => { setShowRootManualTask(false); setShowAddRoot(true); }} className={btnPrimary + ' text-xs'}>
+                <Plus className="h-3 w-3" /> Create Zone
+              </button>
+              <button onClick={() => setShowRootManualTask(false)} className={btnSecondary + ' text-xs ml-2'}>Cancel</button>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Root-level Service Picker */}
+      {showRootServicePicker && (
+        <RootServicePickerModal
+          templateId={templateId}
+          templates={taskTemplates as any[]}
+          onClose={() => setShowRootServicePicker(false)}
+        />
+      )}
+
+      {/* Root-level Catalog Picker */}
+      {showRootCatalogPicker && (
+        <RootCatalogPickerModal
+          templateId={templateId}
+          onClose={() => setShowRootCatalogPicker(false)}
+        />
+      )}
     </div>
   );
 }
