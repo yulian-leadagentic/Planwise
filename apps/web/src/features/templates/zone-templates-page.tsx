@@ -169,7 +169,10 @@ function AddZoneTaskForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!code.trim() || !name.trim()) return;
+    if (!code.trim() || !name.trim()) {
+      notify.warning('Code and Name are required', { code: 'TASK-ADD-400' });
+      return;
+    }
     const payload = {
       code: code.trim(),
       name: name.trim(),
@@ -796,8 +799,8 @@ function ZoneTreeNode({
               <button onClick={() => { setShowCatalogPicker(true); setShowAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
                 <CheckSquare className="h-3.5 w-3.5 text-green-600" /> Task from Catalog
               </button>
-              <button onClick={() => { setShowAddTask(true); setShowAddMenu(false); setExpanded(true); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left border-t border-border">
-                <Plus className="h-3.5 w-3.5 text-muted-foreground" /> Manual Task
+              <button onClick={() => { setShowAddTask(true); setShowAddMenu(false); setExpanded(true); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
+                <Plus className="h-3.5 w-3.5 text-green-600" /> Manual Task
               </button>
             </div>
           )}
@@ -944,7 +947,10 @@ function RootManualTaskForm({ templateId, phases, onDone }: { templateId: number
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!code.trim() || !name.trim()) return;
+    if (!code.trim() || !name.trim()) {
+      notify.warning('Code and Name are required', { code: 'TASK-ADD-400' });
+      return;
+    }
     const payload = {
       code: code.trim(),
       name: name.trim(),
