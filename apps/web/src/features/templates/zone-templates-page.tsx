@@ -517,47 +517,178 @@ function ZoneTasksTable({
 // ---------------------------------------------------------------------------
 
 function ServicePickerModal({
+  zoneId,
+  templateId,
   templates,
-  currentLinkedId,
-  onSelect,
   onClose,
 }: {
+  zoneId: number;
+  templateId: number;
   templates: any[];
-  currentLinkedId?: number | null;
-  onSelect: (serviceId: number) => void;
   onClose: () => void;
 }) {
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [adding, setAdding] = useState(false);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return templates;
+    const q = search.toLowerCase();
+    return templates.filter((t: any) => t.name?.toLowerCase().includes(q) || t.code?.toLowerCase().includes(q));
+  }, [templates, search]);
+
+  const toggleTemplate = (id: number) => {
+    setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  };
+
+  const handleAdd = async () => {
+    const toAdd = templates.filter((t: any) => selected.has(t.id));
+    if (toAdd.length === 0) return;
+    setAdding(true);
+    try {
+      for (const svc of toAdd) {
+        // Fetch service detail to get its tasks
+        const detail = await client.get(`/templates/${svc.id}`).then((r) => r.data.data ?? r.data);
+        const tasks = detail?.templateTasks ?? [];
+        // Copy each task tagged with the service name
+        for (const task of tasks) {
+          await client.post(`/templates/zones/${zoneId}/tasks`, {
+            code: task.code,
+            name: task.name,
+            description: `[SERVICE:${svc.name}]`,
+            defaultBudgetHours: task.defaultBudgetHours,
+            defaultBudgetAmount: task.defaultBudgetAmount,
+            phaseId: task.phaseId,
+          });
+        }
+      }
+      queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
+      notify.success(`Added ${toAdd.length} service template${toAdd.length > 1 ? 's' : ''}`, { code: 'SVC-ADD-200' });
+      onClose();
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to add service');
+    } finally {
+      setAdding(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="mx-4 w-full max-w-md rounded-lg border border-border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="text-lg font-semibold">Select Service Template</h2>
+          <h2 className="text-lg font-semibold">Select Service Templates</h2>
           <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent"><X className="h-5 w-5" /></button>
         </div>
-        <div className="max-h-[60vh] overflow-y-auto p-3">
-          {templates.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">No service templates available. Create one first.</p>
+        <div className="border-b border-border px-5 py-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search service templates..." className={`${inputClass} pl-9`} autoFocus />
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">{search ? 'No templates match.' : 'No service templates available.'}</p>
           ) : (
-            <div className="space-y-1">
-              {templates.map((t: any) => (
-                <button
-                  key={t.id}
-                  onClick={() => onSelect(t.id)}
-                  className={`flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors ${t.id === currentLinkedId ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-muted/50'}`}
-                >
-                  <Copy className="h-4 w-4 shrink-0 text-blue-600" />
-                  <div className="flex-1">
-                    <span className="font-medium">{t.name}</span>
-                    {t.code && <span className="ml-2 text-xs text-muted-foreground">({t.code})</span>}
-                    <p className="text-xs text-muted-foreground">{t._count?.templateTasks ?? 0} tasks</p>
-                  </div>
-                  {t.id === currentLinkedId && <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">current</span>}
-                </button>
-              ))}
-            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/50 text-xs">
+                  <th className="px-3 py-2 w-10"></th>
+                  <th className="px-3 py-2 text-left font-medium">Name</th>
+                  <th className="px-3 py-2 text-left font-medium">Code</th>
+                  <th className="px-3 py-2 text-right font-medium">Tasks</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((t: any) => {
+                  const isSelected = selected.has(t.id);
+                  return (
+                    <tr key={t.id} className={`border-b border-border cursor-pointer ${isSelected ? 'bg-brand-50' : 'hover:bg-muted/30'}`} onClick={() => toggleTemplate(t.id)}>
+                      <td className="px-3 py-2"><input type="checkbox" checked={isSelected} onChange={() => {}} className="h-4 w-4" /></td>
+                      <td className="px-3 py-2 font-medium">{t.name}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{t.code || '-'}</td>
+                      <td className="px-3 py-2 text-right">{t._count?.templateTasks ?? 0}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           )}
         </div>
+        <div className="flex items-center justify-between border-t border-border px-5 py-4">
+          <span className="text-xs text-muted-foreground">{filtered.length} templates</span>
+          <div className="flex gap-3">
+            <button onClick={onClose} className={btnSecondary}>Cancel</button>
+            <button onClick={handleAdd} disabled={selected.size === 0 || adding} className={btnPrimary}>
+              {adding ? 'Adding...' : `Add ${selected.size} Service${selected.size !== 1 ? 's' : ''}`}
+            </button>
+          </div>
+        </div>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Service Group Item (expandable, view-only tasks)
+// ---------------------------------------------------------------------------
+
+function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll }: {
+  serviceName: string;
+  tasks: any[];
+  templateId: number;
+  onDeleteAll: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const totalHours = tasks.reduce((s: number, t: any) => s + Number(t.defaultBudgetHours || 0), 0);
+  const totalAmount = tasks.reduce((s: number, t: any) => s + Number(t.defaultBudgetAmount || 0), 0);
+
+  return (
+    <div>
+      <div
+        className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-blue-50 cursor-pointer"
+        onClick={() => setExpanded(!expanded)}
+      >
+        {expanded ? <ChevronDown className="h-3 w-3 text-blue-500" /> : <ChevronRight className="h-3 w-3 text-blue-500" />}
+        <Copy className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+        <span className="text-sm text-blue-700 font-medium">Service: {serviceName}</span>
+        <span className="text-xs text-muted-foreground">
+          {tasks.length} task{tasks.length !== 1 ? 's' : ''} &middot; {totalHours}h &middot; {'\u20AA'}{totalAmount.toLocaleString()}
+        </span>
+        <button
+          onClick={(e) => { e.stopPropagation(); onDeleteAll(); }}
+          className="ml-auto rounded p-0.5 text-muted-foreground hover:bg-red-100 hover:text-red-600"
+          title="Remove this service and all its tasks"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </div>
+      {expanded && (
+        <div className="ml-6 border-l border-blue-200 pl-3 mb-1">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-muted-foreground">
+                <th className="px-2 py-1 text-left font-medium">Code</th>
+                <th className="px-2 py-1 text-left font-medium">Name</th>
+                <th className="px-2 py-1 text-right font-medium">Hours</th>
+                <th className="px-2 py-1 text-right font-medium">Amount</th>
+                <th className="px-2 py-1 text-left font-medium">Phase</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tasks.map((task: any) => (
+                <tr key={task.id} className="hover:bg-blue-50/50">
+                  <td className="px-2 py-1 font-mono text-muted-foreground">{task.code || '-'}</td>
+                  <td className="px-2 py-1">{task.name}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{task.defaultBudgetHours != null ? `${Number(task.defaultBudgetHours)}` : '-'}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{task.defaultBudgetAmount != null ? `${'\u20AA'}${Number(task.defaultBudgetAmount).toLocaleString()}` : '-'}</td>
+                  <td className="px-2 py-1 text-muted-foreground">{task.phase?.name ?? '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -682,26 +813,37 @@ function ZoneTreeNode({
       </div>
 
       {/* Tree items (expanded) */}
-      {expanded && (
-        <div className="ml-6 border-l-2 border-border pl-3 space-y-0.5 mb-2">
-          {/* Service template item */}
-          {linkedService && (
-            <div className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-blue-50">
-              <Copy className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-              <span className="text-sm text-blue-700 font-medium">Service: {linkedService.name}</span>
-              {linkedService.code && <span className="text-xs text-blue-500">({linkedService.code})</span>}
-              <button
-                onClick={() => updateMutation.mutate({ linkedTaskTemplateId: null })}
-                className="ml-auto rounded p-0.5 text-muted-foreground hover:bg-red-100 hover:text-red-600"
-                title="Unlink service template"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          )}
+      {expanded && (() => {
+        // Group tasks by service tag
+        const serviceGroups = new Map<string, any[]>();
+        const ungroupedTasks: any[] = [];
+        for (const task of zoneTasks) {
+          const match = task.description?.match(/^\[SERVICE:(.+)\]$/);
+          if (match) {
+            const svcName = match[1];
+            if (!serviceGroups.has(svcName)) serviceGroups.set(svcName, []);
+            serviceGroups.get(svcName)!.push(task);
+          } else {
+            ungroupedTasks.push(task);
+          }
+        }
 
-          {/* Task items */}
-          {zoneTasks.map((task: any) => (
+        return (
+        <div className="ml-6 border-l-2 border-border pl-3 space-y-0.5 mb-2">
+          {/* Service groups (expandable) */}
+          {Array.from(serviceGroups.entries()).map(([svcName, svcTasks]) => (
+            <ServiceGroupItem key={svcName} serviceName={svcName} tasks={svcTasks} templateId={templateId} onDeleteAll={() => {
+              if (confirm(`Remove service "${svcName}" and all its ${svcTasks.length} tasks?`)) {
+                Promise.all(svcTasks.map((t: any) => client.delete(`/templates/zone-tasks/${t.id}`))).then(() => {
+                  queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
+                  notify.success(`Removed service: ${svcName}`, { code: 'SVC-DELETE-200' });
+                });
+              }
+            }} />
+          ))}
+
+          {/* Ungrouped task items */}
+          {ungroupedTasks.map((task: any) => (
             <div key={task.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-green-50">
               <CheckSquare className="h-3.5 w-3.5 shrink-0 text-green-600" />
               <span className="font-mono text-xs text-muted-foreground w-16">{task.code || '-'}</span>
@@ -746,21 +888,19 @@ function ZoneTreeNode({
           )}
 
           {/* Empty state */}
-          {!linkedService && zoneTasks.length === 0 && children.length === 0 && !showAddChild && !showAddTask && (
+          {zoneTasks.length === 0 && children.length === 0 && !showAddChild && !showAddTask && (
             <p className="py-2 text-xs text-muted-foreground italic">No items. Click [+ Add] to add zones, services, or tasks.</p>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {/* Service picker modal */}
       {showServicePicker && (
         <ServicePickerModal
+          zoneId={zone.id}
+          templateId={templateId}
           templates={taskTemplates}
-          currentLinkedId={zone.linkedTaskTemplate?.id ?? zone.linkedTaskTemplateId}
-          onSelect={(serviceId) => {
-            updateMutation.mutate({ linkedTaskTemplateId: serviceId });
-            setShowServicePicker(false);
-          }}
           onClose={() => setShowServicePicker(false)}
         />
       )}
@@ -792,19 +932,36 @@ function RootServicePickerModal({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<number>>(new Set());
   const [adding, setAdding] = useState(false);
 
-  const handleSelect = async (serviceTemplate: any) => {
+  const filtered = useMemo(() => {
+    if (!search.trim()) return templates;
+    const q = search.toLowerCase();
+    return templates.filter((t: any) => t.name?.toLowerCase().includes(q) || t.code?.toLowerCase().includes(q));
+  }, [templates, search]);
+
+  const handleAdd = async () => {
+    const toAdd = templates.filter((t: any) => selected.has(t.id));
+    if (toAdd.length === 0) return;
     setAdding(true);
     try {
-      // Create a root zone named after the service template and link it
-      await client.post(`/templates/${templateId}/zones`, {
-        name: serviceTemplate.name,
-        zoneType: 'zone',
-        linkedTaskTemplateId: serviceTemplate.id,
-      });
+      for (const svc of toAdd) {
+        // Create a zone named after the service
+        const zoneRes = await client.post(`/templates/${templateId}/zones`, { name: svc.name, zoneType: 'zone' });
+        const newZone = zoneRes.data.data ?? zoneRes.data;
+        // Fetch service tasks and copy them tagged
+        const detail = await client.get(`/templates/${svc.id}`).then((r) => r.data.data ?? r.data);
+        for (const task of (detail?.templateTasks ?? [])) {
+          await client.post(`/templates/zones/${newZone.id}/tasks`, {
+            code: task.code, name: task.name, description: `[SERVICE:${svc.name}]`,
+            defaultBudgetHours: task.defaultBudgetHours, defaultBudgetAmount: task.defaultBudgetAmount, phaseId: task.phaseId,
+          });
+        }
+      }
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
-      notify.success(`Added service: ${serviceTemplate.name}`, { code: 'ZONE-CREATE-200' });
+      notify.success(`Added ${toAdd.length} service${toAdd.length > 1 ? 's' : ''}`, { code: 'SVC-ADD-200' });
       onClose();
     } catch (err: any) {
       notify.apiError(err, 'Failed to add service');
@@ -815,33 +972,46 @@ function RootServicePickerModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="mx-4 w-full max-w-md rounded-lg border border-border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="text-lg font-semibold">Add Service Template</h2>
+          <h2 className="text-lg font-semibold">Select Service Templates</h2>
           <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent"><X className="h-5 w-5" /></button>
         </div>
-        <div className="max-h-[60vh] overflow-y-auto p-3">
-          {templates.length === 0 ? (
+        <div className="border-b border-border px-5 py-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." className={`${inputClass} pl-9`} autoFocus />
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {filtered.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">No service templates available.</p>
           ) : (
-            <div className="space-y-1">
-              {templates.map((t: any) => (
-                <button
-                  key={t.id}
-                  onClick={() => handleSelect(t)}
-                  disabled={adding}
-                  className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm hover:bg-muted/50 disabled:opacity-50"
-                >
-                  <Copy className="h-4 w-4 shrink-0 text-blue-600" />
-                  <div className="flex-1">
-                    <span className="font-medium">{t.name}</span>
-                    {t.code && <span className="ml-2 text-xs text-muted-foreground">({t.code})</span>}
-                    <p className="text-xs text-muted-foreground">{t._count?.templateTasks ?? 0} tasks</p>
-                  </div>
-                </button>
-              ))}
-            </div>
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-border bg-muted/50 text-xs">
+                <th className="px-3 py-2 w-10"></th>
+                <th className="px-3 py-2 text-left font-medium">Name</th>
+                <th className="px-3 py-2 text-left font-medium">Code</th>
+                <th className="px-3 py-2 text-right font-medium">Tasks</th>
+              </tr></thead>
+              <tbody>
+                {filtered.map((t: any) => (
+                  <tr key={t.id} className={`border-b border-border cursor-pointer ${selected.has(t.id) ? 'bg-brand-50' : 'hover:bg-muted/30'}`} onClick={() => { const n = new Set(selected); n.has(t.id) ? n.delete(t.id) : n.add(t.id); setSelected(n); }}>
+                    <td className="px-3 py-2"><input type="checkbox" checked={selected.has(t.id)} onChange={() => {}} className="h-4 w-4" /></td>
+                    <td className="px-3 py-2 font-medium">{t.name}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{t.code || '-'}</td>
+                    <td className="px-3 py-2 text-right">{t._count?.templateTasks ?? 0}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
+        </div>
+        <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-4">
+          <button onClick={onClose} className={btnSecondary}>Cancel</button>
+          <button onClick={handleAdd} disabled={selected.size === 0 || adding} className={btnPrimary}>
+            {adding ? 'Adding...' : `Add ${selected.size} Service${selected.size !== 1 ? 's' : ''}`}
+          </button>
         </div>
       </div>
     </div>
