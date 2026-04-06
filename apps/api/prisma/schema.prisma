@@ -179,6 +179,7 @@ model User {
   role Role @relation(fields: [roleId], references: [id])
 
   projectsCreated      Project[]          @relation("ProjectCreatedBy")
+  projectsLed          Project[]          @relation("ProjectLeader")
   projectMembers       ProjectMember[]
   taskAssignees        TaskAssignee[]
   taskComments         TaskComment[]
@@ -277,6 +278,7 @@ model Project {
   number        String?
   description   String?
   projectTypeId Int           @map("project_type_id")
+  leaderId      Int?          @map("leader_id")
   status        ProjectStatus @default(draft)
   budget        Decimal?      @db.Decimal(14, 2)
   startDate     DateTime?     @map("start_date")
@@ -289,6 +291,7 @@ model Project {
 
   projectType ProjectType @relation(fields: [projectTypeId], references: [id])
   creator     User        @relation("ProjectCreatedBy", fields: [createdBy], references: [id])
+  leader      User?       @relation("ProjectLeader", fields: [leaderId], references: [id])
 
   members     ProjectMember[]
   labels      Label[]
@@ -300,6 +303,7 @@ model Project {
 
   @@index([projectTypeId])
   @@index([createdBy])
+  @@index([leaderId])
   @@index([status])
   @@index([deletedAt])
   @@map("projects")
@@ -813,20 +817,36 @@ model Task {
   updatedAt     DateTime     @updatedAt @map("updated_at")
   deletedAt     DateTime?    @map("deleted_at")
 
-  zone        Zone         @relation(fields: [zoneId], references: [id], onDelete: Cascade)
-  project     Project      @relation(fields: [projectId], references: [id])
-  serviceType ServiceType? @relation(fields: [serviceTypeId], references: [id])
-  phase       Phase?       @relation(fields: [phaseId], references: [id])
-  creator     User         @relation("TaskCreator", fields: [createdBy], references: [id])
-  assignees   TaskAssignee[]
-  comments    TaskComment[]
-  timeEntries TimeEntry[]
+  zone         Zone         @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  project      Project      @relation(fields: [projectId], references: [id])
+  serviceType  ServiceType? @relation(fields: [serviceTypeId], references: [id])
+  phase        Phase?       @relation(fields: [phaseId], references: [id])
+  creator      User         @relation("TaskCreator", fields: [createdBy], references: [id])
+  assignees    TaskAssignee[]
+  comments     TaskComment[]
+  timeEntries  TimeEntry[]
+  dependencies TaskDependency[] @relation("TaskDeps")
+  dependedBy   TaskDependency[] @relation("TaskDepBy")
 
   @@index([zoneId])
   @@index([projectId])
   @@index([serviceTypeId])
   @@index([status])
   @@map("tasks")
+}
+
+model TaskDependency {
+  id          Int @id @default(autoincrement())
+  taskId      Int @map("task_id")
+  dependsOnId Int @map("depends_on_id")
+
+  task      Task @relation("TaskDeps", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOn Task @relation("TaskDepBy", fields: [dependsOnId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, dependsOnId])
+  @@index([taskId])
+  @@index([dependsOnId])
+  @@map("task_dependencies")
 }
 
 model TaskAssignee {

@@ -100,4 +100,27 @@ export class ProjectsController {
   ) {
     return this.projectsService.removeMember(projectId, userId);
   }
+
+  // Leader
+  @Patch(':id/leader')
+  @RequirePermissions({ module: 'projects', action: 'write' })
+  @ApiOperation({ summary: 'Set project leader' })
+  setLeader(@Param('id', ParseIntPipe) id: number, @Body('userId', ParseIntPipe) userId: number) {
+    return this.projectsService.setLeader(id, userId);
+  }
+
+  // Task Dependencies
+  @Post('tasks/:taskId/dependencies')
+  @RequirePermissions({ module: 'projects', action: 'write' })
+  @ApiOperation({ summary: 'Add task dependency' })
+  addDependency(@Param('taskId', ParseIntPipe) taskId: number, @Body('dependsOnId', ParseIntPipe) dependsOnId: number) {
+    return this.projectsService.addDependency(taskId, dependsOnId);
+  }
+
+  @Delete('tasks/:taskId/dependencies/:dependsOnId')
+  @RequirePermissions({ module: 'projects', action: 'write' })
+  @ApiOperation({ summary: 'Remove task dependency' })
+  removeDependency(@Param('taskId', ParseIntPipe) taskId: number, @Param('dependsOnId', ParseIntPipe) dependsOnId: number) {
+    return this.projectsService.removeDependency(taskId, dependsOnId);
+  }
 }

@@ -38,12 +38,21 @@ export class PlanningService {
       include: {
         serviceType: true,
         phase: true,
+        dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true } } } },
         assignees: {
           where: { deletedAt: null },
           include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } },
         },
       },
       orderBy: [{ zoneId: 'asc' }, { serviceTypeId: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    // Project members
+    const members = await this.prisma.projectMember.findMany({
+      where: { projectId },
+      include: {
+        user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
+      },
     });
 
     // Lookups
@@ -59,6 +68,7 @@ export class PlanningService {
       project: { id: project.id, name: project.name, status: project.status, budget: topDown },
       zones: zoneRoots,
       tasks,
+      members,
       serviceTypes,
       phases,
       budgetSummary: {

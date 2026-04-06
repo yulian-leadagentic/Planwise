@@ -1,5 +1,6 @@
-import { IsString, IsOptional, IsInt, IsEnum, IsNumber, IsDateString } from 'class-validator';
+import { IsString, IsOptional, IsInt, IsEnum, IsNumber, IsDateString, IsArray } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import { ProjectStatus } from '@prisma/client';
 
 export class CreateProjectDto {
@@ -40,4 +41,16 @@ export class CreateProjectDto {
   @IsOptional()
   @IsDateString()
   endDate?: string;
+
+  @ApiPropertyOptional({ description: 'Project leader user ID' })
+  @IsOptional()
+  @IsInt()
+  leaderId?: number;
+
+  @ApiPropertyOptional({ description: 'Initial team member user IDs', type: [Number] })
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  @Type(() => Number)
+  memberIds?: number[];
 }

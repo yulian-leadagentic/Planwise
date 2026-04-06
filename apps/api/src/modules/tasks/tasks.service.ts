@@ -96,6 +96,7 @@ export class TasksService {
               user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
             },
           },
+          dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true } } } },
           _count: { select: { comments: true, timeEntries: true } },
         },
       }),
@@ -159,6 +160,8 @@ export class TasksService {
           },
           orderBy: { createdAt: 'desc' },
         },
+        dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true } } } },
+        dependedBy: { include: { task: { select: { id: true, code: true, name: true } } } },
         _count: { select: { timeEntries: true } },
       },
     });

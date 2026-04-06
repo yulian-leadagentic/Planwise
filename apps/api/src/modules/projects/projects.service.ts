@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -11,9 +11,11 @@ export class ProjectsService {
   constructor(private prisma: PrismaService) {}
 
   async create(userId: number, dto: CreateProjectDto) {
-    return this.prisma.project.create({
+    const { memberIds, ...rest } = dto;
+
+    const project = await this.prisma.project.create({
       data: {
-        ...dto,
+        ...rest,
         createdBy: userId,
         startDate: dto.startDate ? new Date(dto.startDate) : undefined,
         endDate: dto.endDate ? new Date(dto.endDate) : undefined,
@@ -21,8 +23,33 @@ export class ProjectsService {
       include: {
         projectType: true,
         creator: { select: { id: true, firstName: true, lastName: true } },
+        leader: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
       },
     });
+
+    // Auto-add leader as a member with role "Project Leader"
+    if (dto.leaderId) {
+      await this.prisma.projectMember.upsert({
+        where: { projectId_userId: { projectId: project.id, userId: dto.leaderId } },
+        create: { projectId: project.id, userId: dto.leaderId, role: 'Project Leader' },
+        update: { role: 'Project Leader' },
+      });
+    }
+
+    // Create ProjectMember records for each member ID
+    if (memberIds && memberIds.length > 0) {
+      const memberData = memberIds
+        .filter((id) => id !== dto.leaderId) // avoid duplicate if leader is also in memberIds
+        .map((memberId) => ({ projectId: project.id, userId: memberId }));
+      if (memberData.length > 0) {
+        await this.prisma.projectMember.createMany({
+          data: memberData,
+          skipDuplicates: true,
+        });
+      }
+    }
+
+    return project;
   }
 
   async findAll(query: QueryProjectsDto) {
@@ -56,7 +83,8 @@ export class ProjectsService {
         include: {
           projectType: true,
           creator: { select: { id: true, firstName: true, lastName: true } },
-          _count: { select: { members: true, labels: true } },
+          leader: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
+          _count: { select: { members: true, labels: true, tasks: true, zones: true } },
         },
       }),
       this.prisma.project.count({ where }),
@@ -79,6 +107,7 @@ export class ProjectsService {
       include: {
         projectType: true,
         creator: { select: { id: true, firstName: true, lastName: true, email: true } },
+        leader: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
         members: {
           include: {
             user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
@@ -154,6 +183,36 @@ export class ProjectsService {
       where: { projectId_userId: { projectId, userId } },
     });
     return { message: 'Member removed' };
+  }
+
+  async setLeader(projectId: number, userId: number) {
+    return this.prisma.project.update({
+      where: { id: projectId },
+      data: { leaderId: userId },
+      include: { leader: { select: { id: true, firstName: true, lastName: true } } },
+    });
+  }
+
+  async addDependency(taskId: number, dependsOnId: number) {
+    // Prevent self-dependency
+    if (taskId === dependsOnId) throw new BadRequestException('Task cannot depend on itself');
+    // Prevent circular (A→B→A)
+    const reverse = await this.prisma.taskDependency.findFirst({
+      where: { taskId: dependsOnId, dependsOnId: taskId },
+    });
+    if (reverse) throw new BadRequestException('Circular dependency detected');
+
+    return this.prisma.taskDependency.create({
+      data: { taskId, dependsOnId },
+      include: { dependsOn: { select: { id: true, code: true, name: true } } },
+    });
+  }
+
+  async removeDependency(taskId: number, dependsOnId: number) {
+    await this.prisma.taskDependency.delete({
+      where: { taskId_dependsOnId: { taskId, dependsOnId } },
+    });
+    return { message: 'Dependency removed' };
   }
 
   async getBudgetSummary(projectId: number) {
