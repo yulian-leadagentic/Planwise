@@ -119,14 +119,22 @@ function TemplatePicker({ projectId, onApplied }: { projectId: number; onApplied
 
 // ─── Task Table with Flexible Grouping ────────────────────────────────────────
 
-function TaskTable({ tasks, projectId, members }: { tasks: any[]; projectId: number; members: any[] }) {
+function TaskTable({ tasks, projectId, members, selectedZone }: { tasks: any[]; projectId: number; members: any[]; selectedZone: any }) {
   const queryClient = useQueryClient();
   const [groupBy, setGroupBy] = useState<'zone' | 'service' | 'phase' | 'none'>('zone');
   const [search, setSearch] = useState('');
   const [sortCol, setSortCol] = useState<string>('');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [showAddTask, setShowAddTask] = useState(false);
+  const [newTask, setNewTask] = useState({ code: '', name: '', budgetHours: '', budgetAmount: '' });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+
+  const createTask = useMutation({
+    mutationFn: (data: any) => tasksApi.create(data),
+    onSuccess: () => { invalidate(); setShowAddTask(false); setNewTask({ code: '', name: '', budgetHours: '', budgetAmount: '' }); notify.success('Task created', { code: 'TASK-CREATE-200' }); },
+    onError: (err: any) => notify.apiError(err, 'Failed to create task'),
+  });
 
   const updateTask = useMutation({
     mutationFn: ({ id, ...data }: { id: number } & Record<string, any>) => tasksApi.update(id, data),
@@ -206,10 +214,15 @@ function TaskTable({ tasks, projectId, members }: { tasks: any[]; projectId: num
           <h3 className="text-[15px] font-bold text-slate-900">Project Tasks</h3>
           <span className="text-[11px] font-medium text-slate-400">{sorted.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          {selectedZone && (
+            <button onClick={() => setShowAddTask(true)} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3.5 py-1.5 rounded-lg flex items-center gap-1.5">
+              <Plus className="h-3.5 w-3.5" /> Add Task
+            </button>
+          )}
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-semibold text-slate-400">Group by:</span>
-            <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as any)} className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none">
+            <span className="text-[11px] font-semibold text-slate-400">Group:</span>
+            <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as any)} className="px-2 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none">
               <option value="zone">Zone</option>
               <option value="service">Service</option>
               <option value="phase">Phase</option>
@@ -218,10 +231,25 @@ function TaskTable({ tasks, projectId, members }: { tasks: any[]; projectId: num
           </div>
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter tasks..." className="w-48 pl-8 px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter..." className="w-36 pl-8 px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none" />
           </div>
         </div>
       </div>
+
+      {/* Add Task inline form */}
+      {showAddTask && selectedZone && (
+        <div className="px-5 py-3 border-b border-slate-100 bg-blue-50/20 flex items-center gap-2">
+          <input value={newTask.code} onChange={(e) => setNewTask(f => ({ ...f, code: e.target.value }))} placeholder="Code *" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" autoFocus />
+          <input value={newTask.name} onChange={(e) => setNewTask(f => ({ ...f, name: e.target.value }))} placeholder="Task name *" className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+          <input value={newTask.budgetHours} onChange={(e) => setNewTask(f => ({ ...f, budgetHours: e.target.value }))} placeholder="Hours" type="number" className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+          <input value={newTask.budgetAmount} onChange={(e) => setNewTask(f => ({ ...f, budgetAmount: e.target.value }))} placeholder="Amount" type="number" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+          <button onClick={() => {
+            if (!newTask.code.trim() || !newTask.name.trim()) { notify.warning('Code and Name required', { code: 'TASK-CREATE-400' }); return; }
+            createTask.mutate({ zoneId: selectedZone.id, code: newTask.code.trim(), name: newTask.name.trim(), budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined, budgetAmount: newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined });
+          }} disabled={createTask.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50">Save</button>
+          <button onClick={() => setShowAddTask(false)} className="bg-white border border-slate-200 text-slate-700 text-[13px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
+        </div>
+      )}
 
       {groups.map((group) => (
         <GroupSection key={group.label} label={group.label} tasks={group.tasks} groupBy={groupBy}
@@ -481,7 +509,7 @@ function PlanningView({ projectId }: { projectId: number }) {
         <div className="flex rounded-[14px] border border-slate-200 bg-white" style={{ height: 'calc(100vh - 300px)', minHeight: 400 }}>
           <ZonePanel zones={zones} selectedZone={selectedZone} onSelectZone={setSelectedZone} projectId={projectId} onInvalidate={invalidate} />
           <div className="flex-1 flex flex-col min-w-0 bg-slate-50 p-5 overflow-y-auto">
-            <TaskTable tasks={visibleTasks} projectId={projectId} members={members} />
+            <TaskTable tasks={visibleTasks} projectId={projectId} members={members} selectedZone={selectedZone} />
           </div>
         </div>
       ) : (
