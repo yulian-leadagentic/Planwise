@@ -410,51 +410,78 @@ export class ZonesService {
         await tx.zone.update({ where: { id: zone.id }, data: { path } });
         createdZones.push({ ...zone, path });
 
-        // Create tasks from linked task template
+        // Create tasks from linked task template (service template)
         if (tz.linkedTaskTemplate?.templateTasks) {
           for (const tt of tz.linkedTaskTemplate.templateTasks) {
             await tx.task.create({
               data: {
-                zoneId: zone.id,
-                projectId,
-                serviceTypeId: tt.serviceTypeId,
-                code: tt.code,
-                name: tt.name,
-                description: tt.description,
-                budgetHours: tt.defaultBudgetHours,
-                budgetAmount: tt.defaultBudgetAmount,
-                phaseId: tt.phaseId,
-                priority: tt.defaultPriority,
-                status: 'not_started',
-                createdBy: userId,
+                zoneId: zone.id, projectId, serviceTypeId: tt.serviceTypeId,
+                code: tt.code, name: tt.name, description: tt.description,
+                budgetHours: tt.defaultBudgetHours, budgetAmount: tt.defaultBudgetAmount,
+                phaseId: tt.phaseId, priority: tt.defaultPriority, status: 'not_started', createdBy: userId,
               },
             });
           }
         }
 
-        // Create tasks from templateZoneTasks (for combined templates)
+        // Create tasks from templateZoneTasks (inline tasks on the zone)
         if (tz.templateZoneTasks?.length) {
           for (const tzt of tz.templateZoneTasks) {
             await tx.task.create({
               data: {
-                zoneId: zone.id,
-                projectId,
-                serviceTypeId: tzt.serviceTypeId,
-                code: tzt.code,
-                name: tzt.name,
-                description: tzt.description,
-                budgetHours: tzt.defaultBudgetHours,
-                budgetAmount: tzt.defaultBudgetAmount,
-                phaseId: tzt.phaseId,
-                priority: tzt.defaultPriority,
-                status: 'not_started',
-                createdBy: userId,
+                zoneId: zone.id, projectId, serviceTypeId: tzt.serviceTypeId,
+                code: tzt.code, name: tzt.name, description: tzt.description,
+                budgetHours: tzt.defaultBudgetHours, budgetAmount: tzt.defaultBudgetAmount,
+                phaseId: tzt.phaseId, priority: tzt.defaultPriority, status: 'not_started', createdBy: userId,
               },
             });
           }
         }
 
-        // Recurse into children
+        // Handle referenced template — fetch and copy its tasks + zones recursively
+        if (tz.referencedTemplateId) {
+          const refTemplate = await tx.template.findUnique({
+            where: { id: tz.referencedTemplateId },
+            include: {
+              templateTasks: true,
+              templateZones: {
+                include: {
+                  templateZoneTasks: true,
+                  linkedTaskTemplate: { include: { templateTasks: true } },
+                  children: {
+                    include: {
+                      templateZoneTasks: true,
+                      linkedTaskTemplate: { include: { templateTasks: true } },
+                    },
+                  },
+                },
+                where: { parentId: null },
+                orderBy: { sortOrder: 'asc' },
+              },
+            },
+          });
+
+          if (refTemplate) {
+            // Copy root-level templateTasks from referenced template
+            for (const tt of (refTemplate.templateTasks || [])) {
+              await tx.task.create({
+                data: {
+                  zoneId: zone.id, projectId, serviceTypeId: tt.serviceTypeId,
+                  code: tt.code, name: tt.name, description: tt.description,
+                  budgetHours: tt.defaultBudgetHours, budgetAmount: tt.defaultBudgetAmount,
+                  phaseId: tt.phaseId, priority: tt.defaultPriority || 'medium', status: 'not_started', createdBy: userId,
+                },
+              });
+            }
+
+            // Recursively create child zones from referenced template
+            for (const childTz of (refTemplate.templateZones || [])) {
+              await createZoneRecursive(childTz, zone.id, path, depth + 1);
+            }
+          }
+        }
+
+        // Recurse into direct children
         for (const child of (tz.children || [])) {
           await createZoneRecursive(child, zone.id, path, depth + 1);
         }

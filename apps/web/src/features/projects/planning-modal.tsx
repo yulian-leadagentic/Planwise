@@ -362,6 +362,12 @@ function ZonePanel({ zones, selectedZone, onSelectZone, projectId, onInvalidate 
     onError: (err: any) => notify.apiError(err, 'Failed to duplicate zone'),
   });
 
+  const renameZone = useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) => zonesApi.update(id, { name }),
+    onSuccess: () => { onInvalidate(); notify.success('Zone renamed', { code: 'ZONE-UPDATE-200' }); },
+    onError: (err: any) => notify.apiError(err, 'Failed to rename zone'),
+  });
+
   const flatZones = useMemo(() => {
     const result: any[] = [];
     function walk(nodes: any[], depth = 0) { for (const n of nodes) { result.push({ ...n, _depth: depth }); if (n.children) walk(n.children, depth + 1); } }
@@ -410,7 +416,7 @@ function ZonePanel({ zones, selectedZone, onSelectZone, projectId, onInvalidate 
 
       <div className="flex-1 overflow-y-auto p-2">
         {zones.map((zone: any) => (
-          <ZoneNode key={zone.id} zone={zone} selectedId={selectedZone?.id} onSelect={onSelectZone} onDelete={(id: number) => { if (confirm('Delete this zone and all its tasks?')) deleteZone.mutate(id); }} depth={0} />
+          <ZoneNode key={zone.id} zone={zone} selectedId={selectedZone?.id} onSelect={onSelectZone} onDelete={(id: number) => { if (confirm('Delete this zone and all its tasks?')) deleteZone.mutate(id); }} onRename={(id: number, name: string) => renameZone.mutate({ id, name })} depth={0} />
         ))}
         {zones.length === 0 && !addingZone && <p className="px-3 py-8 text-center text-[13px] text-slate-400">No zones yet. Click "Add Zone" or apply a template above.</p>}
       </div>
@@ -427,7 +433,7 @@ function ZonePanel({ zones, selectedZone, onSelectZone, projectId, onInvalidate 
   );
 }
 
-function ZoneNode({ zone, selectedId, onSelect, onDelete, depth }: any) {
+function ZoneNode({ zone, selectedId, onSelect, onDelete, onRename, depth }: any) {
   const [expanded, setExpanded] = useState(depth < 2);
   const hasChildren = zone.children?.length > 0;
   const isSelected = zone.id === selectedId;
@@ -443,7 +449,15 @@ function ZoneNode({ zone, selectedId, onSelect, onDelete, depth }: any) {
             {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
           </button>
         ) : <span className="w-3" />}
-        <span className={cn('text-[13px] flex-1', isSelected ? 'font-semibold text-blue-700' : 'font-medium text-slate-700')}>{zone.name}</span>
+        <span
+          className={cn('text-[13px] flex-1', isSelected ? 'font-semibold text-blue-700' : 'font-medium text-slate-700')}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            const newName = prompt('Rename zone:', zone.name);
+            if (newName && newName.trim() && newName !== zone.name) onRename(zone.id, newName.trim());
+          }}
+          title="Double-click to rename"
+        >{zone.name}</span>
         <span className="rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold tracking-wide" style={{ backgroundColor: `${display.color}15`, color: display.color }}>{display.label}</span>
         <button onClick={(e) => { e.stopPropagation(); onDelete(zone.id); }}
           className="opacity-0 group-hover:opacity-100 w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600 transition-all duration-150">
@@ -451,7 +465,7 @@ function ZoneNode({ zone, selectedId, onSelect, onDelete, depth }: any) {
         </button>
       </div>
       {hasChildren && expanded && zone.children.map((child: any) => (
-        <ZoneNode key={child.id} zone={child} selectedId={selectedId} onSelect={onSelect} onDelete={onDelete} depth={depth + 1} />
+        <ZoneNode key={child.id} zone={child} selectedId={selectedId} onSelect={onSelect} onDelete={onDelete} onRename={onRename} depth={depth + 1} />
       ))}
     </div>
   );
