@@ -4,10 +4,18 @@ import {
   Activity,
   Clock,
   Calendar,
+  Users,
 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 
 const adminCards = [
+  {
+    title: 'People Management',
+    description: 'Manage employees and partners',
+    icon: Users,
+    href: '/people',
+    color: 'bg-violet-100 text-violet-700',
+  },
   {
     title: 'Roles & Permissions',
     description: 'Manage user roles and module access',
