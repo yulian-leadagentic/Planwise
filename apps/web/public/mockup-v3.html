@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Planwise — Project Planning v3</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+  body { font-family: 'DM Sans', system-ui, sans-serif; }
+  .font-mono { font-family: 'JetBrains Mono', monospace; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-700">
+
+<!-- ─── PROJECT HEADER ─────────────────────────────────────── -->
+<div class="border-b border-slate-200 bg-white px-7 py-4">
+  <div class="flex items-center gap-3 mb-2">
+    <a href="#" class="text-[13px] text-slate-400 hover:text-slate-600">← Projects</a>
+  </div>
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-4">
+      <h1 class="text-xl font-bold tracking-tight text-slate-900">Savioni Tower</h1>
+      <span class="rounded-[5px] bg-blue-50 px-2.5 py-1 text-[11px] font-bold tracking-wide text-blue-600">ACTIVE</span>
+      <span class="font-mono text-[13px] text-slate-400">PRJ-2025-012</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button class="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Settings</button>
+      <button class="bg-white border border-red-200 hover:border-red-400 text-red-600 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:bg-red-50">Delete Project</button>
+    </div>
+  </div>
+  <div class="flex items-center gap-6 mt-3 text-[13px]">
+    <div class="flex items-center gap-2">
+      <div class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-[9px] font-semibold flex items-center justify-center">JS</div>
+      <span class="text-slate-700 font-medium">John Smith</span>
+      <span class="text-slate-400">Leader</span>
+    </div>
+    <div class="flex items-center gap-1.5">
+      <div class="flex -space-x-1.5">
+        <div class="w-6 h-6 rounded-full bg-violet-100 text-violet-600 text-[9px] font-semibold flex items-center justify-center ring-2 ring-white">DC</div>
+        <div class="w-6 h-6 rounded-full bg-emerald-100 text-emerald-600 text-[9px] font-semibold flex items-center justify-center ring-2 ring-white">SL</div>
+      </div>
+      <span class="text-slate-400">3 members</span>
+    </div>
+    <span class="text-slate-300">│</span>
+    <span class="text-slate-500">Budget:</span>
+    <span class="font-mono text-xs font-semibold text-slate-900">₪250,000</span>
+  </div>
+</div>
+
+<!-- ─── TABS ───────────────────────────────────────────────── -->
+<div class="border-b border-slate-200 bg-white px-7">
+  <div class="flex gap-0">
+    <button class="border-b-2 border-blue-600 px-5 py-3 text-[13px] font-semibold text-blue-600">Planning</button>
+    <button class="border-b-2 border-transparent px-5 py-3 text-[13px] font-semibold text-slate-400 hover:text-slate-600">Team</button>
+  </div>
+</div>
+
+<div class="px-7 py-5 space-y-5">
+
+<!-- ─── ACTION BAR ─────────────────────────────────────────── -->
+<div class="flex items-center justify-between">
+  <div class="flex items-center gap-2">
+    <button class="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+      Add Zone from Template
+    </button>
+    <button class="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+      Add Zone Manually
+    </button>
+  </div>
+  <div class="flex items-center gap-3">
+    <div class="flex items-center gap-1.5">
+      <span class="text-[11px] font-semibold text-slate-400">Group:</span>
+      <select class="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:outline-none">
+        <option>Zone</option>
+        <option>Service</option>
+        <option>Phase</option>
+        <option>None</option>
+      </select>
+    </div>
+    <div class="relative">
+      <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+      <input placeholder="Filter tasks..." class="w-48 pl-8 px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none" />
+    </div>
+  </div>
+</div>
+
+<!-- ─── ZONE TEMPLATE PICKER MODAL (overlaid when "Add Zone from Template" clicked) ── -->
+<div class="bg-white rounded-[14px] border border-slate-200 overflow-hidden">
+  <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+    <h3 class="text-[15px] font-bold text-slate-900">Select Zone Template</h3>
+    <button class="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400">✕</button>
+  </div>
+
+  <!-- Search -->
+  <div class="px-5 py-3 border-b border-slate-100">
+    <div class="relative">
+      <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+      <input placeholder="Search templates..." class="w-full pl-9 px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+    </div>
+  </div>
+
+  <!-- Template grid -->
+  <div class="p-5 grid grid-cols-3 gap-3 max-h-[300px] overflow-y-auto">
+    <div class="rounded-[14px] border-2 border-blue-500 bg-blue-50/40 p-4 cursor-pointer shadow-sm">
+      <div class="flex items-center gap-2 mb-2">
+        <h4 class="text-[13px] font-semibold text-blue-700">Ground Level Standard</h4>
+        <span class="ml-auto rounded-[5px] bg-blue-600 text-white text-[11px] font-bold px-2 py-0.5">Selected</span>
+      </div>
+      <p class="text-[12px] text-blue-600/70 mb-2">Standard ground level with BIM and MEP services</p>
+      <div class="text-[11px] text-blue-400">2 services · 5 tasks · Used 8x</div>
+    </div>
+    <div class="rounded-[14px] border border-slate-200 p-4 cursor-pointer hover:border-blue-300">
+      <h4 class="text-[13px] font-semibold text-slate-900 mb-2">Typical Floor</h4>
+      <p class="text-[12px] text-slate-500 mb-2">Standard residential floor plan</p>
+      <div class="text-[11px] text-slate-400">1 service · 3 tasks · Used 12x</div>
+    </div>
+    <div class="rounded-[14px] border border-slate-200 p-4 cursor-pointer hover:border-blue-300">
+      <h4 class="text-[13px] font-semibold text-slate-900 mb-2">Roof Standard</h4>
+      <p class="text-[12px] text-slate-500 mb-2">Roof with waterproofing and MEP</p>
+      <div class="text-[11px] text-slate-400">1 service · 4 tasks · Used 6x</div>
+    </div>
+  </div>
+
+  <!-- Name step (appears after selecting) -->
+  <div class="px-5 py-4 border-t border-slate-100 bg-blue-50/30">
+    <label class="text-[13px] font-semibold text-slate-700 mb-1.5 block">Zone Name for This Project *</label>
+    <div class="flex items-center gap-3">
+      <input value="Tower A - Ground Floor" class="flex-1 px-3 py-2.5 rounded-lg border border-blue-500 text-sm text-slate-700 focus:outline-none" placeholder="e.g. Tower A - Ground Floor" />
+      <button class="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg">Add to Project</button>
+    </div>
+    <p class="text-[11px] text-slate-400 mt-1.5">This will create a zone "Tower A - Ground Floor" with 5 pre-built tasks from the template</p>
+  </div>
+</div>
+
+<!-- ─── TASK TABLE (grouped by zone) ───────────────────────── -->
+<div class="bg-white rounded-[14px] border border-slate-200 overflow-hidden">
+  <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+    <div>
+      <h3 class="text-[15px] font-bold text-slate-900">Project Tasks</h3>
+      <span class="text-[11px] font-medium text-slate-400">32 tasks · 180h · ₪45,000</span>
+    </div>
+  </div>
+
+  <!-- Zone Group: Tower A - Ground Floor -->
+  <div class="border-b border-slate-100">
+    <div class="flex items-center gap-2.5 px-5 py-2.5 bg-[#FAFBFC] cursor-pointer">
+      <svg class="w-3 h-3 text-slate-400 rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      <span class="text-[13px] font-semibold text-slate-900">Tower A - Ground Floor</span>
+      <span class="rounded-[5px] bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-400">from: Ground Level Standard</span>
+      <span class="ml-auto text-[11px] font-medium text-slate-400">5 tasks · 44h · ₪11,000</span>
+      <button class="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        Add Task
+      </button>
+      <button class="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600" title="Remove zone">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+      </button>
+    </div>
+
+    <table class="w-full">
+      <thead>
+        <tr class="bg-white border-b border-slate-50">
+          <th class="px-5 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-20">Code</th>
+          <th class="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Task Name</th>
+          <th class="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-28">Service</th>
+          <th class="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-20">Phase</th>
+          <th class="px-3 py-1.5 text-right text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-14">Hours</th>
+          <th class="px-3 py-1.5 text-right text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-20">Amount</th>
+          <th class="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-28">Assignee</th>
+          <th class="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-24">Status</th>
+          <th class="w-8"></th>
+        </tr>
+      </thead>
+      <tbody class="text-[13px]">
+        <tr class="border-b border-slate-50 hover:bg-slate-50 group">
+          <td class="px-5 py-2 font-mono text-xs font-medium text-slate-500">BIM-CD</td>
+          <td class="px-3 py-2 font-medium text-slate-900">Clash Detection</td>
+          <td class="px-3 py-2"><span class="rounded-[5px] bg-blue-50 px-1.5 py-0.5 text-[11px] font-bold text-blue-600">BIM Coord</span></td>
+          <td class="px-3 py-2 text-[12px] text-slate-500">Design</td>
+          <td class="px-3 py-2 text-right font-mono text-xs font-medium text-slate-700">20</td>
+          <td class="px-3 py-2 text-right font-mono text-xs font-semibold text-slate-700">₪5,000</td>
+          <td class="px-3 py-2">
+            <div class="flex items-center gap-1.5">
+              <div class="w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-semibold flex items-center justify-center">DC</div>
+              <span class="text-[12px] text-slate-700">Dan C.</span>
+            </div>
+          </td>
+          <td class="px-3 py-2">
+            <select class="text-[12px] bg-transparent border-none cursor-pointer focus:outline-none text-blue-600">
+              <option>In Progress</option>
+              <option>Not Started</option>
+              <option>Completed</option>
+            </select>
+          </td>
+          <td class="px-3 py-2"><button class="opacity-0 group-hover:opacity-100 w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button></td>
+        </tr>
+        <tr class="border-b border-slate-50 hover:bg-slate-50 group">
+          <td class="px-5 py-2 font-mono text-xs font-medium text-slate-500">MEP-C</td>
+          <td class="px-3 py-2 font-medium text-slate-900">MEP Coordination</td>
+          <td class="px-3 py-2"><span class="rounded-[5px] bg-blue-50 px-1.5 py-0.5 text-[11px] font-bold text-blue-600">BIM Coord</span></td>
+          <td class="px-3 py-2 text-[12px] text-slate-500">Design</td>
+          <td class="px-3 py-2 text-right font-mono text-xs font-medium text-slate-700">16</td>
+          <td class="px-3 py-2 text-right font-mono text-xs font-semibold text-slate-700">₪4,000</td>
+          <td class="px-3 py-2">
+            <button class="flex items-center gap-1.5 text-slate-400 hover:text-blue-600">
+              <div class="w-5 h-5 rounded-full bg-slate-200 border-[1.5px] border-dashed border-slate-300 flex items-center justify-center">
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+              </div>
+              <span class="text-[11px]">assign</span>
+            </button>
+          </td>
+          <td class="px-3 py-2">
+            <select class="text-[12px] bg-transparent border-none cursor-pointer focus:outline-none text-slate-500">
+              <option>Not Started</option>
+              <option>In Progress</option>
+            </select>
+          </td>
+          <td class="px-3 py-2"><button class="opacity-0 group-hover:opacity-100 w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Zone Group: Tower A - Roof (collapsed) -->
+  <div class="border-b border-slate-100">
+    <div class="flex items-center gap-2.5 px-5 py-2.5 bg-[#FAFBFC] cursor-pointer hover:bg-slate-100">
+      <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      <span class="text-[13px] font-semibold text-slate-900">Tower A - Roof</span>
+      <span class="rounded-[5px] bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-400">from: Roof Standard</span>
+      <span class="ml-auto text-[11px] font-medium text-slate-400">4 tasks · 20h · ₪5,000</span>
+      <button class="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        Add Task
+      </button>
+      <button class="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Budget Footer -->
+  <div class="flex items-center gap-6 px-6 py-2.5 border-t border-slate-100 bg-[#FAFBFC] rounded-b-[14px] text-[12px]">
+    <div><span class="text-slate-400">Total:</span> <span class="font-mono text-xs font-semibold text-slate-900 ml-1">9 tasks · 64h · ₪16,000</span></div>
+    <span class="text-slate-300">│</span>
+    <div><span class="text-slate-400">Budget:</span> <span class="font-mono text-xs font-semibold text-slate-900 ml-1">₪250,000</span></div>
+    <div><span class="text-slate-400">Used:</span> <span class="font-mono text-xs font-semibold text-slate-900 ml-1">6.4%</span></div>
+    <div><span class="text-slate-400">Remaining:</span> <span class="font-mono text-xs font-semibold text-emerald-600 ml-1">₪234,000</span></div>
+    <div class="flex-1 max-w-[200px]">
+      <div class="w-full h-1 bg-slate-200 rounded-full overflow-hidden">
+        <div class="h-full bg-blue-500 rounded-full" style="width: 6.4%"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>
