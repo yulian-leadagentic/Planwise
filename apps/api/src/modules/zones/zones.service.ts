@@ -362,6 +362,7 @@ export class ZonesService {
     const template = await this.prisma.template.findUniqueOrThrow({
       where: { id: templateId },
       include: {
+        templateTasks: true,
         templateZones: {
           include: {
             templateZoneTasks: true,
@@ -461,6 +462,36 @@ export class ZonesService {
 
       for (const rootZone of template.templateZones) {
         await createZoneRecursive(rootZone, null, '', 0);
+      }
+
+      // Create tasks from root-level templateTasks (services + individual tasks on the template itself)
+      if (template.templateTasks?.length) {
+        // Create a root zone to hold these tasks (named after the template)
+        const rootZone = await tx.zone.create({
+          data: { projectId, zoneType: 'zone', name: template.name, code: template.code, path: '', depth: 0 },
+        });
+        const rootPath = `${rootZone.id}`;
+        await tx.zone.update({ where: { id: rootZone.id }, data: { path: rootPath } });
+        createdZones.push({ ...rootZone, path: rootPath });
+
+        for (const tt of template.templateTasks) {
+          await tx.task.create({
+            data: {
+              zoneId: rootZone.id,
+              projectId,
+              serviceTypeId: tt.serviceTypeId,
+              code: tt.code,
+              name: tt.name,
+              description: tt.description,
+              budgetHours: tt.defaultBudgetHours,
+              budgetAmount: tt.defaultBudgetAmount,
+              phaseId: tt.phaseId,
+              priority: tt.defaultPriority || 'medium',
+              status: 'not_started',
+              createdBy: userId,
+            },
+          });
+        }
       }
 
       // Increment usage count

@@ -328,7 +328,7 @@ function GroupSection({ label, tasks, groupBy, thClass, handleSort, sortIcon, me
                 </tr>
               );
             })}
-            {tasks.length === 0 && <tr><td colSpan={9} className="px-5 py-8 text-center text-[13px] text-slate-400">No tasks</td></tr>}
+            {tasks.length === 0 && <tr><td colSpan={9} className="px-5 py-8 text-center text-[13px] text-slate-400">No tasks yet. Select a zone and click "Add Task", or apply a template with pre-built tasks.</td></tr>}
           </tbody>
         </table>
       )}
