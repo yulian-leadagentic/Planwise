@@ -4,7 +4,7 @@ import {
   Copy,
   Layers,
   ListChecks,
-  FolderKanban,
+  Tags,
   Users,
 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
@@ -39,10 +39,10 @@ const templateCards = [
     color: 'bg-cyan-100 text-cyan-700',
   },
   {
-    title: 'Project Types',
-    description: 'Manage project type classifications',
-    icon: FolderKanban,
-    href: '/templates/project-types',
+    title: 'Types',
+    description: 'Manage zone types, service types, and project types',
+    icon: Tags,
+    href: '/templates/types',
     color: 'bg-orange-100 text-orange-700',
   },
   {

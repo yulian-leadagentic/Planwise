@@ -29,6 +29,7 @@ import { ServiceTemplatesPage } from '@/features/templates/service-templates-pag
 import { ZoneTemplatesPage } from '@/features/templates/zone-templates-page';
 import { TeamTemplatesPage } from '@/features/templates/team-templates-page';
 import { PhasesPage } from '@/features/templates/phases-page';
+import { TypesPage } from '@/features/templates/types-page';
 import { AdminPage } from '@/features/admin/admin-page';
 import { RolesPage } from '@/features/admin/roles-page';
 import { ProjectTypesPage } from '@/features/admin/project-types-page';
@@ -92,6 +93,7 @@ export function AppRouter() {
         <Route path="templates/zone" element={<ZoneTemplatesPage />} />
         <Route path="templates/team" element={<TeamTemplatesPage />} />
         <Route path="templates/phases" element={<PhasesPage />} />
+        <Route path="templates/types" element={<TypesPage />} />
         <Route path="templates/project-types" element={<ProjectTypesPage />} />
 
         {/* Admin */}
