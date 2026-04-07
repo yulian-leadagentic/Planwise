@@ -1,22 +1,14 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  ChevronRight,
-  ChevronDown,
-  Plus,
-  Layers,
-  ArrowLeft,
-  Copy,
-  Trash2,
+  ChevronRight, ChevronDown, Plus, Layers, ArrowLeft, Copy, Trash2, Search,
 } from 'lucide-react';
 import { notify } from '@/lib/notify';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { planningApi, zonesApi, templatesApi } from '@/api/zones.api';
 import { tasksApi } from '@/api/tasks.api';
-import type { CreateTaskPayload } from '@/api/tasks.api';
-
-// ─── Zone display config ─────────────────────────────────────────────────────
+import client from '@/api/client';
 
 const ZONE_DISPLAY: Record<string, { color: string; label: string }> = {
   site: { color: '#6B7280', label: 'Site' },
@@ -29,167 +21,116 @@ const ZONE_DISPLAY: Record<string, { color: string; label: string }> = {
   floor: { color: '#6B7280', label: 'Floor' },
 };
 
-// ─── Zone Tree Node ──────────────────────────────────────────────────────────
+// ─── Template Picker ─────────────────────────────────────────────────────────
 
-function ZoneNode({ zone, selectedZoneId, onSelect, depth = 0 }: {
-  zone: any;
-  selectedZoneId: number | null;
-  onSelect: (zone: any) => void;
-  depth?: number;
-}) {
-  const [expanded, setExpanded] = useState(depth < 2);
-  const hasChildren = zone.children && zone.children.length > 0;
-  const display = ZONE_DISPLAY[zone.zoneType] || ZONE_DISPLAY.zone;
+function TemplatePicker({ projectId, onApplied }: { projectId: number; onApplied: () => void }) {
+  const [search, setSearch] = useState('');
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [sortBy, setSortBy] = useState('usage');
+
+  const { data: rawTemplates = [] } = useQuery({
+    queryKey: ['templates', 'zone'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/templates?type=zone').then((r) => r.data.data ?? r.data),
+  });
+
+  const templates = useMemo(() => {
+    let list = Array.isArray(rawTemplates) ? rawTemplates : [];
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter((t: any) => t.name?.toLowerCase().includes(q) || t.code?.toLowerCase().includes(q) || t.description?.toLowerCase().includes(q));
+    }
+    if (sortBy === 'usage') list.sort((a: any, b: any) => (b.usageCount ?? 0) - (a.usageCount ?? 0));
+    else if (sortBy === 'name') list.sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''));
+    else if (sortBy === 'zones') list.sort((a: any, b: any) => (b._count?.templateZones ?? 0) - (a._count?.templateZones ?? 0));
+    return list;
+  }, [rawTemplates, search, sortBy]);
+
+  const selected = templates.find((t: any) => t.id === selectedId);
+
+  const applyMutation = useMutation({
+    mutationFn: (templateId: number) => planningApi.applyProjectTemplate(projectId, templateId),
+    onSuccess: () => { notify.success('Template applied to project', { code: 'TPL-APPLY-200' }); onApplied(); },
+    onError: (err: any) => notify.apiError(err, 'Failed to apply template'),
+  });
+
+  if (templates.length === 0 && !search) return null;
 
   return (
-    <div>
-      <button
-        onClick={() => onSelect(selectedZoneId === zone.id ? null : zone)}
-        className={cn(
-          'flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
-          selectedZoneId === zone.id
-            ? 'bg-brand-50 text-brand-700 dark:bg-brand-950 dark:text-brand-300'
-            : 'text-foreground hover:bg-muted',
-        )}
-        style={{ paddingLeft: `${depth * 16 + 8}px` }}
-      >
-        {hasChildren ? (
-          <button
-            onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
-            className="shrink-0 rounded p-0.5 hover:bg-accent"
-          >
-            {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+    <div className="bg-white rounded-[14px] border border-slate-200 overflow-hidden">
+      <div className="px-5 py-4 border-b border-slate-100">
+        <h3 className="text-[15px] font-bold text-slate-900">Start from Template</h3>
+        <p className="text-[13px] text-slate-400 mt-0.5">Select a zone template to pre-populate your project structure</p>
+      </div>
+      <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search templates..." className="w-full pl-9 px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+        </div>
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none">
+          <option value="usage">Sort: Most Used</option>
+          <option value="name">Sort: Name A-Z</option>
+          <option value="zones">Sort: Most Zones</option>
+        </select>
+      </div>
+      <div className="p-5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[400px] overflow-y-auto">
+        {templates.map((t: any) => {
+          const isSelected = t.id === selectedId;
+          const svcCount = new Set((t.templateTasks ?? []).map((tk: any) => tk.description?.match(/^\[SERVICE:(.+)\]$/)?.[1]).filter(Boolean)).size;
+          return (
+            <div key={t.id} onClick={() => setSelectedId(isSelected ? null : t.id)}
+              className={cn('rounded-[14px] p-4 cursor-pointer transition-all duration-150',
+                isSelected ? 'border-2 border-blue-500 bg-blue-50/40 shadow-sm' : 'border border-slate-200 hover:border-blue-300 hover:bg-blue-50/30'
+              )}>
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-[28px] h-[28px] rounded-[7px] bg-amber-50 flex items-center justify-center">
+                  <Layers className="w-3.5 h-3.5 text-amber-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h4 className={cn('text-[13px] font-semibold truncate', isSelected ? 'text-blue-700' : 'text-slate-900')}>{t.name}</h4>
+                  {t.code && <span className={cn('font-mono text-[11px]', isSelected ? 'text-blue-400' : 'text-slate-400')}>{t.code}</span>}
+                </div>
+                {isSelected && <span className="rounded-[5px] bg-blue-600 text-white text-[11px] font-bold px-2 py-0.5">Selected</span>}
+              </div>
+              {t.description && <p className={cn('text-[12px] mb-3 line-clamp-2', isSelected ? 'text-blue-600/70' : 'text-slate-500')}>{t.description}</p>}
+              <div className={cn('flex items-center gap-3 text-[11px] font-medium', isSelected ? 'text-blue-400' : 'text-slate-400')}>
+                <span>{t._count?.templateZones ?? 0} zones</span><span>·</span>
+                <span>{svcCount} services</span><span>·</span>
+                <span>{t._count?.templateTasks ?? 0} tasks</span><span>·</span>
+                <span className={isSelected ? '' : 'text-blue-500'}>Used {t.usageCount ?? 0}x</span>
+              </div>
+            </div>
+          );
+        })}
+        {templates.length === 0 && <p className="col-span-3 py-8 text-center text-[13px] text-slate-400">{search ? 'No templates match your search.' : 'No zone templates available.'}</p>}
+      </div>
+      {selected && (
+        <div className="px-5 py-3 border-t border-slate-100 bg-[#FAFBFC] flex items-center justify-between rounded-b-[14px]">
+          <span className="text-[13px] text-slate-400">Selected: <strong className="text-slate-700">{selected.name}</strong></span>
+          <button onClick={() => applyMutation.mutate(selected.id)} disabled={applyMutation.isPending}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
+            {applyMutation.isPending ? 'Applying...' : 'Apply Template to Project'}
           </button>
-        ) : (
-          <span className="w-[18px] shrink-0" />
-        )}
-        <span className="truncate flex-1">{zone.name}</span>
-        <span className="flex shrink-0 items-center gap-1">
-          <span
-            className="rounded px-1 py-0.5 text-[10px] font-medium"
-            style={{ backgroundColor: `${display.color}20`, color: display.color }}
-          >
-            {display.label}
-          </span>
-          {zone.isTypical && zone.typicalCount > 1 && (
-            <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-700">
-              &times;{zone.typicalCount}
-            </span>
-          )}
-        </span>
-      </button>
-      {hasChildren && expanded && (
-        <div>
-          {zone.children.map((child: any) => (
-            <ZoneNode key={child.id} zone={child} selectedZoneId={selectedZoneId} onSelect={onSelect} depth={depth + 1} />
-          ))}
         </div>
       )}
     </div>
   );
 }
 
-// ─── Add Task Form ───────────────────────────────────────────────────────────
+// ─── Task Table with Flexible Grouping ────────────────────────────────────────
 
-function AddTaskForm({ zoneId, serviceTypes, phases, onSave, onCancel, isPending }: {
-  zoneId: number;
-  serviceTypes: any[];
-  phases: any[];
-  onSave: (data: CreateTaskPayload) => void;
-  onCancel: () => void;
-  isPending: boolean;
-}) {
-  const [code, setCode] = useState('');
-  const [name, setName] = useState('');
-  const [budgetHours, setBudgetHours] = useState('');
-  const [budgetAmount, setBudgetAmount] = useState('');
-  const [serviceTypeId, setServiceTypeId] = useState('');
-  const [phaseId, setPhaseId] = useState('');
-  const [priority, setPriority] = useState('medium');
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!code.trim() || !name.trim()) {
-      notify.error('Code and name are required');
-      return;
-    }
-    onSave({
-      zoneId,
-      code: code.trim(),
-      name: name.trim(),
-      budgetHours: budgetHours ? Number(budgetHours) : undefined,
-      budgetAmount: budgetAmount ? Number(budgetAmount) : undefined,
-      serviceTypeId: serviceTypeId ? Number(serviceTypeId) : undefined,
-      phaseId: phaseId ? Number(phaseId) : undefined,
-      priority,
-    });
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="border border-border rounded-md p-3 bg-muted/20 space-y-2">
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
-        <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code *" className="rounded-md border border-input bg-background px-2 py-1.5 text-sm" autoFocus />
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name *" className="rounded-md border border-input bg-background px-2 py-1.5 text-sm" />
-        <input value={budgetHours} onChange={(e) => setBudgetHours(e.target.value)} placeholder="Hours" type="number" className="rounded-md border border-input bg-background px-2 py-1.5 text-sm" />
-        <input value={budgetAmount} onChange={(e) => setBudgetAmount(e.target.value)} placeholder="Amount" type="number" className="rounded-md border border-input bg-background px-2 py-1.5 text-sm" />
-        <select value={serviceTypeId} onChange={(e) => setServiceTypeId(e.target.value)} className="rounded-md border border-input bg-background px-2 py-1.5 text-sm">
-          <option value="">Service Type</option>
-          {serviceTypes.map((st: any) => <option key={st.id} value={st.id}>{st.name}</option>)}
-        </select>
-        <select value={phaseId} onChange={(e) => setPhaseId(e.target.value)} className="rounded-md border border-input bg-background px-2 py-1.5 text-sm">
-          <option value="">Phase</option>
-          {phases.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-        <select value={priority} onChange={(e) => setPriority(e.target.value)} className="rounded-md border border-input bg-background px-2 py-1.5 text-sm">
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-          <option value="critical">Critical</option>
-        </select>
-      </div>
-      <div className="flex gap-2">
-        <button type="submit" disabled={isPending} className="rounded bg-brand-600 px-3 py-1 text-xs text-white hover:bg-brand-700 disabled:opacity-50">
-          {isPending ? 'Saving...' : 'Save'}
-        </button>
-        <button type="button" onClick={onCancel} className="rounded border border-border px-3 py-1 text-xs hover:bg-accent">Cancel</button>
-      </div>
-    </form>
-  );
-}
-
-// ─── Tasks Panel ─────────────────────────────────────────────────────────────
-
-function TasksPanel({ selectedZone, allTasks, serviceTypes, phases, projectId, members }: {
-  selectedZone: any;
-  allTasks: any[];
-  serviceTypes: any[];
-  phases: any[];
-  projectId: number;
-  members: any[];
-}) {
+function TaskTable({ tasks, projectId, members }: { tasks: any[]; projectId: number; members: any[] }) {
   const queryClient = useQueryClient();
-  const [showAddTask, setShowAddTask] = useState(false);
-  const [showTemplateDropdown, setShowTemplateDropdown] = useState(false);
+  const [groupBy, setGroupBy] = useState<'zone' | 'service' | 'phase' | 'none'>('zone');
+  const [search, setSearch] = useState('');
+  const [sortCol, setSortCol] = useState<string>('');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
-  const { data: taskTemplates } = useQuery({
-    queryKey: ['templates', 'task_list'],
-    queryFn: () => templatesApi.list('task_list'),
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
-  };
-
-  const createTask = useMutation({
-    mutationFn: (data: CreateTaskPayload) => tasksApi.create(data),
-    onSuccess: () => { invalidate(); setShowAddTask(false); notify.success('Task created', { code: 'TASK-CREATE-200' }); },
-    onError: (err: any) => notify.apiError(err, 'Failed to create task'),
-  });
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
 
   const updateTask = useMutation({
     mutationFn: ({ id, ...data }: { id: number } & Record<string, any>) => tasksApi.update(id, data),
-    onSuccess: () => invalidate(),
+    onSuccess: invalidate,
     onError: (err: any) => notify.apiError(err, 'Failed to update task'),
   });
 
@@ -199,293 +140,300 @@ function TasksPanel({ selectedZone, allTasks, serviceTypes, phases, projectId, m
     onError: (err: any) => notify.apiError(err, 'Failed to delete task'),
   });
 
-  const applyTemplate = useMutation({
-    mutationFn: (templateId: number) => zonesApi.applyTaskTemplate(selectedZone.id, templateId),
-    onSuccess: () => { invalidate(); setShowTemplateDropdown(false); notify.success('Template applied', { code: 'ZONE-APPLY-200' }); },
-    onError: (err: any) => notify.apiError(err, 'Failed to apply template'),
-  });
+  // Filter
+  const filtered = useMemo(() => {
+    if (!search.trim()) return tasks;
+    const q = search.toLowerCase();
+    return tasks.filter((t: any) =>
+      t.code?.toLowerCase().includes(q) || t.name?.toLowerCase().includes(q) ||
+      t.zone?.name?.toLowerCase().includes(q) || t.serviceType?.name?.toLowerCase().includes(q) ||
+      t.phase?.name?.toLowerCase().includes(q)
+    );
+  }, [tasks, search]);
 
-  // Filter tasks for selected zone
-  const zoneTasks = useMemo(() => {
-    if (!selectedZone) return allTasks;
-    return allTasks.filter((t: any) => t.zoneId === selectedZone.id);
-  }, [allTasks, selectedZone]);
-
-  // Group tasks by service type
-  const grouped = useMemo(() => {
-    const map = new Map<number | null, { serviceType: any; tasks: any[] }>();
-    for (const task of zoneTasks) {
-      const key = task.serviceTypeId || 0;
-      if (!map.has(key)) {
-        map.set(key, { serviceType: task.serviceType || null, tasks: [] });
+  // Sort
+  const sorted = useMemo(() => {
+    if (!sortCol) return filtered;
+    return [...filtered].sort((a: any, b: any) => {
+      let va: any, vb: any;
+      switch (sortCol) {
+        case 'code': va = a.code || ''; vb = b.code || ''; break;
+        case 'name': va = a.name || ''; vb = b.name || ''; break;
+        case 'zone': va = a.zone?.name || ''; vb = b.zone?.name || ''; break;
+        case 'service': va = a.serviceType?.name || ''; vb = b.serviceType?.name || ''; break;
+        case 'phase': va = a.phase?.name || ''; vb = b.phase?.name || ''; break;
+        case 'hours': va = Number(a.budgetHours) || 0; vb = Number(b.budgetHours) || 0; break;
+        case 'amount': va = Number(a.budgetAmount) || 0; vb = Number(b.budgetAmount) || 0; break;
+        default: return 0;
       }
-      map.get(key)!.tasks.push(task);
+      if (typeof va === 'string') { va = va.toLowerCase(); vb = (vb as string).toLowerCase(); }
+      if (va < vb) return sortDir === 'asc' ? -1 : 1;
+      if (va > vb) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [filtered, sortCol, sortDir]);
+
+  // Group
+  const groups = useMemo(() => {
+    if (groupBy === 'none') return [{ key: 'all', label: 'All Tasks', tasks: sorted }];
+    const map = new Map<string, { label: string; tasks: any[] }>();
+    for (const t of sorted) {
+      let key = '', label = '';
+      if (groupBy === 'zone') { key = t.zone?.name || 'Unassigned'; label = key; }
+      else if (groupBy === 'service') { key = t.serviceType?.name || 'No Service'; label = key; }
+      else if (groupBy === 'phase') { key = t.phase?.name || 'No Phase'; label = key; }
+      if (!map.has(key)) map.set(key, { label, tasks: [] });
+      map.get(key)!.tasks.push(t);
     }
     return Array.from(map.values());
-  }, [zoneTasks]);
+  }, [sorted, groupBy]);
 
-  // Budget totals for this zone
-  const zoneHours = zoneTasks.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
-  const zoneAmount = zoneTasks.reduce((s: number, t: any) => s + Number(t.budgetAmount || 0), 0);
+  const totalHours = sorted.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
+  const totalAmount = sorted.reduce((s: number, t: any) => s + Number(t.budgetAmount || 0), 0);
 
-  const templates = Array.isArray(taskTemplates) ? taskTemplates : (taskTemplates as any)?.data ?? [];
+  const handleSort = (col: string) => {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortCol(col); setSortDir('asc'); }
+  };
+  const sortIcon = (col: string) => sortCol === col ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
 
-  if (!selectedZone) {
-    return (
-      <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
-        Select a zone to view its tasks
-      </div>
-    );
-  }
+  const thClass = "px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] cursor-pointer select-none hover:text-slate-600";
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 bg-white">
+    <div className="bg-white rounded-[14px] border border-slate-200 overflow-hidden">
+      <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
         <div>
-          <div className="text-[13px] text-slate-900 font-semibold">{selectedZone.name}</div>
-          <div className="flex items-center gap-3 mt-0.5">
-            <span className="text-[11px] font-medium text-slate-400">{zoneTasks.length} tasks</span>
-            <span className="text-slate-300">&middot;</span>
-            <span className="font-mono text-xs font-semibold text-slate-700">{zoneHours}h</span>
-            <span className="text-slate-300">&middot;</span>
-            <span className="font-mono text-xs font-semibold text-slate-700">{zoneAmount.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })}</span>
-          </div>
+          <h3 className="text-[15px] font-bold text-slate-900">Project Tasks</h3>
+          <span className="text-[11px] font-medium text-slate-400">{sorted.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setShowAddTask(true)} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3.5 py-2 rounded-lg flex items-center gap-1.5">
-            <Plus className="h-3.5 w-3.5" /> Add Task
-          </button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-semibold text-slate-400">Group by:</span>
+            <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as any)} className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none">
+              <option value="zone">Zone</option>
+              <option value="service">Service</option>
+              <option value="phase">Phase</option>
+              <option value="none">None</option>
+            </select>
+          </div>
           <div className="relative">
-            <button onClick={() => setShowTemplateDropdown(!showTemplateDropdown)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg flex items-center gap-1.5">
-              <Copy className="h-3.5 w-3.5" /> Add Service
-            </button>
-            {showTemplateDropdown && (
-              <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-md border border-border bg-background shadow-lg">
-                {templates.length === 0 ? (
-                  <p className="p-3 text-xs text-muted-foreground">No task templates available</p>
-                ) : (
-                  templates.map((t: any) => (
-                    <button key={t.id} onClick={() => applyTemplate.mutate(t.id)} className="block w-full px-3 py-2 text-left text-sm hover:bg-accent">
-                      {t.name}
-                      {t.category && <span className="ml-2 text-xs text-muted-foreground">{t.category}</span>}
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter tasks..." className="w-48 pl-8 px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none" />
           </div>
         </div>
       </div>
 
-      {/* Task List */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
-        {showAddTask && (
-          <AddTaskForm
-            zoneId={selectedZone.id}
-            serviceTypes={serviceTypes}
-            phases={phases}
-            onSave={(data) => createTask.mutate(data)}
-            onCancel={() => setShowAddTask(false)}
-            isPending={createTask.isPending}
-          />
-        )}
+      {groups.map((group) => (
+        <GroupSection key={group.label} label={group.label} tasks={group.tasks} groupBy={groupBy}
+          thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
+          members={members} onUpdate={(id, data) => updateTask.mutate({ id, ...data })}
+          onDelete={(id) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }} />
+      ))}
 
-        {grouped.length === 0 && !showAddTask && (
-          <div className="py-8 text-center text-sm text-muted-foreground">
-            No tasks yet. Click "Add Task" or "Apply Template" to get started.
-          </div>
-        )}
-
-        {grouped.map(({ serviceType, tasks }) => (
-          <ServiceTypeGroup key={serviceType?.id || 'ungrouped'} serviceType={serviceType} tasks={tasks} phases={phases} onDelete={(id) => deleteTask.mutate(id)} onUpdate={(id, data) => updateTask.mutate({ id, ...data })} members={members} />
-        ))}
+      <div className="flex items-center gap-6 px-6 py-2.5 border-t border-slate-100 bg-[#FAFBFC] rounded-b-[14px] text-[12px]">
+        <div><span className="text-slate-400">Total:</span> <span className="font-mono text-xs font-semibold text-slate-900 ml-1">{sorted.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span></div>
       </div>
     </div>
   );
 }
 
-// ─── Service Type Group ──────────────────────────────────────────────────────
-
-function ServiceTypeGroup({ serviceType, tasks, phases, onDelete, onUpdate, members }: {
-  serviceType: any;
-  tasks: any[];
-  phases: any[];
-  onDelete: (id: number) => void;
-  onUpdate: (id: number, data: any) => void;
-  members: any[];
-}) {
+function GroupSection({ label, tasks, groupBy, thClass, handleSort, sortIcon, members, onUpdate, onDelete }: any) {
   const [collapsed, setCollapsed] = useState(false);
-  const groupHours = tasks.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
-  const groupAmount = tasks.reduce((s: number, t: any) => s + Number(t.budgetAmount || 0), 0);
+  const hours = tasks.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
+  const amount = tasks.reduce((s: number, t: any) => s + Number(t.budgetAmount || 0), 0);
 
   return (
-    <div className="rounded-[14px] border border-slate-200 bg-white">
-      <button
-        onClick={() => setCollapsed(!collapsed)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 rounded-t-[14px]"
-      >
-        {collapsed ? <ChevronRight className="h-3.5 w-3.5 text-slate-400" /> : <ChevronDown className="h-3.5 w-3.5 text-slate-400" />}
-        {serviceType?.color && <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: serviceType.color }} />}
-        <span className="text-[13px] font-semibold text-slate-900">{serviceType?.name || 'Ungrouped'}</span>
-        {serviceType?.code && <span className="rounded-[5px] bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-slate-500">{serviceType.code}</span>}
-        <span className="ml-auto text-[11px] font-medium text-slate-400">{tasks.length} tasks &middot; {groupHours}h &middot; {groupAmount.toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })}</span>
-      </button>
-
+    <div className="border-b border-slate-100 last:border-0">
+      {groupBy !== 'none' && (
+        <div className="flex items-center gap-2.5 px-5 py-2.5 bg-[#FAFBFC] cursor-pointer hover:bg-slate-100" onClick={() => setCollapsed(!collapsed)}>
+          {collapsed ? <ChevronRight className="w-3 h-3 text-slate-400" /> : <ChevronDown className="w-3 h-3 text-slate-400" />}
+          <span className="text-[13px] font-semibold text-slate-900">{label}</span>
+          <span className="ml-auto text-[11px] font-medium text-slate-400">{tasks.length} tasks · {hours}h · ₪{amount.toLocaleString()}</span>
+        </div>
+      )}
       {!collapsed && (
-        <div className="border-t border-slate-100">
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="bg-[#FAFBFC] border-b border-slate-100">
-                <th className="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Code</th>
-                <th className="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Name</th>
-                <th className="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Assignee</th>
-                <th className="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Start</th>
-                <th className="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">End</th>
-                <th className="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Priority</th>
-                <th className="px-3 py-1.5 text-right text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Hours</th>
-                <th className="px-3 py-1.5 text-right text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Amount</th>
-                <th className="px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">Status</th>
-                <th className="px-3 py-1.5 w-8"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map((task: any) => {
-                const assignee = task.assignees?.[0]?.user;
-                return (
+        <table className="w-full">
+          <thead>
+            <tr className="bg-white border-b border-slate-50">
+              <th className={cn(thClass, 'w-20 pl-5')} onClick={() => handleSort('code')}>Code{sortIcon('code')}</th>
+              <th className={thClass} onClick={() => handleSort('name')}>Task{sortIcon('name')}</th>
+              <th className={cn(thClass, 'w-28')} onClick={() => handleSort('zone')}>Zone{sortIcon('zone')}</th>
+              <th className={cn(thClass, 'w-28')} onClick={() => handleSort('service')}>Service{sortIcon('service')}</th>
+              <th className={cn(thClass, 'w-20')} onClick={() => handleSort('phase')}>Phase{sortIcon('phase')}</th>
+              <th className={cn(thClass, 'w-14 text-right')} onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
+              <th className={cn(thClass, 'w-20 text-right')} onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
+              <th className={cn(thClass, 'w-28')}>Assignee</th>
+              <th className="w-8"></th>
+            </tr>
+          </thead>
+          <tbody className="text-[13px]">
+            {tasks.map((task: any) => {
+              const assignee = task.assignees?.[0]?.user;
+              return (
                 <tr key={task.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 group">
-                  <td className="px-3 py-2 text-xs font-medium font-mono text-slate-500">{task.code}</td>
+                  <td className="px-3 py-2 pl-5 font-mono text-xs font-medium text-slate-500">{task.code}</td>
                   <td className="px-3 py-2 font-medium text-slate-900">{task.name}</td>
+                  <td className="px-3 py-2 text-[12px] text-slate-500">{task.zone?.name || '-'}</td>
+                  <td className="px-3 py-2">{task.serviceType ? <span className="rounded-[5px] bg-blue-50 px-1.5 py-0.5 text-[11px] font-bold text-blue-600">{task.serviceType.name}</span> : <span className="text-slate-300">-</span>}</td>
+                  <td className="px-3 py-2 text-[12px] text-slate-500">{task.phase?.name || '-'}</td>
+                  <td className="px-3 py-2 text-right font-mono text-xs font-medium text-slate-700">{task.budgetHours ? Number(task.budgetHours) : '-'}</td>
+                  <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-slate-700">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</td>
                   <td className="px-3 py-2">
                     {assignee ? (
-                      <span className="inline-flex items-center gap-1.5 text-[13px] text-slate-700">
-                        <span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-semibold flex items-center justify-center">
-                          {assignee.firstName?.[0]}{assignee.lastName?.[0]}
-                        </span>
-                        {assignee.firstName}
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-semibold flex items-center justify-center">{assignee.firstName?.[0]}{assignee.lastName?.[0]}</span>
+                        <span className="text-[12px] text-slate-700">{assignee.firstName}</span>
                       </span>
                     ) : (
-                      <select
-                        className="w-full text-[12px] text-slate-400 bg-transparent border-none cursor-pointer hover:text-slate-600 focus:outline-none"
-                        value=""
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            tasksApi.addAssignee(task.id, { userId: Number(e.target.value) });
-                            onUpdate(task.id, {});
-                          }
-                        }}
-                      >
+                      <select className="text-[12px] text-slate-400 bg-transparent border-none cursor-pointer hover:text-slate-600 focus:outline-none" value=""
+                        onChange={(e) => { if (e.target.value) { tasksApi.addAssignee(task.id, { userId: Number(e.target.value) }); onUpdate(task.id, {}); } }}>
                         <option value="">+ assign</option>
-                        {members.map((m: any) => (
-                          <option key={m.user?.id ?? m.id} value={m.user?.id ?? m.id}>
-                            {m.user?.firstName ?? m.firstName} {m.user?.lastName ?? m.lastName}
-                          </option>
-                        ))}
+                        {members.map((m: any) => <option key={m.user?.id ?? m.id} value={m.user?.id ?? m.id}>{m.user?.firstName ?? m.firstName} {m.user?.lastName ?? m.lastName}</option>)}
                       </select>
                     )}
                   </td>
                   <td className="px-3 py-2">
-                    <input
-                      type="date"
-                      defaultValue={task.startDate?.split('T')[0] || ''}
-                      className="w-24 text-[12px] text-slate-600 bg-transparent border-none focus:outline-none cursor-pointer"
-                      onChange={(e) => onUpdate(task.id, { startDate: e.target.value || null })}
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <input
-                      type="date"
-                      defaultValue={task.endDate?.split('T')[0] || ''}
-                      className="w-24 text-[12px] text-slate-600 bg-transparent border-none focus:outline-none cursor-pointer"
-                      onChange={(e) => onUpdate(task.id, { endDate: e.target.value || null })}
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <select
-                      value={task.priority || 'medium'}
-                      className="text-[12px] bg-transparent border-none cursor-pointer focus:outline-none"
-                      onChange={(e) => onUpdate(task.id, { priority: e.target.value })}
-                    >
-                      <option value="low">Low</option>
-                      <option value="medium">Medium</option>
-                      <option value="high">High</option>
-                      <option value="critical">Critical</option>
-                    </select>
-                  </td>
-                  <td className="px-3 py-2 text-right text-xs font-medium font-mono tabular-nums text-slate-700">{task.budgetHours ? Number(task.budgetHours) : '-'}</td>
-                  <td className="px-3 py-2 text-right text-xs font-semibold font-mono tabular-nums text-slate-700">{task.budgetAmount ? Number(task.budgetAmount).toLocaleString() : '-'}</td>
-                  <td className="px-3 py-2">
-                    <select
-                      value={task.status || 'not_started'}
-                      className="text-[12px] bg-transparent border-none cursor-pointer focus:outline-none"
-                      onChange={(e) => onUpdate(task.id, { status: e.target.value })}
-                    >
-                      <option value="not_started">Not Started</option>
-                      <option value="in_progress">In Progress</option>
-                      <option value="in_review">In Review</option>
-                      <option value="completed">Completed</option>
-                      <option value="on_hold">On Hold</option>
-                    </select>
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    <button onClick={() => { if (confirm(`Delete "${task.name}"?`)) onDelete(task.id); }} className="opacity-0 group-hover:opacity-100 rounded-[7px] p-1 text-slate-300 hover:bg-red-50 hover:text-red-600 transition-all duration-150">
-                      <Trash2 className="h-3.5 w-3.5" />
+                    <button onClick={() => onDelete(task.id)} className="opacity-0 group-hover:opacity-100 w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600 transition-all duration-150">
+                      <Trash2 className="w-3 h-3" />
                     </button>
                   </td>
                 </tr>
-                );
-              })}
-            </tbody>
-          </table>
+              );
+            })}
+            {tasks.length === 0 && <tr><td colSpan={9} className="px-5 py-8 text-center text-[13px] text-slate-400">No tasks</td></tr>}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ─── Zone Panel ──────────────────────────────────────────────────────────────
+
+function ZonePanel({ zones, selectedZone, onSelectZone, projectId, onInvalidate }: any) {
+  const [addingZone, setAddingZone] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newType, setNewType] = useState('zone');
+  const [newParentId, setNewParentId] = useState<string>('');
+
+  const createZone = useMutation({
+    mutationFn: (data: any) => zonesApi.create(data),
+    onSuccess: () => { onInvalidate(); setNewName(''); setAddingZone(false); notify.success('Zone created', { code: 'ZONE-CREATE-200' }); },
+    onError: (err: any) => notify.apiError(err, 'Failed to create zone'),
+  });
+
+  const deleteZone = useMutation({
+    mutationFn: (id: number) => zonesApi.remove(id),
+    onSuccess: () => { onInvalidate(); notify.success('Zone deleted', { code: 'ZONE-DELETE-200' }); },
+    onError: (err: any) => notify.apiError(err, 'Failed to delete zone'),
+  });
+
+  const duplicateZone = useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) => zonesApi.duplicate(id, name),
+    onSuccess: () => { onInvalidate(); notify.success('Zone duplicated', { code: 'ZONE-DUP-200' }); },
+    onError: (err: any) => notify.apiError(err, 'Failed to duplicate zone'),
+  });
+
+  const flatZones = useMemo(() => {
+    const result: any[] = [];
+    function walk(nodes: any[], depth = 0) { for (const n of nodes) { result.push({ ...n, _depth: depth }); if (n.children) walk(n.children, depth + 1); } }
+    walk(zones);
+    return result;
+  }, [zones]);
+
+  return (
+    <div className="w-[300px] shrink-0 border-r border-slate-200 flex flex-col bg-white">
+      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+        <h3 className="text-[15px] font-bold text-slate-900">Zone Structure</h3>
+        <button onClick={() => setAddingZone(!addingZone)} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+          <Plus className="h-3.5 w-3.5" /> Add Zone
+        </button>
+      </div>
+
+      {addingZone && (
+        <div className="border-b border-slate-100 p-4 space-y-3 bg-blue-50/20">
+          <div>
+            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Zone Name *</label>
+            <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Tower A - Ground Floor" autoFocus
+              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Zone Type</label>
+            <select value={newType} onChange={(e) => setNewType(e.target.value)} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none">
+              {Object.entries(ZONE_DISPLAY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+          </div>
+          {flatZones.length > 0 && (
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Parent Zone</label>
+              <select value={newParentId} onChange={(e) => setNewParentId(e.target.value)} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none">
+                <option value="">— Root level —</option>
+                {flatZones.map((z: any) => <option key={z.id} value={z.id}>{'  '.repeat(z._depth)}{z.name}</option>)}
+              </select>
+            </div>
+          )}
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={() => setAddingZone(false)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+            <button onClick={() => { if (!newName.trim()) return; createZone.mutate({ projectId, name: newName.trim(), zoneType: newType, parentId: newParentId ? Number(newParentId) : null }); }}
+              disabled={createZone.isPending || !newName.trim()} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">Add Zone</button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto p-2">
+        {zones.map((zone: any) => (
+          <ZoneNode key={zone.id} zone={zone} selectedId={selectedZone?.id} onSelect={onSelectZone} onDelete={(id: number) => { if (confirm('Delete this zone and all its tasks?')) deleteZone.mutate(id); }} depth={0} />
+        ))}
+        {zones.length === 0 && !addingZone && <p className="px-3 py-8 text-center text-[13px] text-slate-400">No zones yet. Click "Add Zone" or apply a template above.</p>}
+      </div>
+
+      {selectedZone && (
+        <div className="border-t border-slate-100 p-3">
+          <button onClick={() => { const name = prompt('New zone name:', `${selectedZone.name} (copy)`); if (name) duplicateZone.mutate({ id: selectedZone.id, name }); }}
+            className="w-full border border-dashed border-slate-300 hover:border-blue-500 bg-transparent hover:bg-blue-50 text-slate-500 hover:text-blue-600 text-[13px] font-semibold px-3 py-2 rounded-[7px] flex items-center justify-center gap-2 transition-all duration-150">
+            <Copy className="w-3.5 h-3.5" /> Duplicate Zone
+          </button>
         </div>
       )}
     </div>
   );
 }
 
-// ─── Budget Summary Bar ──────────────────────────────────────────────────────
-
-function BudgetSummaryBar({ summary }: { summary: any }) {
-  if (!summary) return null;
-  const { totalHours, totalAmount, projectBudget, remaining, remainingPct } = summary;
-  const isOver = remaining < 0;
+function ZoneNode({ zone, selectedId, onSelect, onDelete, depth }: any) {
+  const [expanded, setExpanded] = useState(depth < 2);
+  const hasChildren = zone.children?.length > 0;
+  const isSelected = zone.id === selectedId;
+  const display = ZONE_DISPLAY[zone.zoneType] || ZONE_DISPLAY.zone;
 
   return (
-    <div className="flex flex-wrap items-center gap-4 border-t border-slate-100 bg-[#FAFBFC] px-6 py-2.5 text-xs rounded-b-[14px]">
-      <span>
-        <span className="text-muted-foreground">Project Total: </span>
-        <span className="font-semibold tabular-nums">{totalHours}h</span>
-        <span className="mx-1 text-muted-foreground">&middot;</span>
-        <span className="font-semibold tabular-nums">{Number(totalAmount).toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })}</span>
-      </span>
-      {projectBudget > 0 && (
-        <>
-          <span className="text-muted-foreground">
-            / {Number(projectBudget).toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })}
-            {' '}({Math.round(100 - (remainingPct || 0))}%)
-          </span>
-          <span className={cn('font-medium', isOver ? 'text-red-600' : 'text-green-600')}>
-            Remaining: {Number(remaining).toLocaleString('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 })}
-          </span>
-        </>
-      )}
+    <div>
+      <div className={cn('group flex items-center gap-1.5 px-2.5 py-[7px] rounded-lg cursor-pointer transition-all duration-150',
+        isSelected ? 'bg-blue-50 border border-blue-200' : 'hover:bg-slate-50'
+      )} style={{ paddingLeft: `${depth * 20 + 10}px` }} onClick={() => onSelect(zone)}>
+        {hasChildren ? (
+          <button onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }} className="w-3 h-3 text-slate-400">
+            {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+          </button>
+        ) : <span className="w-3" />}
+        <span className={cn('text-[13px] flex-1', isSelected ? 'font-semibold text-blue-700' : 'font-medium text-slate-700')}>{zone.name}</span>
+        <span className="rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold tracking-wide" style={{ backgroundColor: `${display.color}15`, color: display.color }}>{display.label}</span>
+        <button onClick={(e) => { e.stopPropagation(); onDelete(zone.id); }}
+          className="opacity-0 group-hover:opacity-100 w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600 transition-all duration-150">
+          <Trash2 className="w-3 h-3" />
+        </button>
+      </div>
+      {hasChildren && expanded && zone.children.map((child: any) => (
+        <ZoneNode key={child.id} zone={child} selectedId={selectedId} onSelect={onSelect} onDelete={onDelete} depth={depth + 1} />
+      ))}
     </div>
   );
 }
 
-// ─── Main Planning Page ──────────────────────────────────────────────────────
+// ─── Main Planning View ──────────────────────────────────────────────────────
 
 function PlanningView({ projectId }: { projectId: number }) {
   const queryClient = useQueryClient();
   const [selectedZone, setSelectedZone] = useState<any>(null);
-  const [addingZone, setAddingZone] = useState(false);
-  const [newZoneName, setNewZoneName] = useState('');
-  const [newZoneType, setNewZoneType] = useState('zone');
-  const [duplicateModal, setDuplicateModal] = useState<any>(null);
-  const [duplicateName, setDuplicateName] = useState('');
-  const [showProjectTemplateMenu, setShowProjectTemplateMenu] = useState(false);
-
-  const zoneTypeOptions = ['site', 'building', 'level', 'zone', 'area', 'section', 'wing', 'floor'];
 
   const { data: planningData, isLoading } = useQuery({
     queryKey: ['planning', projectId],
@@ -496,197 +444,56 @@ function PlanningView({ projectId }: { projectId: number }) {
   const pd = (planningData as any)?.data ?? planningData;
   const zones = pd?.zones ?? [];
   const tasks = pd?.tasks ?? [];
-  const serviceTypes = pd?.serviceTypes ?? [];
-  const phases = pd?.phases ?? [];
-  const budgetSummary = pd?.budgetSummary;
+  const members = pd?.members ?? [];
 
-  const { data: zoneTemplatesRaw } = useQuery({
-    queryKey: ['templates', 'zone'],
-    queryFn: () => templatesApi.list('zone'),
-    staleTime: 5 * 60 * 1000,
-  });
-  const { data: combinedTemplatesRaw } = useQuery({
-    queryKey: ['templates', 'combined'],
-    queryFn: () => templatesApi.list('combined'),
-    staleTime: 5 * 60 * 1000,
-  });
-  const projectZoneTemplates = Array.isArray(zoneTemplatesRaw) ? zoneTemplatesRaw : (zoneTemplatesRaw as any)?.data ?? [];
-  const projectCombinedTemplates = Array.isArray(combinedTemplatesRaw) ? combinedTemplatesRaw : (combinedTemplatesRaw as any)?.data ?? [];
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
 
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
-  };
+  // Filter tasks by selected zone
+  const visibleTasks = useMemo(() => {
+    if (!selectedZone) return tasks;
+    const zoneIds = new Set<number>();
+    function collectIds(z: any) { zoneIds.add(z.id); (z.children || []).forEach(collectIds); }
+    collectIds(selectedZone);
+    return tasks.filter((t: any) => zoneIds.has(t.zoneId));
+  }, [tasks, selectedZone]);
 
-  const applyProjectTemplate = useMutation({
-    mutationFn: (templateId: number) => planningApi.applyProjectTemplate(projectId, templateId),
-    onSuccess: () => { invalidate(); setShowProjectTemplateMenu(false); notify.success('Template applied — zones and tasks created', { code: 'PROJECT-APPLY-200' }); },
-    onError: (err: any) => notify.apiError(err, 'Failed to apply template'),
-  });
+  if (isLoading) return <div className="flex h-96 items-center justify-center text-[13px] text-slate-400">Loading planning data...</div>;
 
-  const createZone = useMutation({
-    mutationFn: (data: any) => zonesApi.create(data),
-    onSuccess: () => { invalidate(); setNewZoneName(''); setAddingZone(false); notify.success('Zone created', { code: 'ZONE-CREATE-200' }); },
-    onError: (err: any) => notify.apiError(err, 'Failed to create zone'),
-  });
-
-  const duplicateZone = useMutation({
-    mutationFn: ({ zoneId, newName }: { zoneId: number; newName: string }) => zonesApi.duplicate(zoneId, newName),
-    onSuccess: () => { invalidate(); setDuplicateModal(null); setDuplicateName(''); notify.success('Zone duplicated', { code: 'ZONE-DUPLICATE-200' }); },
-    onError: (err: any) => notify.apiError(err, 'Failed to duplicate zone'),
-  });
-
-  const handleAddZone = () => {
-    if (!newZoneName.trim()) return;
-    createZone.mutate({
-      projectId,
-      name: newZoneName.trim(),
-      zoneType: newZoneType,
-      parentId: selectedZone?.id || null,
-    });
-  };
-
-  if (isLoading) {
-    return <div className="flex h-96 items-center justify-center text-muted-foreground">Loading planning data...</div>;
-  }
+  const hasTasks = tasks.length > 0;
+  const hasZones = zones.length > 0;
 
   return (
-    <div className="flex h-[calc(100vh-12rem)] flex-col rounded-[14px] border border-slate-200 bg-white">
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left: Zone tree */}
-        <div className="w-[300px] shrink-0 border-r border-slate-200 flex flex-col bg-white">
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <h3 className="text-[15px] font-bold text-slate-900">Zone Structure</h3>
-            <button onClick={() => setAddingZone(!addingZone)} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5">
-              <Plus className="h-3.5 w-3.5" />
-              Add Zone
-            </button>
+    <div className="space-y-6">
+      {/* Template picker (show when no zones yet) */}
+      {!hasZones && <TemplatePicker projectId={projectId} onApplied={invalidate} />}
+
+      {/* "or build manually" divider (when no zones) */}
+      {!hasZones && (
+        <>
+          <div className="flex items-center gap-4 py-2">
+            <div className="flex-1 h-px bg-slate-200" /><span className="text-[13px] font-semibold text-slate-400">or build manually</span><div className="flex-1 h-px bg-slate-200" />
           </div>
+        </>
+      )}
 
-          {addingZone && (
-            <div className="border-b border-slate-100 p-4 space-y-3 bg-blue-50/20">
-              <div>
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Zone Name *</label>
-                <input
-                  type="text" value={newZoneName}
-                  onChange={(e) => setNewZoneName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleAddZone(); if (e.key === 'Escape') setAddingZone(false); }}
-                  placeholder="e.g. Tower A - Ground Floor" autoFocus
-                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-              <div>
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Zone Type</label>
-                <select value={newZoneType} onChange={(e) => setNewZoneType(e.target.value)} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none">
-                  {zoneTypeOptions.map((zt) => <option key={zt} value={zt}>{zt.charAt(0).toUpperCase() + zt.slice(1)}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Start from template</label>
-                <select className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" value="" onChange={(e) => {
-                  if (e.target.value) {
-                    const tplId = Number(e.target.value);
-                    applyProjectTemplate.mutate(tplId);
-                    setAddingZone(false);
-                  }
-                }}>
-                  <option value="">Empty zone (add services later)</option>
-                  {projectZoneTemplates.map((t: any) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
-              </div>
-              {selectedZone && (
-                <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Parent Zone</label>
-                  <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm text-slate-500">
-                    Under: {selectedZone.name}
-                  </div>
-                </div>
-              )}
-              <div className="flex justify-end gap-2 pt-1">
-                <button onClick={() => setAddingZone(false)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
-                <button onClick={handleAddZone} disabled={createZone.isPending || !newZoneName.trim()} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">Add Zone</button>
-              </div>
-            </div>
-          )}
-
-          <div className="flex-1 overflow-y-auto p-2">
-            <button
-              onClick={() => setSelectedZone(null)}
-              className={cn(
-                'flex w-full items-center gap-1.5 px-2.5 py-[7px] rounded-lg text-[13px] font-medium transition-all duration-150',
-                !selectedZone ? 'bg-blue-50 border border-blue-200 text-blue-700' : 'text-slate-500 hover:bg-slate-50',
-              )}
-            >
-              <Layers className="h-3.5 w-3.5 shrink-0" /> All Zones
-            </button>
-            {zones.map((zone: any) => (
-              <ZoneNode key={zone.id} zone={zone} selectedZoneId={selectedZone?.id ?? null} onSelect={setSelectedZone} />
-            ))}
-            {zones.length === 0 && !addingZone && <p className="px-3 py-8 text-center text-[13px] text-slate-400">No zones yet. Click "Add Zone" to build your project structure.</p>}
+      {/* Split panel: zones + tasks */}
+      {(hasZones || hasTasks) ? (
+        <div className="flex rounded-[14px] border border-slate-200 bg-white" style={{ height: 'calc(100vh - 300px)', minHeight: 400 }}>
+          <ZonePanel zones={zones} selectedZone={selectedZone} onSelectZone={setSelectedZone} projectId={projectId} onInvalidate={invalidate} />
+          <div className="flex-1 flex flex-col min-w-0 bg-slate-50 p-5 overflow-y-auto">
+            <TaskTable tasks={visibleTasks} projectId={projectId} members={members} />
           </div>
-
-          {/* Duplicate zone action */}
-          {selectedZone && (
-            <div className="border-t border-slate-100 p-3">
-              <button
-                onClick={() => { setDuplicateModal(selectedZone); setDuplicateName(`${selectedZone.name} (copy)`); }}
-                className="w-full border border-dashed border-slate-300 hover:border-blue-500 bg-transparent hover:bg-blue-50 text-slate-500 hover:text-blue-600 text-[13px] font-semibold px-3 py-2 rounded-[7px] transition-all duration-150"
-              >
-                Duplicate Zone
-              </button>
-            </div>
-          )}
         </div>
-
-        {/* Right: Tasks panel */}
-        <div className="flex-1 flex flex-col min-w-0 bg-slate-50">
-          <TasksPanel
-            selectedZone={selectedZone}
-            allTasks={tasks}
-            serviceTypes={serviceTypes}
-            phases={phases}
-            projectId={projectId}
-            members={pd?.members ?? []}
-          />
-        </div>
-      </div>
-
-      {/* Bottom: Budget summary */}
-      <BudgetSummaryBar summary={budgetSummary} />
-
-      {/* Duplicate zone modal */}
-      {duplicateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="w-96 rounded-lg bg-background p-6 shadow-xl space-y-4">
-            <h3 className="text-sm font-semibold">Duplicate Zone: {duplicateModal.name}</h3>
-            <div>
-              <label className="block text-sm font-medium mb-1">New Zone Name *</label>
-              <input
-                value={duplicateName}
-                onChange={(e) => setDuplicateName(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                autoFocus
-              />
-            </div>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setDuplicateModal(null)} className="rounded-md border border-border px-4 py-2 text-sm hover:bg-accent">Cancel</button>
-              <button
-                onClick={() => duplicateZone.mutate({ zoneId: duplicateModal.id, newName: duplicateName })}
-                disabled={duplicateZone.isPending || !duplicateName.trim()}
-                className="rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50"
-              >
-                {duplicateZone.isPending ? 'Duplicating...' : 'Duplicate'}
-              </button>
-            </div>
-          </div>
+      ) : (
+        <div className="text-center py-4">
+          <p className="text-[13px] text-slate-400 mb-3">No zones yet. Apply a template above or add zones manually.</p>
         </div>
       )}
     </div>
   );
 }
 
-// ─── Exported PlanningPage (standalone route) ────────────────────────────────
+// ─── Exports ──────────────────────────────────────────────────────────────────
 
 export function PlanningPage() {
   const navigate = useNavigate();
@@ -694,19 +501,14 @@ export function PlanningPage() {
   const projectId = Number(id);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <button onClick={() => navigate(`/projects/${projectId}`)} className="rounded-md p-1.5 hover:bg-accent">
-          <ArrowLeft className="h-5 w-5" />
-        </button>
-        <h2 className="text-lg font-semibold">Project Planning</h2>
-      </div>
+    <div className="space-y-4 px-7 py-5">
+      <button onClick={() => navigate(`/projects/${projectId}`)} className="flex items-center gap-1.5 text-[13px] text-slate-400 hover:text-slate-600">
+        <ArrowLeft className="h-4 w-4" /> Back to Project
+      </button>
       <PlanningView projectId={projectId} />
     </div>
   );
 }
-
-// ─── Exported PlanningTab (embedded in project detail) ───────────────────────
 
 export function PlanningTab({ projectId }: { projectId: number }) {
   return <PlanningView projectId={projectId} />;
