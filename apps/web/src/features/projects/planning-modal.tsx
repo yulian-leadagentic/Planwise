@@ -210,6 +210,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
               <tr className="bg-white border-b border-slate-50">
                 <th className={cn(thClass, 'w-20 pl-5')} onClick={() => handleSort('code')}>Code{sortIcon('code')}</th>
                 <th className={thClass} onClick={() => handleSort('name')}>Task Name{sortIcon('name')}</th>
+                <th className={cn(thClass, 'w-28')} onClick={() => handleSort('zone')}>Zone{sortIcon('zone')}</th>
                 <th className={cn(thClass, 'w-28')} onClick={() => handleSort('service')}>Service{sortIcon('service')}</th>
                 <th className={cn(thClass, 'w-20')} onClick={() => handleSort('phase')}>Phase{sortIcon('phase')}</th>
                 <th className={cn(thClass, 'w-14 text-right')} onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
@@ -222,10 +223,13 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
             <tbody className="text-[13px]">
               {tasks.map((task: any) => {
                 const assignee = task.assignees?.[0]?.user;
+                const statusMap: Record<string, { dot: string; text: string }> = { not_started: { dot: 'bg-slate-400', text: 'text-slate-500' }, in_progress: { dot: 'bg-blue-500', text: 'text-blue-600' }, in_review: { dot: 'bg-violet-500', text: 'text-violet-600' }, completed: { dot: 'bg-emerald-500', text: 'text-emerald-600' }, on_hold: { dot: 'bg-amber-500', text: 'text-amber-600' }, cancelled: { dot: 'bg-red-500', text: 'text-red-600' } };
+                const st = statusMap[task.status] || statusMap.not_started;
                 return (
                   <tr key={task.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 group">
                     <td className="px-3 py-2 pl-5 font-mono text-xs font-medium text-slate-500">{task.code}</td>
                     <td className="px-3 py-2 font-medium text-slate-900">{task.name}</td>
+                    <td className="px-3 py-2 text-[12px] text-slate-500">{task.zone?.name || '-'}</td>
                     <td className="px-3 py-2">{task.serviceType ? <span className="rounded-[5px] bg-blue-50 px-1.5 py-0.5 text-[11px] font-bold text-blue-600">{task.serviceType.name}</span> : <span className="text-slate-300">-</span>}</td>
                     <td className="px-3 py-2 text-[12px] text-slate-500">{task.phase?.name || '-'}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs font-medium text-slate-700">{task.budgetHours ? Number(task.budgetHours) : '-'}</td>
@@ -245,14 +249,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                       )}
                     </td>
                     <td className="px-3 py-2">
-                      <select value={task.status || 'not_started'} className="text-[12px] bg-transparent border-none cursor-pointer focus:outline-none"
-                        onChange={(e) => { tasksApi.update(task.id, { status: e.target.value }); onUpdate(); }}>
-                        <option value="not_started">Not Started</option>
-                        <option value="in_progress">In Progress</option>
-                        <option value="in_review">In Review</option>
-                        <option value="completed">Completed</option>
-                        <option value="on_hold">On Hold</option>
-                      </select>
+                      <span className="inline-flex items-center gap-1"><span className={cn('w-1.5 h-1.5 rounded-full', st.dot)} /><span className={cn('text-[12px]', st.text)}>{(task.status || 'not_started').replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</span></span>
                     </td>
                     <td className="px-3 py-2">
                       <button onClick={() => onDeleteTask(task.id)} className="opacity-0 group-hover:opacity-100 w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600 transition-all duration-150">
@@ -275,7 +272,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
 
 // ─── Hierarchical Zone Group (parent + nested children) ──────────────────────
 
-function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, thClass, handleSort, sortIcon, depth }: any) {
+function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth }: any) {
   const [collapsed, setCollapsed] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
   const [newTask, setNewTask] = useState({ code: '', name: '', budgetHours: '', budgetAmount: '' });
@@ -313,6 +310,12 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
           <Plus className="w-3 h-3" /> Add Task
         </button>
+        {depth === 0 && onDuplicateZone && (
+          <button onClick={(e) => { e.stopPropagation(); const newName = prompt('Duplicate zone name:', `${zone.name} (copy)`); if (newName?.trim()) onDuplicateZone(zone.id, newName.trim()); }}
+            className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
+            <Copy className="w-3 h-3" /> Duplicate
+          </button>
+        )}
         <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete "${zone.name}" and all its tasks?`)) onDeleteZone(zone.id); }}
           className="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600">
           <Trash2 className="w-3 h-3" />
@@ -372,9 +375,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
                         )}
                       </td>
                       <td className="px-3 py-2">
-                        <select value={task.status || 'not_started'} className="text-[12px] bg-transparent border-none cursor-pointer focus:outline-none" onChange={(e) => { tasksApi.update(task.id, { status: e.target.value }); onUpdate(); }}>
-                          <option value="not_started">Not Started</option><option value="in_progress">In Progress</option><option value="completed">Completed</option><option value="on_hold">On Hold</option>
-                        </select>
+                        <span className="inline-flex items-center gap-1"><span className={cn('w-1.5 h-1.5 rounded-full', {'bg-slate-400': !task.status || task.status === 'not_started', 'bg-blue-500': task.status === 'in_progress', 'bg-emerald-500': task.status === 'completed', 'bg-amber-500': task.status === 'on_hold'})} /><span className="text-[12px] text-slate-500">{(task.status || 'not_started').replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</span></span>
                       </td>
                       <td className="px-3 py-2"><button onClick={() => onDeleteTask(task.id)} className="opacity-0 group-hover:opacity-100 w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600 transition-all duration-150"><Trash2 className="w-3 h-3" /></button></td>
                     </tr>
@@ -387,7 +388,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           {/* Child zones (nested) */}
           {hasChildren && zone.children.map((child: any) => (
             <HierarchicalZoneGroup key={child.id} zone={child} allTasks={allTasks} members={members} projectId={projectId}
-              onUpdate={onUpdate} onDeleteTask={onDeleteTask} onDeleteZone={onDeleteZone}
+              onUpdate={onUpdate} onDeleteTask={onDeleteTask} onDeleteZone={onDeleteZone} onDuplicateZone={onDuplicateZone}
               thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={depth + 1} />
           ))}
 
@@ -424,6 +425,12 @@ function PlanningView({ projectId }: { projectId: number }) {
   const budget = pd?.budgetSummary;
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+
+  const duplicateZone = useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) => zonesApi.duplicate(id, name),
+    onSuccess: () => { invalidate(); notify.success('Zone duplicated', { code: 'ZONE-DUP-200' }); },
+    onError: (err: any) => notify.apiError(err, 'Failed to duplicate zone'),
+  });
 
   const deleteTask = useMutation({
     mutationFn: (id: number) => tasksApi.delete(id),
@@ -536,7 +543,8 @@ function PlanningView({ projectId }: { projectId: number }) {
             zones.map((z: any) => (
               <HierarchicalZoneGroup key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
                 onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
-                onDeleteZone={(id: number) => deleteZone.mutate(id)} thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={0} />
+                onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
+                thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={0} />
             ))
           ) : (
             groups.map((g: any) => (
