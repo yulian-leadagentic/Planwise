@@ -57,11 +57,30 @@ function TemplatePickerDialog({ projectId, onClose, onApplied }: { projectId: nu
   return (
     <div className="bg-white rounded-[14px] border border-slate-200 overflow-hidden">
       <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-        <h3 className="text-[15px] font-bold text-slate-900">Select Zone Template</h3>
+        <h3 className="text-[15px] font-bold text-slate-900">Add Zone from Template</h3>
         <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
           <X className="w-4 h-4" />
         </button>
       </div>
+
+      {/* Zone name — ALWAYS visible at top */}
+      <div className="px-5 py-4 border-b border-slate-100 bg-blue-50/20">
+        <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Zone Name for This Project *</label>
+        <div className="flex items-center gap-3">
+          <input value={zoneName} onChange={(e) => setZoneName(e.target.value)} placeholder="e.g. Tower A - Ground Floor"
+            className="flex-1 px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" autoFocus />
+          {selected && (
+            <button onClick={() => applyMutation.mutate()} disabled={applyMutation.isPending || !zoneName.trim()}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50 whitespace-nowrap">
+              {applyMutation.isPending ? 'Adding...' : 'Add to Project'}
+            </button>
+          )}
+        </div>
+        {selected && <p className="text-[11px] text-slate-400 mt-1.5">Selected: <strong className="text-slate-700">{selected.name}</strong> — {selected._count?.templateTasks ?? 0} tasks will be created</p>}
+        {!selected && <p className="text-[11px] text-slate-400 mt-1.5">Enter a name, then select a template below</p>}
+      </div>
+
+      {/* Search + Sort */}
       <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-3">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -93,22 +112,6 @@ function TemplatePickerDialog({ projectId, onClose, onApplied }: { projectId: nu
         })}
         {templates.length === 0 && <p className="col-span-3 py-8 text-center text-[13px] text-slate-400">No zone templates available.</p>}
       </div>
-      {selected && (
-        <div className="px-5 py-4 border-t border-slate-100 bg-blue-50/30">
-          <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Zone Name for This Project *</label>
-          <div className="flex items-center gap-3">
-            <input value={zoneName} onChange={(e) => setZoneName(e.target.value)} placeholder="e.g. Tower A - Ground Floor"
-              className="flex-1 px-3 py-2.5 rounded-lg border border-blue-500 text-sm text-slate-700 focus:outline-none" />
-            <button onClick={() => applyMutation.mutate()} disabled={applyMutation.isPending || !zoneName.trim()}
-              className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
-              {applyMutation.isPending ? 'Adding...' : 'Add to Project'}
-            </button>
-          </div>
-          <p className="text-[11px] text-slate-400 mt-1.5">
-            Creates zone "{zoneName || '...'}" with {selected._count?.templateTasks ?? 0} pre-built tasks
-          </p>
-        </div>
-      )}
     </div>
   );
 }

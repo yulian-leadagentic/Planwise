@@ -101,6 +101,7 @@ export function ProjectDetailPage() {
               onClick={() => {
                 if (confirm(`Delete project "${project.name}"? This cannot be undone.`)) {
                   client.delete(`/projects/${projectId}`).then(() => {
+                    queryClient.invalidateQueries({ queryKey: ['projects'] });
                     notify.success('Project deleted', { code: 'PROJECT-DELETE-200' });
                     navigate('/projects');
                   }).catch((err: any) => notify.apiError(err, 'Failed to delete project'));
