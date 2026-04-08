@@ -45,7 +45,6 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Projects', href: '/projects', icon: FolderKanban },
   { label: 'Time', href: '/time', icon: Clock },
   { label: 'Contracts', href: '/contracts', icon: FileText },
-  { label: 'People', href: '/people', icon: Users },
   { label: 'Reports', href: '/reports', icon: BarChart3 },
   { label: 'Templates', href: '/templates', icon: Layers },
   { label: 'Admin', href: '/admin', icon: Settings },

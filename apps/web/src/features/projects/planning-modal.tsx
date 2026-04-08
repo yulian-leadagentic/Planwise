@@ -163,6 +163,8 @@ function AddZoneManuallyDialog({ projectId, onClose, onCreated }: { projectId: n
 function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, thClass, handleSort, sortIcon }: any) {
   const [collapsed, setCollapsed] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
+  const [showTaskMenu, setShowTaskMenu] = useState(false);
+  const [showCatalogPicker, setShowCatalogPicker] = useState(false);
   const [newTask, setNewTask] = useState({ code: '', name: '', budgetHours: '', budgetAmount: '' });
   const queryClient = useQueryClient();
 
@@ -182,10 +184,17 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
         <span className="text-[13px] font-semibold text-slate-900">{zone.name}</span>
         <span className="rounded-[5px] bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-400">{zone.zoneType}</span>
         <span className="ml-auto text-[11px] font-medium text-slate-400">{tasks.length} tasks · {hours}h · ₪{amount.toLocaleString()}</span>
-        <button onClick={(e) => { e.stopPropagation(); setShowAddTask(true); setCollapsed(false); }}
-          className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
-          <Plus className="w-3 h-3" /> Add Task
-        </button>
+        <div className="relative" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => setShowTaskMenu(!showTaskMenu)} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
+            <Plus className="w-3 h-3" /> Add Task
+          </button>
+          {showTaskMenu && (
+            <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-1.5">
+              <button onClick={() => { setShowCatalogPicker(true); setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 hover:bg-slate-50">From Catalog</button>
+              <button onClick={() => { setShowAddTask(true); setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 hover:bg-slate-50">Create New Task</button>
+            </div>
+          )}
+        </div>
         <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete zone "${zone.name}" and all its tasks?`)) onDeleteZone(zone.id); }}
           className="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600">
           <Trash2 className="w-3 h-3" />
@@ -278,6 +287,9 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
   const [newTask, setNewTask] = useState({ code: '', name: '', budgetHours: '', budgetAmount: '' });
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const [duplicateName, setDuplicateName] = useState('');
+  const [showTaskMenu, setShowTaskMenu] = useState(false);
+  const [showCatalogPicker, setShowCatalogPicker] = useState(false);
+  const [saveToCatalog, setSaveToCatalog] = useState(true);
   const queryClient = useQueryClient();
 
   const createTask = useMutation({
@@ -308,10 +320,17 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
         <span className="rounded-[5px] bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-400">{zone.zoneType}</span>
         {hasChildren && <span className="text-[11px] text-slate-300">({zone.children.length} sub-zones)</span>}
         <span className="ml-auto text-[11px] font-medium text-slate-400">{allZoneTasks.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span>
-        <button onClick={(e) => { e.stopPropagation(); setShowAddTask(true); setCollapsed(false); }}
-          className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
-          <Plus className="w-3 h-3" /> Add Task
-        </button>
+        <div className="relative" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => setShowTaskMenu(!showTaskMenu)} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
+            <Plus className="w-3 h-3" /> Add Task
+          </button>
+          {showTaskMenu && (
+            <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-1.5">
+              <button onClick={() => { setShowCatalogPicker(true); setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 hover:bg-slate-50">From Catalog</button>
+              <button onClick={() => { setShowAddTask(true); setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 hover:bg-slate-50">Create New Task</button>
+            </div>
+          )}
+        </div>
         {depth === 0 && onDuplicateZone && (
           <button onClick={(e) => { e.stopPropagation(); setDuplicateName(`${zone.name} (copy)`); setShowDuplicateModal(true); }}
             className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
@@ -333,8 +352,15 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <input value={newTask.name} onChange={(e) => setNewTask(f => ({ ...f, name: e.target.value }))} placeholder="Task name *" className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
               <input value={newTask.budgetHours} onChange={(e) => setNewTask(f => ({ ...f, budgetHours: e.target.value }))} placeholder="Hours" type="number" className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
               <input value={newTask.budgetAmount} onChange={(e) => setNewTask(f => ({ ...f, budgetAmount: e.target.value }))} placeholder="Amount" type="number" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
-              <button onClick={() => { if (!newTask.code.trim() || !newTask.name.trim()) { notify.warning('Code and Name required'); return; } createTask.mutate({ zoneId: zone.id, code: newTask.code.trim(), name: newTask.name.trim(), budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined, budgetAmount: newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined }); }}
-                disabled={createTask.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-3 py-1.5 rounded-md disabled:opacity-50">Save</button>
+              <button onClick={async () => {
+                if (!newTask.code.trim() || !newTask.name.trim()) { notify.warning('Code and Name required'); return; }
+                const payload = { code: newTask.code.trim(), name: newTask.name.trim(), budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined, budgetAmount: newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined };
+                if (saveToCatalog) {
+                  try { const cats = await client.get('/templates?type=task_list').then(r => r.data.data ?? r.data); const cat = (Array.isArray(cats) ? cats : []).find((t: any) => t.code === '__TASK_CATALOG__'); if (cat) await client.post(`/templates/${cat.id}/tasks`, { ...payload, defaultBudgetHours: payload.budgetHours, defaultBudgetAmount: payload.budgetAmount }); } catch {}
+                }
+                createTask.mutate({ zoneId: zone.id, ...payload });
+              }} disabled={createTask.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-3 py-1.5 rounded-md disabled:opacity-50">Save</button>
+              <label className="flex items-center gap-1 text-[11px] text-slate-400 cursor-pointer"><input type="checkbox" checked={saveToCatalog} onChange={(e) => setSaveToCatalog(e.target.checked)} className="h-3 w-3 rounded" />Save to catalog</label>
               <button onClick={() => setShowAddTask(false)} className="text-[11px] text-slate-400 hover:text-slate-600 px-2">Cancel</button>
             </div>
           )}

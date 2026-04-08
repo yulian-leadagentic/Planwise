@@ -1,23 +1,74 @@
-import { useQuery } from '@tanstack/react-query';
-import { Shield, ChevronDown, ChevronRight, Check, X } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Shield, ChevronDown, ChevronRight, Check, X, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
+import { notify } from '@/lib/notify';
 
 export function RolesPage() {
+  const queryClient = useQueryClient();
+  const [showCreate, setShowCreate] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'roles'],
     staleTime: 5 * 60 * 1000,
     queryFn: () => client.get('/admin/roles').then((r) => r.data.data),
   });
 
+  const createRole = useMutation({
+    mutationFn: () => client.post('/admin/roles', { name: newName.trim(), description: newDesc.trim() || undefined }).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'roles'] });
+      notify.success('Role created', { code: 'ROLE-CREATE-200' });
+      setShowCreate(false);
+      setNewName('');
+      setNewDesc('');
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to create role'),
+  });
+
   const roles = data ?? [];
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Roles & Permissions" description="Manage user roles and module access" />
+      <PageHeader
+        title="Roles & Permissions"
+        description="Manage user roles and module access"
+        actions={
+          <button onClick={() => setShowCreate(true)} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5">
+            <Plus className="h-3.5 w-3.5" /> Create Role
+          </button>
+        }
+      />
+
+      {showCreate && (
+        <div className="bg-white rounded-[14px] border border-slate-200 p-5 space-y-3">
+          <h3 className="text-[15px] font-bold text-slate-900">New Role</h3>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Role Name *</label>
+              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Coordinator" autoFocus
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Description</label>
+              <input value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="Brief description"
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setShowCreate(false)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+            <button onClick={() => createRole.mutate()} disabled={!newName.trim() || createRole.isPending}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
+              {createRole.isPending ? 'Creating...' : 'Create Role'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {isLoading ? (
         <TableSkeleton rows={5} cols={4} />
