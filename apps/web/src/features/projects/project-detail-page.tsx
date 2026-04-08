@@ -92,10 +92,23 @@ export function ProjectDetailPage() {
             </div>
             <button
               onClick={() => navigate(`/projects/${projectId}/edit`)}
-              className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+              className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg flex items-center gap-1.5"
             >
               <Settings className="h-4 w-4" />
               Settings
+            </button>
+            <button
+              onClick={() => {
+                if (confirm(`Delete project "${project.name}"? This cannot be undone.`)) {
+                  client.delete(`/projects/${projectId}`).then(() => {
+                    notify.success('Project deleted', { code: 'PROJECT-DELETE-200' });
+                    navigate('/projects');
+                  }).catch((err: any) => notify.apiError(err, 'Failed to delete project'));
+                }
+              }}
+              className="bg-white border border-red-200 hover:border-red-400 text-red-600 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:bg-red-50"
+            >
+              Delete
             </button>
           </div>
 
