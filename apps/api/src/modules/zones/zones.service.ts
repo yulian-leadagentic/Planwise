@@ -487,38 +487,31 @@ export class ZonesService {
         }
       };
 
-      for (const rootZone of template.templateZones) {
-        await createZoneRecursive(rootZone, null, '', 0);
-      }
+      // Create a main project zone (user will rename this)
+      const mainZone = await tx.zone.create({
+        data: { projectId, zoneType: 'zone', name: template.name, code: template.code, path: '', depth: 0 },
+      });
+      const mainPath = `${mainZone.id}`;
+      await tx.zone.update({ where: { id: mainZone.id }, data: { path: mainPath } });
+      createdZones.push({ ...mainZone, path: mainPath });
 
-      // Create tasks from root-level templateTasks (services + individual tasks on the template itself)
+      // Create tasks from root-level templateTasks on the main zone
       if (template.templateTasks?.length) {
-        // Create a root zone to hold these tasks (named after the template)
-        const rootZone = await tx.zone.create({
-          data: { projectId, zoneType: 'zone', name: template.name, code: template.code, path: '', depth: 0 },
-        });
-        const rootPath = `${rootZone.id}`;
-        await tx.zone.update({ where: { id: rootZone.id }, data: { path: rootPath } });
-        createdZones.push({ ...rootZone, path: rootPath });
-
         for (const tt of template.templateTasks) {
           await tx.task.create({
             data: {
-              zoneId: rootZone.id,
-              projectId,
-              serviceTypeId: tt.serviceTypeId,
-              code: tt.code,
-              name: tt.name,
-              description: tt.description,
-              budgetHours: tt.defaultBudgetHours,
-              budgetAmount: tt.defaultBudgetAmount,
-              phaseId: tt.phaseId,
-              priority: tt.defaultPriority || 'medium',
-              status: 'not_started',
-              createdBy: userId,
+              zoneId: mainZone.id, projectId, serviceTypeId: tt.serviceTypeId,
+              code: tt.code, name: tt.name, description: tt.description,
+              budgetHours: tt.defaultBudgetHours, budgetAmount: tt.defaultBudgetAmount,
+              phaseId: tt.phaseId, priority: tt.defaultPriority || 'medium', status: 'not_started', createdBy: userId,
             },
           });
         }
+      }
+
+      // Create child zones from templateZones under the main zone
+      for (const rootZone of template.templateZones) {
+        await createZoneRecursive(rootZone, mainZone.id, mainPath, 1);
       }
 
       // Increment usage count
