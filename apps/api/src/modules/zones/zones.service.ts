@@ -306,6 +306,20 @@ export class ZonesService {
       include: {
         tasks: { where: { deletedAt: null } },
         zoneServiceTypes: true,
+        children: {
+          where: { deletedAt: null },
+          include: {
+            tasks: { where: { deletedAt: null } },
+            zoneServiceTypes: true,
+            children: {
+              where: { deletedAt: null },
+              include: {
+                tasks: { where: { deletedAt: null } },
+                zoneServiceTypes: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -315,46 +329,51 @@ export class ZonesService {
     if (existing) throw new ConflictException('Zone name must be unique within project');
 
     return this.prisma.$transaction(async (tx) => {
-      const newZone = await tx.zone.create({
-        data: {
-          projectId: zone.projectId,
-          parentId: zone.parentId,
-          zoneType: zone.zoneType,
-          name: newName,
-          path: '',
-          depth: zone.depth,
-          sortOrder: zone.sortOrder + 1,
-        },
-      });
-      const parent = zone.parentId ? await tx.zone.findUnique({ where: { id: zone.parentId } }) : null;
-      const path = parent ? `${parent.path}/${newZone.id}` : `/${newZone.id}`;
-      await tx.zone.update({ where: { id: newZone.id }, data: { path } });
-
-      for (const zst of zone.zoneServiceTypes) {
-        await tx.zoneServiceType.create({
-          data: { zoneId: newZone.id, serviceTypeId: zst.serviceTypeId, sortOrder: zst.sortOrder },
-        });
-      }
-      for (const task of zone.tasks) {
-        await tx.task.create({
+      const copyZoneRecursive = async (sourceZone: any, parentId: number | null, parentPath: string, depth: number, zoneName: string) => {
+        const newZone = await tx.zone.create({
           data: {
-            zoneId: newZone.id,
-            projectId: zone.projectId,
-            serviceTypeId: task.serviceTypeId,
-            code: task.code,
-            name: task.name,
-            description: task.description,
-            budgetHours: task.budgetHours,
-            budgetAmount: task.budgetAmount,
-            phaseId: task.phaseId,
-            priority: task.priority,
-            status: 'not_started',
-            completionPct: 0,
-            createdBy: userId,
+            projectId: sourceZone.projectId,
+            parentId,
+            zoneType: sourceZone.zoneType,
+            name: zoneName,
+            code: sourceZone.code,
+            path: '',
+            depth,
+            sortOrder: sourceZone.sortOrder + 1,
           },
         });
-      }
-      return { ...newZone, path };
+        const path = parentPath ? `${parentPath}/${newZone.id}` : `${newZone.id}`;
+        await tx.zone.update({ where: { id: newZone.id }, data: { path } });
+
+        // Copy service types
+        for (const zst of (sourceZone.zoneServiceTypes || [])) {
+          await tx.zoneServiceType.create({
+            data: { zoneId: newZone.id, serviceTypeId: zst.serviceTypeId, sortOrder: zst.sortOrder },
+          });
+        }
+
+        // Copy ALL tasks
+        for (const task of (sourceZone.tasks || [])) {
+          await tx.task.create({
+            data: {
+              zoneId: newZone.id, projectId: sourceZone.projectId,
+              serviceTypeId: task.serviceTypeId, code: task.code, name: task.name,
+              description: task.description, budgetHours: task.budgetHours, budgetAmount: task.budgetAmount,
+              phaseId: task.phaseId, priority: task.priority, status: 'not_started', completionPct: 0, createdBy: userId,
+            },
+          });
+        }
+
+        // Recursively copy children
+        for (const child of (sourceZone.children || [])) {
+          await copyZoneRecursive(child, newZone.id, path, depth + 1, child.name);
+        }
+
+        return { ...newZone, path };
+      };
+
+      const result = await copyZoneRecursive(zone, zone.parentId, '', zone.depth, newName);
+      return result;
     });
   }
 

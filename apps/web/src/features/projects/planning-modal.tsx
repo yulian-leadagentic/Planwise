@@ -276,6 +276,8 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
   const [collapsed, setCollapsed] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
   const [newTask, setNewTask] = useState({ code: '', name: '', budgetHours: '', budgetAmount: '' });
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [duplicateName, setDuplicateName] = useState('');
   const queryClient = useQueryClient();
 
   const createTask = useMutation({
@@ -311,7 +313,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           <Plus className="w-3 h-3" /> Add Task
         </button>
         {depth === 0 && onDuplicateZone && (
-          <button onClick={(e) => { e.stopPropagation(); const newName = prompt('Duplicate zone name:', `${zone.name} (copy)`); if (newName?.trim()) onDuplicateZone(zone.id, newName.trim()); }}
+          <button onClick={(e) => { e.stopPropagation(); setDuplicateName(`${zone.name} (copy)`); setShowDuplicateModal(true); }}
             className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
             <Copy className="w-3 h-3" /> Duplicate
           </button>
@@ -396,6 +398,29 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
             <div className="px-5 py-4 text-center text-[13px] text-slate-400">No tasks. Click "Add Task" to create one.</div>
           )}
         </>
+      )}
+
+      {/* Duplicate Zone Modal */}
+      {showDuplicateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={() => setShowDuplicateModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[440px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-100">
+              <h3 className="text-base font-bold text-slate-900">Duplicate Zone</h3>
+              <p className="text-[13px] text-slate-400 mt-0.5">Create a copy of "{zone.name}" with all its tasks and sub-zones</p>
+            </div>
+            <div className="p-5">
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">New Zone Name *</label>
+              <input value={duplicateName} onChange={(e) => setDuplicateName(e.target.value)} autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter' && duplicateName.trim()) { onDuplicateZone(zone.id, duplicateName.trim()); setShowDuplicateModal(false); } }}
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+            </div>
+            <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
+              <button onClick={() => setShowDuplicateModal(false)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+              <button onClick={() => { if (duplicateName.trim()) { onDuplicateZone(zone.id, duplicateName.trim()); setShowDuplicateModal(false); } }}
+                disabled={!duplicateName.trim()} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">Duplicate</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
