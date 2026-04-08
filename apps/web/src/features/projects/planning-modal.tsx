@@ -270,6 +270,133 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
   );
 }
 
+// ─── Hierarchical Zone Group (parent + nested children) ──────────────────────
+
+function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, thClass, handleSort, sortIcon, depth }: any) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [showAddTask, setShowAddTask] = useState(false);
+  const [newTask, setNewTask] = useState({ code: '', name: '', budgetHours: '', budgetAmount: '' });
+  const queryClient = useQueryClient();
+
+  const createTask = useMutation({
+    mutationFn: (data: any) => tasksApi.create(data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['planning', projectId] }); setShowAddTask(false); setNewTask({ code: '', name: '', budgetHours: '', budgetAmount: '' }); notify.success('Task created', { code: 'TASK-CREATE-200' }); },
+    onError: (err: any) => notify.apiError(err, 'Failed to create task'),
+  });
+
+  // Tasks directly on THIS zone (not on children)
+  const directTasks = allTasks.filter((t: any) => t.zoneId === zone.id);
+  // All tasks including children (for totals)
+  const allZoneIds = new Set<number>();
+  function collectIds(z: any) { allZoneIds.add(z.id); (z.children || []).forEach(collectIds); }
+  collectIds(zone);
+  const allZoneTasks = allTasks.filter((t: any) => allZoneIds.has(t.zoneId));
+  const totalHours = allZoneTasks.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
+  const totalAmount = allZoneTasks.reduce((s: number, t: any) => s + Number(t.budgetAmount || 0), 0);
+
+  const hasChildren = zone.children?.length > 0;
+  const indent = depth > 0;
+
+  return (
+    <div className={cn('border-b border-slate-100 last:border-0', indent && 'ml-6 border-l-2 border-slate-100')}>
+      {/* Zone header */}
+      <div className="flex items-center gap-2.5 px-5 py-2.5 bg-[#FAFBFC] cursor-pointer" onClick={() => setCollapsed(!collapsed)}>
+        {collapsed ? <ChevronRight className="w-3 h-3 text-slate-400" /> : <ChevronDown className="w-3 h-3 text-slate-400" />}
+        <span className={cn('text-[13px] font-semibold', depth === 0 ? 'text-slate-900' : 'text-slate-700')}>{zone.name}</span>
+        <span className="rounded-[5px] bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-400">{zone.zoneType}</span>
+        {hasChildren && <span className="text-[11px] text-slate-300">({zone.children.length} sub-zones)</span>}
+        <span className="ml-auto text-[11px] font-medium text-slate-400">{allZoneTasks.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span>
+        <button onClick={(e) => { e.stopPropagation(); setShowAddTask(true); setCollapsed(false); }}
+          className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
+          <Plus className="w-3 h-3" /> Add Task
+        </button>
+        <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete "${zone.name}" and all its tasks?`)) onDeleteZone(zone.id); }}
+          className="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600">
+          <Trash2 className="w-3 h-3" />
+        </button>
+      </div>
+
+      {!collapsed && (
+        <>
+          {/* Add task form */}
+          {showAddTask && (
+            <div className="px-5 py-2 bg-blue-50/20 flex items-center gap-2 border-b border-slate-50">
+              <input value={newTask.code} onChange={(e) => setNewTask(f => ({ ...f, code: e.target.value }))} placeholder="Code *" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
+              <input value={newTask.name} onChange={(e) => setNewTask(f => ({ ...f, name: e.target.value }))} placeholder="Task name *" className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+              <input value={newTask.budgetHours} onChange={(e) => setNewTask(f => ({ ...f, budgetHours: e.target.value }))} placeholder="Hours" type="number" className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+              <input value={newTask.budgetAmount} onChange={(e) => setNewTask(f => ({ ...f, budgetAmount: e.target.value }))} placeholder="Amount" type="number" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+              <button onClick={() => { if (!newTask.code.trim() || !newTask.name.trim()) { notify.warning('Code and Name required'); return; } createTask.mutate({ zoneId: zone.id, code: newTask.code.trim(), name: newTask.name.trim(), budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined, budgetAmount: newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined }); }}
+                disabled={createTask.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-3 py-1.5 rounded-md disabled:opacity-50">Save</button>
+              <button onClick={() => setShowAddTask(false)} className="text-[11px] text-slate-400 hover:text-slate-600 px-2">Cancel</button>
+            </div>
+          )}
+
+          {/* Direct tasks on this zone */}
+          {directTasks.length > 0 && (
+            <table className="w-full">
+              <thead>
+                <tr className="bg-white border-b border-slate-50">
+                  <th className={cn(thClass, 'w-20 pl-5')} onClick={() => handleSort('code')}>Code{sortIcon('code')}</th>
+                  <th className={thClass} onClick={() => handleSort('name')}>Task Name{sortIcon('name')}</th>
+                  <th className={cn(thClass, 'w-28')} onClick={() => handleSort('service')}>Service{sortIcon('service')}</th>
+                  <th className={cn(thClass, 'w-20')} onClick={() => handleSort('phase')}>Phase{sortIcon('phase')}</th>
+                  <th className={cn(thClass, 'w-14 text-right')} onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
+                  <th className={cn(thClass, 'w-20 text-right')} onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
+                  <th className={cn(thClass, 'w-28')}>Assignee</th>
+                  <th className={cn(thClass, 'w-24')}>Status</th>
+                  <th className="w-8"></th>
+                </tr>
+              </thead>
+              <tbody className="text-[13px]">
+                {directTasks.map((task: any) => {
+                  const assignee = task.assignees?.[0]?.user;
+                  return (
+                    <tr key={task.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 group">
+                      <td className="px-3 py-2 pl-5 font-mono text-xs font-medium text-slate-500">{task.code}</td>
+                      <td className="px-3 py-2 font-medium text-slate-900">{task.name}</td>
+                      <td className="px-3 py-2">{task.serviceType ? <span className="rounded-[5px] bg-blue-50 px-1.5 py-0.5 text-[11px] font-bold text-blue-600">{task.serviceType.name}</span> : <span className="text-slate-300">-</span>}</td>
+                      <td className="px-3 py-2 text-[12px] text-slate-500">{task.phase?.name || '-'}</td>
+                      <td className="px-3 py-2 text-right font-mono text-xs font-medium text-slate-700">{task.budgetHours ? Number(task.budgetHours) : '-'}</td>
+                      <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-slate-700">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</td>
+                      <td className="px-3 py-2">
+                        {assignee ? (
+                          <span className="inline-flex items-center gap-1.5"><span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-semibold flex items-center justify-center">{assignee.firstName?.[0]}{assignee.lastName?.[0]}</span><span className="text-[12px] text-slate-700">{assignee.firstName}</span></span>
+                        ) : (
+                          <select className="text-[12px] text-slate-400 bg-transparent border-none cursor-pointer focus:outline-none" value="" onChange={(e) => { if (e.target.value) { tasksApi.addAssignee(task.id, { userId: Number(e.target.value) }); onUpdate(); } }}>
+                            <option value="">+ assign</option>
+                            {members.map((m: any) => <option key={m.user?.id ?? m.id} value={m.user?.id ?? m.id}>{m.user?.firstName ?? m.firstName} {m.user?.lastName ?? m.lastName}</option>)}
+                          </select>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        <select value={task.status || 'not_started'} className="text-[12px] bg-transparent border-none cursor-pointer focus:outline-none" onChange={(e) => { tasksApi.update(task.id, { status: e.target.value }); onUpdate(); }}>
+                          <option value="not_started">Not Started</option><option value="in_progress">In Progress</option><option value="completed">Completed</option><option value="on_hold">On Hold</option>
+                        </select>
+                      </td>
+                      <td className="px-3 py-2"><button onClick={() => onDeleteTask(task.id)} className="opacity-0 group-hover:opacity-100 w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600 transition-all duration-150"><Trash2 className="w-3 h-3" /></button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+
+          {/* Child zones (nested) */}
+          {hasChildren && zone.children.map((child: any) => (
+            <HierarchicalZoneGroup key={child.id} zone={child} allTasks={allTasks} members={members} projectId={projectId}
+              onUpdate={onUpdate} onDeleteTask={onDeleteTask} onDeleteZone={onDeleteZone}
+              thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={depth + 1} />
+          ))}
+
+          {directTasks.length === 0 && !hasChildren && !showAddTask && (
+            <div className="px-5 py-4 text-center text-[13px] text-slate-400">No tasks. Click "Add Task" to create one.</div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Planning View ──────────────────────────────────────────────────────
 
 function PlanningView({ projectId }: { projectId: number }) {
@@ -403,12 +530,11 @@ function PlanningView({ projectId }: { projectId: number }) {
           </div>
 
           {groupBy === 'zone' ? (
-            flatZones.map((z: any) => {
-              const zoneTasks = sorted.filter((t: any) => t.zoneId === z.id);
-              return <ZoneGroup key={z.id} zone={z} tasks={zoneTasks} members={members} projectId={projectId}
+            zones.map((z: any) => (
+              <HierarchicalZoneGroup key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
                 onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
-                onDeleteZone={(id: number) => deleteZone.mutate(id)} thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} />;
-            })
+                onDeleteZone={(id: number) => deleteZone.mutate(id)} thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={0} />
+            ))
           ) : (
             groups.map((g: any) => (
               <ZoneGroup key={g.key} zone={{ id: 0, name: g.key, zoneType: groupBy }} tasks={g.tasks} members={members} projectId={projectId}
