@@ -149,9 +149,12 @@ export class ProjectsService {
     const project = await this.prisma.project.findFirst({ where: { id } });
     if (!project) throw new NotFoundException('Project not found');
 
-    // Soft delete tasks first, then zones, then project
-    await this.prisma.task.updateMany({ where: { projectId: id }, data: { deletedAt: new Date() } });
-    await this.prisma.zone.updateMany({ where: { projectId: id }, data: { deletedAt: new Date() } });
+    // Delete in order: task assignees → tasks → zones → members → project
+    await this.prisma.taskAssignee.deleteMany({ where: { task: { projectId: id } } });
+    await this.prisma.taskComment.deleteMany({ where: { task: { projectId: id } } });
+    await this.prisma.task.deleteMany({ where: { projectId: id } });
+    await this.prisma.zone.deleteMany({ where: { projectId: id } });
+    await this.prisma.projectMember.deleteMany({ where: { projectId: id } });
     await this.prisma.project.update({ where: { id }, data: { deletedAt: new Date() } });
     return { message: 'Project deleted' };
   }
