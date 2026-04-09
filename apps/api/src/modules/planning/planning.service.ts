@@ -36,6 +36,7 @@ export class PlanningService {
     const tasks = await this.prisma.task.findMany({
       where: { projectId, deletedAt: null, isArchived: false },
       include: {
+        zone: { select: { id: true, name: true, zoneType: true } },
         serviceType: true,
         phase: true,
         dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true } } } },

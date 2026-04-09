@@ -564,13 +564,31 @@ function PlanningView({ projectId }: { projectId: number }) {
         </div>
       )}
 
-      {/* Task table */}
+      {/* Task table — full width */}
       {sorted.length > 0 || flatZones.length > 0 ? (
-        <div className="bg-white rounded-[14px] border border-slate-200 overflow-hidden">
-          <div className="px-5 py-3 border-b border-slate-100">
-            <h3 className="text-[15px] font-bold text-slate-900">Project Tasks</h3>
-            <span className="text-[11px] font-medium text-slate-400">{sorted.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span>
+        <div>
+          <div className="flex items-center justify-between py-3 border-b border-slate-200">
+            <div>
+              <h3 className="text-[15px] font-bold text-slate-900">Project Tasks</h3>
+              <span className="text-[11px] font-medium text-slate-400">{sorted.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span>
+            </div>
           </div>
+
+          {/* Column header for non-zone grouping */}
+          {groupBy !== 'zone' && (
+            <div className="flex items-center gap-3 py-1.5 px-4 border-b border-slate-100 bg-[#FAFBFC] text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">
+              <span className="w-24 shrink-0">Code</span>
+              <span className="flex-1">Task Name</span>
+              <span className="w-28 shrink-0">Zone</span>
+              <span className="w-24 shrink-0">Service</span>
+              <span className="w-20 shrink-0">Phase</span>
+              <span className="w-10 text-right shrink-0">Hours</span>
+              <span className="w-16 text-right shrink-0">Amount</span>
+              <span className="w-20 shrink-0">Assignee</span>
+              <span className="w-20 shrink-0">Status</span>
+              <span className="w-5 shrink-0"></span>
+            </div>
+          )}
 
           {groupBy === 'zone' ? (
             zones.map((z: any) => (
@@ -587,7 +605,7 @@ function PlanningView({ projectId }: { projectId: number }) {
             ))
           )}
 
-          <div className="flex items-center gap-6 px-6 py-2.5 border-t border-slate-100 bg-[#FAFBFC] rounded-b-[14px] text-[12px]">
+          <div className="flex items-center gap-6 px-4 py-2.5 border-t border-slate-200 bg-[#FAFBFC] text-[12px]">
             <div><span className="text-slate-400">Total:</span> <span className="font-mono text-xs font-semibold text-slate-900 ml-1">{sorted.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span></div>
             {budget?.projectBudget > 0 && (
               <>
