@@ -28,7 +28,7 @@ function CatalogPickerModal({
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [adding, setAdding] = useState(false);
-  const [sortField, setSortField] = useState<'code' | 'name' | 'hours' | 'amount' | 'phase'>('name');
+  const [sortField, setSortField] = useState<'code' | 'name' | 'hours' | 'amount'>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const { data: allTemplates = [] } = useQuery({
@@ -64,7 +64,6 @@ function CatalogPickerModal({
         case 'name': valA = (a.name ?? '').toLowerCase(); valB = (b.name ?? '').toLowerCase(); break;
         case 'hours': valA = Number(a.defaultBudgetHours) || 0; valB = Number(b.defaultBudgetHours) || 0; break;
         case 'amount': valA = Number(a.defaultBudgetAmount) || 0; valB = Number(b.defaultBudgetAmount) || 0; break;
-        case 'phase': valA = (a.phase?.name ?? '').toLowerCase(); valB = (b.phase?.name ?? '').toLowerCase(); break;
       }
       if (valA < valB) return sortDir === 'asc' ? -1 : 1;
       if (valA > valB) return sortDir === 'asc' ? 1 : -1;
@@ -98,7 +97,6 @@ function CatalogPickerModal({
           name: ct.name,
           defaultBudgetHours: ct.defaultBudgetHours,
           defaultBudgetAmount: ct.defaultBudgetAmount,
-          phaseId: ct.phaseId,
         });
       }
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
@@ -161,7 +159,6 @@ function CatalogPickerModal({
                   <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('name')}>Name{sortIcon('name')}</th>
                   <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
                   <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
-                  <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('phase')}>Phase/Milestone{sortIcon('phase')}</th>
                   <th className="px-3 py-2 text-left font-medium">Status</th>
                 </tr>
               </thead>
@@ -188,7 +185,6 @@ function CatalogPickerModal({
                       <td className="px-3 py-2 font-medium">{task.name}</td>
                       <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetHours != null ? Number(task.defaultBudgetHours).toFixed(0) : '-'}</td>
                       <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString() : '-'}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{task.phase?.name ?? '-'}</td>
                       <td className="px-3 py-2">
                         {alreadyExists && (
                           <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">already added</span>
@@ -244,7 +240,7 @@ function EditorView({
 
   // ---- header editing ----
   const [editingHeader, setEditingHeader] = useState(false);
-  const [headerForm, setHeaderForm] = useState({ name: '', code: '', description: '' });
+  const [headerForm, setHeaderForm] = useState({ name: '', code: '', description: '', phaseId: '' });
 
   const updateTemplateMutation = useMutation({
     mutationFn: (data: Record<string, any>) =>
@@ -261,7 +257,7 @@ function EditorView({
   // ---- add task form ----
   const [showAddTask, setShowAddTask] = useState(false);
   const [addToCatalog, setAddToCatalog] = useState(true);
-  const emptyTask = { code: '', name: '', defaultBudgetHours: '', defaultBudgetAmount: '', phaseId: '' };
+  const emptyTask = { code: '', name: '', defaultBudgetHours: '', defaultBudgetAmount: '' };
   const [newTask, setNewTask] = useState(emptyTask);
 
   const addTaskMutation = useMutation({
@@ -314,7 +310,6 @@ function EditorView({
       name: newTask.name.trim(),
       defaultBudgetHours: newTask.defaultBudgetHours ? Number(newTask.defaultBudgetHours) : undefined,
       defaultBudgetAmount: newTask.defaultBudgetAmount ? Number(newTask.defaultBudgetAmount) : undefined,
-      phaseId: newTask.phaseId ? Number(newTask.phaseId) : undefined,
     };
     // Also add to catalog if checkbox is checked
     if (addToCatalog) {
@@ -337,6 +332,7 @@ function EditorView({
       name: headerForm.name.trim(),
       code: headerForm.code.trim() || undefined,
       description: headerForm.description.trim() || undefined,
+      phaseId: headerForm.phaseId ? Number(headerForm.phaseId) : null,
     });
   };
 
@@ -346,6 +342,7 @@ function EditorView({
       name: template.name ?? '',
       code: template.code ?? '',
       description: template.description ?? '',
+      phaseId: template.phaseId ? String(template.phaseId) : '',
     });
     setEditingHeader(true);
   };
@@ -363,7 +360,7 @@ function EditorView({
       {/* Template header */}
       {editingHeader ? (
         <form onSubmit={handleSaveHeader} className="rounded-lg border border-border bg-background p-4 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
               <label className="block text-sm font-medium mb-1">Name *</label>
               <input value={headerForm.name} onChange={(e) => setHeaderForm((p) => ({ ...p, name: e.target.value }))} className={inputClass} autoFocus />
@@ -371,6 +368,15 @@ function EditorView({
             <div>
               <label className="block text-sm font-medium mb-1">Code</label>
               <input value={headerForm.code} onChange={(e) => setHeaderForm((p) => ({ ...p, code: e.target.value }))} className={inputClass} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Phase/Milestone</label>
+              <select value={headerForm.phaseId} onChange={(e) => setHeaderForm((p) => ({ ...p, phaseId: e.target.value }))} className={inputClass}>
+                <option value="">-- none --</option>
+                {(phases as any[]).map((ph: any) => (
+                  <option key={ph.id} value={ph.id}>{ph.name}{ph.code ? ` (${ph.code})` : ''}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Description</label>
@@ -392,6 +398,7 @@ function EditorView({
                 <Copy className="h-5 w-5 text-brand-600" />
                 <h2 className="text-lg font-semibold">{template.name}</h2>
                 {template.code && <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">{template.code}</span>}
+                {template.phase && <span className="rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-medium text-cyan-700">{template.phase.name}</span>}
               </div>
               {template.description && <p className="mt-1 text-sm text-muted-foreground">{template.description}</p>}
               <p className="mt-1 text-xs text-muted-foreground">{tasks.length} task{tasks.length !== 1 ? 's' : ''} &middot; Used {template.usageCount ?? 0} time{(template.usageCount ?? 0) !== 1 ? 's' : ''}</p>
@@ -401,7 +408,7 @@ function EditorView({
         </div>
       )}
 
-      {/* Tasks table */}
+      {/* Tasks table — phase column removed (phase is now at template level) */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold">Template Tasks</h3>
@@ -425,7 +432,6 @@ function EditorView({
                 <th className="px-3 py-2 text-left font-medium">Name</th>
                 <th className="px-3 py-2 text-right font-medium">Hours</th>
                 <th className="px-3 py-2 text-right font-medium">Amount</th>
-                <th className="px-3 py-2 text-left font-medium">Phase/Milestone</th>
                 <th className="px-3 py-2 text-center font-medium">Actions</th>
               </tr>
             </thead>
@@ -444,14 +450,6 @@ function EditorView({
                   </td>
                   <td className="px-3 py-2">
                     <input type="number" step="any" min="0" value={newTask.defaultBudgetAmount} onChange={(e) => setNewTask((p) => ({ ...p, defaultBudgetAmount: e.target.value }))} placeholder="0" className={`${inputClass} text-right`} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <select value={newTask.phaseId} onChange={(e) => setNewTask((p) => ({ ...p, phaseId: e.target.value }))} className={inputClass}>
-                      <option value="">-- none --</option>
-                      {(phases as any[]).map((ph: any) => (
-                        <option key={ph.id} value={ph.id}>{ph.name}{ph.code ? ` (${ph.code})` : ''}</option>
-                      ))}
-                    </select>
                   </td>
                   <td className="px-3 py-2 text-center">
                     <div className="flex flex-col items-center gap-1.5">
@@ -473,7 +471,7 @@ function EditorView({
               {/* Existing tasks */}
               {tasks.length === 0 && !showAddTask && (
                 <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                  <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
                     No tasks yet. Click "Add Task" or "Pick from Catalog" to get started.
                   </td>
                 </tr>
@@ -485,7 +483,6 @@ function EditorView({
                   <td className="px-3 py-2 font-medium">{task.name}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetHours != null ? Number(task.defaultBudgetHours).toFixed(1) : '-'}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
-                  <td className="px-3 py-2">{task.phase?.name ?? '-'}{task.phase?.code ? ` (${task.phase.code})` : ''}</td>
                   <td className="px-3 py-2 text-center">
                     <button
                       onClick={() => { if (confirm(`Delete task "${task.name}"?`)) deleteTaskMutation.mutate(task.id); }}
@@ -504,7 +501,6 @@ function EditorView({
                   <td className="px-3 py-2 text-right">Totals</td>
                   <td className="px-3 py-2 text-right tabular-nums">{totals.hours.toFixed(1)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{totals.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="px-3 py-2" />
                   <td className="px-3 py-2" />
                 </tr>
               )}
@@ -538,6 +534,7 @@ export function ServiceTemplatesPage() {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [description, setDescription] = useState('');
+  const [phaseId, setPhaseId] = useState('');
 
   const { data: templates, isLoading } = useQuery({
     queryKey: ['templates', 'task_list'],
@@ -545,8 +542,14 @@ export function ServiceTemplatesPage() {
     queryFn: () => client.get('/templates?type=task_list').then((r) => r.data.data ?? r.data),
   });
 
+  const { data: phases = [] } = useQuery({
+    queryKey: ['phases'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () => client.get('/phases').then((r) => r.data.data ?? r.data),
+  });
+
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; code?: string; description?: string; type: string }) =>
+    mutationFn: (data: { name: string; code?: string; description?: string; phaseId?: number; type: string }) =>
       client.post('/templates', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
@@ -555,6 +558,7 @@ export function ServiceTemplatesPage() {
       setName('');
       setCode('');
       setDescription('');
+      setPhaseId('');
     },
     onError: (err: any) => notify.apiError(err, 'Failed to create'),
   });
@@ -575,6 +579,7 @@ export function ServiceTemplatesPage() {
       name: name.trim(),
       code: code.trim() || undefined,
       description: description.trim() || undefined,
+      phaseId: phaseId ? Number(phaseId) : undefined,
       type: 'task_list',
     });
   };
@@ -604,7 +609,7 @@ export function ServiceTemplatesPage() {
 
       {showForm && (
         <form onSubmit={handleSubmit} className="rounded-lg border border-border bg-background p-4 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
               <label className="block text-sm font-medium mb-1">Template Name *</label>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. BIM Coordination Standard" className={inputClass} autoFocus />
@@ -612,6 +617,15 @@ export function ServiceTemplatesPage() {
             <div>
               <label className="block text-sm font-medium mb-1">Code</label>
               <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. BC.S.1" className={inputClass} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Phase/Milestone</label>
+              <select value={phaseId} onChange={(e) => setPhaseId(e.target.value)} className={inputClass}>
+                <option value="">-- none --</option>
+                {(phases as any[]).map((ph: any) => (
+                  <option key={ph.id} value={ph.id}>{ph.name}{ph.code ? ` (${ph.code})` : ''}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Description</label>
@@ -649,6 +663,7 @@ export function ServiceTemplatesPage() {
                   <Copy className="h-4 w-4 flex-shrink-0 text-brand-600" />
                   <span className="text-sm font-medium">{t.name}</span>
                   {t.code && <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">{t.code}</span>}
+                  {t.phase && <span className="rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-medium text-cyan-700">{t.phase.name}</span>}
                 </div>
                 {t.description && <p className="mt-1 text-sm text-muted-foreground">{t.description}</p>}
                 <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">

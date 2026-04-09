@@ -788,6 +788,7 @@ model Phase {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   tasks             Task[]
+  templates         Template[]
   templateTasks     TemplateTask[]
   templateZoneTasks TemplateZoneTask[]
 
@@ -897,6 +898,7 @@ model Template {
   type        TemplateType
   category    String?      @db.VarChar(100)
   description String?      @db.Text
+  phaseId     Int?         @map("phase_id")
   isActive    Boolean      @default(true) @map("is_active")
   usageCount  Int          @default(0) @map("usage_count")
   createdBy   Int          @map("created_by")
@@ -905,6 +907,7 @@ model Template {
   deletedAt   DateTime?    @map("deleted_at")
 
   creator            User           @relation("TemplateCreator", fields: [createdBy], references: [id])
+  phase              Phase?         @relation(fields: [phaseId], references: [id])
   templateTasks      TemplateTask[]
   templateZones      TemplateZone[]
   linkedZones        TemplateZone[] @relation("LinkedTaskTemplate")

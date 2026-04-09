@@ -66,10 +66,16 @@ export class PhasesService {
     const taskCount = await this.prisma.task.count({
       where: { phaseId: id },
     });
+    const templateCount = await this.prisma.template.count({
+      where: { phaseId: id, deletedAt: null },
+    });
 
-    if (taskCount > 0) {
+    if (taskCount > 0 || templateCount > 0) {
+      const refs: string[] = [];
+      if (taskCount > 0) refs.push(`${taskCount} task(s)`);
+      if (templateCount > 0) refs.push(`${templateCount} service template(s)`);
       throw new BadRequestException(
-        `Cannot delete phase: ${taskCount} task(s) still reference it`,
+        `Cannot delete phase: ${refs.join(' and ')} still reference it`,
       );
     }
 

@@ -14,6 +14,7 @@ export class TemplatesService {
       orderBy: { createdAt: 'desc' },
       include: {
         creator: { select: { id: true, firstName: true, lastName: true } },
+        phase: true,
         _count: { select: { templateTasks: true, templateZones: true } },
         templateTasks: { select: { id: true, description: true }, take: 100 },
       },
@@ -28,10 +29,12 @@ export class TemplatesService {
         type: body.type || 'task_list',
         category: body.category || null,
         description: body.description || null,
+        phaseId: body.phaseId || null,
         createdBy: userId,
       },
       include: {
         creator: { select: { id: true, firstName: true, lastName: true } },
+        phase: true,
       },
     });
 
@@ -64,6 +67,7 @@ export class TemplatesService {
       where: { id, deletedAt: null },
       include: {
         creator: { select: { id: true, firstName: true, lastName: true } },
+        phase: true,
         templateTasks: {
           include: { serviceType: true, phase: true },
           orderBy: { sortOrder: 'asc' },
@@ -108,9 +112,11 @@ export class TemplatesService {
         category: body.category,
         description: body.description,
         isActive: body.isActive,
+        phaseId: body.phaseId !== undefined ? (body.phaseId || null) : undefined,
       },
       include: {
         creator: { select: { id: true, firstName: true, lastName: true } },
+        phase: true,
       },
     });
   }
@@ -262,6 +268,7 @@ export class TemplatesService {
         type: source.type,
         category: source.category,
         description: source.description,
+        phaseId: source.phaseId,
         createdBy: userId,
       },
     });

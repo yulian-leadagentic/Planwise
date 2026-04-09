@@ -228,12 +228,11 @@ function ZoneTemplatePicker({
 function AddZoneTaskForm({
   zoneId,
   templateId,
-  phases,
   onDone,
 }: {
   zoneId: number;
   templateId: number;
-  phases: any[];
+  phases?: any[];
   onDone: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -241,7 +240,6 @@ function AddZoneTaskForm({
   const [name, setName] = useState('');
   const [hours, setHours] = useState('');
   const [amount, setAmount] = useState('');
-  const [phaseId, setPhaseId] = useState('');
   const [saveToCatalog, setSaveToCatalog] = useState(true);
 
   const addMutation = useMutation({
@@ -266,7 +264,6 @@ function AddZoneTaskForm({
       name: name.trim(),
       defaultBudgetHours: hours ? Number(hours) : undefined,
       defaultBudgetAmount: amount ? Number(amount) : undefined,
-      phaseId: phaseId ? Number(phaseId) : undefined,
     };
     // Also save to catalog if checked
     if (saveToCatalog) {
@@ -284,7 +281,7 @@ function AddZoneTaskForm({
 
   return (
     <form onSubmit={handleSubmit} className="mt-1 rounded-md border border-border bg-muted/30 p-2 space-y-2">
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <div>
           <label className="block text-xs font-medium mb-0.5">Code *</label>
           <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. BIM-CD" className={inputClass} autoFocus />
@@ -300,15 +297,6 @@ function AddZoneTaskForm({
         <div>
           <label className="block text-xs font-medium mb-0.5">Amount</label>
           <input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className={inputClass} />
-        </div>
-        <div>
-          <label className="block text-xs font-medium mb-0.5">Phase</label>
-          <select value={phaseId} onChange={(e) => setPhaseId(e.target.value)} className={inputClass}>
-            <option value="">-- None --</option>
-            {phases.map((p: any) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
         </div>
       </div>
       <div className="flex items-center gap-3">
@@ -348,7 +336,7 @@ function ZoneCatalogPickerModal({
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [adding, setAdding] = useState(false);
-  const [sortField, setSortField] = useState<'code' | 'name' | 'hours' | 'amount' | 'phase'>('name');
+  const [sortField, setSortField] = useState<'code' | 'name' | 'hours' | 'amount'>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const { data: allTemplates = [] } = useQuery({
@@ -384,7 +372,6 @@ function ZoneCatalogPickerModal({
         case 'name': valA = (a.name ?? '').toLowerCase(); valB = (b.name ?? '').toLowerCase(); break;
         case 'hours': valA = Number(a.defaultBudgetHours) || 0; valB = Number(b.defaultBudgetHours) || 0; break;
         case 'amount': valA = Number(a.defaultBudgetAmount) || 0; valB = Number(b.defaultBudgetAmount) || 0; break;
-        case 'phase': valA = (a.phase?.name ?? '').toLowerCase(); valB = (b.phase?.name ?? '').toLowerCase(); break;
       }
       if (valA < valB) return sortDir === 'asc' ? -1 : 1;
       if (valA > valB) return sortDir === 'asc' ? 1 : -1;
@@ -418,7 +405,7 @@ function ZoneCatalogPickerModal({
           name: ct.name,
           defaultBudgetHours: ct.defaultBudgetHours,
           defaultBudgetAmount: ct.defaultBudgetAmount,
-          phaseId: ct.phaseId,
+          // phaseId is set at the service template level, not per-task
         });
       }
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
@@ -480,7 +467,6 @@ function ZoneCatalogPickerModal({
                   <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('name')}>Name{sortIcon('name')}</th>
                   <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
                   <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
-                  <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('phase')}>Phase{sortIcon('phase')}</th>
                   <th className="px-3 py-2 text-left font-medium">Status</th>
                 </tr>
               </thead>
@@ -507,7 +493,6 @@ function ZoneCatalogPickerModal({
                       <td className="px-3 py-2 font-medium">{task.name}</td>
                       <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetHours != null ? Number(task.defaultBudgetHours).toFixed(0) : '-'}</td>
                       <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString() : '-'}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{task.phase?.name ?? '-'}</td>
                       <td className="px-3 py-2">
                         {alreadyExists && (
                           <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">already added</span>
@@ -570,7 +555,6 @@ function ZoneTasksTable({
             <th className="px-2 py-1 text-left font-medium">Name</th>
             <th className="px-2 py-1 text-right font-medium">Hours</th>
             <th className="px-2 py-1 text-right font-medium">Amount</th>
-            <th className="px-2 py-1 text-left font-medium">Phase</th>
             <th className="px-2 py-1 text-center font-medium w-8"></th>
           </tr>
         </thead>
@@ -585,7 +569,6 @@ function ZoneTasksTable({
               <td className="px-2 py-1 text-right tabular-nums">
                 {task.defaultBudgetAmount != null ? `\u20AA${Number(task.defaultBudgetAmount).toLocaleString()}` : '-'}
               </td>
-              <td className="px-2 py-1 text-muted-foreground">{task.phase?.name ?? '-'}</td>
               <td className="px-2 py-1 text-center">
                 <button
                   onClick={() => { if (confirm(`Remove task "${task.name}"?`)) deleteMutation.mutate(task.id); }}
@@ -650,7 +633,6 @@ function ServicePickerModal({
             description: `[SERVICE:${svc.name}]`,
             defaultBudgetHours: task.defaultBudgetHours,
             defaultBudgetAmount: task.defaultBudgetAmount,
-            phaseId: task.phaseId,
           });
         }
       }
@@ -774,8 +756,7 @@ function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, readOnl
                   <td className="px-2 py-1">{task.name}</td>
                   <td className="px-2 py-1 text-right tabular-nums">{task.defaultBudgetHours != null ? `${Number(task.defaultBudgetHours)}` : '-'}</td>
                   <td className="px-2 py-1 text-right tabular-nums">{task.defaultBudgetAmount != null ? `${'\u20AA'}${Number(task.defaultBudgetAmount).toLocaleString()}` : '-'}</td>
-                  <td className="px-2 py-1 text-muted-foreground">{task.phase?.name ?? '-'}</td>
-                </tr>
+                    </tr>
               ))}
             </tbody>
           </table>
@@ -1053,13 +1034,12 @@ function ZoneTreeNode({
 // Root-level Manual Task Form (adds TemplateTask at template level)
 // ---------------------------------------------------------------------------
 
-function RootManualTaskForm({ templateId, phases, onDone }: { templateId: number; phases: any[]; onDone: () => void }) {
+function RootManualTaskForm({ templateId, onDone }: { templateId: number; phases?: any[]; onDone: () => void }) {
   const queryClient = useQueryClient();
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [hours, setHours] = useState('');
   const [amount, setAmount] = useState('');
-  const [phaseId, setPhaseId] = useState('');
   const [saveToCatalog, setSaveToCatalog] = useState(true);
 
   const addMutation = useMutation({
@@ -1084,7 +1064,6 @@ function RootManualTaskForm({ templateId, phases, onDone }: { templateId: number
       name: name.trim(),
       defaultBudgetHours: hours ? Number(hours) : undefined,
       defaultBudgetAmount: amount ? Number(amount) : undefined,
-      phaseId: phaseId ? Number(phaseId) : undefined,
     };
     if (saveToCatalog) {
       try {
@@ -1101,17 +1080,11 @@ function RootManualTaskForm({ templateId, phases, onDone }: { templateId: number
 
   return (
     <form onSubmit={handleSubmit} className="mt-2 rounded-md border border-border bg-muted/30 p-3 space-y-2">
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <div><label className="block text-xs font-medium mb-0.5">Code *</label><input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. BIM-CD" className={inputClass} autoFocus /></div>
         <div><label className="block text-xs font-medium mb-0.5">Name *</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Clash Detection" className={inputClass} /></div>
         <div><label className="block text-xs font-medium mb-0.5">Hours</label><input type="number" min="0" step="0.5" value={hours} onChange={(e) => setHours(e.target.value)} placeholder="0" className={inputClass} /></div>
         <div><label className="block text-xs font-medium mb-0.5">Amount</label><input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className={inputClass} /></div>
-        <div><label className="block text-xs font-medium mb-0.5">Phase</label>
-          <select value={phaseId} onChange={(e) => setPhaseId(e.target.value)} className={inputClass}>
-            <option value="">-- None --</option>
-            {phases.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </div>
       </div>
       <div className="flex items-center gap-3">
         <div className="flex gap-2">
@@ -1164,7 +1137,7 @@ function RootServicePickerModal({
         for (const task of (detail?.templateTasks ?? [])) {
           await client.post(`/templates/${templateId}/tasks`, {
             code: task.code, name: task.name, description: `[SERVICE:${svc.name}]`,
-            defaultBudgetHours: task.defaultBudgetHours, defaultBudgetAmount: task.defaultBudgetAmount, phaseId: task.phaseId,
+            defaultBudgetHours: task.defaultBudgetHours, defaultBudgetAmount: task.defaultBudgetAmount,
           });
         }
       }
@@ -1273,7 +1246,6 @@ function RootCatalogPickerModal({
           name: t.name,
           defaultBudgetHours: t.defaultBudgetHours,
           defaultBudgetAmount: t.defaultBudgetAmount,
-          phaseId: t.phaseId,
         });
       }
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });

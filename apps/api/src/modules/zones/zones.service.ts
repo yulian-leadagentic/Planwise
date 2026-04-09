@@ -264,6 +264,9 @@ export class ZonesService {
       include: { templateTasks: { include: { serviceType: true } } },
     });
 
+    // Use the service template's phaseId for all tasks (falls back to per-task phaseId)
+    const templatePhaseId = template.phaseId;
+
     return this.prisma.$transaction(async (tx) => {
       const createdTasks: any[] = [];
       for (const tt of template.templateTasks) {
@@ -284,7 +287,7 @@ export class ZonesService {
             description: tt.description,
             budgetHours: tt.defaultBudgetHours,
             budgetAmount: tt.defaultBudgetAmount,
-            phaseId: tt.phaseId,
+            phaseId: templatePhaseId ?? tt.phaseId,
             priority: tt.defaultPriority,
             status: 'not_started',
             createdBy: userId,
@@ -387,6 +390,7 @@ export class ZonesService {
             templateZoneTasks: true,
             linkedTaskTemplate: {
               include: { templateTasks: true },
+              // linkedTaskTemplate is a service template — its phaseId is available
             },
             children: {
               include: {
@@ -431,13 +435,15 @@ export class ZonesService {
 
         // Create tasks from linked task template (service template)
         if (tz.linkedTaskTemplate?.templateTasks) {
+          // Use the service template's phaseId for all its tasks
+          const servicePhaseId = (tz.linkedTaskTemplate as any).phaseId;
           for (const tt of tz.linkedTaskTemplate.templateTasks) {
             await tx.task.create({
               data: {
                 zoneId: zone.id, projectId, serviceTypeId: tt.serviceTypeId,
                 code: tt.code, name: tt.name, description: tt.description,
                 budgetHours: tt.defaultBudgetHours, budgetAmount: tt.defaultBudgetAmount,
-                phaseId: tt.phaseId, priority: tt.defaultPriority, status: 'not_started', createdBy: userId,
+                phaseId: servicePhaseId ?? tt.phaseId, priority: tt.defaultPriority, status: 'not_started', createdBy: userId,
               },
             });
           }
@@ -481,14 +487,15 @@ export class ZonesService {
           });
 
           if (refTemplate) {
-            // Copy root-level templateTasks from referenced template
+            // Copy root-level templateTasks using referenced template's phaseId
+            const refPhaseId = refTemplate.phaseId;
             for (const tt of (refTemplate.templateTasks || [])) {
               await tx.task.create({
                 data: {
                   zoneId: zone.id, projectId, serviceTypeId: tt.serviceTypeId,
                   code: tt.code, name: tt.name, description: tt.description,
                   budgetHours: tt.defaultBudgetHours, budgetAmount: tt.defaultBudgetAmount,
-                  phaseId: tt.phaseId, priority: tt.defaultPriority || 'medium', status: 'not_started', createdBy: userId,
+                  phaseId: refPhaseId ?? tt.phaseId, priority: tt.defaultPriority || 'medium', status: 'not_started', createdBy: userId,
                 },
               });
             }

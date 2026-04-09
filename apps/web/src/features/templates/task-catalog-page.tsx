@@ -9,9 +9,8 @@ import { notify } from '@/lib/notify';
 
 const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 const btnPrimary = 'flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
-const btnSecondary = 'rounded-md border border-border px-4 py-2 text-sm hover:bg-accent';
 
-type SortField = 'code' | 'name' | 'defaultBudgetHours' | 'defaultBudgetAmount' | 'phase';
+type SortField = 'code' | 'name' | 'defaultBudgetHours' | 'defaultBudgetAmount';
 type SortDir = 'asc' | 'desc';
 
 const emptyTask = {
@@ -20,7 +19,6 @@ const emptyTask = {
   description: '',
   defaultBudgetHours: '',
   defaultBudgetAmount: '',
-  phaseId: '',
 };
 
 type TaskForm = typeof emptyTask;
@@ -52,10 +50,6 @@ function compareTasks(a: any, b: any, field: SortField, dir: SortDir): number {
     case 'defaultBudgetAmount':
       valA = Number(a[field]) || 0;
       valB = Number(b[field]) || 0;
-      break;
-    case 'phase':
-      valA = (a.phase?.name ?? '').toLowerCase();
-      valB = (b.phase?.name ?? '').toLowerCase();
       break;
   }
 
@@ -95,13 +89,6 @@ export function TaskCatalogPage() {
     queryKey: ['templates', catalogId],
     enabled: !!catalogId,
     queryFn: () => client.get(`/templates/${catalogId}`).then((r) => r.data.data ?? r.data),
-  });
-
-  // ---- lookups ----
-  const { data: phases = [] } = useQuery({
-    queryKey: ['phases'],
-    staleTime: 10 * 60 * 1000,
-    queryFn: () => client.get('/phases').then((r) => r.data.data ?? r.data),
   });
 
   // ---- mutations ----
@@ -185,7 +172,6 @@ export function TaskCatalogPage() {
     description: form.description.trim() || undefined,
     defaultBudgetHours: form.defaultBudgetHours ? Number(form.defaultBudgetHours) : undefined,
     defaultBudgetAmount: form.defaultBudgetAmount ? Number(form.defaultBudgetAmount) : undefined,
-    phaseId: form.phaseId ? Number(form.phaseId) : undefined,
   });
 
   const handleAddTask = (e: React.FormEvent) => {
@@ -208,7 +194,6 @@ export function TaskCatalogPage() {
       description: task.description ?? '',
       defaultBudgetHours: task.defaultBudgetHours != null ? String(task.defaultBudgetHours) : '',
       defaultBudgetAmount: task.defaultBudgetAmount != null ? String(task.defaultBudgetAmount) : '',
-      phaseId: task.phase?.id != null ? String(task.phase.id) : (task.phaseId != null ? String(task.phaseId) : ''),
     });
   };
 
@@ -245,14 +230,6 @@ export function TaskCatalogPage() {
       </td>
       <td className="px-3 py-2">
         <input type="number" step="any" min="0" value={form.defaultBudgetAmount} onChange={(e) => setForm((p) => ({ ...p, defaultBudgetAmount: e.target.value }))} placeholder="0" className={`${inputClass} text-right`} />
-      </td>
-      <td className="px-3 py-2">
-        <select value={form.phaseId} onChange={(e) => setForm((p) => ({ ...p, phaseId: e.target.value }))} className={inputClass}>
-          <option value="">-- none --</option>
-          {(phases as any[]).map((ph: any) => (
-            <option key={ph.id} value={ph.id}>{ph.name}{ph.code ? ` (${ph.code})` : ''}</option>
-          ))}
-        </select>
       </td>
       <td className="px-3 py-2 text-center">
         <div className="flex items-center justify-center gap-1">
@@ -306,7 +283,7 @@ export function TaskCatalogPage() {
 
       {/* Table */}
       {isLoading ? (
-        <TableSkeleton rows={5} cols={8} />
+        <TableSkeleton rows={5} cols={5} />
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
@@ -323,9 +300,6 @@ export function TaskCatalogPage() {
                 </th>
                 <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('defaultBudgetAmount')}>
                   Amount{sortIcon('defaultBudgetAmount')}
-                </th>
-                <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('phase')}>
-                  Phase/Milestone{sortIcon('phase')}
                 </th>
                 <th className="px-3 py-2 text-center font-medium">Actions</th>
               </tr>
@@ -346,7 +320,7 @@ export function TaskCatalogPage() {
               {/* Empty state */}
               {filteredTasks.length === 0 && !showAddTask && (
                 <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                  <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
                     <BookOpen className="mx-auto h-10 w-10 text-muted-foreground/50" />
                     <p className="mt-2">
                       {search ? 'No tasks match your search.' : 'No tasks in the catalog yet. Click "Add Task" to get started.'}
@@ -378,7 +352,6 @@ export function TaskCatalogPage() {
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetHours != null ? Number(task.defaultBudgetHours).toFixed(1) : '-'}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
-                    <td className="px-3 py-2">{task.phase?.name ?? '-'}{task.phase?.code ? ` (${task.phase.code})` : ''}</td>
                     <td className="px-3 py-2 text-center">
                       <div className="flex items-center justify-center gap-1">
                         <button
@@ -408,7 +381,6 @@ export function TaskCatalogPage() {
                   <td className="px-3 py-2 text-right">Totals</td>
                   <td className="px-3 py-2 text-right tabular-nums">{totals.hours.toFixed(1)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{totals.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="px-3 py-2" />
                   <td className="px-3 py-2" />
                 </tr>
               )}
