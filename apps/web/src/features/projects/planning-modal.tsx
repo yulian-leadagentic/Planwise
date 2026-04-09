@@ -279,7 +279,8 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
   );
 }
 
-// ─── Hierarchical Zone Group (parent + nested children) ──────────────────────
+
+// ─── Hierarchical Zone Group — flat tree style with colored borders ──────────
 
 function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth }: any) {
   const [collapsed, setCollapsed] = useState(false);
@@ -288,7 +289,6 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const [duplicateName, setDuplicateName] = useState('');
   const [showTaskMenu, setShowTaskMenu] = useState(false);
-  const [showCatalogPicker, setShowCatalogPicker] = useState(false);
   const [saveToCatalog, setSaveToCatalog] = useState(true);
   const queryClient = useQueryClient();
 
@@ -298,141 +298,124 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
     onError: (err: any) => notify.apiError(err, 'Failed to create task'),
   });
 
-  // Tasks directly on THIS zone (not on children)
   const directTasks = allTasks.filter((t: any) => t.zoneId === zone.id);
-  // All tasks including children (for totals)
   const allZoneIds = new Set<number>();
   function collectIds(z: any) { allZoneIds.add(z.id); (z.children || []).forEach(collectIds); }
   collectIds(zone);
   const allZoneTasks = allTasks.filter((t: any) => allZoneIds.has(t.zoneId));
   const totalHours = allZoneTasks.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
   const totalAmount = allZoneTasks.reduce((s: number, t: any) => s + Number(t.budgetAmount || 0), 0);
-
   const hasChildren = zone.children?.length > 0;
-  const indent = depth > 0;
+
+  // Zone type colors from design system
+  const zoneColors: Record<string, { border: string; bg: string; text: string }> = {
+    site: { border: 'border-l-indigo-400', bg: 'bg-indigo-50', text: 'text-indigo-700' },
+    building: { border: 'border-l-amber-500', bg: 'bg-amber-50', text: 'text-amber-700' },
+    level: { border: 'border-l-teal-400', bg: 'bg-teal-50', text: 'text-teal-700' },
+    zone: { border: 'border-l-amber-400', bg: 'bg-amber-50', text: 'text-amber-600' },
+    area: { border: 'border-l-purple-400', bg: 'bg-purple-50', text: 'text-purple-700' },
+    floor: { border: 'border-l-blue-400', bg: 'bg-blue-50', text: 'text-blue-700' },
+    section: { border: 'border-l-teal-400', bg: 'bg-teal-50', text: 'text-teal-700' },
+    wing: { border: 'border-l-pink-400', bg: 'bg-pink-50', text: 'text-pink-700' },
+  };
+  const zc = zoneColors[zone.zoneType] || zoneColors.zone;
 
   return (
-    <div className={cn('border-b border-slate-100 last:border-0', indent && 'ml-6 border-l-2 border-slate-100')}>
-      {/* Zone header */}
-      <div className="flex items-center gap-2.5 px-5 py-2.5 bg-[#FAFBFC] cursor-pointer" onClick={() => setCollapsed(!collapsed)}>
-        {collapsed ? <ChevronRight className="w-3 h-3 text-slate-400" /> : <ChevronDown className="w-3 h-3 text-slate-400" />}
-        <span className={cn('text-[13px] font-semibold', depth === 0 ? 'text-slate-900' : 'text-slate-700')}>{zone.name}</span>
-        <span className="rounded-[5px] bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-400">{zone.zoneType}</span>
-        {hasChildren && <span className="text-[11px] text-slate-300">({zone.children.length} sub-zones)</span>}
-        <span className="ml-auto text-[11px] font-medium text-slate-400">{allZoneTasks.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span>
-        <div className="relative" onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => setShowTaskMenu(!showTaskMenu)} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
-            <Plus className="w-3 h-3" /> Add Task
-          </button>
-          {showTaskMenu && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-1.5">
-              <button onClick={() => { setShowCatalogPicker(true); setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 hover:bg-slate-50">From Catalog</button>
-              <button onClick={() => { setShowAddTask(true); setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 hover:bg-slate-50">Create New Task</button>
-            </div>
+    <div style={{ marginLeft: depth > 0 ? depth * 28 : 0 }}>
+      {/* Zone row — full width with colored left border */}
+      <div className={cn('flex items-center gap-2.5 py-3 px-4 border-l-[3px] cursor-pointer hover:bg-slate-50/80 group transition-colors duration-100', zc.border, 'border-b border-slate-100')}
+        onClick={() => setCollapsed(!collapsed)}>
+        {collapsed ? <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+        <span className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide shrink-0', zc.bg, zc.text)}>{zone.zoneType}</span>
+        <span className={cn('font-semibold', depth === 0 ? 'text-[15px] text-slate-900' : 'text-[13px] text-slate-800')}>{zone.name}</span>
+        {hasChildren && <span className="text-[11px] text-slate-400">({zone.children.length} sub-zones)</span>}
+        <span className="ml-auto text-[11px] font-medium text-slate-400 shrink-0">{allZoneTasks.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span>
+
+        <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-all duration-150" onClick={(e) => e.stopPropagation()}>
+          <div className="relative">
+            <button onClick={() => setShowTaskMenu(!showTaskMenu)} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2 py-1 rounded-md flex items-center gap-1">
+              <Plus className="w-3 h-3" /> Task
+            </button>
+            {showTaskMenu && (
+              <div className="absolute right-0 top-full z-50 mt-1 w-44 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-1.5">
+                <button onClick={() => { setShowAddTask(true); setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Create New</button>
+                <button onClick={() => { setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">From Catalog</button>
+              </div>
+            )}
+          </div>
+          {depth === 0 && onDuplicateZone && (
+            <button onClick={() => { setDuplicateName(`${zone.name} (copy)`); setShowDuplicateModal(true); }}
+              className="text-slate-400 hover:text-blue-600 text-[11px] font-medium px-2 py-1 rounded-md hover:bg-blue-50 flex items-center gap-1">
+              <Copy className="w-3 h-3" /> Dup
+            </button>
           )}
-        </div>
-        {depth === 0 && onDuplicateZone && (
-          <button onClick={(e) => { e.stopPropagation(); setDuplicateName(`${zone.name} (copy)`); setShowDuplicateModal(true); }}
-            className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
-            <Copy className="w-3 h-3" /> Duplicate
+          <button onClick={() => { if (confirm(`Delete "${zone.name}"?`)) onDeleteZone(zone.id); }}
+            className="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600">
+            <Trash2 className="w-3 h-3" />
           </button>
-        )}
-        <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete "${zone.name}" and all its tasks?`)) onDeleteZone(zone.id); }}
-          className="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600">
-          <Trash2 className="w-3 h-3" />
-        </button>
+        </div>
       </div>
 
       {!collapsed && (
         <>
-          {/* Add task form */}
           {showAddTask && (
-            <div className="px-5 py-2 bg-blue-50/20 flex items-center gap-2 border-b border-slate-50">
+            <div style={{ marginLeft: 28 }} className="flex items-center gap-2 py-2 px-4 border-b border-slate-50 bg-blue-50/20">
               <input value={newTask.code} onChange={(e) => setNewTask(f => ({ ...f, code: e.target.value }))} placeholder="Code *" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
               <input value={newTask.name} onChange={(e) => setNewTask(f => ({ ...f, name: e.target.value }))} placeholder="Task name *" className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
-              <input value={newTask.budgetHours} onChange={(e) => setNewTask(f => ({ ...f, budgetHours: e.target.value }))} placeholder="Hours" type="number" className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
-              <input value={newTask.budgetAmount} onChange={(e) => setNewTask(f => ({ ...f, budgetAmount: e.target.value }))} placeholder="Amount" type="number" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+              <input value={newTask.budgetHours} onChange={(e) => setNewTask(f => ({ ...f, budgetHours: e.target.value }))} placeholder="Hrs" type="number" className="w-14 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+              <input value={newTask.budgetAmount} onChange={(e) => setNewTask(f => ({ ...f, budgetAmount: e.target.value }))} placeholder="Amt" type="number" className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
               <button onClick={async () => {
                 if (!newTask.code.trim() || !newTask.name.trim()) { notify.warning('Code and Name required'); return; }
                 const payload = { code: newTask.code.trim(), name: newTask.name.trim(), budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined, budgetAmount: newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined };
-                if (saveToCatalog) {
-                  try { const cats = await client.get('/templates?type=task_list').then(r => r.data.data ?? r.data); const cat = (Array.isArray(cats) ? cats : []).find((t: any) => t.code === '__TASK_CATALOG__'); if (cat) await client.post(`/templates/${cat.id}/tasks`, { ...payload, defaultBudgetHours: payload.budgetHours, defaultBudgetAmount: payload.budgetAmount }); } catch {}
-                }
+                if (saveToCatalog) { try { const cats = await client.get('/templates?type=task_list').then(r => r.data.data ?? r.data); const cat = (Array.isArray(cats) ? cats : []).find((t: any) => t.code === '__TASK_CATALOG__'); if (cat) await client.post(`/templates/${cat.id}/tasks`, { ...payload, defaultBudgetHours: payload.budgetHours, defaultBudgetAmount: payload.budgetAmount }); } catch {} }
                 createTask.mutate({ zoneId: zone.id, ...payload });
-              }} disabled={createTask.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-3 py-1.5 rounded-md disabled:opacity-50">Save</button>
-              <label className="flex items-center gap-1 text-[11px] text-slate-400 cursor-pointer"><input type="checkbox" checked={saveToCatalog} onChange={(e) => setSaveToCatalog(e.target.checked)} className="h-3 w-3 rounded" />Save to catalog</label>
-              <button onClick={() => setShowAddTask(false)} className="text-[11px] text-slate-400 hover:text-slate-600 px-2">Cancel</button>
+              }} disabled={createTask.isPending} className="bg-blue-600 text-white text-[11px] font-semibold px-3 py-1.5 rounded-md disabled:opacity-50">Save</button>
+              <label className="flex items-center gap-1 text-[11px] text-slate-400 cursor-pointer whitespace-nowrap"><input type="checkbox" checked={saveToCatalog} onChange={(e) => setSaveToCatalog(e.target.checked)} className="h-3 w-3 rounded" />Catalog</label>
+              <button onClick={() => setShowAddTask(false)} className="text-[11px] text-slate-400 px-1">✕</button>
             </div>
           )}
 
-          {/* Direct tasks on this zone */}
-          {directTasks.length > 0 && (
-            <table className="w-full">
-              <thead>
-                <tr className="bg-white border-b border-slate-50">
-                  <th className={cn(thClass, 'w-20 pl-5')} onClick={() => handleSort('code')}>Code{sortIcon('code')}</th>
-                  <th className={thClass} onClick={() => handleSort('name')}>Task Name{sortIcon('name')}</th>
-                  <th className={cn(thClass, 'w-28')} onClick={() => handleSort('service')}>Service{sortIcon('service')}</th>
-                  <th className={cn(thClass, 'w-20')} onClick={() => handleSort('phase')}>Phase{sortIcon('phase')}</th>
-                  <th className={cn(thClass, 'w-14 text-right')} onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
-                  <th className={cn(thClass, 'w-20 text-right')} onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
-                  <th className={cn(thClass, 'w-28')}>Assignee</th>
-                  <th className={cn(thClass, 'w-24')}>Status</th>
-                  <th className="w-8"></th>
-                </tr>
-              </thead>
-              <tbody className="text-[13px]">
-                {directTasks.map((task: any) => {
-                  const assignee = task.assignees?.[0]?.user;
-                  return (
-                    <tr key={task.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 group">
-                      <td className="px-3 py-2 pl-5 font-mono text-xs font-medium text-slate-500">{task.code}</td>
-                      <td className="px-3 py-2 font-medium text-slate-900">{task.name}</td>
-                      <td className="px-3 py-2">{task.serviceType ? <span className="rounded-[5px] bg-blue-50 px-1.5 py-0.5 text-[11px] font-bold text-blue-600">{task.serviceType.name}</span> : <span className="text-slate-300">-</span>}</td>
-                      <td className="px-3 py-2 text-[12px] text-slate-500">{task.phase?.name || '-'}</td>
-                      <td className="px-3 py-2 text-right font-mono text-xs font-medium text-slate-700">{task.budgetHours ? Number(task.budgetHours) : '-'}</td>
-                      <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-slate-700">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</td>
-                      <td className="px-3 py-2">
-                        {assignee ? (
-                          <span className="inline-flex items-center gap-1.5"><span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-semibold flex items-center justify-center">{assignee.firstName?.[0]}{assignee.lastName?.[0]}</span><span className="text-[12px] text-slate-700">{assignee.firstName}</span></span>
-                        ) : (
-                          <select className="text-[12px] text-slate-400 bg-transparent border-none cursor-pointer focus:outline-none" value="" onChange={(e) => { if (e.target.value) { tasksApi.addAssignee(task.id, { userId: Number(e.target.value) }); onUpdate(); } }}>
-                            <option value="">+ assign</option>
-                            {members.map((m: any) => <option key={m.user?.id ?? m.id} value={m.user?.id ?? m.id}>{m.user?.firstName ?? m.firstName} {m.user?.lastName ?? m.lastName}</option>)}
-                          </select>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className="inline-flex items-center gap-1"><span className={cn('w-1.5 h-1.5 rounded-full', {'bg-slate-400': !task.status || task.status === 'not_started', 'bg-blue-500': task.status === 'in_progress', 'bg-emerald-500': task.status === 'completed', 'bg-amber-500': task.status === 'on_hold'})} /><span className="text-[12px] text-slate-500">{(task.status || 'not_started').replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</span></span>
-                      </td>
-                      <td className="px-3 py-2"><button onClick={() => onDeleteTask(task.id)} className="opacity-0 group-hover:opacity-100 w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600 transition-all duration-150"><Trash2 className="w-3 h-3" /></button></td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
+          {directTasks.map((task: any) => {
+            const assignee = task.assignees?.[0]?.user;
+            const stColor: Record<string, string> = { not_started: 'text-slate-400', in_progress: 'text-blue-600', completed: 'text-emerald-600', on_hold: 'text-amber-600', in_review: 'text-violet-600', cancelled: 'text-red-500' };
+            return (
+              <div key={task.id} style={{ marginLeft: 28 }} className="flex items-center gap-3 py-2.5 px-4 border-b border-slate-50 hover:bg-slate-50/50 group text-[13px]">
+                <span className="font-mono text-xs font-medium text-slate-400 w-24 shrink-0">{task.code}</span>
+                <span className="font-medium text-slate-900 flex-1 min-w-0 truncate">{task.name}</span>
+                {task.serviceType ? <span className="rounded-[5px] bg-blue-50 px-1.5 py-0.5 text-[11px] font-bold text-blue-600 shrink-0">{task.serviceType.name}</span> : null}
+                {task.phase ? <span className="text-[11px] text-slate-400 shrink-0">{task.phase.name}</span> : null}
+                <span className="font-mono text-xs text-slate-500 w-10 text-right shrink-0">{task.budgetHours ? Number(task.budgetHours) : '-'}</span>
+                <span className="font-mono text-xs font-semibold text-slate-700 w-16 text-right shrink-0">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</span>
+                <span className="w-20 shrink-0">
+                  {assignee ? (
+                    <span className="inline-flex items-center gap-1"><span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-semibold flex items-center justify-center">{assignee.firstName?.[0]}{assignee.lastName?.[0]}</span><span className="text-[11px]">{assignee.firstName}</span></span>
+                  ) : (
+                    <select className="text-[11px] text-slate-400 bg-transparent border-none cursor-pointer focus:outline-none w-full" value="" onChange={(e) => { if (e.target.value) { tasksApi.addAssignee(task.id, { userId: Number(e.target.value) }); onUpdate(); } }}>
+                      <option value="">+assign</option>
+                      {members.map((m: any) => <option key={m.user?.id ?? m.id} value={m.user?.id ?? m.id}>{m.user?.firstName} {m.user?.lastName}</option>)}
+                    </select>
+                  )}
+                </span>
+                <span className={cn('text-[11px] font-medium w-20 shrink-0', stColor[task.status as string] || 'text-slate-400')}>{(task.status || 'not_started').replace(/_/g, ' ')}</span>
+                <button onClick={() => onDeleteTask(task.id)} className="opacity-0 group-hover:opacity-100 w-[18px] h-[18px] rounded hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-500"><Trash2 className="w-3 h-3" /></button>
+              </div>
+            );
+          })}
 
-          {/* Child zones (nested) */}
           {hasChildren && zone.children.map((child: any) => (
             <HierarchicalZoneGroup key={child.id} zone={child} allTasks={allTasks} members={members} projectId={projectId}
               onUpdate={onUpdate} onDeleteTask={onDeleteTask} onDeleteZone={onDeleteZone} onDuplicateZone={onDuplicateZone}
               thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={depth + 1} />
           ))}
-
-          {directTasks.length === 0 && !hasChildren && !showAddTask && (
-            <div className="px-5 py-4 text-center text-[13px] text-slate-400">No tasks. Click "Add Task" to create one.</div>
-          )}
         </>
       )}
 
-      {/* Duplicate Zone Modal */}
       {showDuplicateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={() => setShowDuplicateModal(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-[440px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-slate-100">
               <h3 className="text-base font-bold text-slate-900">Duplicate Zone</h3>
-              <p className="text-[13px] text-slate-400 mt-0.5">Create a copy of "{zone.name}" with all its tasks and sub-zones</p>
+              <p className="text-[13px] text-slate-400 mt-0.5">Copy "{zone.name}" with all tasks and sub-zones</p>
             </div>
             <div className="p-5">
               <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">New Zone Name *</label>
@@ -441,7 +424,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
                 className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
             </div>
             <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
-              <button onClick={() => setShowDuplicateModal(false)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+              <button onClick={() => setShowDuplicateModal(false)} className="bg-white border border-slate-200 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
               <button onClick={() => { if (duplicateName.trim()) { onDuplicateZone(zone.id, duplicateName.trim()); setShowDuplicateModal(false); } }}
                 disabled={!duplicateName.trim()} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">Duplicate</button>
             </div>
@@ -451,7 +434,6 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
     </div>
   );
 }
-
 // ─── Main Planning View ──────────────────────────────────────────────────────
 
 function PlanningView({ projectId }: { projectId: number }) {
