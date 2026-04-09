@@ -325,7 +325,7 @@ export function TaskCatalogPage() {
                   Amount{sortIcon('defaultBudgetAmount')}
                 </th>
                 <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('phase')}>
-                  Service Phase{sortIcon('phase')}
+                  Phase/Milestone{sortIcon('phase')}
                 </th>
                 <th className="px-3 py-2 text-center font-medium">Actions</th>
               </tr>

@@ -57,7 +57,7 @@ export function PhasesPage() {
           <ArrowLeft className="h-5 w-5" />
         </button>
         <PageHeader
-          title="Service Phases"
+          title="Phases/Milestones"
           description="Phases like Design, Construction, Handover"
           actions={
             <button onClick={() => setShowForm(!showForm)} className="flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">

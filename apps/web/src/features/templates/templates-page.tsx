@@ -32,7 +32,7 @@ const templateCards = [
     color: 'bg-green-100 text-green-700',
   },
   {
-    title: 'Service Phases',
+    title: 'Phases/Milestones',
     description: 'Manage phases: Design, Construction, Handover',
     icon: ListChecks,
     href: '/templates/phases',
