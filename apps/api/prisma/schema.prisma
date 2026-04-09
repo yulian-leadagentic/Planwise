@@ -264,6 +264,7 @@ model ProjectType {
   id        Int      @id @default(autoincrement())
   name      String   @unique
   code      String?  @db.VarChar(20)
+  color     String?  @db.VarChar(7)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Plus, Search, Trash2 } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { ArrowLeft, Check, Plus, Search, Trash2, X } from 'lucide-react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
@@ -21,6 +21,23 @@ const ZONE_TYPES = [
 ];
 
 // ---------------------------------------------------------------------------
+// localStorage helpers for zone type colors
+// ---------------------------------------------------------------------------
+const ZONE_COLORS_KEY = 'planwise_zone_type_colors';
+
+function loadZoneTypeColors(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(ZONE_COLORS_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveZoneTypeColors(colors: Record<string, string>) {
+  localStorage.setItem(ZONE_COLORS_KEY, JSON.stringify(colors));
+}
+
+// ---------------------------------------------------------------------------
 // Tab definitions
 // ---------------------------------------------------------------------------
 type TabKey = 'zone' | 'service' | 'project';
@@ -30,6 +47,43 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'service', label: 'Service Types' },
   { key: 'project', label: 'Project Types' },
 ];
+
+// ---------------------------------------------------------------------------
+// Inline color input component
+// ---------------------------------------------------------------------------
+function ColorInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span
+        className="w-4 h-4 rounded-full border border-slate-200 shrink-0"
+        style={{ backgroundColor: value || '#6B7280' }}
+      />
+      <input
+        type="text"
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="#hex"
+        className="w-20 px-2 py-1 rounded border border-slate-200 text-xs font-mono focus:border-blue-500 focus:outline-none"
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Edit state type
+// ---------------------------------------------------------------------------
+interface EditState {
+  id: string | number;
+  name: string;
+  code: string;
+  color: string;
+}
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -46,6 +100,12 @@ export function TypesPage() {
   const [formName, setFormName] = useState('');
   const [formCode, setFormCode] = useState('');
   const [formColor, setFormColor] = useState('');
+
+  // Inline edit state
+  const [editing, setEditing] = useState<EditState | null>(null);
+
+  // Zone type custom colors from localStorage
+  const [zoneColors, setZoneColors] = useState<Record<string, string>>(loadZoneTypeColors);
 
   // -----------------------------------------------------------------------
   // Service types queries
@@ -68,6 +128,17 @@ export function TypesPage() {
     onError: (err: any) => notify.apiError(err, 'Failed to create service type'),
   });
 
+  const updateServiceType = useMutation({
+    mutationFn: ({ id, ...payload }: { id: number; name: string; code?: string; color?: string }) =>
+      client.patch(`/service-types/${id}`, payload).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['service-types'] });
+      notify.success('Service type updated', { code: 'SVCTYPE-UPDATE-200' });
+      setEditing(null);
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update service type'),
+  });
+
   const deleteServiceType = useMutation({
     mutationFn: (id: number) => client.delete(`/service-types/${id}`).then((r) => r.data),
     onSuccess: () => {
@@ -88,7 +159,7 @@ export function TypesPage() {
   });
 
   const createProjectType = useMutation({
-    mutationFn: (payload: { name: string; code?: string }) =>
+    mutationFn: (payload: { name: string; code?: string; color?: string }) =>
       client.post('/admin/config/project-types', payload).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'project-types'] });
@@ -96,6 +167,17 @@ export function TypesPage() {
       resetForm();
     },
     onError: (err: any) => notify.apiError(err, 'Failed to create project type'),
+  });
+
+  const updateProjectType = useMutation({
+    mutationFn: ({ id, ...payload }: { id: number; name: string; code?: string; color?: string }) =>
+      client.patch(`/admin/config/project-types/${id}`, payload).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'project-types'] });
+      notify.success('Project type updated', { code: 'PROJECT-UPDATE-200' });
+      setEditing(null);
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update project type'),
   });
 
   const deleteProjectType = useMutation({
@@ -126,6 +208,9 @@ export function TypesPage() {
     (activeTab === 'service' && createServiceType.isPending) ||
     (activeTab === 'project' && createProjectType.isPending);
 
+  const isSaving =
+    updateServiceType.isPending || updateProjectType.isPending;
+
   // Build the rows for the active tab
   const rows: { id: string | number; code: string; name: string; color?: string; static?: boolean }[] =
     useMemo(() => {
@@ -133,7 +218,11 @@ export function TypesPage() {
 
       let items: typeof rows = [];
       if (activeTab === 'zone') {
-        items = ZONE_TYPES.map((z) => ({ ...z, static: true }));
+        items = ZONE_TYPES.map((z) => ({
+          ...z,
+          color: zoneColors[z.id] || z.color,
+          static: true,
+        }));
       } else if (activeTab === 'service') {
         items = (serviceTypesQuery.data ?? []).map((s: any) => ({
           id: s.id,
@@ -146,6 +235,7 @@ export function TypesPage() {
           id: p.id,
           code: p.code ?? '',
           name: p.name,
+          color: p.color ?? '',
         }));
       }
 
@@ -155,13 +245,76 @@ export function TypesPage() {
           r.name.toLowerCase().includes(q) ||
           r.code.toLowerCase().includes(q),
       );
-    }, [activeTab, search, serviceTypesQuery.data, projectTypesQuery.data]);
+    }, [activeTab, search, serviceTypesQuery.data, projectTypesQuery.data, zoneColors]);
 
-  // Whether the active tab supports color
-  const hasColor = activeTab === 'zone' || activeTab === 'service';
+  // All tabs now have color
+  const hasColor = true;
 
-  // Whether the active tab supports CRUD
-  const isMutable = activeTab !== 'zone';
+  // -----------------------------------------------------------------------
+  // Inline edit handlers
+  // -----------------------------------------------------------------------
+  function startEditing(row: (typeof rows)[number]) {
+    setEditing({
+      id: row.id,
+      name: row.name,
+      code: row.code,
+      color: row.color || '',
+    });
+  }
+
+  function cancelEditing() {
+    setEditing(null);
+  }
+
+  const saveEditing = useCallback(() => {
+    if (!editing) return;
+    const trimmedName = editing.name.trim();
+    if (!trimmedName) {
+      notify.warning('Name is required');
+      return;
+    }
+
+    if (activeTab === 'zone') {
+      // Save zone color to localStorage
+      const updated = { ...zoneColors };
+      const defaultColor = ZONE_TYPES.find((z) => z.id === editing.id)?.color || '';
+      if (editing.color && editing.color !== defaultColor) {
+        updated[editing.id as string] = editing.color;
+      } else if (!editing.color || editing.color === defaultColor) {
+        delete updated[editing.id as string];
+      }
+      setZoneColors(updated);
+      saveZoneTypeColors(updated);
+      notify.success('Zone type color saved');
+      setEditing(null);
+    } else if (activeTab === 'service') {
+      updateServiceType.mutate({
+        id: editing.id as number,
+        name: trimmedName,
+        code: editing.code.trim() || undefined,
+        color: editing.color.trim() || undefined,
+      });
+    } else if (activeTab === 'project') {
+      updateProjectType.mutate({
+        id: editing.id as number,
+        name: trimmedName,
+        code: editing.code.trim() || undefined,
+        color: editing.color.trim() || undefined,
+      });
+    }
+  }, [editing, activeTab, zoneColors, updateServiceType, updateProjectType]);
+
+  // Escape key handler for inline edit
+  useEffect(() => {
+    if (!editing) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        cancelEditing();
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [editing]);
 
   // -----------------------------------------------------------------------
   // Form submit
@@ -181,6 +334,7 @@ export function TypesPage() {
       createProjectType.mutate({
         name: trimmedName,
         code: formCode.trim() || undefined,
+        color: formColor.trim() || undefined,
       });
     }
   }
@@ -205,6 +359,9 @@ export function TypesPage() {
     if (!c) return undefined;
     return c.startsWith('#') ? c : `#${c}`;
   }
+
+  // Whether the active tab supports CRUD (delete/create)
+  const isMutable = activeTab !== 'zone';
 
   // -----------------------------------------------------------------------
   // Render
@@ -237,6 +394,7 @@ export function TypesPage() {
               setActiveTab(tab.key);
               setSearch('');
               resetForm();
+              setEditing(null);
             }}
             className={`pb-2.5 transition-colors ${
               activeTab === tab.key
@@ -305,29 +463,27 @@ export function TypesPage() {
                   className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
                 />
               </div>
-              {activeTab === 'service' && (
-                <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
-                    Color
-                  </label>
-                  <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-slate-200 focus-within:border-blue-500">
-                    <span
-                      className="inline-block h-3.5 w-3.5 rounded-full shrink-0 border border-slate-200"
-                      style={{
-                        backgroundColor: resolveColor(formColor) ?? '#CBD5E1',
-                      }}
-                    />
-                    <span className="text-sm text-slate-400">#</span>
-                    <input
-                      value={formColor}
-                      onChange={(e) => setFormColor(e.target.value.replace(/^#/, ''))}
-                      placeholder="3B82F6"
-                      maxLength={7}
-                      className="flex-1 text-sm text-slate-700 focus:outline-none bg-transparent"
-                    />
-                  </div>
+              <div>
+                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+                  Color
+                </label>
+                <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-slate-200 focus-within:border-blue-500">
+                  <span
+                    className="inline-block h-3.5 w-3.5 rounded-full shrink-0 border border-slate-200"
+                    style={{
+                      backgroundColor: resolveColor(formColor) ?? '#CBD5E1',
+                    }}
+                  />
+                  <span className="text-sm text-slate-400">#</span>
+                  <input
+                    value={formColor}
+                    onChange={(e) => setFormColor(e.target.value.replace(/^#/, ''))}
+                    placeholder="3B82F6"
+                    maxLength={7}
+                    className="flex-1 text-sm text-slate-700 focus:outline-none bg-transparent"
+                  />
                 </div>
-              )}
+              </div>
             </div>
             <div className="flex gap-2 mt-4">
               <button
@@ -374,56 +530,133 @@ export function TypesPage() {
                 <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">
                   Name
                 </th>
-                <th className="px-5 py-2.5 text-right text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-20">
+                <th className="px-5 py-2.5 text-right text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-28">
                   Actions
                 </th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr
-                  key={row.id}
-                  className="text-[13px] hover:bg-slate-50 border-t border-slate-100 transition-colors"
-                >
-                  {hasColor && (
-                    <td className="px-5 py-3">
-                      {resolveColor(row.color) ? (
-                        <span
-                          className="inline-block h-3 w-3 rounded-full"
-                          style={{ backgroundColor: resolveColor(row.color) }}
+              {rows.map((row) => {
+                const isEditing = editing?.id === row.id;
+
+                if (isEditing && editing) {
+                  return (
+                    <tr
+                      key={row.id}
+                      className="text-[13px] bg-blue-50/30 border-t border-slate-100"
+                    >
+                      {hasColor && (
+                        <td className="px-5 py-2.5">
+                          <ColorInput
+                            value={editing.color}
+                            onChange={(v) => setEditing({ ...editing, color: v })}
+                          />
+                        </td>
+                      )}
+                      <td className="px-5 py-2.5">
+                        <input
+                          value={editing.code}
+                          onChange={(e) =>
+                            setEditing({ ...editing, code: e.target.value.toUpperCase() })
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') saveEditing();
+                            if (e.key === 'Escape') cancelEditing();
+                          }}
+                          maxLength={10}
+                          placeholder="CODE"
+                          disabled={activeTab === 'zone'}
+                          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
                         />
+                      </td>
+                      <td className="px-5 py-2.5">
+                        <input
+                          value={editing.name}
+                          onChange={(e) =>
+                            setEditing({ ...editing, name: e.target.value })
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') saveEditing();
+                            if (e.key === 'Escape') cancelEditing();
+                          }}
+                          placeholder="Name"
+                          disabled={activeTab === 'zone'}
+                          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
+                          autoFocus
+                        />
+                      </td>
+                      <td className="px-5 py-2.5 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={saveEditing}
+                            disabled={isSaving}
+                            className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
+                            title="Save"
+                          >
+                            <Check className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={cancelEditing}
+                            className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                            title="Cancel"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                }
+
+                return (
+                  <tr
+                    key={row.id}
+                    onClick={() => startEditing(row)}
+                    className="text-[13px] hover:bg-slate-50 border-t border-slate-100 transition-colors cursor-pointer"
+                  >
+                    {hasColor && (
+                      <td className="px-5 py-3">
+                        {resolveColor(row.color) ? (
+                          <span
+                            className="inline-block h-3 w-3 rounded-full"
+                            style={{ backgroundColor: resolveColor(row.color) }}
+                          />
+                        ) : (
+                          <span className="inline-block h-3 w-3 rounded-full bg-slate-200" />
+                        )}
+                      </td>
+                    )}
+                    <td className="px-5 py-3">
+                      {row.code ? (
+                        <span className="rounded-[5px] bg-slate-50 text-slate-600 text-[11px] font-bold tracking-wide px-2 py-0.5">
+                          {row.code}
+                        </span>
                       ) : (
-                        <span className="inline-block h-3 w-3 rounded-full bg-slate-200" />
+                        <span className="text-slate-300">--</span>
                       )}
                     </td>
-                  )}
-                  <td className="px-5 py-3">
-                    {row.code ? (
-                      <span className="rounded-[5px] bg-slate-50 text-slate-600 text-[11px] font-bold tracking-wide px-2 py-0.5">
-                        {row.code}
-                      </span>
-                    ) : (
-                      <span className="text-slate-300">--</span>
-                    )}
-                  </td>
-                  <td className="px-5 py-3 font-medium text-slate-700">{row.name}</td>
-                  <td className="px-5 py-3 text-right">
-                    {isMutable ? (
-                      <button
-                        onClick={() => handleDelete(row)}
-                        className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] hover:bg-red-50 text-slate-300 hover:text-red-600 transition-colors"
-                        title={`Delete ${row.name}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    ) : (
-                      <span className="rounded-[5px] bg-slate-50 text-slate-400 text-[11px] font-bold tracking-wide px-2 py-0.5">
-                        Static
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                    <td className="px-5 py-3 font-medium text-slate-700">{row.name}</td>
+                    <td className="px-5 py-3 text-right">
+                      {isMutable ? (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(row);
+                          }}
+                          className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] hover:bg-red-50 text-slate-300 hover:text-red-600 transition-colors"
+                          title={`Delete ${row.name}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      ) : (
+                        <span className="rounded-[5px] bg-slate-50 text-slate-400 text-[11px] font-bold tracking-wide px-2 py-0.5">
+                          Static
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
