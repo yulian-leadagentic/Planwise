@@ -517,7 +517,13 @@ function PlanningView({ projectId }: { projectId: number }) {
     }
     const map = new Map<string, { key: string; zone: null; tasks: any[] }>();
     for (const t of sorted) {
-      const key = groupBy === 'service' ? (t.serviceType?.name || 'No Service') : (t.phase?.name || 'No Phase');
+      let key = '';
+      if (groupBy === 'service') {
+        // Try serviceType first, then extract from description tag [SERVICE:name]
+        key = t.serviceType?.name || t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || 'No Service';
+      } else {
+        key = t.phase?.name || 'No Phase/Milestone';
+      }
       if (!map.has(key)) map.set(key, { key, zone: null, tasks: [] });
       map.get(key)!.tasks.push(t);
     }

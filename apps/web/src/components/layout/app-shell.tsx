@@ -26,7 +26,7 @@ export function AppShell() {
         <Header />
 
         <main className={cn('flex-1 overflow-y-auto', isMobile ? 'pb-16' : 'pb-4')}>
-          <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+          <div className="px-4 py-4 sm:px-5">
             <Outlet />
           </div>
         </main>
