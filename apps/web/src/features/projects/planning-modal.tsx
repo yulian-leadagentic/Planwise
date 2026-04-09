@@ -331,7 +331,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
         {hasChildren && <span className="text-[11px] text-slate-400">({zone.children.length} sub-zones)</span>}
         <span className="ml-auto text-[11px] font-medium text-slate-400 shrink-0">{allZoneTasks.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span>
 
-        <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-all duration-150" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
           <div className="relative">
             <button onClick={() => setShowTaskMenu(!showTaskMenu)} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2 py-1 rounded-md flex items-center gap-1">
               <Plus className="w-3 h-3" /> Task
@@ -397,7 +397,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
                   )}
                 </span>
                 <span className={cn('text-[11px] font-medium w-20 shrink-0', stColor[task.status as string] || 'text-slate-400')}>{(task.status || 'not_started').replace(/_/g, ' ')}</span>
-                <button onClick={() => onDeleteTask(task.id)} className="opacity-0 group-hover:opacity-100 w-[18px] h-[18px] rounded hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-500"><Trash2 className="w-3 h-3" /></button>
+                <button onClick={() => onDeleteTask(task.id)} className="w-[18px] h-[18px] rounded hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-500"><Trash2 className="w-3 h-3" /></button>
               </div>
             );
           })}
@@ -550,10 +550,10 @@ function PlanningView({ projectId }: { projectId: number }) {
             <div className="flex items-center gap-1.5">
               <span className="text-[11px] font-semibold text-slate-400">Group:</span>
               <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as any)} className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none">
-                <option value="zone">Zone</option>
-                <option value="service">Service</option>
-                <option value="phase">Phase</option>
-                <option value="none">None</option>
+                <option value="zone">Zone Template</option>
+                <option value="service">Service Type</option>
+                <option value="phase">Service Phase</option>
+                <option value="none">No Grouping</option>
               </select>
             </div>
             <div className="relative">

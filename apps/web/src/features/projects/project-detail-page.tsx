@@ -325,7 +325,8 @@ function AddMemberDialog({
 
   const addMember = useAddProjectMember();
 
-  const users: User[] = usersResponse?.data ?? usersResponse ?? [];
+  const rawUsers = usersResponse?.data ?? usersResponse;
+  const users: User[] = Array.isArray(rawUsers) ? rawUsers : (rawUsers?.data ?? []);
   const filteredUsers = users.filter((u: User) => {
     if (existingMemberIds.includes(u.id)) return false;
     if (!search) return true;
