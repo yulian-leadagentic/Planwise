@@ -239,7 +239,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                     <td className="px-3 py-2 pl-5 font-mono text-xs font-medium text-slate-500">{task.code}</td>
                     <td className="px-3 py-2 font-medium text-slate-900">{task.name}</td>
                     <td className="px-3 py-2 text-[12px] text-slate-500">{task.zone?.name || '-'}</td>
-                    <td className="px-3 py-2">{task.serviceType ? <span className="rounded-[5px] bg-blue-50 px-1.5 py-0.5 text-[11px] font-bold text-blue-600">{task.serviceType.name}</span> : <span className="text-slate-300">-</span>}</td>
+                    <td className="px-3 py-2">{task.serviceType ? <span className="rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold" style={{ backgroundColor: `${task.serviceType.color || '#3B82F6'}15`, color: task.serviceType.color || '#3B82F6' }}>{task.serviceType.name}</span> : <span className="text-slate-300">-</span>}</td>
                     <td className="px-3 py-2 text-[12px] text-slate-500">{task.phase?.name || '-'}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs font-medium text-slate-700">{task.budgetHours ? Number(task.budgetHours) : '-'}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-slate-700">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</td>
@@ -382,7 +382,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <div key={task.id} style={{ marginLeft: 28 }} className="flex items-center gap-3 py-2.5 px-4 border-b border-slate-50 hover:bg-slate-50/50 group text-[13px]">
                 <span className="font-mono text-xs font-medium text-slate-400 w-24 shrink-0">{task.code}</span>
                 <span className="font-medium text-slate-900 flex-1 min-w-0 truncate">{task.name}</span>
-                {task.serviceType ? <span className="rounded-[5px] bg-blue-50 px-1.5 py-0.5 text-[11px] font-bold text-blue-600 shrink-0">{task.serviceType.name}</span> : null}
+                {task.serviceType ? <span className="rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold shrink-0" style={{ backgroundColor: `${task.serviceType.color || '#3B82F6'}15`, color: task.serviceType.color || '#3B82F6' }}>{task.serviceType.name}</span> : null}
                 {task.phase ? <span className="text-[11px] text-slate-400 shrink-0">{task.phase.name}</span> : null}
                 <span className="font-mono text-xs text-slate-500 w-10 text-right shrink-0">{task.budgetHours ? Number(task.budgetHours) : '-'}</span>
                 <span className="font-mono text-xs font-semibold text-slate-700 w-16 text-right shrink-0">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</span>
