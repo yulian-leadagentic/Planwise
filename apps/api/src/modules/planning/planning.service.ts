@@ -60,21 +60,41 @@ export class PlanningService {
     const serviceTypes = await this.prisma.serviceType.findMany({ orderBy: { sortOrder: 'asc' } });
     const phases = await this.prisma.phase.findMany({ orderBy: { sortOrder: 'asc' } });
 
+    // Aggregate logged time per task
+    const timeAgg = await this.prisma.timeEntry.groupBy({
+      by: ['taskId'],
+      where: { projectId, deletedAt: null, taskId: { not: null } },
+      _sum: { minutes: true },
+    });
+    const loggedByTask = new Map<number, number>();
+    for (const row of timeAgg) {
+      if (row.taskId) loggedByTask.set(row.taskId, row._sum.minutes ?? 0);
+    }
+
+    // Attach loggedMinutes to each task
+    const tasksWithLogged = tasks.map((t) => ({
+      ...t,
+      loggedMinutes: loggedByTask.get(t.id) ?? 0,
+    }));
+
     // Budget summary
     const totalHours = tasks.reduce((s, t) => s + Number(t.budgetHours || 0), 0);
     const totalAmount = tasks.reduce((s, t) => s + Number(t.budgetAmount || 0), 0);
+    const totalLoggedMinutes = tasksWithLogged.reduce((s, t) => s + t.loggedMinutes, 0);
     const topDown = project.budget ? Number(project.budget) : 0;
 
     return {
       project: { id: project.id, name: project.name, status: project.status, budget: topDown },
       zones: zoneRoots,
-      tasks,
+      tasks: tasksWithLogged,
       members,
       serviceTypes,
       phases,
       budgetSummary: {
         totalHours,
         totalAmount,
+        totalLoggedMinutes,
+        totalLoggedHours: Math.round(totalLoggedMinutes / 60 * 100) / 100,
         projectBudget: topDown,
         remaining: topDown - totalAmount,
         remainingPct: topDown > 0 ? Math.round((topDown - totalAmount) / topDown * 10000) / 100 : 0,

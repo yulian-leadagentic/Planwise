@@ -1,15 +1,25 @@
 import { useState, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Clock, LogIn, LogOut, Grid3X3 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/page-header';
 import { DailyBreakdownComponent } from './daily-breakdown';
-import { useClockStatus, useDailyBreakdown, useWeeklyGrid } from '@/hooks/use-time';
-import { getWeekRange, getWeekDates, addDays, startOfWeek, format } from '@/lib/date-utils';
+import { LogTimeDialog } from './log-time-dialog';
+import {
+  useClockStatus,
+  useClockIn,
+  useClockOut,
+  useDailyBreakdown,
+  useWeeklyGrid,
+} from '@/hooks/use-time';
+import { getWeekDates, addDays, startOfWeek, format } from '@/lib/date-utils';
 import { minutesToDisplay } from '@/types';
 import { Skeleton } from '@/components/shared/loading-skeleton';
 import { cn } from '@/lib/utils';
 
 export function MyTimePage() {
   const [weekOffset, setWeekOffset] = useState(0);
+  const [showLogDialog, setShowLogDialog] = useState(false);
+  const [logDialogDate, setLogDialogDate] = useState<string | undefined>();
 
   const currentWeekStart = useMemo(() => {
     const today = new Date();
@@ -21,8 +31,23 @@ export function MyTimePage() {
   const weekDates = getWeekDates(currentWeekStart);
 
   const { data: clockStatus } = useClockStatus();
+  const clockIn = useClockIn();
+  const clockOut = useClockOut();
   const { data: breakdown, isLoading } = useDailyBreakdown(weekStartStr);
   const { data: grid } = useWeeklyGrid({ weekStart: weekStartStr });
+
+  const handleClockToggle = () => {
+    if (clockStatus?.isClockedIn) {
+      clockOut.mutate();
+    } else {
+      clockIn.mutate();
+    }
+  };
+
+  const openLogForDate = (date?: string) => {
+    setLogDialogDate(date);
+    setShowLogDialog(true);
+  };
 
   return (
     <div className="space-y-6">
@@ -30,12 +55,62 @@ export function MyTimePage() {
         title="My Time"
         description="Track your daily work hours"
         actions={
-          <button className="flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
-            <Plus className="h-4 w-4" />
-            Log Time
-          </button>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/time/grid"
+              className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:bg-accent"
+            >
+              <Grid3X3 className="h-4 w-4" />
+              Weekly Grid
+            </Link>
+            <button
+              onClick={handleClockToggle}
+              disabled={clockIn.isPending || clockOut.isPending}
+              className={cn(
+                'flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50',
+                clockStatus?.isClockedIn
+                  ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
+                  : 'border border-green-200 bg-green-50 text-green-700 hover:bg-green-100',
+              )}
+            >
+              {clockStatus?.isClockedIn ? (
+                <>
+                  <LogOut className="h-4 w-4" />
+                  {clockIn.isPending || clockOut.isPending ? 'Processing...' : 'Clock Out'}
+                </>
+              ) : (
+                <>
+                  <LogIn className="h-4 w-4" />
+                  {clockIn.isPending || clockOut.isPending ? 'Processing...' : 'Clock In'}
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => openLogForDate()}
+              className="flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
+            >
+              <Plus className="h-4 w-4" />
+              Log Time
+            </button>
+          </div>
         }
       />
+
+      {/* Clock status banner */}
+      {clockStatus?.isClockedIn && (
+        <div className="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-3">
+          <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-green-500" />
+          <Clock className="h-4 w-4 text-green-600" />
+          <span className="text-sm font-medium text-green-700">
+            Clocked in since {clockStatus.clockInAt ? format(new Date(clockStatus.clockInAt), 'HH:mm') : ''}
+          </span>
+          {clockStatus.elapsedMinutes != null && (
+            <span className="text-sm text-green-600">
+              ({minutesToDisplay(clockStatus.elapsedMinutes)} elapsed)
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Week navigation */}
       <div className="flex items-center justify-between rounded-lg border border-border bg-background p-3">
@@ -109,10 +184,20 @@ export function MyTimePage() {
       ) : (
         <div className="space-y-2">
           {(breakdown ?? []).map((day) => (
-            <DailyBreakdownComponent key={day.date} day={day} />
+            <DailyBreakdownComponent
+              key={day.date}
+              day={day}
+              onLogTime={() => openLogForDate(day.date)}
+            />
           ))}
         </div>
       )}
+
+      <LogTimeDialog
+        open={showLogDialog}
+        onClose={() => setShowLogDialog(false)}
+        defaultDate={logDialogDate}
+      />
     </div>
   );
 }

@@ -223,6 +223,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                 <th className={cn(thClass, 'w-28')} onClick={() => handleSort('service')}>Service{sortIcon('service')}</th>
                 <th className={cn(thClass, 'w-20')} onClick={() => handleSort('phase')}>Phase{sortIcon('phase')}</th>
                 <th className={cn(thClass, 'w-14 text-right')} onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
+                <th className={cn(thClass, 'w-14 text-right')}>Logged</th>
                 <th className={cn(thClass, 'w-20 text-right')} onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
                 <th className={cn(thClass, 'w-28')}>Assignee</th>
                 <th className={cn(thClass, 'w-24')}>Status</th>
@@ -242,6 +243,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                     <td className="px-3 py-2">{task.serviceType ? <span className="rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold" style={{ backgroundColor: `${task.serviceType.color || '#3B82F6'}15`, color: task.serviceType.color || '#3B82F6' }}>{task.serviceType.name}</span> : <span className="text-slate-300">-</span>}</td>
                     <td className="px-3 py-2 text-[12px] text-slate-500">{task.phase?.name || '-'}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs font-medium text-slate-700">{task.budgetHours ? Number(task.budgetHours) : '-'}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs">{task.loggedMinutes > 0 ? <span className={cn('font-medium', task.budgetHours && (task.loggedMinutes / 60) > Number(task.budgetHours) ? 'text-red-600' : 'text-blue-600')}>{Math.round(task.loggedMinutes / 60 * 10) / 10}h</span> : <span className="text-slate-300">-</span>}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-slate-700">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</td>
                     <td className="px-3 py-2">
                       {assignee ? (
@@ -269,7 +271,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                 );
               })}
               {tasks.length === 0 && !showAddTask && (
-                <tr><td colSpan={9} className="px-5 py-6 text-center text-[13px] text-slate-400">No tasks. Click "Add Task" to create one.</td></tr>
+                <tr><td colSpan={10} className="px-5 py-6 text-center text-[13px] text-slate-400">No tasks. Click "Add Task" to create one.</td></tr>
               )}
             </tbody>
           </table>
@@ -385,6 +387,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
                 {task.serviceType ? <span className="rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold shrink-0" style={{ backgroundColor: `${task.serviceType.color || '#3B82F6'}15`, color: task.serviceType.color || '#3B82F6' }}>{task.serviceType.name}</span> : null}
                 {task.phase ? <span className="text-[11px] text-slate-400 shrink-0">{task.phase.name}</span> : null}
                 <span className="font-mono text-xs text-slate-500 w-10 text-right shrink-0">{task.budgetHours ? Number(task.budgetHours) : '-'}</span>
+                <span className="font-mono text-xs w-12 text-right shrink-0">{task.loggedMinutes > 0 ? <span className={cn('font-medium', task.budgetHours && (task.loggedMinutes / 60) > Number(task.budgetHours) ? 'text-red-600' : 'text-blue-600')}>{Math.round(task.loggedMinutes / 60 * 10) / 10}h</span> : <span className="text-slate-300">-</span>}</span>
                 <span className="font-mono text-xs font-semibold text-slate-700 w-16 text-right shrink-0">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</span>
                 <span className="w-20 shrink-0">
                   {assignee ? (
@@ -532,6 +535,8 @@ function PlanningView({ projectId }: { projectId: number }) {
 
   const totalHours = sorted.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
   const totalAmount = sorted.reduce((s: number, t: any) => s + Number(t.budgetAmount || 0), 0);
+  const totalLoggedMinutes = sorted.reduce((s: number, t: any) => s + (t.loggedMinutes || 0), 0);
+  const totalLoggedHours = Math.round(totalLoggedMinutes / 60 * 10) / 10;
 
   if (isLoading) return <div className="flex h-96 items-center justify-center text-[13px] text-slate-400">Loading...</div>;
 
@@ -576,7 +581,7 @@ function PlanningView({ projectId }: { projectId: number }) {
           <div className="flex items-center justify-between py-3 border-b border-slate-200">
             <div>
               <h3 className="text-[15px] font-bold text-slate-900">Project Tasks</h3>
-              <span className="text-[11px] font-medium text-slate-400">{sorted.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span>
+              <span className="text-[11px] font-medium text-slate-400">{sorted.length} tasks · {totalHours}h budget{totalLoggedHours > 0 ? ` · ${totalLoggedHours}h logged` : ''} · ₪{totalAmount.toLocaleString()}</span>
             </div>
           </div>
 
@@ -589,6 +594,7 @@ function PlanningView({ projectId }: { projectId: number }) {
               <span className="w-24 shrink-0">Service</span>
               <span className="w-24 shrink-0">Phase/Milestone</span>
               <span className="w-10 text-right shrink-0">Hours</span>
+              <span className="w-12 text-right shrink-0">Logged</span>
               <span className="w-16 text-right shrink-0">Amount</span>
               <span className="w-20 shrink-0">Assignee</span>
               <span className="w-20 shrink-0">Status</span>
@@ -613,6 +619,12 @@ function PlanningView({ projectId }: { projectId: number }) {
 
           <div className="flex items-center gap-6 px-4 py-2.5 border-t border-slate-200 bg-[#FAFBFC] text-[12px]">
             <div><span className="text-slate-400">Total:</span> <span className="font-mono text-xs font-semibold text-slate-900 ml-1">{sorted.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span></div>
+            {totalLoggedHours > 0 && (
+              <>
+                <span className="text-slate-300">│</span>
+                <div><span className="text-slate-400">Logged:</span> <span className={cn('font-mono text-xs font-semibold ml-1', totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-600' : 'text-blue-600')}>{totalLoggedHours}h</span>{totalHours > 0 && <span className="text-slate-400 ml-1">/ {totalHours}h ({Math.round(totalLoggedHours / totalHours * 100)}%)</span>}</div>
+              </>
+            )}
             {budget?.projectBudget > 0 && (
               <>
                 <span className="text-slate-300">│</span>
