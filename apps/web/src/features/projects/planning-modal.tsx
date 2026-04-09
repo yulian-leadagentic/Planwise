@@ -550,9 +550,9 @@ function PlanningView({ projectId }: { projectId: number }) {
             <div className="flex items-center gap-1.5">
               <span className="text-[11px] font-semibold text-slate-400">Group:</span>
               <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as any)} className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none">
-                <option value="zone">Zone Template</option>
-                <option value="service">Service Type</option>
-                <option value="phase">Service Phase</option>
+                <option value="zone">Zone</option>
+                <option value="service">Service</option>
+                <option value="phase">Phase/Milestone</option>
                 <option value="none">No Grouping</option>
               </select>
             </div>
@@ -581,7 +581,7 @@ function PlanningView({ projectId }: { projectId: number }) {
               <span className="flex-1">Task Name</span>
               <span className="w-28 shrink-0">Zone</span>
               <span className="w-24 shrink-0">Service</span>
-              <span className="w-20 shrink-0">Phase</span>
+              <span className="w-24 shrink-0">Phase/Milestone</span>
               <span className="w-10 text-right shrink-0">Hours</span>
               <span className="w-16 text-right shrink-0">Amount</span>
               <span className="w-20 shrink-0">Assignee</span>
@@ -633,7 +633,7 @@ export function PlanningPage() {
   const navigate = useNavigate();
   const { id } = useParams();
   return (
-    <div className="px-7 py-5 space-y-4">
+    <div className="px-4 py-5 space-y-4">
       <button onClick={() => navigate(`/projects/${Number(id)}`)} className="flex items-center gap-1.5 text-[13px] text-slate-400 hover:text-slate-600"><ArrowLeft className="h-4 w-4" /> Back to Project</button>
       <PlanningView projectId={Number(id)} />
     </div>

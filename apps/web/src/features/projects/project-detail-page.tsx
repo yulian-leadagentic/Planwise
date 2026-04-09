@@ -65,7 +65,7 @@ export function ProjectDetailPage() {
     <div className="min-h-screen bg-slate-50">
       {/* Header */}
       <div className="bg-white border-b border-slate-200">
-        <div className="mx-auto max-w-7xl px-6 pt-5 pb-0">
+        <div className="px-5 pt-5 pb-0">
           {/* Back link */}
           <button
             onClick={() => navigate('/projects')}
@@ -171,7 +171,7 @@ export function ProjectDetailPage() {
 
       {/* Tab bar */}
       <div className="bg-white border-b border-slate-200">
-        <div className="mx-auto max-w-7xl px-6">
+        <div className="px-5">
           <div className="flex gap-6">
             {tabs.map((t) => (
               <button
@@ -192,7 +192,7 @@ export function ProjectDetailPage() {
       </div>
 
       {/* Tab content */}
-      <div className="mx-auto max-w-7xl px-6 py-6">
+      <div className="px-5 py-6">
         {tab === 'planning' && <PlanningTab projectId={projectId} />}
         {tab === 'team' && (
           <TeamTab
