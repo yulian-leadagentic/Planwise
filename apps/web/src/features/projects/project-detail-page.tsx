@@ -1,7 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Settings, Plus, UserPlus, X, Pencil } from 'lucide-react';
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlanningTab } from './planning-modal';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { useProject, useProjectMembers, useAddProjectMember, useRemoveProjectMember } from '@/hooks/use-projects';
@@ -319,32 +319,34 @@ function AddMemberDialog({
 }) {
   const [search, setSearch] = useState('');
 
-  const { data: usersResponse, isLoading: loadingUsers } = useQuery({
-    queryKey: ['users', 'active'],
-    queryFn: () => client.get('/users?isActive=true').then((r) => r.data),
+  const { data: users = [], isLoading: loadingUsers } = useQuery<User[]>({
+    queryKey: ['users-active'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () =>
+      client.get('/users?isActive=true').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
   });
 
   const addMember = useAddProjectMember();
 
-  const rawUsers = usersResponse?.data ?? usersResponse;
-  const users: User[] = Array.isArray(rawUsers) ? rawUsers : (rawUsers?.data ?? []);
-  const filteredUsers = users.filter((u: User) => {
-    if (existingMemberIds.includes(u.id)) return false;
-    if (!search) return true;
-    const full = `${u.firstName} ${u.lastName}`.toLowerCase();
-    return full.includes(search.toLowerCase());
-  });
+  const filteredUsers = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    return users.filter((u) => {
+      if (existingMemberIds.includes(u.id)) return false;
+      if (!q) return true;
+      const full = `${u.firstName ?? ''} ${u.lastName ?? ''}`.toLowerCase();
+      return full.includes(q);
+    });
+  }, [users, search, existingMemberIds]);
 
   const handleAdd = (user: User) => {
     addMember.mutate(
       { projectId, userId: user.id },
       {
         onSuccess: () => {
-          notify.success(`Added ${user.firstName} ${user.lastName}`);
           onClose();
-        },
-        onError: () => {
-          notify.error(`Failed to add ${user.firstName} ${user.lastName}`);
         },
       },
     );
@@ -386,31 +388,31 @@ function AddMemberDialog({
             </p>
           ) : (
             <div className="space-y-1">
-              {filteredUsers.map((user) => (
-                <div
-                  key={user.id}
-                  className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50"
-                >
-                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-[9px] font-semibold text-indigo-600">
-                    {getInitials(user.firstName, user.lastName)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-800 truncate">
-                      {user.firstName} {user.lastName}
-                    </p>
-                    {user.position && (
-                      <p className="text-xs text-slate-400">{user.position}</p>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => handleAdd(user)}
-                    disabled={addMember.isPending}
-                    className="rounded-md bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-600 hover:bg-blue-100 transition-colors disabled:opacity-50"
+              {filteredUsers.map((user) => {
+                const fullName = `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || 'Unknown';
+                const email = typeof user.email === 'string' ? user.email : '';
+                return (
+                  <div
+                    key={user.id}
+                    className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50"
                   >
-                    Add
-                  </button>
-                </div>
-              ))}
+                    <div className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-[9px] font-semibold text-indigo-600">
+                      {getInitials(user.firstName ?? '', user.lastName ?? '')}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-slate-800 truncate">{fullName}</p>
+                      {email && <p className="text-xs text-slate-400 truncate">{email}</p>}
+                    </div>
+                    <button
+                      onClick={() => handleAdd(user)}
+                      disabled={addMember.isPending}
+                      className="rounded-md bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-600 hover:bg-blue-100 transition-colors disabled:opacity-50"
+                    >
+                      Add
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
