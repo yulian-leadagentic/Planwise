@@ -319,6 +319,8 @@ function AddMemberDialog({
 }) {
   const [tab, setTab] = useState<'individual' | 'template'>('individual');
   const [search, setSearch] = useState('');
+  const [applying, setApplying] = useState(false);
+  const queryClient = useQueryClient();
 
   const { data: users = [], isLoading: loadingUsers } = useQuery<User[]>({
     queryKey: ['users-active'],
@@ -374,31 +376,35 @@ function AddMemberDialog({
       return;
     }
 
-    let added = 0;
-    let failed = 0;
-    for (const userId of templateMemberIds) {
-      try {
-        await new Promise<void>((resolve, reject) =>
-          addMember.mutate(
-            { projectId, userId },
-            {
-              onSuccess: () => { added++; resolve(); },
-              onError: () => { failed++; resolve(); },
-            },
-          ),
-        );
-      } catch {
-        failed++;
-      }
-    }
+    // Bypass the useAddProjectMember hook so we don't fire one toast per member.
+    // Add all members in parallel via direct API calls, then show a single notification.
+    setApplying(true);
+    const results = await Promise.allSettled(
+      templateMemberIds.map((userId) =>
+        client.post(`/projects/${projectId}/members`, { userId }),
+      ),
+    );
+    const added = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.length - added;
 
-    if (added > 0) {
-      notify.success(`Added ${added} member${added !== 1 ? 's' : ''} from "${template.name}"`, {
-        code: 'TEAM-APPLY-200',
+    // Refresh the members list
+    queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'members'] });
+    setApplying(false);
+
+    if (added > 0 && failed === 0) {
+      notify.success(
+        `Added ${added} member${added !== 1 ? 's' : ''} from "${template.name}"`,
+        { code: 'TEAM-APPLY-200' },
+      );
+    } else if (added > 0 && failed > 0) {
+      notify.warning(
+        `Added ${added}, ${failed} failed from "${template.name}"`,
+        { code: 'TEAM-APPLY-207' },
+      );
+    } else {
+      notify.error(`Could not add members from "${template.name}"`, {
+        code: 'TEAM-APPLY-500',
       });
-    }
-    if (failed > 0) {
-      notify.warning(`${failed} member${failed !== 1 ? 's' : ''} could not be added`);
     }
     onClose();
   };
@@ -519,7 +525,7 @@ function AddMemberDialog({
                       key={t.id}
                       type="button"
                       onClick={() => handleApplyTemplate(t)}
-                      disabled={addMember.isPending || availableCount === 0}
+                      disabled={applying || availableCount === 0}
                       className="w-full rounded-lg border border-slate-200 bg-white p-3 text-left hover:border-blue-400 hover:bg-blue-50/40 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <div className="flex items-start justify-between gap-3">
