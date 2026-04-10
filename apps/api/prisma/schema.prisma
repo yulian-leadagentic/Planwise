@@ -424,8 +424,8 @@ model TimeClock {
 
   timeEntries TimeEntry[]
 
-  @@unique([userId, date])
   @@index([userId])
+  @@index([userId, date])
   @@index([approvedBy])
   @@index([editedBy])
   @@index([date])

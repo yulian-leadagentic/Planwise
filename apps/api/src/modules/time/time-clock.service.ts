@@ -13,22 +13,18 @@ export class TimeClockService {
   async clockIn(userId: number, dto: ClockInDto) {
     const today = startOfDay(new Date());
 
-    // Check if already clocked in today
-    const existing = await this.prisma.timeClock.findFirst({
-      where: { userId, date: today },
+    // Only block if there's an OPEN clock-in (user forgot to clock out)
+    const openRecord = await this.prisma.timeClock.findFirst({
+      where: { userId, date: today, clockOut: null, status: 'clocked_in' },
     });
 
-    if (existing && !existing.clockOut) {
-      throw new BadRequestException('Already clocked in today');
-    }
-
-    if (existing && existing.clockOut) {
-      throw new BadRequestException('Already completed clock for today');
+    if (openRecord) {
+      throw new BadRequestException('Already clocked in — clock out first');
     }
 
     const now = new Date();
 
-    // Check user schedule for late detection
+    // Check user schedule for late detection (only applied to the first clock-in of the day)
     const dayOfWeek = now.getDay();
     const schedule = await this.prisma.workSchedule.findFirst({
       where: {
@@ -40,6 +36,12 @@ export class TimeClockService {
       },
     });
 
+    // Count existing clock-in records for today to determine if this is the first one
+    const existingTodayCount = await this.prisma.timeClock.count({
+      where: { userId, date: today },
+    });
+    const isFirstClockInToday = existingTodayCount === 0;
+
     let isLate = false;
     let lateMinutes = 0;
     let expectedMinutes: number | null = null;
@@ -49,7 +51,8 @@ export class TimeClockService {
       const shiftStart = new Date(today);
       shiftStart.setHours(shiftHour, shiftMin, 0, 0);
 
-      if (now > shiftStart) {
+      // Only mark as late on the first clock-in of the day
+      if (isFirstClockInToday && now > shiftStart) {
         isLate = true;
         lateMinutes = differenceInMinutes(now, shiftStart);
       }
@@ -58,7 +61,10 @@ export class TimeClockService {
       const shiftEnd = new Date(today);
       shiftEnd.setHours(endHour, endMin, 0, 0);
 
-      expectedMinutes = differenceInMinutes(shiftEnd, shiftStart) - schedule.breakMinutes;
+      // Only attach expected minutes to the first clock-in of the day
+      if (isFirstClockInToday) {
+        expectedMinutes = differenceInMinutes(shiftEnd, shiftStart) - schedule.breakMinutes;
+      }
     }
 
     return this.prisma.timeClock.create({
@@ -79,8 +85,10 @@ export class TimeClockService {
   async clockOut(userId: number, dto: ClockOutDto) {
     const today = startOfDay(new Date());
 
+    // Find the most recent open clock-in for today
     const record = await this.prisma.timeClock.findFirst({
-      where: { userId, date: today, clockOut: null },
+      where: { userId, date: today, clockOut: null, status: 'clocked_in' },
+      orderBy: { clockIn: 'desc' },
     });
 
     if (!record) {
@@ -109,17 +117,33 @@ export class TimeClockService {
   async getStatus(userId: number) {
     const today = startOfDay(new Date());
 
+    // Find the most recent record for today
     const record = await this.prisma.timeClock.findFirst({
       where: { userId, date: today },
+      orderBy: { clockIn: 'desc' },
     });
 
     if (!record) {
-      return { isClockedIn: false, record: null };
+      return {
+        isClockedIn: false,
+        clockInAt: null,
+        elapsedMinutes: null,
+        expectedMinutes: null,
+        todayRecord: null,
+      };
     }
 
+    const isClockedIn = !record.clockOut;
+    const elapsedMinutes = isClockedIn
+      ? Math.max(0, differenceInMinutes(new Date(), record.clockIn))
+      : record.totalMinutes ?? null;
+
     return {
-      isClockedIn: !record.clockOut,
-      record,
+      isClockedIn,
+      clockInAt: record.clockIn.toISOString(),
+      elapsedMinutes,
+      expectedMinutes: record.expectedMinutes,
+      todayRecord: record,
     };
   }
 
@@ -127,8 +151,11 @@ export class TimeClockService {
     const today = startOfDay(new Date());
     const todayEnd = endOfDay(new Date());
 
-    const [clockRecord, timeEntries, schedule] = await Promise.all([
-      this.prisma.timeClock.findFirst({ where: { userId, date: today } }),
+    const [clockRecords, timeEntries, schedule] = await Promise.all([
+      this.prisma.timeClock.findMany({
+        where: { userId, date: today },
+        orderBy: { clockIn: 'asc' },
+      }),
       this.prisma.timeEntry.findMany({
         where: { userId, date: { gte: today, lte: todayEnd } },
         include: {
@@ -148,15 +175,21 @@ export class TimeClockService {
     ]);
 
     const totalLoggedMinutes = timeEntries.reduce((sum, e) => sum + e.minutes, 0);
+    const totalClockedMinutes = clockRecords.reduce((sum, r) => sum + (r.totalMinutes ?? 0), 0);
+    const expectedMinutes = clockRecords.find((r) => r.expectedMinutes != null)?.expectedMinutes ?? null;
+    // Most recent record for backwards-compat `clock` field
+    const latestRecord = clockRecords.length > 0 ? clockRecords[clockRecords.length - 1] : null;
 
     return {
-      clock: clockRecord,
+      clock: latestRecord,
+      clockRecords,
       timeEntries,
       schedule,
       summary: {
         totalLoggedMinutes,
         totalLoggedHours: +(totalLoggedMinutes / 60).toFixed(2),
-        expectedMinutes: clockRecord?.expectedMinutes ?? null,
+        totalClockedMinutes,
+        expectedMinutes,
       },
     };
   }
