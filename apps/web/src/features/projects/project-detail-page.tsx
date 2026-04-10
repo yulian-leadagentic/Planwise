@@ -16,8 +16,9 @@ interface User {
   id: number;
   firstName: string;
   lastName: string;
-  role?: string;
+  email?: string;
   avatarUrl?: string | null;
+  position?: string | null;
 }
 
 function getInitials(firstName: string, lastName: string) {
@@ -40,6 +41,7 @@ function formatBudget(amount: number) {
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const projectId = Number(id);
   const [tab, setTab] = useState<Tab>('planning');
   const [showAddMember, setShowAddMember] = useState(false);
@@ -316,7 +318,6 @@ function AddMemberDialog({
   onClose: () => void;
 }) {
   const [search, setSearch] = useState('');
-  const queryClient = useQueryClient();
 
   const { data: usersResponse, isLoading: loadingUsers } = useQuery({
     queryKey: ['users', 'active'],
@@ -336,10 +337,11 @@ function AddMemberDialog({
 
   const handleAdd = (user: User) => {
     addMember.mutate(
-      { projectId, userId: user.id, role: user.role ?? undefined },
+      { projectId, userId: user.id },
       {
         onSuccess: () => {
           notify.success(`Added ${user.firstName} ${user.lastName}`);
+          onClose();
         },
         onError: () => {
           notify.error(`Failed to add ${user.firstName} ${user.lastName}`);
@@ -396,8 +398,8 @@ function AddMemberDialog({
                     <p className="text-sm font-medium text-slate-800 truncate">
                       {user.firstName} {user.lastName}
                     </p>
-                    {user.role && (
-                      <p className="text-xs text-slate-400">{user.role}</p>
+                    {user.position && (
+                      <p className="text-xs text-slate-400">{user.position}</p>
                     )}
                   </div>
                   <button
