@@ -2,7 +2,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ArrowLeft, Loader2, X, Search, UserCircle } from 'lucide-react';
+import { ArrowLeft, Loader2, X, Search, UserCircle, Users } from 'lucide-react';
 import { useEffect, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
@@ -62,6 +62,17 @@ export function ProjectFormPage() {
   const [memberIds, setMemberIds] = useState<number[]>([]);
   const [memberSearch, setMemberSearch] = useState('');
   const [memberDropdownOpen, setMemberDropdownOpen] = useState(false);
+  const [showTeamTemplatePicker, setShowTeamTemplatePicker] = useState(false);
+
+  // Fetch team templates for the picker
+  const { data: teamTemplates = [] } = useQuery<any[]>({
+    queryKey: ['team-templates'],
+    queryFn: () =>
+      client.get('/admin/config/team-templates').then((r) => {
+        const d = r.data.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
 
   const {
     register,
@@ -132,6 +143,24 @@ export function ProjectFormPage() {
 
   const removeMember = (userId: number) => {
     setMemberIds((prev) => prev.filter((id) => id !== userId));
+  };
+
+  const applyTeamTemplate = (templateId: number) => {
+    const template = teamTemplates.find((t) => t.id === templateId);
+    if (!template) return;
+    const templateMemberIds: number[] = (template.members || [])
+      .map((m: any) => m.userId ?? m.user?.id)
+      .filter((id: any): id is number => typeof id === 'number');
+    setMemberIds((prev) => {
+      const next = new Set(prev);
+      templateMemberIds.forEach((id) => next.add(id));
+      return Array.from(next);
+    });
+    setShowTeamTemplatePicker(false);
+    notify.success(
+      `Loaded ${templateMemberIds.length} member${templateMemberIds.length !== 1 ? 's' : ''} from "${template.name}"`,
+      { code: 'TEAM-LOAD-200' },
+    );
   };
 
   const getUserName = (userId: number) => {
@@ -285,7 +314,17 @@ export function ProjectFormPage() {
 
                 {/* Team Members */}
                 <div>
-                  <label className={labelClass}>Team Members</label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className={labelClass + ' mb-0'}>Team Members</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowTeamTemplatePicker(true)}
+                      className="flex items-center gap-1.5 text-[12px] font-semibold text-blue-600 hover:text-blue-700"
+                    >
+                      <Users className="h-3.5 w-3.5" />
+                      Add from Team Template
+                    </button>
+                  </div>
 
                   {/* Selected member pills */}
                   {memberIds.length > 0 && (
@@ -393,6 +432,91 @@ export function ProjectFormPage() {
             </div>
           </div>
         </form>
+
+        {/* Team Template Picker Modal */}
+        {showTeamTemplatePicker && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            onClick={() => setShowTeamTemplatePicker(false)}
+          >
+            <div
+              className="mx-4 flex max-h-[80vh] w-full max-w-lg flex-col rounded-[14px] border border-slate-200 bg-white shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+                <div className="flex items-center gap-2">
+                  <Users className="h-5 w-5 text-blue-600" />
+                  <h2 className="text-base font-semibold">Add from Team Template</h2>
+                </div>
+                <button
+                  onClick={() => setShowTeamTemplatePicker(false)}
+                  className="rounded-md p-1.5 hover:bg-slate-100"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                {teamTemplates.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-slate-500">
+                    No team templates available. Create one in Templates → Team Templates.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {teamTemplates.map((t) => {
+                      const memberCount = t._count?.members ?? t.members?.length ?? 0;
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => applyTeamTemplate(t.id)}
+                          className="w-full rounded-lg border border-slate-200 bg-white p-3 text-left hover:border-blue-400 hover:bg-blue-50/40"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold text-slate-900">{t.name}</p>
+                              <p className="mt-0.5 text-xs text-slate-500">
+                                {memberCount} member{memberCount !== 1 ? 's' : ''}
+                              </p>
+                              {t.members && t.members.length > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-1">
+                                  {t.members.slice(0, 6).map((m: any) => {
+                                    const u = m.user ?? {};
+                                    const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || u.email || 'Unknown';
+                                    return (
+                                      <span
+                                        key={m.id}
+                                        className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600"
+                                      >
+                                        <UserCircle className="h-3 w-3 text-slate-400" />
+                                        {name}
+                                      </span>
+                                    );
+                                  })}
+                                  {t.members.length > 6 && (
+                                    <span className="text-[11px] text-slate-400">+{t.members.length - 6} more</span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
+                <button
+                  type="button"
+                  onClick={() => setShowTeamTemplatePicker(false)}
+                  className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

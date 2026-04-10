@@ -669,6 +669,7 @@ function ServicePickerModal({
                   <th className="px-3 py-2 w-10"></th>
                   <th className="px-3 py-2 text-left font-medium">Name</th>
                   <th className="px-3 py-2 text-left font-medium">Code</th>
+                  <th className="px-3 py-2 text-left font-medium">Phase/Milestone</th>
                   <th className="px-3 py-2 text-right font-medium">Tasks</th>
                 </tr>
               </thead>
@@ -680,6 +681,13 @@ function ServicePickerModal({
                       <td className="px-3 py-2"><input type="checkbox" checked={isSelected} onChange={() => {}} className="h-4 w-4" /></td>
                       <td className="px-3 py-2 font-medium">{t.name}</td>
                       <td className="px-3 py-2 text-muted-foreground">{t.code || '-'}</td>
+                      <td className="px-3 py-2">
+                        {t.phase ? (
+                          <span className="rounded-full bg-cyan-100 px-1.5 py-0.5 text-[11px] font-medium text-cyan-700">{t.phase.name}</span>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </td>
                       <td className="px-3 py-2 text-right">{t._count?.templateTasks ?? 0}</td>
                     </tr>
                   );
@@ -706,12 +714,13 @@ function ServicePickerModal({
 // Service Group Item (expandable, view-only tasks)
 // ---------------------------------------------------------------------------
 
-function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, readOnly }: {
+function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, readOnly, servicePhase }: {
   serviceName: string;
   tasks: any[];
   templateId: number;
   onDeleteAll: () => void;
   readOnly?: boolean;
+  servicePhase?: { name: string; code?: string | null } | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const totalHours = tasks.reduce((s: number, t: any) => s + Number(t.defaultBudgetHours || 0), 0);
@@ -726,6 +735,11 @@ function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, readOnl
         {expanded ? <ChevronDown className="h-3 w-3 text-blue-500" /> : <ChevronRight className="h-3 w-3 text-blue-500" />}
         <Copy className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         <span className="text-sm text-blue-700 font-medium">Service: {serviceName}</span>
+        {servicePhase && (
+          <span className="rounded-full bg-cyan-100 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700">
+            {servicePhase.name}
+          </span>
+        )}
         <span className="text-xs text-muted-foreground">
           {tasks.length} task{tasks.length !== 1 ? 's' : ''} &middot; {totalHours}h &middot; {'\u20AA'}{totalAmount.toLocaleString()}
         </span>
@@ -746,7 +760,6 @@ function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, readOnl
                 <th className="px-2 py-1 text-left font-medium">Name</th>
                 <th className="px-2 py-1 text-right font-medium">Hours</th>
                 <th className="px-2 py-1 text-right font-medium">Amount</th>
-                <th className="px-2 py-1 text-left font-medium">Phase</th>
               </tr>
             </thead>
             <tbody>
@@ -756,7 +769,7 @@ function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, readOnl
                   <td className="px-2 py-1">{task.name}</td>
                   <td className="px-2 py-1 text-right tabular-nums">{task.defaultBudgetHours != null ? `${Number(task.defaultBudgetHours)}` : '-'}</td>
                   <td className="px-2 py-1 text-right tabular-nums">{task.defaultBudgetAmount != null ? `${'\u20AA'}${Number(task.defaultBudgetAmount).toLocaleString()}` : '-'}</td>
-                    </tr>
+                </tr>
               ))}
             </tbody>
           </table>
@@ -770,7 +783,7 @@ function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, readOnl
 // Read-Only Zone Node (for displaying referenced template content)
 // ---------------------------------------------------------------------------
 
-function ReadOnlyZoneNode({ zone, depth }: { zone: any; depth: number }) {
+function ReadOnlyZoneNode({ zone, depth, servicePhaseMap }: { zone: any; depth: number; servicePhaseMap?: Map<string, { name: string; code?: string | null }> }) {
   const [expanded, setExpanded] = useState(false);
 
   // If this zone references another template, fetch its content
@@ -821,7 +834,7 @@ function ReadOnlyZoneNode({ zone, depth }: { zone: any; depth: number }) {
         <div className="ml-5 border-l border-muted pl-3 space-y-0.5 mb-1">
           {/* Services */}
           {Array.from(serviceGroups.entries()).map(([svcName, svcTasks]) => (
-            <ServiceGroupItem key={`ro-svc-${svcName}`} serviceName={svcName} tasks={svcTasks} templateId={0} onDeleteAll={() => {}} readOnly />
+            <ServiceGroupItem key={`ro-svc-${svcName}`} serviceName={svcName} tasks={svcTasks} templateId={0} servicePhase={servicePhaseMap?.get(svcName) || null} onDeleteAll={() => {}} readOnly />
           ))}
 
           {/* Tasks */}
@@ -836,12 +849,12 @@ function ReadOnlyZoneNode({ zone, depth }: { zone: any; depth: number }) {
 
           {/* Referenced template's zones */}
           {refZones.map((rz: any) => (
-            <ReadOnlyZoneNode key={`ro-zone-${rz.id}`} zone={rz} depth={depth + 1} />
+            <ReadOnlyZoneNode key={`ro-zone-${rz.id}`} zone={rz} depth={depth + 1} servicePhaseMap={servicePhaseMap} />
           ))}
 
           {/* Direct children */}
           {children.map((child: any) => (
-            <ReadOnlyZoneNode key={`ro-child-${child.id}`} zone={child} depth={depth + 1} />
+            <ReadOnlyZoneNode key={`ro-child-${child.id}`} zone={child} depth={depth + 1} servicePhaseMap={servicePhaseMap} />
           ))}
         </div>
       )}
@@ -859,12 +872,14 @@ function ZoneTreeNode({
   taskTemplates,
   phases,
   depth,
+  servicePhaseMap,
 }: {
   zone: any;
   templateId: number;
   taskTemplates: any[];
   phases: any[];
   depth: number;
+  servicePhaseMap?: Map<string, { name: string; code?: string | null }>;
 }) {
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(true);
@@ -979,7 +994,7 @@ function ZoneTreeNode({
         <div className="ml-6 border-l-2 border-border pl-3 space-y-0.5 mb-2">
           {/* View-only: services from referenced template */}
           {Array.from(refServiceGroups.entries()).map(([svcName, svcTasks]) => (
-            <ServiceGroupItem key={`ref-svc-${svcName}`} serviceName={svcName} tasks={svcTasks} templateId={templateId} onDeleteAll={() => {}} readOnly />
+            <ServiceGroupItem key={`ref-svc-${svcName}`} serviceName={svcName} tasks={svcTasks} templateId={templateId} servicePhase={servicePhaseMap?.get(svcName) || null} onDeleteAll={() => {}} readOnly />
           ))}
 
           {/* View-only: ungrouped tasks from referenced template */}
@@ -995,7 +1010,7 @@ function ZoneTreeNode({
 
           {/* View-only: zones from referenced template (recursive, show their content) */}
           {refZones.map((rz: any) => (
-            <ReadOnlyZoneNode key={`ref-zone-${rz.id}`} zone={rz} depth={0} />
+            <ReadOnlyZoneNode key={`ref-zone-${rz.id}`} zone={rz} depth={0} servicePhaseMap={servicePhaseMap} />
           ))}
 
           {/* Editable: child zones in this template */}
@@ -1007,6 +1022,7 @@ function ZoneTreeNode({
               taskTemplates={taskTemplates}
               phases={phases}
               depth={depth + 1}
+              servicePhaseMap={servicePhaseMap}
             />
           ))}
 
@@ -1173,6 +1189,7 @@ function RootServicePickerModal({
                 <th className="px-3 py-2 w-10"></th>
                 <th className="px-3 py-2 text-left font-medium">Name</th>
                 <th className="px-3 py-2 text-left font-medium">Code</th>
+                <th className="px-3 py-2 text-left font-medium">Phase/Milestone</th>
                 <th className="px-3 py-2 text-right font-medium">Tasks</th>
               </tr></thead>
               <tbody>
@@ -1181,6 +1198,13 @@ function RootServicePickerModal({
                     <td className="px-3 py-2"><input type="checkbox" checked={selected.has(t.id)} onChange={() => {}} className="h-4 w-4" /></td>
                     <td className="px-3 py-2 font-medium">{t.name}</td>
                     <td className="px-3 py-2 text-muted-foreground">{t.code || '-'}</td>
+                    <td className="px-3 py-2">
+                      {t.phase ? (
+                        <span className="rounded-full bg-cyan-100 px-1.5 py-0.5 text-[11px] font-medium text-cyan-700">{t.phase.name}</span>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-right">{t._count?.templateTasks ?? 0}</td>
                   </tr>
                 ))}
@@ -1346,6 +1370,15 @@ function EditorView({
     ? rawTaskTemplates.filter((t: any) => t.code !== '__TASK_CATALOG__')
     : [];
 
+  // Lookup: service name → phase (for displaying phase on service groups)
+  const servicePhaseMap = useMemo(() => {
+    const map = new Map<string, { name: string; code?: string | null }>();
+    for (const t of taskTemplates) {
+      if (t.phase) map.set(t.name, { name: t.phase.name, code: t.phase.code });
+    }
+    return map;
+  }, [taskTemplates]);
+
   // ---- fetch phases for task form dropdown ----
   const { data: phases = [] } = useQuery({
     queryKey: ['phases'],
@@ -1507,7 +1540,7 @@ function EditorView({
             <>
               {/* Root-level service groups */}
               {Array.from(rootServiceGroups.entries()).map(([svcName, svcTasks]) => (
-                <ServiceGroupItem key={`svc-${svcName}`} serviceName={svcName} tasks={svcTasks} templateId={templateId} onDeleteAll={() => {
+                <ServiceGroupItem key={`svc-${svcName}`} serviceName={svcName} tasks={svcTasks} templateId={templateId} servicePhase={servicePhaseMap.get(svcName) || null} onDeleteAll={() => {
                   if (confirm(`Remove service "${svcName}" and all its ${svcTasks.length} tasks?`)) {
                     Promise.all(svcTasks.map((t: any) => client.delete(`/templates/tasks/${t.id}`))).then(() => {
                       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
@@ -1543,6 +1576,7 @@ function EditorView({
                   taskTemplates={taskTemplates as any[]}
                   phases={phases as any[]}
                   depth={0}
+                  servicePhaseMap={servicePhaseMap}
                 />
               ))}
             </>

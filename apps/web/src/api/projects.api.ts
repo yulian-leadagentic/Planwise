@@ -16,6 +16,8 @@ export interface CreateProjectPayload {
   budget?: number;
   startDate?: string;
   endDate?: string;
+  leaderId?: number;
+  memberIds?: number[];
 }
 
 export interface AddMemberPayload {

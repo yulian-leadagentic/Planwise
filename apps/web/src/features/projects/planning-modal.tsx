@@ -454,9 +454,38 @@ function PlanningView({ projectId }: { projectId: number }) {
     enabled: !!projectId,
   });
 
+  // Fetch service templates to map service name → phase (for phase display/grouping)
+  const { data: serviceTemplatesRaw = [] } = useQuery({
+    queryKey: ['templates', 'task_list'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/templates?type=task_list').then((r) => r.data.data ?? r.data),
+  });
+  const servicePhaseMap = useMemo(() => {
+    const map = new Map<string, { id: number; name: string; code?: string | null }>();
+    const list = Array.isArray(serviceTemplatesRaw) ? serviceTemplatesRaw : [];
+    for (const t of list) {
+      if (t?.phase) map.set(t.name, { id: t.phase.id, name: t.phase.name, code: t.phase.code });
+    }
+    return map;
+  }, [serviceTemplatesRaw]);
+
   const pd = (planningData as any)?.data ?? planningData;
   const zones = pd?.zones ?? [];
-  const tasks = pd?.tasks ?? [];
+  const rawTasks = pd?.tasks ?? [];
+
+  // Enrich each task with phase from its service template (if no direct phase)
+  const tasks = useMemo(() => {
+    return (rawTasks as any[]).map((t) => {
+      if (t.phase) return t;
+      const svcMatch = t.description?.match(/^\[SERVICE:(.+)\]$/);
+      if (svcMatch) {
+        const svcName = svcMatch[1];
+        const phase = servicePhaseMap.get(svcName);
+        if (phase) return { ...t, phase, phaseId: phase.id };
+      }
+      return t;
+    });
+  }, [rawTasks, servicePhaseMap]);
   const members = pd?.members ?? [];
   const budget = pd?.budgetSummary;
 

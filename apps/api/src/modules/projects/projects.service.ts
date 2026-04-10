@@ -130,11 +130,12 @@ export class ProjectsService {
 
   async update(id: number, dto: UpdateProjectDto) {
     await this.findOne(id);
+    const { memberIds, ...rest } = dto;
 
-    return this.prisma.project.update({
+    const project = await this.prisma.project.update({
       where: { id },
       data: {
-        ...dto,
+        ...rest,
         startDate: dto.startDate ? new Date(dto.startDate) : undefined,
         endDate: dto.endDate ? new Date(dto.endDate) : undefined,
       },
@@ -143,6 +144,52 @@ export class ProjectsService {
         creator: { select: { id: true, firstName: true, lastName: true } },
       },
     });
+
+    // Ensure leader is a member
+    if (dto.leaderId && dto.leaderId > 0) {
+      await this.prisma.projectMember.upsert({
+        where: { projectId_userId: { projectId: id, userId: dto.leaderId } },
+        create: { projectId: id, userId: dto.leaderId, role: 'Project Leader' },
+        update: { role: 'Project Leader' },
+      });
+    }
+
+    // Sync team members if provided: add new ones, remove ones no longer in the list
+    // (but always keep the leader)
+    if (memberIds !== undefined) {
+      const existing = await this.prisma.projectMember.findMany({
+        where: { projectId: id },
+        select: { userId: true, role: true },
+      });
+      const existingIds = new Set(existing.map((m) => m.userId));
+      const desiredIds = new Set(memberIds);
+      if (dto.leaderId && dto.leaderId > 0) desiredIds.add(dto.leaderId);
+
+      // Add new members
+      const toAdd = [...desiredIds].filter((uid) => !existingIds.has(uid));
+      if (toAdd.length > 0) {
+        await this.prisma.projectMember.createMany({
+          data: toAdd.map((uid) => ({
+            projectId: id,
+            userId: uid,
+            role: uid === dto.leaderId ? 'Project Leader' : null,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      // Remove members no longer in the list (but never remove the leader)
+      const toRemove = [...existingIds].filter(
+        (uid) => !desiredIds.has(uid) && uid !== dto.leaderId,
+      );
+      if (toRemove.length > 0) {
+        await this.prisma.projectMember.deleteMany({
+          where: { projectId: id, userId: { in: toRemove } },
+        });
+      }
+    }
+
+    return project;
   }
 
   async remove(id: number) {
