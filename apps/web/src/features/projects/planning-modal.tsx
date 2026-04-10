@@ -8,6 +8,247 @@ import { planningApi, zonesApi, templatesApi } from '@/api/zones.api';
 import { tasksApi } from '@/api/tasks.api';
 import client from '@/api/client';
 
+// ─── Bulk Action Bar — floating bar for operating on selected tasks ─────────
+
+function BulkActionBar({
+  selectedCount,
+  selectedTaskIds,
+  members,
+  projectId,
+  onClear,
+}: {
+  selectedCount: number;
+  selectedTaskIds: Set<number>;
+  members: any[];
+  projectId: number;
+  onClear: () => void;
+}) {
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [busy, setBusy] = useState(false);
+  const queryClient = useQueryClient();
+  const assignRef = useRef<HTMLDivElement>(null);
+  const statusRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!assignOpen && !statusOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (assignOpen && assignRef.current && !assignRef.current.contains(e.target as Node)) {
+        setAssignOpen(false);
+      }
+      if (statusOpen && statusRef.current && !statusRef.current.contains(e.target as Node)) {
+        setStatusOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [assignOpen, statusOpen]);
+
+  const filteredMembers = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    return members.filter((m: any) => {
+      if (!q) return true;
+      const u = m.user ?? m;
+      const full = `${u.firstName ?? ''} ${u.lastName ?? ''}`.toLowerCase();
+      return full.includes(q);
+    });
+  }, [members, search]);
+
+  const handleBulkAssign = async (userId: number) => {
+    if (busy || selectedTaskIds.size === 0) return;
+    setBusy(true);
+    const taskIds = Array.from(selectedTaskIds);
+    // Parallel assignments — ignore conflicts (user already assigned to a task)
+    const results = await Promise.allSettled(
+      taskIds.map((taskId) => tasksApi.addAssignee(taskId, { userId })),
+    );
+    const succeeded = results.filter((r) => r.status === 'fulfilled').length;
+    const alreadyAssigned = results.filter(
+      (r) => r.status === 'rejected' && (r as PromiseRejectedResult).reason?.response?.status === 409,
+    ).length;
+    const failed = results.length - succeeded - alreadyAssigned;
+
+    queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+    setBusy(false);
+    setAssignOpen(false);
+    setSearch('');
+
+    const user = members.find((m: any) => (m.user?.id ?? m.id) === userId);
+    const u = user?.user ?? user ?? {};
+    const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || 'user';
+
+    if (succeeded > 0 && failed === 0 && alreadyAssigned === 0) {
+      notify.success(`Assigned ${name} to ${succeeded} task${succeeded !== 1 ? 's' : ''}`, {
+        code: 'TASK-ASSIGN-200',
+      });
+    } else if (succeeded > 0 && alreadyAssigned > 0 && failed === 0) {
+      notify.success(
+        `Assigned ${name} to ${succeeded} task${succeeded !== 1 ? 's' : ''} (${alreadyAssigned} already assigned)`,
+        { code: 'TASK-ASSIGN-200' },
+      );
+    } else if (failed > 0 && succeeded > 0) {
+      notify.warning(`Assigned to ${succeeded}, ${failed} failed`, { code: 'TASK-ASSIGN-207' });
+    } else if (succeeded === 0 && alreadyAssigned > 0 && failed === 0) {
+      notify.info(`${name} is already assigned to all selected tasks`);
+    } else {
+      notify.error(`Could not assign ${name}`, { code: 'TASK-ASSIGN-500' });
+    }
+    onClear();
+  };
+
+  const handleBulkStatus = async (status: string) => {
+    if (busy || selectedTaskIds.size === 0) return;
+    setBusy(true);
+    const taskIds = Array.from(selectedTaskIds);
+    const results = await Promise.allSettled(
+      taskIds.map((taskId) => tasksApi.update(taskId, { status })),
+    );
+    const succeeded = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.length - succeeded;
+
+    queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+    setBusy(false);
+    setStatusOpen(false);
+
+    if (succeeded > 0 && failed === 0) {
+      notify.success(`Updated status on ${succeeded} task${succeeded !== 1 ? 's' : ''}`, {
+        code: 'TASK-UPDATE-200',
+      });
+    } else if (succeeded > 0 && failed > 0) {
+      notify.warning(`Updated ${succeeded}, ${failed} failed`, { code: 'TASK-UPDATE-207' });
+    } else {
+      notify.error(`Could not update status`, { code: 'TASK-UPDATE-500' });
+    }
+    onClear();
+  };
+
+  if (selectedCount === 0) return null;
+
+  const statusOptions = [
+    { value: 'not_started', label: 'Not Started', dot: 'bg-slate-400' },
+    { value: 'in_progress', label: 'In Progress', dot: 'bg-blue-500' },
+    { value: 'in_review', label: 'In Review', dot: 'bg-violet-500' },
+    { value: 'completed', label: 'Completed', dot: 'bg-emerald-500' },
+    { value: 'on_hold', label: 'On Hold', dot: 'bg-amber-500' },
+    { value: 'cancelled', label: 'Cancelled', dot: 'bg-red-500' },
+  ];
+
+  return (
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40">
+      <div className="flex items-center gap-3 rounded-[14px] border border-slate-200 bg-white px-4 py-3 shadow-2xl">
+        <div className="flex items-center gap-2">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white text-xs font-bold">
+            {selectedCount}
+          </span>
+          <span className="text-sm font-semibold text-slate-700">
+            task{selectedCount !== 1 ? 's' : ''} selected
+          </span>
+        </div>
+
+        <div className="h-5 w-px bg-slate-200" />
+
+        {/* Assign dropdown */}
+        <div className="relative" ref={assignRef}>
+          <button
+            type="button"
+            onClick={() => { setAssignOpen(!assignOpen); setStatusOpen(false); }}
+            disabled={busy}
+            className="flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 disabled:opacity-50"
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Assign
+          </button>
+          {assignOpen && (
+            <div className="absolute bottom-full left-0 mb-2 w-64 rounded-lg border border-slate-200 bg-white shadow-xl">
+              <div className="border-b border-slate-100 px-3 py-2">
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search members..."
+                    className="w-full rounded-md border border-slate-200 bg-slate-50 pl-7 pr-2 py-1.5 text-xs text-slate-700 focus:border-blue-400 focus:outline-none"
+                    autoFocus
+                  />
+                </div>
+              </div>
+              <div className="max-h-56 overflow-y-auto py-1">
+                {filteredMembers.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-slate-400">
+                    {members.length === 0 ? 'No project members' : 'No match'}
+                  </p>
+                ) : (
+                  filteredMembers.map((m: any) => {
+                    const u = m.user ?? m;
+                    const uid = u.id;
+                    const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || 'Unknown';
+                    return (
+                      <button
+                        key={uid}
+                        type="button"
+                        disabled={busy}
+                        onClick={() => handleBulkAssign(uid)}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        <span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-semibold flex items-center justify-center shrink-0">
+                          {(u.firstName?.[0] ?? '') + (u.lastName?.[0] ?? '')}
+                        </span>
+                        <span className="truncate text-slate-700">{name}</span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Status dropdown */}
+        <div className="relative" ref={statusRef}>
+          <button
+            type="button"
+            onClick={() => { setStatusOpen(!statusOpen); setAssignOpen(false); }}
+            disabled={busy}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[13px] font-semibold px-3 py-1.5 disabled:opacity-50"
+          >
+            Set Status
+            <ChevronDown className="h-3 w-3" />
+          </button>
+          {statusOpen && (
+            <div className="absolute bottom-full left-0 mb-2 w-48 rounded-lg border border-slate-200 bg-white shadow-xl py-1">
+              {statusOptions.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => handleBulkStatus(opt.value)}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <span className={cn('w-2 h-2 rounded-full', opt.dot)} />
+                  <span className="text-slate-700">{opt.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="h-5 w-px bg-slate-200" />
+
+        <button
+          type="button"
+          onClick={onClear}
+          disabled={busy}
+          className="text-[13px] font-semibold text-slate-500 hover:text-slate-700 disabled:opacity-50"
+        >
+          Clear
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Assignee Picker — multi-select, add/remove assignees on a task ──────────
 
 function AssigneePicker({
@@ -307,7 +548,7 @@ function AddZoneManuallyDialog({ projectId, onClose, onCreated }: { projectId: n
 
 // ─── Zone Group (collapsible) with task table ────────────────────────────────
 
-function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, thClass, handleSort, sortIcon }: any) {
+function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, thClass, handleSort, sortIcon, selectedTaskIds, onToggleTask, onToggleMany }: any) {
   const [collapsed, setCollapsed] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showTaskMenu, setShowTaskMenu] = useState(false);
@@ -364,7 +605,22 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
           <table className="w-full">
             <thead>
               <tr className="bg-white border-b border-slate-50">
-                <th className={cn(thClass, 'w-20 pl-5')} onClick={() => handleSort('code')}>Code{sortIcon('code')}</th>
+                <th className="w-10 pl-5">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer"
+                    checked={tasks.length > 0 && tasks.every((t: any) => selectedTaskIds?.has(t.id))}
+                    ref={(el) => {
+                      if (el) {
+                        const someSelected = tasks.some((t: any) => selectedTaskIds?.has(t.id));
+                        const allSelected = tasks.length > 0 && tasks.every((t: any) => selectedTaskIds?.has(t.id));
+                        el.indeterminate = someSelected && !allSelected;
+                      }
+                    }}
+                    onChange={(e) => onToggleMany?.(tasks.map((t: any) => t.id), e.target.checked)}
+                  />
+                </th>
+                <th className={cn(thClass, 'w-20')} onClick={() => handleSort('code')}>Code{sortIcon('code')}</th>
                 <th className={thClass} onClick={() => handleSort('name')}>Task Name{sortIcon('name')}</th>
                 <th className={cn(thClass, 'w-28')} onClick={() => handleSort('zone')}>Zone{sortIcon('zone')}</th>
                 <th className={cn(thClass, 'w-28')} onClick={() => handleSort('service')}>Service{sortIcon('service')}</th>
@@ -381,9 +637,18 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
               {tasks.map((task: any) => {
                 const statusMap: Record<string, { dot: string; text: string }> = { not_started: { dot: 'bg-slate-400', text: 'text-slate-500' }, in_progress: { dot: 'bg-blue-500', text: 'text-blue-600' }, in_review: { dot: 'bg-violet-500', text: 'text-violet-600' }, completed: { dot: 'bg-emerald-500', text: 'text-emerald-600' }, on_hold: { dot: 'bg-amber-500', text: 'text-amber-600' }, cancelled: { dot: 'bg-red-500', text: 'text-red-600' } };
                 const st = statusMap[task.status] || statusMap.not_started;
+                const isSelected = selectedTaskIds?.has(task.id) ?? false;
                 return (
-                  <tr key={task.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 group">
-                    <td className="px-3 py-2 pl-5 font-mono text-xs font-medium text-slate-500">{task.code}</td>
+                  <tr key={task.id} className={cn('border-b border-slate-50 last:border-0 hover:bg-slate-50 group', isSelected && 'bg-blue-50/40')}>
+                    <td className="pl-5">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer"
+                        checked={isSelected}
+                        onChange={() => onToggleTask?.(task.id)}
+                      />
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs font-medium text-slate-500">{task.code}</td>
                     <td className="px-3 py-2 font-medium text-slate-900">{task.name}</td>
                     <td className="px-3 py-2 text-[12px] text-slate-500">{task.zone?.name || '-'}</td>
                     <td className="px-3 py-2">{task.serviceType ? <span className="rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold" style={{ backgroundColor: `${task.serviceType.color || '#3B82F6'}15`, color: task.serviceType.color || '#3B82F6' }}>{task.serviceType.name}</span> : <span className="text-slate-300">-</span>}</td>
@@ -406,7 +671,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                 );
               })}
               {tasks.length === 0 && !showAddTask && (
-                <tr><td colSpan={10} className="px-5 py-6 text-center text-[13px] text-slate-400">No tasks. Click "Add Task" to create one.</td></tr>
+                <tr><td colSpan={11} className="px-5 py-6 text-center text-[13px] text-slate-400">No tasks. Click "Add Task" to create one.</td></tr>
               )}
             </tbody>
           </table>
@@ -419,7 +684,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
 
 // ─── Hierarchical Zone Group — flat tree style with colored borders ──────────
 
-function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth }: any) {
+function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth, selectedTaskIds, onToggleTask, onToggleMany }: any) {
   const [collapsed, setCollapsed] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
   const [newTask, setNewTask] = useState({ code: '', name: '', budgetHours: '', budgetAmount: '' });
@@ -463,6 +728,21 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
       <div className={cn('flex items-center gap-2.5 py-3 px-4 border-l-[3px] cursor-pointer hover:bg-slate-50/80 group transition-colors duration-100', zc.border, 'border-b border-slate-100')}
         onClick={() => setCollapsed(!collapsed)}>
         {collapsed ? <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+        <input
+          type="checkbox"
+          className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer shrink-0"
+          checked={allZoneTasks.length > 0 && allZoneTasks.every((t: any) => selectedTaskIds?.has(t.id))}
+          ref={(el) => {
+            if (el) {
+              const someSelected = allZoneTasks.some((t: any) => selectedTaskIds?.has(t.id));
+              const allSelected = allZoneTasks.length > 0 && allZoneTasks.every((t: any) => selectedTaskIds?.has(t.id));
+              el.indeterminate = someSelected && !allSelected;
+            }
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onToggleMany?.(allZoneTasks.map((t: any) => t.id), e.target.checked)}
+          title={`Select all ${allZoneTasks.length} tasks in this zone`}
+        />
         <span className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide shrink-0', zc.bg, zc.text)}>{zone.zoneType}</span>
         <span className={cn('font-semibold', depth === 0 ? 'text-[15px] text-slate-900' : 'text-[13px] text-slate-800')}>{zone.name}</span>
         {hasChildren && <span className="text-[11px] text-slate-400">({zone.children.length} sub-zones)</span>}
@@ -514,8 +794,15 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
 
           {directTasks.map((task: any) => {
             const stColor: Record<string, string> = { not_started: 'text-slate-400', in_progress: 'text-blue-600', completed: 'text-emerald-600', on_hold: 'text-amber-600', in_review: 'text-violet-600', cancelled: 'text-red-500' };
+            const isSelected = selectedTaskIds?.has(task.id) ?? false;
             return (
-              <div key={task.id} style={{ marginLeft: 28 }} className="flex items-center gap-3 py-2.5 px-4 border-b border-slate-50 hover:bg-slate-50/50 group text-[13px]">
+              <div key={task.id} style={{ marginLeft: 28 }} className={cn('flex items-center gap-3 py-2.5 px-4 border-b border-slate-50 hover:bg-slate-50/50 group text-[13px]', isSelected && 'bg-blue-50/40')}>
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer shrink-0"
+                  checked={isSelected}
+                  onChange={() => onToggleTask?.(task.id)}
+                />
                 <span className="font-mono text-xs font-medium text-slate-400 w-24 shrink-0">{task.code}</span>
                 <span className="font-medium text-slate-900 flex-1 min-w-0 truncate">{task.name}</span>
                 {task.serviceType ? <span className="rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold shrink-0" style={{ backgroundColor: `${task.serviceType.color || '#3B82F6'}15`, color: task.serviceType.color || '#3B82F6' }}>{task.serviceType.name}</span> : null}
@@ -535,7 +822,8 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           {hasChildren && zone.children.map((child: any) => (
             <HierarchicalZoneGroup key={child.id} zone={child} allTasks={allTasks} members={members} projectId={projectId}
               onUpdate={onUpdate} onDeleteTask={onDeleteTask} onDeleteZone={onDeleteZone} onDuplicateZone={onDuplicateZone}
-              thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={depth + 1} />
+              thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={depth + 1}
+              selectedTaskIds={selectedTaskIds} onToggleTask={onToggleTask} onToggleMany={onToggleMany} />
           ))}
         </>
       )}
@@ -574,6 +862,24 @@ function PlanningView({ projectId }: { projectId: number }) {
   const [search, setSearch] = useState('');
   const [sortCol, setSortCol] = useState('');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
+
+  const toggleTask = (taskId: number) => {
+    setSelectedTaskIds((prev) => {
+      const next = new Set(prev);
+      next.has(taskId) ? next.delete(taskId) : next.add(taskId);
+      return next;
+    });
+  };
+  const toggleManyTasks = (taskIds: number[], selectAll: boolean) => {
+    setSelectedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (selectAll) taskIds.forEach((id) => next.add(id));
+      else taskIds.forEach((id) => next.delete(id));
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedTaskIds(new Set());
 
   const { data: planningData, isLoading } = useQuery({
     queryKey: ['planning', projectId],
@@ -714,6 +1020,19 @@ function PlanningView({ projectId }: { projectId: number }) {
             </button>
           </div>
           <div className="flex items-center gap-3">
+            {sorted.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const visibleIds = sorted.map((t: any) => t.id);
+                  const allSelected = visibleIds.every((id: number) => selectedTaskIds.has(id));
+                  toggleManyTasks(visibleIds, !allSelected);
+                }}
+                className="text-[12px] font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1"
+              >
+                {sorted.every((t: any) => selectedTaskIds.has(t.id)) ? 'Deselect all' : `Select all (${sorted.length})`}
+              </button>
+            )}
             <div className="flex items-center gap-1.5">
               <span className="text-[11px] font-semibold text-slate-400">Group:</span>
               <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as any)} className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none">
@@ -763,13 +1082,15 @@ function PlanningView({ projectId }: { projectId: number }) {
               <HierarchicalZoneGroup key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
                 onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
                 onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
-                thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={0} />
+                thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={0}
+                selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
             ))
           ) : (
             groups.map((g: any) => (
               <ZoneGroup key={g.key} zone={{ id: 0, name: g.key, zoneType: groupBy }} tasks={g.tasks} members={members} projectId={projectId}
                 onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
-                onDeleteZone={() => {}} thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} />
+                onDeleteZone={() => {}} thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
+                selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
             ))
           )}
 
@@ -797,6 +1118,15 @@ function PlanningView({ projectId }: { projectId: number }) {
           <p className="text-[13px] text-slate-400 mb-4">Start by adding a zone from a template or create one manually</p>
         </div>
       ) : null}
+
+      {/* Floating bulk action bar (only visible when tasks are selected) */}
+      <BulkActionBar
+        selectedCount={selectedTaskIds.size}
+        selectedTaskIds={selectedTaskIds}
+        members={members}
+        projectId={projectId}
+        onClear={clearSelection}
+      />
     </div>
   );
 }
