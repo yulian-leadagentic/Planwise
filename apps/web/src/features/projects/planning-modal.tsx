@@ -7,6 +7,129 @@ import { cn } from '@/lib/utils';
 import { planningApi, zonesApi, templatesApi } from '@/api/zones.api';
 import { tasksApi } from '@/api/tasks.api';
 import client from '@/api/client';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
+// ─── Sortable Task Row ──────────────────────────────────────────────────────
+
+const statusMap: Record<string, { bg: string; text: string; label: string }> = {
+  not_started: { bg: 'bg-slate-100', text: 'text-slate-600', label: 'Not Started' },
+  in_progress: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'In Progress' },
+  in_review: { bg: 'bg-violet-100', text: 'text-violet-700', label: 'In Review' },
+  completed: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Completed' },
+  on_hold: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'On Hold' },
+  cancelled: { bg: 'bg-red-100', text: 'text-red-700', label: 'Cancelled' },
+};
+
+function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onToggleTask, onUpdate, onDeleteTask }: {
+  task: any; idx: number; projectId: number; members: any[];
+  selectedTaskIds?: Set<number>; onToggleTask?: (id: number) => void;
+  onUpdate: () => void; onDeleteTask: (id: number) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id });
+  const style = { transform: CSS.Transform.toString(transform), transition, marginLeft: 28 };
+  const st = statusMap[task.status] || statusMap.not_started;
+  const isSelected = selectedTaskIds?.has(task.id) ?? false;
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} className={cn(
+      'flex items-center gap-3 py-2 px-4 border-b border-slate-50 hover:bg-slate-50/60 group text-[13px] transition-colors',
+      isSelected && 'bg-blue-50/50',
+      idx % 2 === 1 && !isSelected && 'bg-slate-50/30',
+      isDragging && 'opacity-50 bg-blue-50 shadow-lg z-10',
+    )}>
+      <button {...listeners} className="w-4 h-4 flex items-center justify-center cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 shrink-0 touch-none">
+        <GripVertical className="w-3.5 h-3.5" />
+      </button>
+      <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer shrink-0" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
+      <span className="font-mono text-[11px] font-medium text-slate-500 w-20 shrink-0 truncate">{task.code || '-'}</span>
+      <span className="font-medium text-slate-900 flex-1 min-w-0 truncate">{task.name}</span>
+      <span className="w-24 shrink-0">{task.serviceType ? <span className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full" style={{ backgroundColor: `${task.serviceType.color || '#3B82F6'}15`, color: task.serviceType.color || '#3B82F6' }}>{task.serviceType.name}</span> : <span className="text-slate-300">-</span>}</span>
+      <span className="w-20 shrink-0 text-[11px] text-slate-500 truncate">{task.phase?.name || '-'}</span>
+      <span className="font-mono text-[11px] text-slate-600 w-12 text-right shrink-0">{task.budgetHours ? `${Number(task.budgetHours)}h` : '-'}</span>
+      <span className="font-mono text-[11px] w-12 text-right shrink-0">{task.loggedMinutes > 0 ? <span className={cn('font-medium', task.budgetHours && (task.loggedMinutes / 60) > Number(task.budgetHours) ? 'text-red-600' : 'text-blue-600')}>{Math.round(task.loggedMinutes / 60 * 10) / 10}h</span> : <span className="text-slate-300">-</span>}</span>
+      <span className="font-mono text-[11px] font-semibold text-slate-700 w-16 text-right shrink-0">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</span>
+      <span className="w-24 shrink-0 flex items-center">
+        <AssigneePicker task={task} members={members} projectId={projectId} onUpdate={onUpdate} />
+      </span>
+      <span className="w-24 shrink-0">
+        <span className={cn('inline-block rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold', st.bg, st.text)}>{st.label}</span>
+      </span>
+      <button onClick={() => onDeleteTask(task.id)} className="w-5 h-5 rounded hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-3 h-3" /></button>
+    </div>
+  );
+}
+
+// ─── Sortable Task List (DnD context for tasks within a zone) ───────────────
+
+function SortableTaskList({ tasks, zoneId, projectId, members, selectedTaskIds, onToggleTask, onUpdate, onDeleteTask }: {
+  tasks: any[]; zoneId: number; projectId: number; members: any[];
+  selectedTaskIds?: Set<number>; onToggleTask?: (id: number) => void;
+  onUpdate: () => void; onDeleteTask: (id: number) => void;
+}) {
+  const queryClient = useQueryClient();
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor),
+  );
+
+  const taskIds = useMemo(() => tasks.map((t: any) => t.id), [tasks]);
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = tasks.findIndex((t: any) => t.id === active.id);
+    const newIndex = tasks.findIndex((t: any) => t.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const reordered = arrayMove(tasks, oldIndex, newIndex);
+    const items = reordered.map((t: any, i: number) => ({ id: t.id, sortOrder: i }));
+
+    try {
+      await tasksApi.reorder(items);
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to reorder tasks');
+    }
+  };
+
+  if (tasks.length === 0) return null;
+
+  return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
+        {tasks.map((task: any, idx: number) => (
+          <SortableTaskRow
+            key={task.id}
+            task={task}
+            idx={idx}
+            projectId={projectId}
+            members={members}
+            selectedTaskIds={selectedTaskIds}
+            onToggleTask={onToggleTask}
+            onUpdate={onUpdate}
+            onDeleteTask={onDeleteTask}
+          />
+        ))}
+      </SortableContext>
+    </DndContext>
+  );
+}
 
 // ─── Bulk Action Bar — floating bar for operating on selected tasks ─────────
 
@@ -736,6 +859,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
       {/* Zone row — full width with colored left border */}
       <div className={cn('flex items-center gap-2.5 py-3 px-4 border-l-[3px] cursor-pointer hover:bg-slate-50/80 group transition-colors duration-100', zc.border, 'border-b border-slate-100')}
         onClick={() => setCollapsed(!collapsed)}>
+        <GripVertical className="w-3.5 h-3.5 text-slate-300 hover:text-slate-500 cursor-grab shrink-0 touch-none" onClick={(e) => e.stopPropagation()} />
         {collapsed ? <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
         <input
           type="checkbox"
@@ -827,6 +951,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           {directTasks.length > 0 && (
             <div style={{ marginLeft: 28 }} className="flex items-center gap-3 py-1.5 px-4 bg-slate-50/70 border-b border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider">
               <span className="w-4 shrink-0" />
+              <span className="w-4 shrink-0" />
               <span className="w-20 shrink-0">Code</span>
               <span className="flex-1">Task Name</span>
               <span className="w-24 shrink-0">Service</span>
@@ -839,46 +964,16 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <span className="w-5 shrink-0" />
             </div>
           )}
-          {directTasks.map((task: any, idx: number) => {
-            const statusMap: Record<string, { bg: string; text: string; label: string }> = {
-              not_started: { bg: 'bg-slate-100', text: 'text-slate-600', label: 'Not Started' },
-              in_progress: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'In Progress' },
-              in_review: { bg: 'bg-violet-100', text: 'text-violet-700', label: 'In Review' },
-              completed: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Completed' },
-              on_hold: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'On Hold' },
-              cancelled: { bg: 'bg-red-100', text: 'text-red-700', label: 'Cancelled' },
-            };
-            const st = statusMap[task.status] || statusMap.not_started;
-            const isSelected = selectedTaskIds?.has(task.id) ?? false;
-            return (
-              <div key={task.id} style={{ marginLeft: 28 }} className={cn(
-                'flex items-center gap-3 py-2 px-4 border-b border-slate-50 hover:bg-slate-50/60 group text-[13px] transition-colors',
-                isSelected && 'bg-blue-50/50',
-                idx % 2 === 1 && !isSelected && 'bg-slate-50/30',
-              )}>
-                <input
-                  type="checkbox"
-                  className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer shrink-0"
-                  checked={isSelected}
-                  onChange={() => onToggleTask?.(task.id)}
-                />
-                <span className="font-mono text-[11px] font-medium text-slate-500 w-20 shrink-0 truncate">{task.code || '-'}</span>
-                <span className="font-medium text-slate-900 flex-1 min-w-0 truncate">{task.name}</span>
-                <span className="w-24 shrink-0">{task.serviceType ? <span className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full" style={{ backgroundColor: `${task.serviceType.color || '#3B82F6'}15`, color: task.serviceType.color || '#3B82F6' }}>{task.serviceType.name}</span> : <span className="text-slate-300">-</span>}</span>
-                <span className="w-20 shrink-0 text-[11px] text-slate-500 truncate">{task.phase?.name || '-'}</span>
-                <span className="font-mono text-[11px] text-slate-600 w-12 text-right shrink-0">{task.budgetHours ? `${Number(task.budgetHours)}h` : '-'}</span>
-                <span className="font-mono text-[11px] w-12 text-right shrink-0">{task.loggedMinutes > 0 ? <span className={cn('font-medium', task.budgetHours && (task.loggedMinutes / 60) > Number(task.budgetHours) ? 'text-red-600' : 'text-blue-600')}>{Math.round(task.loggedMinutes / 60 * 10) / 10}h</span> : <span className="text-slate-300">-</span>}</span>
-                <span className="font-mono text-[11px] font-semibold text-slate-700 w-16 text-right shrink-0">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</span>
-                <span className="w-24 shrink-0 flex items-center">
-                  <AssigneePicker task={task} members={members} projectId={projectId} onUpdate={onUpdate} />
-                </span>
-                <span className="w-24 shrink-0">
-                  <span className={cn('inline-block rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold', st.bg, st.text)}>{st.label}</span>
-                </span>
-                <button onClick={() => onDeleteTask(task.id)} className="w-5 h-5 rounded hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-3 h-3" /></button>
-              </div>
-            );
-          })}
+          <SortableTaskList
+            tasks={directTasks}
+            zoneId={zone.id}
+            projectId={projectId}
+            members={members}
+            selectedTaskIds={selectedTaskIds}
+            onToggleTask={onToggleTask}
+            onUpdate={onUpdate}
+            onDeleteTask={onDeleteTask}
+          />
 
           {hasChildren && zone.children.map((child: any) => (
             <HierarchicalZoneGroup key={child.id} zone={child} allTasks={allTasks} members={members} projectId={projectId}
