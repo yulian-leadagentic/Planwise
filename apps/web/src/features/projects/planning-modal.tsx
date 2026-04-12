@@ -748,8 +748,8 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                 <th className={cn(thClass, 'w-20')} onClick={() => handleSort('code')}>Code{sortIcon('code')}</th>
                 <th className={thClass} onClick={() => handleSort('name')}>Task Name{sortIcon('name')}</th>
                 <th className={cn(thClass, 'w-28')} onClick={() => handleSort('zone')}>Zone{sortIcon('zone')}</th>
-                <th className={cn(thClass, 'w-28')} onClick={() => handleSort('service')}>Service{sortIcon('service')}</th>
-                <th className={cn(thClass, 'w-20')} onClick={() => handleSort('phase')}>Phase{sortIcon('phase')}</th>
+                <th className={cn(thClass, 'w-28')} onClick={() => handleSort('service')}>Phase/Milestone{sortIcon('service')}</th>
+                <th className={cn(thClass, 'w-20')} onClick={() => handleSort('phase')}>Service{sortIcon('phase')}</th>
                 <th className={cn(thClass, 'w-14 text-right')} onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
                 <th className={cn(thClass, 'w-14 text-right')}>Logged</th>
                 <th className={cn(thClass, 'w-20 text-right')} onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
@@ -957,8 +957,8 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <span className="w-4 shrink-0" />
               <span className="w-20 shrink-0">Code</span>
               <span className="flex-1">Task Name</span>
-              <span className="w-24 shrink-0">Service</span>
-              <span className="w-20 shrink-0">Phase</span>
+              <span className="w-24 shrink-0">Phase/Milestone</span>
+              <span className="w-20 shrink-0">Service</span>
               <span className="w-12 text-right shrink-0">Budget</span>
               <span className="w-12 text-right shrink-0">Logged</span>
               <span className="w-16 text-right shrink-0">Amount</span>
@@ -1143,10 +1143,11 @@ function PlanningView({ projectId }: { projectId: number }) {
     for (const t of sorted) {
       let key = '';
       if (groupBy === 'service') {
-        // Try serviceType first, then extract from description tag [SERVICE:name]
-        key = t.serviceType?.name || t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || 'No Service';
+        // "service" groupBy = Phase/Milestone grouping (by template name from [SERVICE:] tag)
+        key = t.serviceType?.name || t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || 'No Phase/Milestone';
       } else {
-        key = t.phase?.name || 'No Phase/Milestone';
+        // "phase" groupBy = Service grouping (by the phase/service entity)
+        key = t.phase?.name || 'No Service';
       }
       if (!map.has(key)) map.set(key, { key, zone: null, tasks: [] });
       map.get(key)!.tasks.push(t);
@@ -1196,8 +1197,8 @@ function PlanningView({ projectId }: { projectId: number }) {
               <span className="text-[11px] font-semibold text-slate-400">Group:</span>
               <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as any)} className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none">
                 <option value="zone">Zone</option>
-                <option value="service">Service</option>
-                <option value="phase">Phase/Milestone</option>
+                <option value="service">Phase/Milestone</option>
+                <option value="phase">Service</option>
                 <option value="none">No Grouping</option>
               </select>
             </div>
@@ -1225,8 +1226,8 @@ function PlanningView({ projectId }: { projectId: number }) {
               <span className="w-24 shrink-0">Code</span>
               <span className="flex-1">Task Name</span>
               <span className="w-28 shrink-0">Zone</span>
-              <span className="w-24 shrink-0">Service</span>
               <span className="w-24 shrink-0">Phase/Milestone</span>
+              <span className="w-24 shrink-0">Service</span>
               <span className="w-10 text-right shrink-0">Hours</span>
               <span className="w-12 text-right shrink-0">Logged</span>
               <span className="w-16 text-right shrink-0">Amount</span>

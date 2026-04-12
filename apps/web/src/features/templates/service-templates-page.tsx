@@ -354,7 +354,7 @@ function EditorView({
     <div className="space-y-6">
       {/* Back button */}
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="h-4 w-4" /> Back to service templates
+        <ArrowLeft className="h-4 w-4" /> Back to phase/milestone templates
       </button>
 
       {/* Template header */}
@@ -370,7 +370,7 @@ function EditorView({
               <input value={headerForm.code} onChange={(e) => setHeaderForm((p) => ({ ...p, code: e.target.value }))} className={inputClass} />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Phase/Milestone</label>
+              <label className="block text-sm font-medium mb-1">Service</label>
               <select value={headerForm.phaseId} onChange={(e) => setHeaderForm((p) => ({ ...p, phaseId: e.target.value }))} className={inputClass}>
                 <option value="">-- none --</option>
                 {(phases as any[]).map((ph: any) => (
@@ -553,7 +553,7 @@ export function ServiceTemplatesPage() {
       client.post('/templates', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
-      notify.success('Service template created', { code: 'TPL-CREATE-200' });
+      notify.success('Phase/Milestone template created', { code: 'TPL-CREATE-200' });
       setShowForm(false);
       setName('');
       setCode('');
@@ -567,7 +567,7 @@ export function ServiceTemplatesPage() {
     mutationFn: (id: number) => client.delete(`/templates/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
-      notify.success('Service template deleted', { code: 'TPL-DELETE-200' });
+      notify.success('Phase/Milestone template deleted', { code: 'TPL-DELETE-200' });
     },
     onError: (err: any) => notify.apiError(err, 'Failed to delete'),
   });
@@ -597,11 +597,11 @@ export function ServiceTemplatesPage() {
           <ArrowLeft className="h-5 w-5" />
         </button>
         <PageHeader
-          title="Service Templates"
-          description="Groups of tasks from the catalog assigned to a service"
+          title="Phase/Milestone Templates"
+          description="Groups of tasks from the catalog assigned to a phase or milestone"
           actions={
             <button onClick={() => setShowForm(!showForm)} className={btnPrimary}>
-              <Plus className="h-4 w-4" /> New Service Template
+              <Plus className="h-4 w-4" /> New Phase/Milestone Template
             </button>
           }
         />
@@ -619,7 +619,7 @@ export function ServiceTemplatesPage() {
               <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. BC.S.1" className={inputClass} />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Phase/Milestone</label>
+              <label className="block text-sm font-medium mb-1">Service</label>
               <select value={phaseId} onChange={(e) => setPhaseId(e.target.value)} className={inputClass}>
                 <option value="">-- none --</option>
                 {(phases as any[]).map((ph: any) => (
@@ -646,9 +646,9 @@ export function ServiceTemplatesPage() {
       ) : templateList.length === 0 ? (
         <div className="rounded-lg border border-border bg-background p-8 text-center">
           <Copy className="mx-auto h-12 w-12 text-muted-foreground" />
-          <h3 className="mt-3 text-sm font-medium">No service templates</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Create a service template to group tasks from the catalog.</p>
-          <button onClick={() => setShowForm(true)} className="mt-4 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">Create Service Template</button>
+          <h3 className="mt-3 text-sm font-medium">No phase/milestone templates</h3>
+          <p className="mt-1 text-sm text-muted-foreground">Create a phase/milestone template to group tasks from the catalog.</p>
+          <button onClick={() => setShowForm(true)} className="mt-4 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">Create Phase/Milestone Template</button>
         </div>
       ) : (
         <div className="space-y-2">

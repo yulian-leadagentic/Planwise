@@ -25,7 +25,7 @@ export function PhasesPage() {
       client.post('/phases', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['phases'] });
-      notify.success('Phase created', { code: 'PHASE-CREATE-200' });
+      notify.success('Service created', { code: 'SERVICE-CREATE-200' });
       setShowForm(false);
       setName('');
       setCode('');
@@ -37,7 +37,7 @@ export function PhasesPage() {
     mutationFn: (id: number) => client.delete(`/phases/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['phases'] });
-      notify.success('Phase deleted', { code: 'PHASE-DELETE-200' });
+      notify.success('Service deleted', { code: 'SERVICE-DELETE-200' });
     },
     onError: (err: any) => notify.apiError(err, 'Failed to delete'),
   });
@@ -57,11 +57,11 @@ export function PhasesPage() {
           <ArrowLeft className="h-5 w-5" />
         </button>
         <PageHeader
-          title="Phases/Milestones"
-          description="Phases like Design, Construction, Handover"
+          title="Services"
+          description="Manage services: e.g. ניהול מודל, תאום מערכות"
           actions={
             <button onClick={() => setShowForm(!showForm)} className="flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
-              <Plus className="h-4 w-4" /> Add Phase
+              <Plus className="h-4 w-4" /> Add Service
             </button>
           }
         />
@@ -71,12 +71,12 @@ export function PhasesPage() {
         <form onSubmit={handleSubmit} className="rounded-lg border border-border bg-background p-4">
           <div className="flex items-end gap-3">
             <div className="flex-1">
-              <label className="block text-sm font-medium mb-1">Phase Name *</label>
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Design, Construction, Handover" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" autoFocus />
+              <label className="block text-sm font-medium mb-1">Service Name *</label>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. ניהול מודל, תאום מערכות" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" autoFocus />
             </div>
             <div className="w-32">
-              <label className="block text-sm font-medium mb-1">Phase Code</label>
-              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. DSN" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+              <label className="block text-sm font-medium mb-1">Service Code</label>
+              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. MDL" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
             </div>
             <button type="submit" disabled={createMutation.isPending} className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
               {createMutation.isPending ? 'Creating...' : 'Create'}
@@ -89,13 +89,13 @@ export function PhasesPage() {
       {isLoading ? (
         <TableSkeleton rows={5} cols={2} />
       ) : phases.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">No service phases yet. Click "Add Phase" to create one.</p>
+        <p className="py-8 text-center text-sm text-muted-foreground">No services yet. Click "Add Service" to create one.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50">
-                <th className="px-4 py-2.5 text-left font-medium">Phase Name</th>
+                <th className="px-4 py-2.5 text-left font-medium">Service Name</th>
                 <th className="px-4 py-2.5 text-left font-medium">Code</th>
                 <th className="px-4 py-2.5 text-right font-medium">Actions</th>
               </tr>

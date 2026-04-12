@@ -166,7 +166,7 @@ function ZoneNode({
               onChange={(e) => setEditLinkedTemplateId(e.target.value)}
               className={`${inputClass} !w-48`}
             >
-              <option value="">-- no service template --</option>
+              <option value="">-- no phase/milestone template --</option>
               {taskTemplates.map((t: any) => (
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
@@ -188,7 +188,7 @@ function ZoneNode({
               {zone.name}
             </span>
 
-            {/* Linked service template indicator */}
+            {/* Linked phase/milestone template indicator */}
             {(zone.linkedTaskTemplateId || linkedTemplateName) && (
               <span className="ml-1 flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-600">
                 <Link2 className="h-3 w-3" />
@@ -466,7 +466,7 @@ function EditorView({
                 onChange={(e) => setNewZone((p) => ({ ...p, linkedTaskTemplateId: e.target.value }))}
                 className={`${inputClass} !w-48`}
               >
-                <option value="">-- no service template --</option>
+                <option value="">-- no phase/milestone template --</option>
                 {(taskTemplates as any[]).map((t: any) => (
                   <option key={t.id} value={t.id}>{t.name}</option>
                 ))}

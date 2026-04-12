@@ -18,22 +18,22 @@ const templateCards = [
     color: 'bg-blue-100 text-blue-700',
   },
   {
-    title: 'Service Templates',
-    description: 'Groups of tasks from the catalog assigned to a service',
+    title: 'Phase/Milestone Templates',
+    description: 'Groups of tasks from the catalog assigned to a phase or milestone',
     icon: Copy,
     href: '/templates/service',
     color: 'bg-amber-100 text-amber-700',
   },
   {
     title: 'Zone Templates',
-    description: 'Zone hierarchy with services and tasks assigned',
+    description: 'Zone hierarchy with phases/milestones and tasks assigned',
     icon: Layers,
     href: '/templates/zone',
     color: 'bg-green-100 text-green-700',
   },
   {
-    title: 'Phases/Milestones',
-    description: 'Manage phases: Design, Construction, Handover',
+    title: 'Services',
+    description: 'Manage services: e.g. ניהול מודל, תאום מערכות',
     icon: ListChecks,
     href: '/templates/phases',
     color: 'bg-cyan-100 text-cyan-700',
@@ -57,7 +57,7 @@ const templateCards = [
 export function TemplatesPage() {
   return (
     <div className="space-y-6">
-      <PageHeader title="Templates" description="Manage task catalog, service templates, zone templates, and configurations" />
+      <PageHeader title="Templates" description="Manage task catalog, phase/milestone templates, zone templates, and configurations" />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {templateCards.map((card) => (
