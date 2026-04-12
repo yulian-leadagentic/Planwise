@@ -104,4 +104,10 @@ export class ZonesController {
   applyProjectTemplate(@Body() body: { projectId: number; templateId: number; zoneName?: string }, @CurrentUser() user: any) {
     return this.zonesService.applyProjectTemplate(body.projectId, body.templateId, user.id, body.zoneName);
   }
+
+  @Post('reorder')
+  @ApiOperation({ summary: 'Batch reorder zones' })
+  reorder(@Body() body: { items: { id: number; sortOrder: number; parentId?: number | null }[] }) {
+    return this.zonesService.batchReorder(body.items);
+  }
 }

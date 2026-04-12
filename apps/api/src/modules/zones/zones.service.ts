@@ -549,4 +549,19 @@ export class ZonesService {
       return createdZones;
     });
   }
+
+  async batchReorder(items: { id: number; sortOrder: number; parentId?: number | null }[]) {
+    await this.prisma.$transaction(
+      items.map((item) =>
+        this.prisma.zone.update({
+          where: { id: item.id },
+          data: {
+            sortOrder: item.sortOrder,
+            ...(item.parentId !== undefined ? { parentId: item.parentId } : {}),
+          },
+        }),
+      ),
+    );
+    return { message: `Reordered ${items.length} zones` };
+  }
 }

@@ -24,6 +24,9 @@ export const zonesApi = {
 
   duplicate: (zoneId: number, newName: string) =>
     client.post(`/zones/${zoneId}/duplicate`, { newName }).then((r) => r.data),
+
+  reorder: (items: { id: number; sortOrder: number; parentId?: number | null }[]) =>
+    client.post('/zones/reorder', { items }).then((r) => r.data),
 };
 
 export const serviceTypesApi = {
@@ -108,6 +111,6 @@ export const planningApi = {
   getData: (projectId: number) =>
     client.get(`/projects/${projectId}/planning-data`).then((r) => r.data),
 
-  applyProjectTemplate: (projectId: number, templateId: number) =>
-    client.post('/zones/apply-project-template', { projectId, templateId }).then((r) => r.data),
+  applyProjectTemplate: (projectId: number, templateId: number, zoneName?: string) =>
+    client.post('/zones/apply-project-template', { projectId, templateId, zoneName }).then((r) => r.data),
 };

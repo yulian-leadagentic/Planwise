@@ -279,4 +279,19 @@ export class TasksService {
       },
     });
   }
+
+  async batchReorder(items: { id: number; sortOrder: number; zoneId?: number }[]) {
+    await this.prisma.$transaction(
+      items.map((item) =>
+        this.prisma.task.update({
+          where: { id: item.id },
+          data: {
+            sortOrder: item.sortOrder,
+            ...(item.zoneId !== undefined ? { zoneId: item.zoneId } : {}),
+          },
+        }),
+      ),
+    );
+    return { message: `Reordered ${items.length} tasks` };
+  }
 }

@@ -111,4 +111,12 @@ export class TasksController {
   ) {
     return this.tasksService.addComment(taskId, user.id, body);
   }
+
+  // Batch reorder
+  @Post('reorder')
+  @RequirePermissions({ module: 'tasks', action: 'write' })
+  @ApiOperation({ summary: 'Batch reorder tasks' })
+  reorder(@Body() body: { items: { id: number; sortOrder: number; zoneId?: number }[] }) {
+    return this.tasksService.batchReorder(body.items);
+  }
 }

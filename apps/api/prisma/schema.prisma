@@ -813,6 +813,7 @@ model Task {
   completionPct Int          @default(0) @map("completion_pct")
   startDate     DateTime?    @map("start_date") @db.Date
   endDate       DateTime?    @map("end_date") @db.Date
+  sortOrder     Int          @default(0) @map("sort_order")
   isArchived    Boolean      @default(false) @map("is_archived")
   createdBy     Int          @map("created_by")
   createdAt     DateTime     @default(now()) @map("created_at")

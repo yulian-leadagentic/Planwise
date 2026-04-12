@@ -1,6 +1,6 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers } from 'lucide-react';
 import { notify } from '@/lib/notify';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
@@ -686,10 +686,12 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
 function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth, selectedTaskIds, onToggleTask, onToggleMany }: any) {
   const [collapsed, setCollapsed] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
+  const [showAddZone, setShowAddZone] = useState(false);
   const [newTask, setNewTask] = useState({ code: '', name: '', budgetHours: '', budgetAmount: '' });
+  const [newZone, setNewZone] = useState({ name: '', zoneType: 'zone' });
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const [duplicateName, setDuplicateName] = useState('');
-  const [showTaskMenu, setShowTaskMenu] = useState(false);
+  const [showAddMenu, setShowAddMenu] = useState(false);
   const [saveToCatalog, setSaveToCatalog] = useState(true);
   const queryClient = useQueryClient();
 
@@ -698,6 +700,14 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['planning', projectId] }); setShowAddTask(false); setNewTask({ code: '', name: '', budgetHours: '', budgetAmount: '' }); notify.success('Task created', { code: 'TASK-CREATE-200' }); },
     onError: (err: any) => notify.apiError(err, 'Failed to create task'),
   });
+
+  const createZoneMutation = useMutation({
+    mutationFn: (data: any) => zonesApi.create(data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['planning', projectId] }); setShowAddZone(false); setNewZone({ name: '', zoneType: 'zone' }); notify.success('Sub-zone created', { code: 'ZONE-CREATE-200' }); },
+    onError: (err: any) => notify.apiError(err, 'Failed to create zone'),
+  });
+
+  const ZONE_TYPES = ['site', 'building', 'level', 'zone', 'area', 'section', 'wing', 'floor'];
 
   const directTasks = allTasks.filter((t: any) => t.zoneId === zone.id);
   const allZoneIds = new Set<number>();
@@ -749,13 +759,17 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
 
         <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
           <div className="relative">
-            <button onClick={() => setShowTaskMenu(!showTaskMenu)} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2 py-1 rounded-md flex items-center gap-1">
-              <Plus className="w-3 h-3" /> Task
+            <button onClick={() => setShowAddMenu(!showAddMenu)} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
+              <Plus className="w-3 h-3" /> Add
             </button>
-            {showTaskMenu && (
-              <div className="absolute right-0 top-full z-50 mt-1 w-44 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-1.5">
-                <button onClick={() => { setShowAddTask(true); setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Create New</button>
-                <button onClick={() => { setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">From Catalog</button>
+            {showAddMenu && (
+              <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-1.5">
+                <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Tasks</div>
+                <button onClick={() => { setShowAddTask(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Create New Task</button>
+                <button onClick={() => { setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Task from Catalog</button>
+                <div className="my-1 border-t border-slate-100" />
+                <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Zones</div>
+                <button onClick={() => { setShowAddZone(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Add Sub-Zone</button>
               </div>
             )}
           </div>
@@ -791,29 +805,77 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
             </div>
           )}
 
-          {directTasks.map((task: any) => {
-            const stColor: Record<string, string> = { not_started: 'text-slate-400', in_progress: 'text-blue-600', completed: 'text-emerald-600', on_hold: 'text-amber-600', in_review: 'text-violet-600', cancelled: 'text-red-500' };
+          {showAddZone && (
+            <div style={{ marginLeft: 28 }} className="flex items-center gap-2 py-2 px-4 border-b border-slate-50 bg-amber-50/30">
+              <input value={newZone.name} onChange={(e) => setNewZone(f => ({ ...f, name: e.target.value }))} placeholder="Zone name *" autoFocus
+                className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+              <select value={newZone.zoneType} onChange={(e) => setNewZone(f => ({ ...f, zoneType: e.target.value }))}
+                className="w-28 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none">
+                {ZONE_TYPES.map(zt => <option key={zt} value={zt}>{zt.charAt(0).toUpperCase() + zt.slice(1)}</option>)}
+              </select>
+              <button onClick={() => {
+                if (!newZone.name.trim()) { notify.warning('Zone name is required'); return; }
+                createZoneMutation.mutate({ projectId, parentId: zone.id, name: newZone.name.trim(), zoneType: newZone.zoneType });
+              }} disabled={createZoneMutation.isPending} className="bg-amber-600 text-white text-[11px] font-semibold px-3 py-1.5 rounded-md disabled:opacity-50">
+                {createZoneMutation.isPending ? 'Creating...' : 'Add Zone'}
+              </button>
+              <button onClick={() => setShowAddZone(false)} className="text-[11px] text-slate-400 px-1">✕</button>
+            </div>
+          )}
+
+          {/* Task column header row */}
+          {directTasks.length > 0 && (
+            <div style={{ marginLeft: 28 }} className="flex items-center gap-3 py-1.5 px-4 bg-slate-50/70 border-b border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider">
+              <span className="w-4 shrink-0" />
+              <span className="w-20 shrink-0">Code</span>
+              <span className="flex-1">Task Name</span>
+              <span className="w-24 shrink-0">Service</span>
+              <span className="w-20 shrink-0">Phase</span>
+              <span className="w-12 text-right shrink-0">Budget</span>
+              <span className="w-12 text-right shrink-0">Logged</span>
+              <span className="w-16 text-right shrink-0">Amount</span>
+              <span className="w-24 shrink-0">Assignees</span>
+              <span className="w-24 shrink-0">Status</span>
+              <span className="w-5 shrink-0" />
+            </div>
+          )}
+          {directTasks.map((task: any, idx: number) => {
+            const statusMap: Record<string, { bg: string; text: string; label: string }> = {
+              not_started: { bg: 'bg-slate-100', text: 'text-slate-600', label: 'Not Started' },
+              in_progress: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'In Progress' },
+              in_review: { bg: 'bg-violet-100', text: 'text-violet-700', label: 'In Review' },
+              completed: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Completed' },
+              on_hold: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'On Hold' },
+              cancelled: { bg: 'bg-red-100', text: 'text-red-700', label: 'Cancelled' },
+            };
+            const st = statusMap[task.status] || statusMap.not_started;
             const isSelected = selectedTaskIds?.has(task.id) ?? false;
             return (
-              <div key={task.id} style={{ marginLeft: 28 }} className={cn('flex items-center gap-3 py-2.5 px-4 border-b border-slate-50 hover:bg-slate-50/50 group text-[13px]', isSelected && 'bg-blue-50/40')}>
+              <div key={task.id} style={{ marginLeft: 28 }} className={cn(
+                'flex items-center gap-3 py-2 px-4 border-b border-slate-50 hover:bg-slate-50/60 group text-[13px] transition-colors',
+                isSelected && 'bg-blue-50/50',
+                idx % 2 === 1 && !isSelected && 'bg-slate-50/30',
+              )}>
                 <input
                   type="checkbox"
                   className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer shrink-0"
                   checked={isSelected}
                   onChange={() => onToggleTask?.(task.id)}
                 />
-                <span className="font-mono text-xs font-medium text-slate-400 w-24 shrink-0">{task.code}</span>
+                <span className="font-mono text-[11px] font-medium text-slate-500 w-20 shrink-0 truncate">{task.code || '-'}</span>
                 <span className="font-medium text-slate-900 flex-1 min-w-0 truncate">{task.name}</span>
-                {task.serviceType ? <span className="rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold shrink-0" style={{ backgroundColor: `${task.serviceType.color || '#3B82F6'}15`, color: task.serviceType.color || '#3B82F6' }}>{task.serviceType.name}</span> : null}
-                {task.phase ? <span className="text-[11px] text-slate-400 shrink-0">{task.phase.name}</span> : null}
-                <span className="font-mono text-xs text-slate-500 w-10 text-right shrink-0">{task.budgetHours ? Number(task.budgetHours) : '-'}</span>
-                <span className="font-mono text-xs w-12 text-right shrink-0">{task.loggedMinutes > 0 ? <span className={cn('font-medium', task.budgetHours && (task.loggedMinutes / 60) > Number(task.budgetHours) ? 'text-red-600' : 'text-blue-600')}>{Math.round(task.loggedMinutes / 60 * 10) / 10}h</span> : <span className="text-slate-300">-</span>}</span>
-                <span className="font-mono text-xs font-semibold text-slate-700 w-16 text-right shrink-0">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</span>
+                <span className="w-24 shrink-0">{task.serviceType ? <span className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full" style={{ backgroundColor: `${task.serviceType.color || '#3B82F6'}15`, color: task.serviceType.color || '#3B82F6' }}>{task.serviceType.name}</span> : <span className="text-slate-300">-</span>}</span>
+                <span className="w-20 shrink-0 text-[11px] text-slate-500 truncate">{task.phase?.name || '-'}</span>
+                <span className="font-mono text-[11px] text-slate-600 w-12 text-right shrink-0">{task.budgetHours ? `${Number(task.budgetHours)}h` : '-'}</span>
+                <span className="font-mono text-[11px] w-12 text-right shrink-0">{task.loggedMinutes > 0 ? <span className={cn('font-medium', task.budgetHours && (task.loggedMinutes / 60) > Number(task.budgetHours) ? 'text-red-600' : 'text-blue-600')}>{Math.round(task.loggedMinutes / 60 * 10) / 10}h</span> : <span className="text-slate-300">-</span>}</span>
+                <span className="font-mono text-[11px] font-semibold text-slate-700 w-16 text-right shrink-0">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</span>
                 <span className="w-24 shrink-0 flex items-center">
                   <AssigneePicker task={task} members={members} projectId={projectId} onUpdate={onUpdate} />
                 </span>
-                <span className={cn('text-[11px] font-medium w-20 shrink-0', stColor[task.status as string] || 'text-slate-400')}>{(task.status || 'not_started').replace(/_/g, ' ')}</span>
-                <button onClick={() => onDeleteTask(task.id)} className="w-[18px] h-[18px] rounded hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-500"><Trash2 className="w-3 h-3" /></button>
+                <span className="w-24 shrink-0">
+                  <span className={cn('inline-block rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold', st.bg, st.text)}>{st.label}</span>
+                </span>
+                <button onClick={() => onDeleteTask(task.id)} className="w-5 h-5 rounded hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-3 h-3" /></button>
               </div>
             );
           })}

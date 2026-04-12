@@ -67,6 +67,10 @@ export const tasksApi = {
   removeAssignee: (taskId: number, userId: number) =>
     client.delete(`/tasks/${taskId}/assignees/${userId}`).then((r) => r.data),
 
+  // Reorder
+  reorder: (items: { id: number; sortOrder: number; zoneId?: number }[]) =>
+    client.post('/tasks/reorder', { items }).then((r) => r.data),
+
   // Comments
   getComments: (taskId: number) =>
     client.get(`/tasks/${taskId}/comments`).then((r) => r.data),
