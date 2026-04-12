@@ -44,9 +44,21 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
   const style = { transform: CSS.Transform.toString(transform), transition, marginLeft: 28 };
   const st = statusMap[task.status] || statusMap.not_started;
   const isSelected = selectedTaskIds?.has(task.id) ?? false;
-  // Extract service name from serviceType or [SERVICE:name] tag
   const serviceName = task.serviceType?.name || task.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || null;
   const serviceColor = task.serviceType?.color || '#3B82F6';
+  const queryClient = useQueryClient();
+
+  const handleDateChange = async (date: string) => {
+    try {
+      await tasksApi.update(task.id, { endDate: date || undefined });
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to update due date');
+    }
+  };
+
+  const dueDate = task.endDate ? task.endDate.split('T')[0] : '';
+  const isOverdue = dueDate && new Date(dueDate) < new Date() && task.status !== 'completed' && task.status !== 'cancelled';
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} className={cn(
@@ -66,6 +78,18 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       <span className="font-mono text-[11px] text-slate-600 w-12 text-right shrink-0">{task.budgetHours ? `${Number(task.budgetHours)}h` : '-'}</span>
       <span className="font-mono text-[11px] w-12 text-right shrink-0">{task.loggedMinutes > 0 ? <span className={cn('font-medium', task.budgetHours && (task.loggedMinutes / 60) > Number(task.budgetHours) ? 'text-red-600' : 'text-blue-600')}>{Math.round(task.loggedMinutes / 60 * 10) / 10}h</span> : <span className="text-slate-300">-</span>}</span>
       <span className="font-mono text-[11px] font-semibold text-slate-700 w-16 text-right shrink-0">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</span>
+      <span className="w-24 shrink-0">
+        <input
+          type="date"
+          value={dueDate}
+          onChange={(e) => handleDateChange(e.target.value)}
+          className={cn(
+            'w-full px-1 py-0.5 rounded border text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400',
+            isOverdue ? 'border-red-300 text-red-600 bg-red-50' : 'border-slate-200 text-slate-600 bg-transparent',
+            !dueDate && 'text-slate-300',
+          )}
+        />
+      </span>
       <span className="w-24 shrink-0 flex items-center">
         <AssigneePicker task={task} members={members} projectId={projectId} onUpdate={onUpdate} />
       </span>
@@ -131,6 +155,110 @@ function SortableTaskList({ tasks, zoneId, projectId, members, selectedTaskIds, 
         ))}
       </SortableContext>
     </DndContext>
+  );
+}
+
+// ─── Catalog Picker for Zone — pick tasks from catalog and create in a zone ──
+
+function CatalogPickerForZone({ zoneId, projectId, onClose, onDone }: {
+  zoneId: number; projectId: number; onClose: () => void; onDone: () => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [adding, setAdding] = useState(false);
+  const queryClient = useQueryClient();
+
+  const { data: allTemplates = [] } = useQuery({
+    queryKey: ['templates', 'task_list'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/templates?type=task_list').then((r) => r.data.data ?? r.data),
+  });
+  const catalogEntry = (allTemplates as any[]).find((t: any) => t.code === '__TASK_CATALOG__');
+  const { data: catalog, isLoading } = useQuery({
+    queryKey: ['templates', catalogEntry?.id],
+    enabled: !!catalogEntry?.id,
+    queryFn: () => client.get(`/templates/${catalogEntry.id}`).then((r) => r.data.data ?? r.data),
+  });
+  const catalogTasks: any[] = catalog?.templateTasks ?? [];
+  const filtered = search.trim()
+    ? catalogTasks.filter((t: any) => t.name?.toLowerCase().includes(search.toLowerCase()) || t.code?.toLowerCase().includes(search.toLowerCase()))
+    : catalogTasks;
+
+  const handleAdd = async () => {
+    const tasks = catalogTasks.filter((t: any) => selected.has(t.id));
+    if (tasks.length === 0) return;
+    setAdding(true);
+    try {
+      for (const t of tasks) {
+        await tasksApi.create({
+          zoneId,
+          code: t.code,
+          name: t.name,
+          description: t.description,
+          budgetHours: t.defaultBudgetHours ? Number(t.defaultBudgetHours) : undefined,
+          budgetAmount: t.defaultBudgetAmount ? Number(t.defaultBudgetAmount) : undefined,
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+      notify.success(`Added ${tasks.length} task${tasks.length !== 1 ? 's' : ''} from catalog`, { code: 'TASK-ADD-200' });
+      onDone();
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to add tasks');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="mx-4 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-[14px] border border-slate-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+          <h2 className="text-base font-semibold">Add Tasks from Catalog</h2>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="border-b border-slate-200 px-5 py-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tasks..." className="w-full pl-9 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {isLoading ? <p className="py-8 text-center text-sm text-slate-400">Loading catalog...</p> : filtered.length === 0 ? (
+            <p className="py-8 text-center text-sm text-slate-400">{search ? 'No tasks match.' : 'No tasks in catalog.'}</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-slate-100 bg-slate-50 text-xs">
+                <th className="px-3 py-2 w-10"></th>
+                <th className="px-3 py-2 text-left font-medium">Code</th>
+                <th className="px-3 py-2 text-left font-medium">Name</th>
+                <th className="px-3 py-2 text-right font-medium">Hours</th>
+                <th className="px-3 py-2 text-right font-medium">Amount</th>
+              </tr></thead>
+              <tbody>
+                {filtered.map((t: any) => (
+                  <tr key={t.id} className={cn('border-b border-slate-50 cursor-pointer', selected.has(t.id) ? 'bg-blue-50' : 'hover:bg-slate-50')} onClick={() => { const n = new Set(selected); n.has(t.id) ? n.delete(t.id) : n.add(t.id); setSelected(n); }}>
+                    <td className="px-3 py-2"><input type="checkbox" checked={selected.has(t.id)} onChange={() => {}} className="h-3.5 w-3.5" /></td>
+                    <td className="px-3 py-2 font-mono text-xs text-slate-500">{t.code || '-'}</td>
+                    <td className="px-3 py-2 font-medium">{t.name}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetHours ? Number(t.defaultBudgetHours) : '-'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetAmount ? Number(t.defaultBudgetAmount).toLocaleString() : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">
+          <span className="text-xs text-slate-400">{filtered.length} tasks</span>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="bg-white border border-slate-200 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:border-slate-400">Cancel</button>
+            <button onClick={handleAdd} disabled={selected.size === 0 || adding} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
+              {adding ? 'Adding...' : `Add ${selected.size} Task${selected.size !== 1 ? 's' : ''}`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -753,6 +881,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                 <th className={cn(thClass, 'w-14 text-right')} onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
                 <th className={cn(thClass, 'w-14 text-right')}>Logged</th>
                 <th className={cn(thClass, 'w-20 text-right')} onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
+                <th className={cn(thClass, 'w-24')}>Due Date</th>
                 <th className={cn(thClass, 'w-28')}>Assignee</th>
                 <th className={cn(thClass, 'w-24')}>Status</th>
                 <th className="w-8"></th>
@@ -800,6 +929,15 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
               )}
             </tbody>
           </table>
+
+          {showCatalogPicker && (
+            <CatalogPickerForZone
+              zoneId={zone.id}
+              projectId={projectId}
+              onClose={() => setShowCatalogPicker(false)}
+              onDone={() => { setShowCatalogPicker(false); onUpdate(); }}
+            />
+          )}
         </>
       )}
     </div>
@@ -813,6 +951,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
   const [collapsed, setCollapsed] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddZone, setShowAddZone] = useState(false);
+  const [showCatalogPicker, setShowCatalogPicker] = useState(false);
   const [newTask, setNewTask] = useState({ code: '', name: '', budgetHours: '', budgetAmount: '' });
   const [newZone, setNewZone] = useState({ name: '', zoneType: 'zone' });
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
@@ -893,7 +1032,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-1.5">
                 <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Tasks</div>
                 <button onClick={() => { setShowAddTask(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Create New Task</button>
-                <button onClick={() => { setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Task from Catalog</button>
+                <button onClick={() => { setShowCatalogPicker(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Task from Catalog</button>
                 <div className="my-1 border-t border-slate-100" />
                 <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Zones</div>
                 <button onClick={() => { setShowAddZone(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Add Sub-Zone</button>
@@ -962,6 +1101,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <span className="w-12 text-right shrink-0">Budget</span>
               <span className="w-12 text-right shrink-0">Logged</span>
               <span className="w-16 text-right shrink-0">Amount</span>
+              <span className="w-24 shrink-0">Due Date</span>
               <span className="w-24 shrink-0">Assignees</span>
               <span className="w-24 shrink-0">Status</span>
               <span className="w-5 shrink-0" />
@@ -985,6 +1125,15 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               selectedTaskIds={selectedTaskIds} onToggleTask={onToggleTask} onToggleMany={onToggleMany} />
           ))}
         </>
+      )}
+
+      {showCatalogPicker && (
+        <CatalogPickerForZone
+          zoneId={zone.id}
+          projectId={projectId}
+          onClose={() => setShowCatalogPicker(false)}
+          onDone={() => { setShowCatalogPicker(false); onUpdate(); }}
+        />
       )}
 
       {showDuplicateModal && (
@@ -1022,6 +1171,40 @@ function PlanningView({ projectId }: { projectId: number }) {
   const [sortCol, setSortCol] = useState('');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
+
+  // ─── Undo Stack ─────────────────────────────────────────────────────────────
+  const undoStackRef = useRef<{ label: string; fn: () => Promise<void> }[]>([]);
+  const [undoCount, setUndoCount] = useState(0);
+
+  const pushUndo = useCallback((label: string, fn: () => Promise<void>) => {
+    undoStackRef.current.push({ label, fn });
+    if (undoStackRef.current.length > 30) undoStackRef.current.shift();
+    setUndoCount(undoStackRef.current.length);
+  }, []);
+
+  const handleUndo = useCallback(async () => {
+    const action = undoStackRef.current.pop();
+    if (!action) { notify.info('Nothing to undo'); return; }
+    try {
+      await action.fn();
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+      notify.success(`Undo: ${action.label}`, { code: 'UNDO-200' });
+    } catch (err: any) {
+      notify.apiError(err, 'Undo failed');
+    }
+    setUndoCount(undoStackRef.current.length);
+  }, [queryClient, projectId]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [handleUndo]);
 
   const toggleTask = (taskId: number) => {
     setSelectedTaskIds((prev) => {
@@ -1193,6 +1376,17 @@ function PlanningView({ projectId }: { projectId: number }) {
                 {sorted.every((t: any) => selectedTaskIds.has(t.id)) ? 'Deselect all' : `Select all (${sorted.length})`}
               </button>
             )}
+            {undoCount > 0 && (
+              <button
+                type="button"
+                onClick={handleUndo}
+                className="text-[12px] font-semibold text-slate-500 hover:text-slate-700 flex items-center gap-1"
+                title="Undo last action (Ctrl+Z)"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5"><path fillRule="evenodd" d="M7.793 2.232a.75.75 0 01-.025 1.06L3.622 7.25h10.003a5.375 5.375 0 010 10.75H10.75a.75.75 0 010-1.5h2.875a3.875 3.875 0 000-7.75H3.622l4.146 3.957a.75.75 0 01-1.036 1.085l-5.5-5.25a.75.75 0 010-1.085l5.5-5.25a.75.75 0 011.06.025z" clipRule="evenodd" /></svg>
+                Undo
+              </button>
+            )}
             <div className="flex items-center gap-1.5">
               <span className="text-[11px] font-semibold text-slate-400">Group:</span>
               <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as any)} className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none">
@@ -1231,6 +1425,7 @@ function PlanningView({ projectId }: { projectId: number }) {
               <span className="w-10 text-right shrink-0">Hours</span>
               <span className="w-12 text-right shrink-0">Logged</span>
               <span className="w-16 text-right shrink-0">Amount</span>
+              <span className="w-24 shrink-0">Due Date</span>
               <span className="w-20 shrink-0">Assignee</span>
               <span className="w-20 shrink-0">Status</span>
               <span className="w-5 shrink-0"></span>
