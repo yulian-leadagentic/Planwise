@@ -81,6 +81,8 @@ export function useAddProjectMember() {
       projectsApi.addMember(projectId, payload),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['projects', variables.projectId, 'members'] });
+      // Also invalidate planning data so assignee pickers pick up the new member
+      queryClient.invalidateQueries({ queryKey: ['planning', variables.projectId] });
       notify.success('Member added', { code: 'PROJECT-UPDATE-200' });
     },
     onError: (err: any) => {
@@ -97,6 +99,7 @@ export function useRemoveProjectMember() {
       projectsApi.removeMember(projectId, memberId),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['projects', variables.projectId, 'members'] });
+      queryClient.invalidateQueries({ queryKey: ['planning', variables.projectId] });
       notify.success('Member removed', { code: 'PROJECT-UPDATE-200' });
     },
     onError: (err: any) => {

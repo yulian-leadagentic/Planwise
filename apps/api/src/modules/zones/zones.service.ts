@@ -380,7 +380,7 @@ export class ZonesService {
     });
   }
 
-  async applyProjectTemplate(projectId: number, templateId: number, userId: number) {
+  async applyProjectTemplate(projectId: number, templateId: number, userId: number, zoneName?: string) {
     const template = await this.prisma.template.findUniqueOrThrow({
       where: { id: templateId },
       include: {
@@ -513,9 +513,9 @@ export class ZonesService {
         }
       };
 
-      // Create a main project zone (user will rename this)
+      // Create a main project zone with user's chosen name (or template name as fallback)
       const mainZone = await tx.zone.create({
-        data: { projectId, zoneType: 'zone', name: template.name, code: template.code, path: '', depth: 0 },
+        data: { projectId, zoneType: 'zone', name: zoneName?.trim() || template.name, code: template.code, path: '', depth: 0 },
       });
       const mainPath = `${mainZone.id}`;
       await tx.zone.update({ where: { id: mainZone.id }, data: { path: mainPath } });

@@ -11,10 +11,10 @@ import { notify } from '@/lib/notify';
 import client from '@/api/client';
 
 const projectSchema = z.object({
-  name: z.string().min(1, 'Name is required'),
+  name: z.string().min(1, 'Project name is required'),
   number: z.string().optional(),
   description: z.string().optional(),
-  projectTypeId: z.coerce.number().min(1, 'Type is required'),
+  projectTypeId: z.coerce.number().min(1, 'Please select a project type'),
   status: z.string().default('draft'),
   budget: z.coerce.number().optional(),
   startDate: z.string().optional(),
@@ -186,6 +186,18 @@ export function ProjectFormPage() {
         </h1>
 
         <form onSubmit={handleSubmit(onSubmit)}>
+          {/* Validation error banner */}
+          {Object.keys(errors).length > 0 && (
+            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4">
+              <p className="text-sm font-semibold text-red-700 mb-1">Please fix the following errors:</p>
+              <ul className="list-disc list-inside space-y-0.5">
+                {Object.entries(errors).map(([field, error]) => (
+                  <li key={field} className="text-sm text-red-600">{(error as any)?.message || `${field} is invalid`}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <div className="bg-white rounded-[14px] border border-slate-200">
             {/* Section 1: Project Details */}
             <div className="p-6">

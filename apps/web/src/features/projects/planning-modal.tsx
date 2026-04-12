@@ -426,13 +426,12 @@ function TemplatePickerDialog({ projectId, onClose, onApplied }: { projectId: nu
   const applyMutation = useMutation({
     mutationFn: async () => {
       if (!selected || !zoneName.trim()) return;
-      // Apply template then rename the root zones
-      const result = await planningApi.applyProjectTemplate(projectId, selected.id);
-      // Rename: the first root zone created gets the user's name
-      const created = (result as any)?.data ?? result;
-      if (Array.isArray(created) && created.length > 0) {
-        await zonesApi.update(created[0].id, { name: zoneName.trim() });
-      }
+      // Apply template with the user's zone name directly (no post-rename needed)
+      await client.post('/zones/apply-project-template', {
+        projectId,
+        templateId: selected.id,
+        zoneName: zoneName.trim(),
+      });
     },
     onSuccess: () => {
       notify.success('Zone added from template', { code: 'TPL-APPLY-200' });

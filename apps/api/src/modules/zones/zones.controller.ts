@@ -101,7 +101,7 @@ export class ZonesController {
 
   @Post('apply-project-template')
   @ApiOperation({ summary: 'Apply a zone or combined template to a project' })
-  applyProjectTemplate(@Body() body: { projectId: number; templateId: number }, @CurrentUser() user: any) {
-    return this.zonesService.applyProjectTemplate(body.projectId, body.templateId, user.id);
+  applyProjectTemplate(@Body() body: { projectId: number; templateId: number; zoneName?: string }, @CurrentUser() user: any) {
+    return this.zonesService.applyProjectTemplate(body.projectId, body.templateId, user.id, body.zoneName);
   }
 }
