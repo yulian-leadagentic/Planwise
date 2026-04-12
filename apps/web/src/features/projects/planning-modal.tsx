@@ -44,6 +44,9 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
   const style = { transform: CSS.Transform.toString(transform), transition, marginLeft: 28 };
   const st = statusMap[task.status] || statusMap.not_started;
   const isSelected = selectedTaskIds?.has(task.id) ?? false;
+  // Extract service name from serviceType or [SERVICE:name] tag
+  const serviceName = task.serviceType?.name || task.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || null;
+  const serviceColor = task.serviceType?.color || '#3B82F6';
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} className={cn(
@@ -58,7 +61,7 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer shrink-0" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
       <span className="font-mono text-[11px] font-medium text-slate-500 w-20 shrink-0 truncate">{task.code || '-'}</span>
       <span className="font-medium text-slate-900 flex-1 min-w-0 truncate">{task.name}</span>
-      <span className="w-24 shrink-0">{task.serviceType ? <span className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full" style={{ backgroundColor: `${task.serviceType.color || '#3B82F6'}15`, color: task.serviceType.color || '#3B82F6' }}>{task.serviceType.name}</span> : <span className="text-slate-300">-</span>}</span>
+      <span className="w-24 shrink-0">{serviceName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full" style={{ backgroundColor: `${serviceColor}15`, color: serviceColor }}>{serviceName}</span> : <span className="text-slate-300">-</span>}</span>
       <span className="w-20 shrink-0 text-[11px] text-slate-500 truncate">{task.phase?.name || '-'}</span>
       <span className="font-mono text-[11px] text-slate-600 w-12 text-right shrink-0">{task.budgetHours ? `${Number(task.budgetHours)}h` : '-'}</span>
       <span className="font-mono text-[11px] w-12 text-right shrink-0">{task.loggedMinutes > 0 ? <span className={cn('font-medium', task.budgetHours && (task.loggedMinutes / 60) > Number(task.budgetHours) ? 'text-red-600' : 'text-blue-600')}>{Math.round(task.loggedMinutes / 60 * 10) / 10}h</span> : <span className="text-slate-300">-</span>}</span>
