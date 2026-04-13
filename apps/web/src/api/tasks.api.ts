@@ -67,6 +67,25 @@ export const tasksApi = {
   removeAssignee: (taskId: number, userId: number) =>
     client.delete(`/tasks/${taskId}/assignees/${userId}`).then((r) => r.data),
 
+  // Attachments
+  getAttachments: (taskId: number) =>
+    client.get(`/tasks/${taskId}/attachments`).then((r) => r.data),
+
+  addAttachment: (taskId: number, payload: { fileName: string; fileUrl: string; fileSize?: number; mimeType?: string }) =>
+    client.post(`/tasks/${taskId}/attachments`, payload).then((r) => r.data),
+
+  removeAttachment: (attachmentId: number) =>
+    client.delete(`/tasks/attachments/${attachmentId}`).then((r) => r.data),
+
+  uploadFile: (file: File, folder?: string) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (folder) formData.append('folder', folder);
+    return client.post('/files/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then((r) => r.data?.data ?? r.data);
+  },
+
   // Reorder
   reorder: (items: { id: number; sortOrder: number; zoneId?: number }[]) =>
     client.post('/tasks/reorder', { items }).then((r) => r.data),

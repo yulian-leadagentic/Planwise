@@ -120,4 +120,30 @@ export class TasksController {
   reorder(@Body() body: { items: { id: number; sortOrder: number; zoneId?: number }[] }) {
     return this.tasksService.batchReorder(body.items);
   }
+
+  // Attachments
+  @Get(':id/attachments')
+  @RequirePermissions({ module: 'tasks', action: 'read' })
+  @ApiOperation({ summary: 'List task attachments' })
+  getAttachments(@Param('id', ParseIntPipe) taskId: number) {
+    return this.tasksService.getAttachments(taskId);
+  }
+
+  @Post(':id/attachments')
+  @RequirePermissions({ module: 'tasks', action: 'write' })
+  @ApiOperation({ summary: 'Add attachment to task' })
+  addAttachment(
+    @Param('id', ParseIntPipe) taskId: number,
+    @CurrentUser() user: any,
+    @Body() body: { fileName: string; fileUrl: string; fileSize?: number; mimeType?: string },
+  ) {
+    return this.tasksService.addAttachment(taskId, user.id, body);
+  }
+
+  @Delete('attachments/:attachmentId')
+  @RequirePermissions({ module: 'tasks', action: 'delete' })
+  @ApiOperation({ summary: 'Delete task attachment' })
+  removeAttachment(@Param('attachmentId', ParseIntPipe) attachmentId: number) {
+    return this.tasksService.removeAttachment(attachmentId);
+  }
 }

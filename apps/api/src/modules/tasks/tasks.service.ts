@@ -333,4 +333,39 @@ export class TasksService {
     );
     return { message: `Reordered ${items.length} tasks` };
   }
+
+  // ─── Attachments ────────────────────────────────────────────────────────
+
+  async getAttachments(taskId: number) {
+    return this.prisma.taskAttachment.findMany({
+      where: { taskId },
+      include: {
+        uploader: { select: { id: true, firstName: true, lastName: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async addAttachment(taskId: number, userId: number, data: { fileName: string; fileUrl: string; fileSize?: number; mimeType?: string }) {
+    await this.findOne(taskId);
+
+    return this.prisma.taskAttachment.create({
+      data: {
+        taskId,
+        fileName: data.fileName,
+        fileUrl: data.fileUrl,
+        fileSize: data.fileSize,
+        mimeType: data.mimeType,
+        uploadedBy: userId,
+      },
+      include: {
+        uploader: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
+  }
+
+  async removeAttachment(attachmentId: number) {
+    await this.prisma.taskAttachment.delete({ where: { id: attachmentId } });
+    return { message: 'Attachment removed' };
+  }
 }

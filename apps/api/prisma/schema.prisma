@@ -216,6 +216,7 @@ model User {
   templatesCreated     Template[]         @relation("TemplateCreator")
   messages             Message[]          @relation("MessageAuthor")
   messageMentions      MessageMention[]
+  taskAttachments      TaskAttachment[]
   notificationsActed   Notification[]     @relation("NotificationActor")
   notificationPrefs    NotificationPreference[]
 
@@ -850,6 +851,7 @@ model Task {
   creator      User         @relation("TaskCreator", fields: [createdBy], references: [id])
   assignees    TaskAssignee[]
   comments     TaskComment[]
+  attachments  TaskAttachment[]
   timeEntries  TimeEntry[]
   dependencies TaskDependency[] @relation("TaskDeps")
   dependedBy   TaskDependency[] @relation("TaskDepBy")
@@ -859,6 +861,23 @@ model Task {
   @@index([serviceTypeId])
   @@index([status])
   @@map("tasks")
+}
+
+model TaskAttachment {
+  id           Int      @id @default(autoincrement())
+  taskId       Int      @map("task_id")
+  fileName     String   @map("file_name") @db.VarChar(255)
+  fileUrl      String   @map("file_url") @db.VarChar(500)
+  fileSize     Int?     @map("file_size")
+  mimeType     String?  @map("mime_type") @db.VarChar(100)
+  uploadedBy   Int      @map("uploaded_by")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  task     Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploader User @relation(fields: [uploadedBy], references: [id])
+
+  @@index([taskId])
+  @@map("task_attachments")
 }
 
 model TaskDependency {

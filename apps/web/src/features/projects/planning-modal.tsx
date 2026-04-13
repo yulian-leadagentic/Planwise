@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText } from 'lucide-react';
 import { notify } from '@/lib/notify';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
@@ -26,6 +26,140 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+
+// ─── Task Attachment Button ──────────────────────────────────────────────────
+
+function TaskAttachmentButton({ taskId, projectId }: { taskId: number; projectId: number }) {
+  const [open, setOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const queryClient = useQueryClient();
+
+  const { data: attachments = [] } = useQuery({
+    queryKey: ['task-attachments', taskId],
+    queryFn: () => client.get(`/tasks/${taskId}/attachments`).then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : [];
+    }),
+    enabled: open,
+    staleTime: 30 * 1000,
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('folder', 'task-attachments');
+        const uploadResult = await client.post('/files/upload', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        }).then((r) => r.data?.data ?? r.data);
+
+        await client.post(`/tasks/${taskId}/attachments`, {
+          fileName: file.name,
+          fileUrl: uploadResult.url,
+          fileSize: file.size,
+          mimeType: file.type,
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ['task-attachments', taskId] });
+      notify.success('File attached', { code: 'FILE-UPLOAD-200' });
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to upload file');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleRemove = async (attachmentId: number) => {
+    try {
+      await client.delete(`/tasks/attachments/${attachmentId}`);
+      queryClient.invalidateQueries({ queryKey: ['task-attachments', taskId] });
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to remove');
+    }
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        title="Attachments"
+        className={cn(
+          'w-7 h-7 rounded-md flex items-center justify-center shrink-0 transition-colors',
+          'text-slate-400 hover:text-amber-600 hover:bg-amber-50',
+        )}
+      >
+        <Paperclip className="w-3.5 h-3.5" />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-30 w-72 rounded-[14px] border border-slate-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="border-b border-slate-100 px-4 py-3 flex items-center justify-between">
+            <h4 className="text-[13px] font-semibold text-slate-800">Attachments</h4>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700 disabled:opacity-50"
+            >
+              <Plus className="h-3 w-3" /> {uploading ? 'Uploading...' : 'Add File'}
+            </button>
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            {attachments.length === 0 ? (
+              <div className="py-6 text-center">
+                <Paperclip className="mx-auto h-6 w-6 text-slate-300" />
+                <p className="mt-1 text-[11px] text-slate-400">No attachments</p>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="mt-2 text-[11px] font-semibold text-blue-600 hover:text-blue-700"
+                >
+                  Upload a file
+                </button>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-50 py-1">
+                {attachments.map((att: any) => (
+                  <div key={att.id} className="flex items-center gap-2 px-4 py-2 hover:bg-slate-50">
+                    <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12px] font-medium text-slate-700 truncate">{att.fileName}</p>
+                      <p className="text-[10px] text-slate-400">
+                        {att.fileSize ? `${Math.round(att.fileSize / 1024)}KB` : ''}
+                        {att.uploader ? ` · ${att.uploader.firstName}` : ''}
+                      </p>
+                    </div>
+                    <a href={att.fileUrl} target="_blank" rel="noopener noreferrer" className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-blue-50">
+                      <Download className="w-3 h-3" />
+                    </a>
+                    <button onClick={() => handleRemove(att.id)} className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Task Discussion Button (mini chat popover) ─────────────────────────────
 
@@ -55,11 +189,11 @@ function TaskDiscussionButton({ taskId, taskName }: { taskId: number; taskName: 
         onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
         title={`Discussion${msgCount > 0 ? ` (${msgCount})` : ''}`}
         className={cn(
-          'w-5 h-5 rounded hover:bg-blue-50 flex items-center justify-center shrink-0 relative',
-          msgCount > 0 ? 'text-blue-500' : 'text-slate-300 hover:text-blue-500',
+          'w-7 h-7 rounded-md flex items-center justify-center shrink-0 relative transition-colors',
+          msgCount > 0 ? 'text-blue-600 hover:bg-blue-100' : 'text-slate-400 hover:text-blue-600 hover:bg-blue-50',
         )}
       >
-        <MessageSquare className="w-3 h-3" />
+        <MessageSquare className="w-3.5 h-3.5" />
         {msgCount > 0 && (
           <span className="absolute -top-1 -right-1 flex h-3 w-3 items-center justify-center rounded-full bg-blue-500 text-[7px] font-bold text-white">
             {msgCount > 9 ? '9+' : msgCount}
@@ -272,8 +406,18 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       <span className="w-24 shrink-0">
         <span className={cn('inline-block rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold', st.bg, st.text)}>{st.label}</span>
       </span>
-      <TaskDiscussionButton taskId={task.id} taskName={task.name} />
-      <button onClick={() => onDeleteTask(task.id)} className="w-5 h-5 rounded hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-3 h-3" /></button>
+      {/* Action buttons — visible, properly sized with clear icons */}
+      <div className="flex items-center gap-1 shrink-0">
+        <TaskAttachmentButton taskId={task.id} projectId={projectId} />
+        <TaskDiscussionButton taskId={task.id} taskName={task.name} />
+        <button
+          onClick={() => onDeleteTask(task.id)}
+          title="Delete task"
+          className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
     </div>
   );
 }
