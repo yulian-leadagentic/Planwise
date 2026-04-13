@@ -27,6 +27,209 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
+// ─── Feasibility Badge ───────────────────────────────────────────────────────
+
+function FeasibilityBadge({ projectId }: { projectId: number }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['feasibility', projectId],
+    queryFn: () => client.get(`/projects/${projectId}/feasibility`).then((r) => r.data?.data ?? r.data),
+    staleTime: 60 * 1000,
+    enabled: !!projectId,
+  });
+
+  const progressQuery = useQuery({
+    queryKey: ['progress', projectId],
+    queryFn: () => client.get(`/projects/${projectId}/progress`).then((r) => r.data?.data ?? r.data),
+    staleTime: 60 * 1000,
+    enabled: !!projectId,
+  });
+
+  const progress = (progressQuery.data as any)?.overallProgress ?? 0;
+  const feasibility = data as any;
+  const status = feasibility?.status ?? 'UNKNOWN';
+
+  const statusConfig: Record<string, { bg: string; text: string; label: string; icon: string }> = {
+    OK: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'On Track', icon: '✓' },
+    AT_RISK: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'At Risk', icon: '⚠' },
+    IMPOSSIBLE: { bg: 'bg-red-100', text: 'text-red-700', label: 'Impossible', icon: '✗' },
+    UNKNOWN: { bg: 'bg-slate-100', text: 'text-slate-500', label: 'Checking...', icon: '…' },
+  };
+  const cfg = statusConfig[status] || statusConfig.UNKNOWN;
+
+  if (isLoading) return <span className="text-[11px] text-slate-400">Analyzing...</span>;
+
+  return (
+    <div className="flex items-center gap-3">
+      {/* Progress bar */}
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-medium text-slate-500">Progress</span>
+        <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden">
+          <div
+            className={cn(
+              'h-full rounded-full transition-all',
+              progress >= 80 ? 'bg-emerald-500' : progress >= 50 ? 'bg-blue-500' : progress >= 25 ? 'bg-amber-500' : 'bg-slate-400',
+            )}
+            style={{ width: `${Math.min(100, progress)}%` }}
+          />
+        </div>
+        <span className="text-[11px] font-semibold text-slate-700">{progress}%</span>
+      </div>
+
+      {/* Feasibility badge */}
+      <div className={cn('flex items-center gap-1 rounded-[6px] px-2.5 py-1 text-[11px] font-bold', cfg.bg, cfg.text)}
+        title={feasibility?.details ? `${feasibility.details.overloadedAssignees?.length ?? 0} overloaded, ${feasibility.details.blockedTasks?.length ?? 0} blocked, ${feasibility.details.unassignedTasks?.length ?? 0} unassigned` : ''}>
+        <span>{cfg.icon}</span>
+        <span>{cfg.label}</span>
+        {feasibility?.details?.daysRemaining != null && (
+          <span className="opacity-70 ml-1">({feasibility.details.daysRemaining}d left)</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Status Menu (quick status change via dropdown) ──────────────────────────
+
+function StatusMenu({ taskId, currentStatus, projectId }: { taskId: number; currentStatus: string; projectId: number }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  const statuses = [
+    { value: 'not_started', label: 'Not Started', dot: 'bg-slate-400' },
+    { value: 'in_progress', label: 'In Progress', dot: 'bg-blue-500' },
+    { value: 'in_review', label: 'In Review', dot: 'bg-violet-500' },
+    { value: 'completed', label: 'Completed', dot: 'bg-emerald-500' },
+    { value: 'on_hold', label: 'On Hold', dot: 'bg-amber-500' },
+    { value: 'cancelled', label: 'Cancelled', dot: 'bg-red-500' },
+  ];
+
+  const handleChange = async (status: string) => {
+    try {
+      await tasksApi.update(taskId, { status });
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['feasibility', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['progress', projectId] });
+      setOpen(false);
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to change status');
+    }
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        title="Change status"
+        className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors shrink-0"
+      >
+        <ChevronDown className="w-3.5 h-3.5" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-30 w-44 rounded-lg border border-slate-200 bg-white shadow-xl py-1">
+          <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase">Set Status</div>
+          {statuses.map((s) => (
+            <button
+              key={s.value}
+              onClick={() => handleChange(s.value)}
+              className={cn(
+                'w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-slate-50',
+                s.value === currentStatus && 'bg-blue-50 font-medium',
+              )}
+            >
+              <span className={cn('w-2 h-2 rounded-full', s.dot)} />
+              <span className="text-slate-700">{s.label}</span>
+              {s.value === currentStatus && <span className="ml-auto text-[10px] text-blue-500">current</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Move To Menu (keyboard alternative for DnD) ────────────────────────────
+
+function MoveToMenu({ taskId, currentZoneId, zones, projectId, onMoved }: {
+  taskId: number; currentZoneId: number; zones: any[]; projectId: number; onMoved: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  const flatZones = useMemo(() => {
+    const result: any[] = [];
+    function walk(z: any[], depth: number) {
+      for (const zone of z) {
+        result.push({ ...zone, depth });
+        if (zone.children) walk(zone.children, depth + 1);
+      }
+    }
+    walk(zones, 0);
+    return result.filter((z) => z.id !== currentZoneId);
+  }, [zones, currentZoneId]);
+
+  const handleMove = async (targetZoneId: number) => {
+    try {
+      await tasksApi.reorder([{ id: taskId, sortOrder: 0, zoneId: targetZoneId }]);
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+      notify.success('Task moved', { code: 'TASK-MOVE-200' });
+      setOpen(false);
+      onMoved();
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to move task');
+    }
+  };
+
+  if (flatZones.length === 0) return null;
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        title="Move to zone..."
+        className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors shrink-0"
+      >
+        <Layers className="w-3.5 h-3.5" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-30 w-56 rounded-lg border border-slate-200 bg-white shadow-xl py-1">
+          <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase">Move to zone</div>
+          {flatZones.map((z) => (
+            <button
+              key={z.id}
+              onClick={() => handleMove(z.id)}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-slate-50"
+              style={{ paddingLeft: `${12 + z.depth * 16}px` }}
+            >
+              <span className="text-slate-700">{z.name}</span>
+              <span className="text-[10px] text-slate-400">{z.zoneType}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Task Attachment Button ──────────────────────────────────────────────────
 
 function TaskAttachmentButton({ taskId, projectId }: { taskId: number; projectId: number }) {
@@ -383,7 +586,14 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       </button>
       <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer shrink-0" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
       <span className="font-mono text-[11px] font-medium text-slate-500 w-20 shrink-0 truncate">{task.code || '-'}</span>
-      <span className="font-medium text-slate-900 flex-1 min-w-0 truncate">{task.name}</span>
+      <span className="font-medium text-slate-900 flex-1 min-w-0 truncate">
+        {task.name}
+        {task.dependencies?.length > 0 && (
+          <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] text-amber-600" title={`Depends on: ${task.dependencies.map((d: any) => d.dependsOn?.name || d.dependsOn?.code).join(', ')}`}>
+            ⛓ {task.dependencies.length}
+          </span>
+        )}
+      </span>
       <span className="w-24 shrink-0">{serviceName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full" style={{ backgroundColor: `${serviceColor}15`, color: serviceColor }}>{serviceName}</span> : <span className="text-slate-300 text-[11px]">-</span>}</span>
       <span className="w-20 shrink-0 text-[11px] text-slate-500 truncate">{task.phase?.name || <span className="text-slate-300">-</span>}</span>
       <InlineEditCell value={task.budgetHours} suffix="h" width="w-14" onSave={(v) => saveField('budgetHours', v)} />
@@ -410,6 +620,7 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       <div className="flex items-center gap-1 shrink-0">
         <TaskAttachmentButton taskId={task.id} projectId={projectId} />
         <TaskDiscussionButton taskId={task.id} taskName={task.name} />
+        <StatusMenu taskId={task.id} currentStatus={task.status} projectId={projectId} />
         <button
           onClick={() => onDeleteTask(task.id)}
           title="Delete task"
@@ -1414,7 +1625,23 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
         <span className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide shrink-0', zc.bg, zc.text)}>{zone.zoneType}</span>
         <span className={cn('font-semibold', depth === 0 ? 'text-[15px] text-slate-900' : 'text-[13px] text-slate-800')}>{zone.name}</span>
         {hasChildren && <span className="text-[11px] text-slate-400">({zone.children.length} sub-zones)</span>}
-        <span className="ml-auto text-[11px] font-medium text-slate-400 shrink-0">{allZoneTasks.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span>
+        <div className="ml-auto flex items-center gap-3 shrink-0">
+          {/* Mini progress bar */}
+          {(() => {
+            const zoneProgress = totalHours > 0
+              ? Math.round(allZoneTasks.reduce((s: number, t: any) => s + (t.completionPct || 0) * Number(t.budgetHours || 0), 0) / totalHours)
+              : 0;
+            return (
+              <div className="flex items-center gap-1.5">
+                <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                  <div className={cn('h-full rounded-full', zoneProgress >= 80 ? 'bg-emerald-500' : zoneProgress >= 50 ? 'bg-blue-500' : 'bg-amber-500')} style={{ width: `${zoneProgress}%` }} />
+                </div>
+                <span className="text-[10px] font-semibold text-slate-500">{zoneProgress}%</span>
+              </div>
+            );
+          })()}
+          <span className="text-[11px] font-medium text-slate-400">{allZoneTasks.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span>
+        </div>
 
         <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
           <div className="relative">
@@ -1894,6 +2121,8 @@ function PlanningView({ projectId }: { projectId: number }) {
               <h3 className="text-[15px] font-bold text-slate-900">Project Tasks</h3>
               <span className="text-[11px] font-medium text-slate-400">{sorted.length} tasks · {totalHours}h budget{totalLoggedHours > 0 ? ` · ${totalLoggedHours}h logged` : ''} · ₪{totalAmount.toLocaleString()}</span>
             </div>
+            {/* Feasibility + Progress */}
+            <FeasibilityBadge projectId={projectId} />
           </div>
 
           {/* Column header for non-zone grouping — matches ZoneGroup table */}
