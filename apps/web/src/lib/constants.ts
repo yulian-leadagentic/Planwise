@@ -7,6 +7,7 @@ import {
   BarChart3,
   Layers,
   Settings,
+  MessageSquare,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -43,6 +44,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/', icon: LayoutDashboard },
   { label: 'Projects', href: '/projects', icon: FolderKanban },
+  { label: 'Inbox', href: '/inbox', icon: MessageSquare },
   { label: 'Time', href: '/time', icon: Clock },
   { label: 'Contracts', href: '/contracts', icon: FileText },
   { label: 'Reports', href: '/reports', icon: BarChart3 },

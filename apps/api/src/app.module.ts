@@ -21,6 +21,7 @@ import { PlanningModule } from './modules/planning/planning.module';
 import { ServiceTypesModule } from './modules/service-types/service-types.module';
 import { PhasesModule } from './modules/phases/phases.module';
 import { TemplatesModule } from './modules/templates/templates.module';
+import { MessagesModule } from './modules/messages/messages.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { TemplatesModule } from './modules/templates/templates.module';
     ServiceTypesModule,
     PhasesModule,
     TemplatesModule,
+    MessagesModule,
   ],
 })
 export class AppModule {}

@@ -149,6 +149,17 @@ enum TemplateType {
   combined
 }
 
+enum MessageEntityType {
+  project
+  task
+  zone
+}
+
+enum MessageType {
+  user
+  system
+}
+
 // ─── Models ─────────────────────────────────────────────────────────────────
 
 model User {
@@ -203,6 +214,10 @@ model User {
   teamTemplateMembers  TeamTemplateMember[]
   tasksCreated         Task[]             @relation("TaskCreator")
   templatesCreated     Template[]         @relation("TemplateCreator")
+  messages             Message[]          @relation("MessageAuthor")
+  messageMentions      MessageMention[]
+  notificationsActed   Notification[]     @relation("NotificationActor")
+  notificationPrefs    NotificationPreference[]
 
   @@index([roleId])
   @@index([email])
@@ -654,19 +669,27 @@ model ActivityLog {
 }
 
 model Notification {
-  id        Int       @id @default(autoincrement())
-  userId    Int       @map("user_id")
-  type      String
-  title     String
-  body      String?
-  data      Json?
-  readAt    DateTime? @map("read_at")
-  createdAt DateTime  @default(now()) @map("created_at")
+  id         Int       @id @default(autoincrement())
+  userId     Int       @map("user_id")
+  type       String
+  title      String
+  body       String?
+  data       Json?
+  readAt     DateTime? @map("read_at")
+  entityType String?   @map("entity_type")
+  entityId   Int?      @map("entity_id")
+  actorId    Int?      @map("actor_id")
+  messageId  Int?      @map("message_id")
+  createdAt  DateTime  @default(now()) @map("created_at")
 
-  user User @relation(fields: [userId], references: [id])
+  user    User     @relation(fields: [userId], references: [id])
+  actor   User?    @relation("NotificationActor", fields: [actorId], references: [id])
+  message Message? @relation(fields: [messageId], references: [id])
 
   @@index([userId])
   @@index([readAt])
+  @@index([entityType, entityId])
+  @@index([actorId])
   @@map("notifications")
 }
 
@@ -981,4 +1004,63 @@ model TemplateZoneTask {
   phase        Phase?       @relation(fields: [phaseId], references: [id])
 
   @@map("template_zone_tasks")
+}
+
+// ─── Messaging ────────────────────────────────────────────────────────────────
+
+model Message {
+  id         Int               @id @default(autoincrement())
+  entityType MessageEntityType @map("entity_type")
+  entityId   Int               @map("entity_id")
+  parentId   Int?              @map("parent_id")
+  authorId   Int?              @map("author_id")
+  type       MessageType       @default(user)
+  content    String            @db.Text
+  metadata   Json?
+  isEdited   Boolean           @default(false) @map("is_edited")
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+  deletedAt  DateTime?         @map("deleted_at")
+
+  author         User?            @relation("MessageAuthor", fields: [authorId], references: [id])
+  parent         Message?         @relation("MessageThread", fields: [parentId], references: [id])
+  replies        Message[]        @relation("MessageThread")
+  mentions       MessageMention[]
+  notifications  Notification[]
+
+  @@index([entityType, entityId])
+  @@index([parentId])
+  @@index([authorId])
+  @@index([createdAt])
+  @@map("messages")
+}
+
+model MessageMention {
+  id        Int      @id @default(autoincrement())
+  messageId Int      @map("message_id")
+  userId    Int      @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@unique([messageId, userId])
+  @@index([userId])
+  @@map("message_mentions")
+}
+
+model NotificationPreference {
+  id               Int      @id @default(autoincrement())
+  userId           Int      @map("user_id")
+  notificationType String   @map("notification_type")
+  inApp            Boolean  @default(true) @map("in_app")
+  email            Boolean  @default(false)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, notificationType])
+  @@index([userId])
+  @@map("notification_preferences")
 }

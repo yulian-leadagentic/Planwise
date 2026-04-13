@@ -32,6 +32,7 @@ import { PhasesPage } from '@/features/templates/phases-page';
 import { TypesPage } from '@/features/templates/types-page';
 import { AdminPage } from '@/features/admin/admin-page';
 import { RolesPage } from '@/features/admin/roles-page';
+import { InboxPage } from '@/features/messaging/inbox-page';
 import { ProjectTypesPage } from '@/features/admin/project-types-page';
 import { ActivityLogPage } from '@/features/admin/activity-log-page';
 import { WorkSchedulesPage } from '@/features/admin/work-schedules-page';
@@ -59,6 +60,7 @@ export function AppRouter() {
         <Route path="tasks/:id" element={<TaskDetailPage />} />
 
         {/* Time */}
+        <Route path="inbox" element={<InboxPage />} />
         <Route path="time" element={<MyTimePage />} />
         <Route path="time/grid" element={<TimeGridPage />} />
         <Route path="time/clock-dashboard" element={<ClockDashboardPage />} />

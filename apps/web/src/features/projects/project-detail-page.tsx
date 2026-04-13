@@ -3,6 +3,7 @@ import { ArrowLeft, Settings, Plus, UserPlus, X, Pencil, Users } from 'lucide-re
 import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlanningTab } from './planning-modal';
+import { MessagePanel } from '@/features/messaging/message-panel';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { useProject, useProjectMembers, useAddProjectMember, useRemoveProjectMember } from '@/hooks/use-projects';
 import { cn } from '@/lib/utils';
@@ -10,7 +11,7 @@ import { notify } from '@/lib/notify';
 import client from '@/api/client';
 import { formatDate } from '@/lib/date-utils';
 
-type Tab = 'planning' | 'team';
+type Tab = 'planning' | 'team' | 'discussion';
 
 interface User {
   id: number;
@@ -61,6 +62,7 @@ export function ProjectDetailPage() {
   const tabs: { key: Tab; label: string }[] = [
     { key: 'planning', label: 'Planning' },
     { key: 'team', label: 'Team' },
+    { key: 'discussion', label: 'Discussion' },
   ];
 
   return (
@@ -196,6 +198,9 @@ export function ProjectDetailPage() {
       {/* Tab content */}
       <div className="px-5 py-6">
         {tab === 'planning' && <PlanningTab projectId={projectId} />}
+        {tab === 'discussion' && (
+          <MessagePanel entityType="project" entityId={projectId} />
+        )}
         {tab === 'team' && (
           <TeamTab
             projectId={projectId}
