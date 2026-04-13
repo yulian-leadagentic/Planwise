@@ -68,4 +68,61 @@ export class MessagesController {
   ) {
     return this.messagesService.remove(id, user.id);
   }
+
+  // ─── Resolved/Unresolved ─────────────────────────────────────────────────
+
+  @Post(':id/resolve')
+  @ApiOperation({ summary: 'Mark thread as resolved' })
+  resolve(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
+    return this.messagesService.resolveThread(id, user.id);
+  }
+
+  @Post(':id/unresolve')
+  @ApiOperation({ summary: 'Mark thread as unresolved' })
+  unresolve(@Param('id', ParseIntPipe) id: number) {
+    return this.messagesService.unresolveThread(id);
+  }
+
+  // ─── Search ──────────────────────────────────────────────────────────────
+
+  @Get('search/query')
+  @ApiOperation({ summary: 'Search across all discussions' })
+  search(
+    @CurrentUser() user: any,
+    @Query('q') query: string,
+    @Query('entityType') entityType?: string,
+    @Query('page') page?: string,
+    @Query('perPage') perPage?: string,
+  ) {
+    return this.messagesService.search(query || '', user.id, {
+      entityType,
+      page: page ? Number(page) : 1,
+      perPage: perPage ? Number(perPage) : 20,
+    });
+  }
+
+  // ─── Analytics ───────────────────────────────────────────────────────────
+
+  @Get('analytics/overview')
+  @ApiOperation({ summary: 'Get messaging analytics and KPIs' })
+  analytics(@Query('projectId') projectId?: string) {
+    return this.messagesService.getAnalytics(projectId ? Number(projectId) : undefined);
+  }
+
+  // ─── AI Features ─────────────────────────────────────────────────────────
+
+  @Get('suggest-recipients/:entityType/:entityId')
+  @ApiOperation({ summary: 'Get suggested message recipients for an entity' })
+  suggestRecipients(
+    @Param('entityType') entityType: string,
+    @Param('entityId', ParseIntPipe) entityId: number,
+  ) {
+    return this.messagesService.suggestRecipients(entityType as any, entityId);
+  }
+
+  @Get(':id/summarize')
+  @ApiOperation({ summary: 'Get AI summary of a thread' })
+  summarize(@Param('id', ParseIntPipe) id: number) {
+    return this.messagesService.summarizeThread(id);
+  }
 }

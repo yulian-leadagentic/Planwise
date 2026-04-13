@@ -33,6 +33,8 @@ import { TypesPage } from '@/features/templates/types-page';
 import { AdminPage } from '@/features/admin/admin-page';
 import { RolesPage } from '@/features/admin/roles-page';
 import { InboxPage } from '@/features/messaging/inbox-page';
+import { MessagingDashboardPage } from '@/features/messaging/messaging-dashboard-page';
+import { MessageSearchPage } from '@/features/messaging/message-search-page';
 import { NotificationSettingsPage } from '@/features/admin/notification-settings-page';
 import { ProjectTypesPage } from '@/features/admin/project-types-page';
 import { ActivityLogPage } from '@/features/admin/activity-log-page';
@@ -62,6 +64,8 @@ export function AppRouter() {
 
         {/* Time */}
         <Route path="inbox" element={<InboxPage />} />
+        <Route path="messages/dashboard" element={<MessagingDashboardPage />} />
+        <Route path="messages/search" element={<MessageSearchPage />} />
         <Route path="time" element={<MyTimePage />} />
         <Route path="time/grid" element={<TimeGridPage />} />
         <Route path="time/clock-dashboard" element={<ClockDashboardPage />} />

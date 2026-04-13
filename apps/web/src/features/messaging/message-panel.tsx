@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { MessageSquare, Send, Reply, Pencil, Trash2, AtSign, ChevronDown, ChevronRight } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { MessageSquare, Send, Reply, Pencil, Trash2, AtSign, ChevronDown, ChevronRight, CheckCircle, Sparkles, XCircle } from 'lucide-react';
 import { useMessages, useCreateMessage, useDeleteMessage } from '@/hooks/use-messages';
 import { cn } from '@/lib/utils';
 import { formatRelative } from '@/lib/date-utils';
@@ -251,7 +251,7 @@ function MessageItem({ message, entityType, entityId, depth = 0 }: {
           )}
 
           {/* Actions */}
-          <div className="flex items-center gap-2 mt-1">
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
             <button
               onClick={() => setShowReply(!showReply)}
               className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-blue-600"
@@ -266,6 +266,9 @@ function MessageItem({ message, entityType, entityId, depth = 0 }: {
                 {showReplies ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                 {replyCount} {replyCount === 1 ? 'reply' : 'replies'}
               </button>
+            )}
+            {depth === 0 && (
+              <ThreadActions messageId={message.id} entityType={entityType} entityId={entityId} isResolved={!!(message.metadata as any)?.resolved} />
             )}
           </div>
         </div>
@@ -298,6 +301,96 @@ function MessageItem({ message, entityType, entityId, depth = 0 }: {
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Thread Actions (resolve, summarize) ─────────────────────────────────────
+
+function ThreadActions({ messageId, entityType, entityId, isResolved }: {
+  messageId: number; entityType: string; entityId: number; isResolved: boolean;
+}) {
+  const [showSummary, setShowSummary] = useState(false);
+  const queryClient = useQueryClient();
+
+  const resolveMutation = useMutation({
+    mutationFn: () => client.post(`/messages/${messageId}/resolve`).then((r) => r.data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['messages', entityType, entityId] }),
+  });
+
+  const unresolveMutation = useMutation({
+    mutationFn: () => client.post(`/messages/${messageId}/unresolve`).then((r) => r.data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['messages', entityType, entityId] }),
+  });
+
+  const { data: summary, isLoading: summarizing, refetch: fetchSummary } = useQuery({
+    queryKey: ['messages', 'summary', messageId],
+    queryFn: () => client.get(`/messages/${messageId}/summarize`).then((r) => r.data?.data ?? r.data),
+    enabled: false,
+  });
+
+  return (
+    <>
+      {isResolved ? (
+        <button
+          onClick={() => unresolveMutation.mutate()}
+          className="flex items-center gap-1 text-[11px] text-green-600 hover:text-amber-600"
+          title="Mark as unresolved"
+        >
+          <CheckCircle className="h-3 w-3" /> Resolved
+        </button>
+      ) : (
+        <button
+          onClick={() => resolveMutation.mutate()}
+          className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-green-600"
+          title="Mark as resolved"
+        >
+          <CheckCircle className="h-3 w-3" /> Resolve
+        </button>
+      )}
+      <button
+        onClick={() => { if (!showSummary) fetchSummary(); setShowSummary(!showSummary); }}
+        className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-purple-600"
+        title="AI Summary"
+      >
+        <Sparkles className="h-3 w-3" /> Summary
+      </button>
+
+      {showSummary && (
+        <div className="w-full mt-2 rounded-lg border border-purple-200 bg-purple-50/50 p-3 text-[12px]">
+          {summarizing ? (
+            <p className="text-purple-500 animate-pulse">Analyzing thread...</p>
+          ) : summary ? (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-3.5 w-3.5 text-purple-500" />
+                <span className="font-semibold text-purple-800">Thread Summary</span>
+                {(summary as any).isUrgent && (
+                  <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-bold text-red-600">URGENT</span>
+                )}
+                <span className={cn(
+                  'rounded-full px-1.5 py-0.5 text-[9px] font-bold',
+                  (summary as any).sentiment === 'positive' ? 'bg-green-100 text-green-600' :
+                  (summary as any).sentiment === 'negative' ? 'bg-red-100 text-red-600' :
+                  'bg-slate-100 text-slate-500',
+                )}>
+                  {(summary as any).sentiment}
+                </span>
+              </div>
+              <p className="text-purple-700">{(summary as any).summary}</p>
+              <div className="flex items-center gap-3 text-[10px] text-purple-500">
+                <span>{(summary as any).messageCount} messages</span>
+                <span>{(summary as any).participantCount} participants</span>
+                {(summary as any).topKeywords?.length > 0 && (
+                  <span>Keywords: {(summary as any).topKeywords.join(', ')}</span>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="text-purple-400">No data available</p>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 
