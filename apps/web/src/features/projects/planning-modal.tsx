@@ -27,6 +27,44 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
+// ─── Inline Editable Cell ────────────────────────────────────────────────────
+
+function InlineEditCell({ value, type = 'number', prefix, suffix, width, onSave }: {
+  value: any; type?: 'number' | 'text'; prefix?: string; suffix?: string; width: string;
+  onSave: (val: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editVal, setEditVal] = useState('');
+
+  const display = value != null && value !== '' && Number(value) !== 0
+    ? `${prefix || ''}${type === 'number' ? Number(value).toLocaleString() : value}${suffix || ''}`
+    : '-';
+
+  if (editing) {
+    return (
+      <input
+        type={type}
+        value={editVal}
+        onChange={(e) => setEditVal(e.target.value)}
+        onBlur={() => { setEditing(false); onSave(editVal); }}
+        onKeyDown={(e) => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } if (e.key === 'Escape') setEditing(false); }}
+        className={cn('font-mono text-[11px] text-right bg-white border border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-300', width)}
+        autoFocus
+      />
+    );
+  }
+
+  return (
+    <span
+      onClick={() => { setEditVal(value != null ? String(value) : ''); setEditing(true); }}
+      className={cn('font-mono text-[11px] cursor-pointer hover:bg-blue-50 hover:text-blue-700 rounded px-1 py-0.5 text-right block truncate', width, value ? 'text-slate-700' : 'text-slate-300')}
+      title="Click to edit"
+    >
+      {display}
+    </span>
+  );
+}
+
 // ─── Sortable Task Row ──────────────────────────────────────────────────────
 
 const statusMap: Record<string, { bg: string; text: string; label: string }> = {
@@ -43,7 +81,7 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
   selectedTaskIds?: Set<number>; onToggleTask?: (id: number) => void;
   onUpdate: () => void; onDeleteTask: (id: number) => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver } = useSortable({ id: task.id });
   const style = { transform: CSS.Transform.toString(transform), transition, marginLeft: 28 };
   const st = statusMap[task.status] || statusMap.not_started;
   const isSelected = selectedTaskIds?.has(task.id) ?? false;
@@ -51,12 +89,17 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
   const serviceColor = task.serviceType?.color || '#3B82F6';
   const queryClient = useQueryClient();
 
-  const handleDateChange = async (date: string) => {
+  const saveField = async (field: string, value: string) => {
+    const payload: any = {};
+    if (field === 'budgetHours') payload.budgetHours = value ? Number(value) : null;
+    else if (field === 'budgetAmount') payload.budgetAmount = value ? Number(value) : null;
+    else if (field === 'endDate') payload.endDate = value || undefined;
+    else return;
     try {
-      await tasksApi.update(task.id, { endDate: date || undefined });
+      await tasksApi.update(task.id, payload);
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
     } catch (err: any) {
-      notify.apiError(err, 'Failed to update due date');
+      notify.apiError(err, 'Failed to update task');
     }
   };
 
@@ -65,27 +108,28 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} className={cn(
-      'flex items-center gap-3 py-2 px-4 border-b border-slate-50 hover:bg-slate-50/60 group text-[13px] transition-colors',
-      isSelected && 'bg-blue-50/50',
-      idx % 2 === 1 && !isSelected && 'bg-slate-50/30',
-      isDragging && 'opacity-50 bg-blue-50 shadow-lg z-10',
+      'flex items-center gap-2 py-1.5 px-4 border-b transition-colors text-[13px]',
+      isDragging && 'opacity-40 bg-blue-50 shadow-lg z-10 border-blue-300',
+      isOver && !isDragging && 'border-t-2 border-t-blue-500',
+      isSelected ? 'bg-blue-50/60 border-slate-200' : idx % 2 === 0 ? 'bg-white border-slate-100' : 'bg-slate-50/50 border-slate-100',
+      !isDragging && !isOver && 'hover:bg-blue-50/30',
     )}>
-      <button {...listeners} className="w-4 h-4 flex items-center justify-center cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 shrink-0 touch-none">
+      <button {...listeners} className="w-4 h-6 flex items-center justify-center cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 shrink-0 touch-none">
         <GripVertical className="w-3.5 h-3.5" />
       </button>
       <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer shrink-0" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
       <span className="font-mono text-[11px] font-medium text-slate-500 w-20 shrink-0 truncate">{task.code || '-'}</span>
       <span className="font-medium text-slate-900 flex-1 min-w-0 truncate">{task.name}</span>
-      <span className="w-24 shrink-0">{serviceName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full" style={{ backgroundColor: `${serviceColor}15`, color: serviceColor }}>{serviceName}</span> : <span className="text-slate-300">-</span>}</span>
-      <span className="w-20 shrink-0 text-[11px] text-slate-500 truncate">{task.phase?.name || '-'}</span>
-      <span className="font-mono text-[11px] text-slate-600 w-12 text-right shrink-0">{task.budgetHours ? `${Number(task.budgetHours)}h` : '-'}</span>
+      <span className="w-24 shrink-0">{serviceName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full" style={{ backgroundColor: `${serviceColor}15`, color: serviceColor }}>{serviceName}</span> : <span className="text-slate-300 text-[11px]">-</span>}</span>
+      <span className="w-20 shrink-0 text-[11px] text-slate-500 truncate">{task.phase?.name || <span className="text-slate-300">-</span>}</span>
+      <InlineEditCell value={task.budgetHours} suffix="h" width="w-14" onSave={(v) => saveField('budgetHours', v)} />
       <span className="font-mono text-[11px] w-12 text-right shrink-0">{task.loggedMinutes > 0 ? <span className={cn('font-medium', task.budgetHours && (task.loggedMinutes / 60) > Number(task.budgetHours) ? 'text-red-600' : 'text-blue-600')}>{Math.round(task.loggedMinutes / 60 * 10) / 10}h</span> : <span className="text-slate-300">-</span>}</span>
-      <span className="font-mono text-[11px] font-semibold text-slate-700 w-16 text-right shrink-0">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</span>
+      <InlineEditCell value={task.budgetAmount} prefix="₪" width="w-16" onSave={(v) => saveField('budgetAmount', v)} />
       <span className="w-24 shrink-0">
         <input
           type="date"
           value={dueDate}
-          onChange={(e) => handleDateChange(e.target.value)}
+          onChange={(e) => saveField('endDate', e.target.value)}
           className={cn(
             'w-full px-1 py-0.5 rounded border text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400',
             isOverdue ? 'border-red-300 text-red-600 bg-red-50' : 'border-slate-200 text-slate-600 bg-transparent',
@@ -230,6 +274,105 @@ function CatalogPickerForZone({ zoneId, projectId, onClose, onDone }: {
             <button onClick={onClose} className="bg-white border border-slate-200 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:border-slate-400">Cancel</button>
             <button onClick={handleAdd} disabled={selected.size === 0 || adding} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
               {adding ? 'Adding...' : `Add ${selected.size} Task${selected.size !== 1 ? 's' : ''}`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Phase/Milestone Template Picker (applies a task_list template's tasks to a zone) ─
+
+function PhaseTemplatePickerForZone({ zoneId, projectId, onClose, onDone }: {
+  zoneId: number; projectId: number; onClose: () => void; onDone: () => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [adding, setAdding] = useState(false);
+  const queryClient = useQueryClient();
+
+  const { data: allTemplates = [], isLoading } = useQuery({
+    queryKey: ['templates', 'task_list'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/templates?type=task_list').then((r) => r.data.data ?? r.data),
+  });
+  const templates = (Array.isArray(allTemplates) ? allTemplates : []).filter((t: any) => t.code !== '__TASK_CATALOG__');
+  const filtered = search.trim()
+    ? templates.filter((t: any) => t.name?.toLowerCase().includes(search.toLowerCase()) || t.code?.toLowerCase().includes(search.toLowerCase()))
+    : templates;
+
+  const handleAdd = async () => {
+    const toAdd = templates.filter((t: any) => selected.has(t.id));
+    if (toAdd.length === 0) return;
+    setAdding(true);
+    try {
+      for (const tpl of toAdd) {
+        const detail = await client.get(`/templates/${tpl.id}`).then((r) => r.data.data ?? r.data);
+        for (const task of (detail?.templateTasks ?? [])) {
+          await tasksApi.create({
+            zoneId,
+            code: task.code,
+            name: task.name,
+            description: `[SERVICE:${tpl.name}]`,
+            budgetHours: task.defaultBudgetHours ? Number(task.defaultBudgetHours) : undefined,
+            budgetAmount: task.defaultBudgetAmount ? Number(task.defaultBudgetAmount) : undefined,
+          });
+        }
+      }
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+      notify.success(`Added ${toAdd.length} phase/milestone template${toAdd.length !== 1 ? 's' : ''}`, { code: 'TPL-APPLY-200' });
+      onDone();
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to apply template');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-[14px] border border-slate-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+          <h2 className="text-base font-semibold">Select Phase/Milestone Templates</h2>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="border-b border-slate-200 px-5 py-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search templates..." className="w-full pl-9 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {isLoading ? <p className="py-8 text-center text-sm text-slate-400">Loading...</p> : filtered.length === 0 ? (
+            <p className="py-8 text-center text-sm text-slate-400">{search ? 'No templates match.' : 'No phase/milestone templates available.'}</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-slate-100 bg-slate-50 text-xs">
+                <th className="px-3 py-2 w-10"></th>
+                <th className="px-3 py-2 text-left font-medium">Name</th>
+                <th className="px-3 py-2 text-left font-medium">Service</th>
+                <th className="px-3 py-2 text-right font-medium">Tasks</th>
+              </tr></thead>
+              <tbody>
+                {filtered.map((t: any) => (
+                  <tr key={t.id} className={cn('border-b border-slate-50 cursor-pointer', selected.has(t.id) ? 'bg-blue-50' : 'hover:bg-slate-50')} onClick={() => { const n = new Set(selected); n.has(t.id) ? n.delete(t.id) : n.add(t.id); setSelected(n); }}>
+                    <td className="px-3 py-2"><input type="checkbox" checked={selected.has(t.id)} onChange={() => {}} className="h-3.5 w-3.5" /></td>
+                    <td className="px-3 py-2 font-medium">{t.name}</td>
+                    <td className="px-3 py-2">{t.phase ? <span className="rounded-full bg-cyan-100 px-1.5 py-0.5 text-[11px] font-medium text-cyan-700">{t.phase.name}</span> : <span className="text-slate-300">-</span>}</td>
+                    <td className="px-3 py-2 text-right">{t._count?.templateTasks ?? 0}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">
+          <span className="text-xs text-slate-400">{filtered.length} templates</span>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="bg-white border border-slate-200 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:border-slate-400">Cancel</button>
+            <button onClick={handleAdd} disabled={selected.size === 0 || adding} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
+              {adding ? 'Adding...' : `Apply ${selected.size} Template${selected.size !== 1 ? 's' : ''}`}
             </button>
           </div>
         </div>
@@ -928,6 +1071,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddZone, setShowAddZone] = useState(false);
   const [showCatalogPicker, setShowCatalogPicker] = useState(false);
+  const [showPhasePicker, setShowPhasePicker] = useState(false);
   const [newTask, setNewTask] = useState({ code: '', name: '', budgetHours: '', budgetAmount: '' });
   const [newZone, setNewZone] = useState({ name: '', zoneType: 'zone' });
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
@@ -1010,6 +1154,9 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
                 <button onClick={() => { setShowAddTask(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Create New Task</button>
                 <button onClick={() => { setShowCatalogPicker(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Task from Catalog</button>
                 <div className="my-1 border-t border-slate-100" />
+                <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Phase/Milestone</div>
+                <button onClick={() => { setShowPhasePicker(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">From Template</button>
+                <div className="my-1 border-t border-slate-100" />
                 <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Zones</div>
                 <button onClick={() => { setShowAddZone(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Add Sub-Zone</button>
               </div>
@@ -1074,7 +1221,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <span className="flex-1">Task Name</span>
               <span className="w-24 shrink-0">Phase/Milestone</span>
               <span className="w-20 shrink-0">Service</span>
-              <span className="w-12 text-right shrink-0">Budget</span>
+              <span className="w-14 text-right shrink-0">Est. Hours</span>
               <span className="w-12 text-right shrink-0">Logged</span>
               <span className="w-16 text-right shrink-0">Amount</span>
               <span className="w-24 shrink-0">Due Date</span>
@@ -1109,6 +1256,15 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           projectId={projectId}
           onClose={() => setShowCatalogPicker(false)}
           onDone={() => { setShowCatalogPicker(false); onUpdate(); }}
+        />
+      )}
+
+      {showPhasePicker && (
+        <PhaseTemplatePickerForZone
+          zoneId={zone.id}
+          projectId={projectId}
+          onClose={() => setShowPhasePicker(false)}
+          onDone={() => { setShowPhasePicker(false); onUpdate(); }}
         />
       )}
 
@@ -1224,17 +1380,18 @@ function PlanningView({ projectId }: { projectId: number }) {
   const zones = pd?.zones ?? [];
   const rawTasks = pd?.tasks ?? [];
 
-  // Enrich each task with phase from its service template (if no direct phase)
+  // Enrich each task with phase (service) + phaseMilestoneName from its template
   const tasks = useMemo(() => {
     return (rawTasks as any[]).map((t) => {
-      if (t.phase) return t;
       const svcMatch = t.description?.match(/^\[SERVICE:(.+)\]$/);
-      if (svcMatch) {
+      const phaseMilestoneName = svcMatch ? svcMatch[1] : null;
+      let enriched = { ...t, phaseMilestoneName };
+      if (!enriched.phase && svcMatch) {
         const svcName = svcMatch[1];
         const phase = servicePhaseMap.get(svcName);
-        if (phase) return { ...t, phase, phaseId: phase.id };
+        if (phase) enriched = { ...enriched, phase, phaseId: phase.id };
       }
-      return t;
+      return enriched;
     });
   }, [rawTasks, servicePhaseMap]);
   const members = pd?.members ?? [];
