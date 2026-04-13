@@ -14,6 +14,7 @@ const columns = [
   { id: 'not_started', label: 'Not Started', color: 'border-t-slate-400', bg: 'bg-slate-50' },
   { id: 'in_progress', label: 'In Progress', color: 'border-t-blue-500', bg: 'bg-blue-50/30' },
   { id: 'in_review', label: 'In Review', color: 'border-t-violet-500', bg: 'bg-violet-50/30' },
+  { id: 'on_hold', label: 'On Hold', color: 'border-t-amber-500', bg: 'bg-amber-50/30' },
   { id: 'completed', label: 'Completed', color: 'border-t-emerald-500', bg: 'bg-emerald-50/30' },
 ];
 
@@ -113,7 +114,8 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
     enabled: !!projectId,
   });
 
-  const tasks = (planningData as any)?.tasks ?? [];
+  const pd = (planningData as any)?.data ?? planningData;
+  const tasks = (pd as any)?.tasks ?? [];
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -170,7 +172,7 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
-      <div className="grid grid-cols-4 gap-4 min-h-[500px]">
+      <div className="grid grid-cols-5 gap-3 min-h-[500px]">
         {columns.map((col) => (
           <KanbanColumn key={col.id} column={col} tasks={columnTasks[col.id] ?? []} />
         ))}

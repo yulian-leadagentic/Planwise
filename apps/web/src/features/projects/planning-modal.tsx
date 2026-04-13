@@ -370,12 +370,14 @@ function TaskDiscussionButton({ taskId, taskName }: { taskId: number; taskName: 
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { data } = useQuery({
-    queryKey: ['messages', 'task', taskId, 1],
-    queryFn: () => client.get('/messages', { params: { entityType: 'task', entityId: taskId, perPage: 1 } }).then((r) => r.data),
-    enabled: true,
-    staleTime: 60 * 1000,
+    queryKey: ['messages', 'task-count', taskId],
+    queryFn: () => client.get('/messages', { params: { entityType: 'task', entityId: taskId, perPage: 1 } }).then((r) => {
+      const d = r.data;
+      return d?.meta?.total ?? d?.data?.meta?.total ?? 0;
+    }),
+    staleTime: 2 * 60 * 1000,
   });
-  const msgCount = (data as any)?.meta?.total ?? 0;
+  const msgCount = typeof data === 'number' ? data : 0;
 
   useEffect(() => {
     if (!open) return;
@@ -398,7 +400,7 @@ function TaskDiscussionButton({ taskId, taskName }: { taskId: number; taskName: 
       >
         <MessageSquare className="w-3.5 h-3.5" />
         {msgCount > 0 && (
-          <span className="absolute -top-1 -right-1 flex h-3 w-3 items-center justify-center rounded-full bg-blue-500 text-[7px] font-bold text-white">
+          <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-blue-500 text-[8px] font-bold text-white ring-1 ring-white">
             {msgCount > 9 ? '9+' : msgCount}
           </span>
         )}
@@ -573,9 +575,18 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
   const dueDate = task.endDate ? task.endDate.split('T')[0] : '';
   const isOverdue = dueDate && new Date(dueDate) < new Date() && task.status !== 'completed' && task.status !== 'cancelled';
 
+  // Zone color for left border
+  const zoneType = task.zone?.zoneType || 'zone';
+  const zoneBorderColors: Record<string, string> = {
+    site: 'border-l-indigo-400', building: 'border-l-amber-500', level: 'border-l-teal-400',
+    zone: 'border-l-amber-400', area: 'border-l-purple-400', floor: 'border-l-blue-400',
+    section: 'border-l-teal-400', wing: 'border-l-pink-400',
+  };
+
   return (
     <div ref={setNodeRef} style={style} {...attributes} className={cn(
-      'flex items-center gap-2 py-1.5 px-4 border-b transition-colors text-[13px]',
+      'flex items-center gap-2 py-1.5 px-4 border-b border-l-[3px] transition-colors text-[13px]',
+      zoneBorderColors[zoneType] || 'border-l-slate-300',
       isDragging && 'opacity-40 bg-blue-50 shadow-lg z-10 border-blue-300',
       isOver && !isDragging && 'border-t-2 border-t-blue-500',
       isSelected ? 'bg-blue-50/60 border-slate-200' : idx % 2 === 0 ? 'bg-white border-slate-100' : 'bg-slate-50/50 border-slate-100',

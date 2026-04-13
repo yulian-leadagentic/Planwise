@@ -23,7 +23,6 @@ export function DashboardPage() {
   const { data: clockStatus } = useClockStatus();
   const { data: tasksData, isLoading: tasksLoading } = useTasks({
     assigneeId: user?.id,
-    status: ['not_started', 'in_progress', 'in_review'],
     perPage: 5,
   });
   const { data: projectsData, isLoading: projectsLoading } = useProjects({

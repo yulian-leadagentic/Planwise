@@ -5,7 +5,7 @@ export interface TaskQuery {
   zoneId?: number;
   serviceTypeId?: number;
   phaseId?: number;
-  status?: string;
+  status?: string | string[];
   priority?: string;
   assigneeId?: number;
   search?: string;
@@ -43,13 +43,13 @@ export interface UpdateTaskPayload {
 
 export const tasksApi = {
   list: (params?: TaskQuery) =>
-    client.get('/tasks', { params }).then((r) => r.data),
+    client.get('/tasks', { params: params ? { ...params, status: Array.isArray(params.status) ? params.status[0] : params.status } : {} }).then((r) => r.data),
 
   mine: () =>
     client.get('/tasks/mine').then((r) => r.data),
 
   get: (id: number) =>
-    client.get(`/tasks/${id}`).then((r) => r.data),
+    client.get(`/tasks/${id}`).then((r) => r.data?.data ?? r.data),
 
   create: (payload: CreateTaskPayload) =>
     client.post('/tasks', payload).then((r) => r.data),
