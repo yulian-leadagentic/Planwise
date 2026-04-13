@@ -9,12 +9,15 @@ import { tasksApi } from '@/api/tasks.api';
 import client from '@/api/client';
 import {
   DndContext,
+  DragOverlay,
   closestCenter,
   KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
+  type DragOverEvent,
 } from '@dnd-kit/core';
 import {
   arrayMove,
@@ -101,60 +104,33 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
   );
 }
 
-// ─── Sortable Task List (DnD context for tasks within a zone) ───────────────
+// ─── Sortable Task List (renders tasks as SortableContext — DndContext is at parent level) ───
 
 function SortableTaskList({ tasks, zoneId, projectId, members, selectedTaskIds, onToggleTask, onUpdate, onDeleteTask }: {
   tasks: any[]; zoneId: number; projectId: number; members: any[];
   selectedTaskIds?: Set<number>; onToggleTask?: (id: number) => void;
   onUpdate: () => void; onDeleteTask: (id: number) => void;
 }) {
-  const queryClient = useQueryClient();
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor),
-  );
-
   const taskIds = useMemo(() => tasks.map((t: any) => t.id), [tasks]);
-
-  const handleDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const oldIndex = tasks.findIndex((t: any) => t.id === active.id);
-    const newIndex = tasks.findIndex((t: any) => t.id === over.id);
-    if (oldIndex === -1 || newIndex === -1) return;
-
-    const reordered = arrayMove(tasks, oldIndex, newIndex);
-    const items = reordered.map((t: any, i: number) => ({ id: t.id, sortOrder: i }));
-
-    try {
-      await tasksApi.reorder(items);
-      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
-    } catch (err: any) {
-      notify.apiError(err, 'Failed to reorder tasks');
-    }
-  };
 
   if (tasks.length === 0) return null;
 
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-      <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
-        {tasks.map((task: any, idx: number) => (
-          <SortableTaskRow
-            key={task.id}
-            task={task}
-            idx={idx}
-            projectId={projectId}
-            members={members}
-            selectedTaskIds={selectedTaskIds}
-            onToggleTask={onToggleTask}
-            onUpdate={onUpdate}
-            onDeleteTask={onDeleteTask}
-          />
-        ))}
-      </SortableContext>
-    </DndContext>
+    <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
+      {tasks.map((task: any, idx: number) => (
+        <SortableTaskRow
+          key={task.id}
+          task={task}
+          idx={idx}
+          projectId={projectId}
+          members={members}
+          selectedTaskIds={selectedTaskIds}
+          onToggleTask={onToggleTask}
+          onUpdate={onUpdate}
+          onDeleteTask={onDeleteTask}
+        />
+      ))}
+    </SortableContext>
   );
 }
 
@@ -1284,6 +1260,75 @@ function PlanningView({ projectId }: { projectId: number }) {
     onError: (err: any) => notify.apiError(err, 'Failed to delete zone'),
   });
 
+  // ─── Global DnD for cross-zone task dragging ──────────────────────────────
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor),
+  );
+  const [activeDragId, setActiveDragId] = useState<number | null>(null);
+
+  const handleGlobalDragStart = (event: DragStartEvent) => {
+    setActiveDragId(Number(event.active.id));
+  };
+
+  const handleGlobalDragEnd = async (event: DragEndEvent) => {
+    setActiveDragId(null);
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const activeId = Number(active.id);
+    const overId = Number(over.id);
+
+    // Find source task and target task
+    const activeTask = tasks.find((t: any) => t.id === activeId);
+    const overTask = tasks.find((t: any) => t.id === overId);
+    if (!activeTask) return;
+
+    // Determine the target zone — if we're dropping on another task, use its zone
+    const targetZoneId = overTask ? overTask.zoneId : activeTask.zoneId;
+    const sameZone = activeTask.zoneId === targetZoneId;
+
+    // Get the tasks in the target zone (for reordering)
+    const targetZoneTasks = tasks.filter((t: any) => t.zoneId === targetZoneId);
+
+    if (sameZone) {
+      // Reorder within zone
+      const oldIndex = targetZoneTasks.findIndex((t: any) => t.id === activeId);
+      const newIndex = targetZoneTasks.findIndex((t: any) => t.id === overId);
+      if (oldIndex === -1 || newIndex === -1) return;
+      const reordered = arrayMove(targetZoneTasks, oldIndex, newIndex);
+      const items = reordered.map((t: any, i: number) => ({ id: t.id, sortOrder: i }));
+      try {
+        await tasksApi.reorder(items);
+        invalidate();
+      } catch (err: any) {
+        notify.apiError(err, 'Failed to reorder tasks');
+      }
+    } else {
+      // Move task to a different zone
+      const oldZoneId = activeTask.zoneId;
+      const newIndex = targetZoneTasks.findIndex((t: any) => t.id === overId);
+      // Build reorder list: move active task to new zone at the target position
+      const items = [{ id: activeId, sortOrder: newIndex >= 0 ? newIndex : 0, zoneId: targetZoneId }];
+      try {
+        await tasksApi.reorder(items);
+        invalidate();
+        const fromZone = activeTask.zone?.name || '';
+        const toZone = overTask?.zone?.name || '';
+        notify.success(`Moved task to ${toZone || 'new zone'}`, { code: 'TASK-MOVE-200' });
+        // Push undo action
+        pushUndo(`move task back to ${fromZone}`, async () => {
+          await tasksApi.reorder([{ id: activeId, sortOrder: 0, zoneId: oldZoneId }]);
+        });
+      } catch (err: any) {
+        notify.apiError(err, 'Failed to move task');
+      }
+    }
+  };
+
+  // All task IDs for the global sortable context
+  const allTaskIds = useMemo(() => tasks.map((t: any) => t.id), [tasks]);
+
   // Filter
   const filtered = useMemo(() => {
     if (!search.trim()) return tasks;
@@ -1432,22 +1477,41 @@ function PlanningView({ projectId }: { projectId: number }) {
             </div>
           )}
 
-          {groupBy === 'zone' ? (
-            zones.map((z: any) => (
-              <HierarchicalZoneGroup key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
-                onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
-                onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
-                thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={0}
-                selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
-            ))
-          ) : (
-            groups.map((g: any) => (
-              <ZoneGroup key={g.key} zone={{ id: 0, name: g.key, zoneType: groupBy }} tasks={g.tasks} members={members} projectId={projectId}
-                onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
-                onDeleteZone={() => {}} thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
-                selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
-            ))
-          )}
+          <DndContext
+            sensors={dndSensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleGlobalDragStart}
+            onDragEnd={handleGlobalDragEnd}
+          >
+            <SortableContext items={allTaskIds} strategy={verticalListSortingStrategy}>
+              {groupBy === 'zone' ? (
+                zones.map((z: any) => (
+                  <HierarchicalZoneGroup key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
+                    onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
+                    onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
+                    thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={0}
+                    selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
+                ))
+              ) : (
+                groups.map((g: any) => (
+                  <ZoneGroup key={g.key} zone={{ id: 0, name: g.key, zoneType: groupBy }} tasks={g.tasks} members={members} projectId={projectId}
+                    onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
+                    onDeleteZone={() => {}} thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
+                    selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
+                ))
+              )}
+            </SortableContext>
+            {activeDragId && (
+              <DragOverlay>
+                <div className="flex items-center gap-3 py-2 px-4 bg-white border border-blue-300 shadow-xl rounded-lg text-[13px] opacity-90">
+                  <GripVertical className="w-3.5 h-3.5 text-blue-500" />
+                  <span className="font-medium text-slate-900">
+                    {tasks.find((t: any) => t.id === activeDragId)?.name || 'Task'}
+                  </span>
+                </div>
+              </DragOverlay>
+            )}
+          </DndContext>
 
           <div className="flex items-center gap-6 px-4 py-2.5 border-t border-slate-200 bg-[#FAFBFC] text-[12px]">
             <div><span className="text-slate-400">Total:</span> <span className="font-mono text-xs font-semibold text-slate-900 ml-1">{sorted.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span></div>
