@@ -33,6 +33,7 @@ import { TypesPage } from '@/features/templates/types-page';
 import { AdminPage } from '@/features/admin/admin-page';
 import { RolesPage } from '@/features/admin/roles-page';
 import { InboxPage } from '@/features/messaging/inbox-page';
+import { NotificationSettingsPage } from '@/features/admin/notification-settings-page';
 import { ProjectTypesPage } from '@/features/admin/project-types-page';
 import { ActivityLogPage } from '@/features/admin/activity-log-page';
 import { WorkSchedulesPage } from '@/features/admin/work-schedules-page';
@@ -104,6 +105,7 @@ export function AppRouter() {
         <Route path="admin/activity-log" element={<ActivityLogPage />} />
         <Route path="admin/work-schedules" element={<WorkSchedulesPage />} />
         <Route path="admin/calendar" element={<CalendarDaysPage />} />
+        <Route path="admin/notification-settings" element={<NotificationSettingsPage />} />
         <Route path="admin/clock-dashboard" element={<ClockDashboardPage />} />
       </Route>
 

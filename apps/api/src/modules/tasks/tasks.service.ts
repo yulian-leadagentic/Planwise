@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -8,7 +9,10 @@ import { QueryTasksDto } from './dto/query-tasks.dto';
 
 @Injectable()
 export class TasksService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private eventEmitter: EventEmitter2,
+  ) {}
 
   async create(userId: number, dto: CreateTaskDto) {
     const zone = await this.prisma.zone.findFirst({ where: { id: dto.zoneId } });
@@ -173,12 +177,12 @@ export class TasksService {
     return task;
   }
 
-  async update(id: number, dto: UpdateTaskDto) {
-    await this.findOne(id);
+  async update(id: number, dto: UpdateTaskDto, userId?: number) {
+    const existing = await this.findOne(id);
 
     const { startDate, endDate, ...rest } = dto;
 
-    return this.prisma.task.update({
+    const updated = await this.prisma.task.update({
       where: { id },
       data: {
         ...rest,
@@ -198,6 +202,24 @@ export class TasksService {
         },
       },
     });
+
+    // Emit status change event
+    if (dto.status && dto.status !== (existing as any).status && userId) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { firstName: true, lastName: true },
+      });
+      this.eventEmitter.emit('task.status.changed', {
+        taskId: id,
+        projectId: (existing as any).projectId,
+        userId,
+        oldStatus: (existing as any).status,
+        newStatus: dto.status,
+        userName: user ? `${user.firstName} ${user.lastName}` : 'System',
+      });
+    }
+
+    return updated;
   }
 
   async remove(id: number) {
@@ -211,7 +233,7 @@ export class TasksService {
     return { message: 'Task deleted' };
   }
 
-  async addAssignee(taskId: number, data: { userId: number; role?: string; hourlyRate?: number }) {
+  async addAssignee(taskId: number, data: { userId: number; role?: string; hourlyRate?: number }, actorId?: number) {
     await this.findOne(taskId);
 
     const existing = await this.prisma.taskAssignee.findFirst({
@@ -222,7 +244,7 @@ export class TasksService {
       throw new ConflictException('User is already assigned to this task');
     }
 
-    return this.prisma.taskAssignee.create({
+    const result = await this.prisma.taskAssignee.create({
       data: {
         taskId,
         userId: data.userId,
@@ -233,6 +255,23 @@ export class TasksService {
         user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
       },
     });
+
+    // Emit assignment event
+    if (actorId) {
+      const actor = await this.prisma.user.findUnique({
+        where: { id: actorId },
+        select: { firstName: true, lastName: true },
+      });
+      this.eventEmitter.emit('task.assignee.added', {
+        taskId,
+        userId: actorId,
+        assigneeId: data.userId,
+        userName: actor ? `${actor.firstName} ${actor.lastName}` : 'System',
+        assigneeName: result.user ? `${result.user.firstName} ${result.user.lastName}` : 'User',
+      });
+    }
+
+    return result;
   }
 
   async removeAssignee(taskId: number, userId: number) {

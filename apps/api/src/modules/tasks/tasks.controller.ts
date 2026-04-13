@@ -61,8 +61,8 @@ export class TasksController {
   @Patch(':id')
   @RequirePermissions({ module: 'tasks', action: 'write' })
   @ApiOperation({ summary: 'Update a task' })
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateTaskDto) {
-    return this.tasksService.update(id, dto);
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateTaskDto, @CurrentUser() user: any) {
+    return this.tasksService.update(id, dto, user?.id);
   }
 
   @Delete(':id')
@@ -79,8 +79,9 @@ export class TasksController {
   addAssignee(
     @Param('id', ParseIntPipe) taskId: number,
     @Body() body: { userId: number; role?: string; hourlyRate?: number },
+    @CurrentUser() user: any,
   ) {
-    return this.tasksService.addAssignee(taskId, body);
+    return this.tasksService.addAssignee(taskId, body, user?.id);
   }
 
   @Delete(':id/assignees/:userId')

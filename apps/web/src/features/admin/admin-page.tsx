@@ -5,6 +5,7 @@ import {
   Clock,
   Calendar,
   Users,
+  Bell,
 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 
@@ -50,6 +51,13 @@ const adminCards = [
     icon: Calendar,
     href: '/admin/calendar',
     color: 'bg-orange-100 text-orange-700',
+  },
+  {
+    title: 'Notification Settings',
+    description: 'Configure notification rules, channels, and integrations',
+    icon: Bell,
+    href: '/admin/notification-settings',
+    color: 'bg-amber-100 text-amber-700',
   },
 ];
 

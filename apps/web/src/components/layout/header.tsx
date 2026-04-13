@@ -1,12 +1,12 @@
-import { Bell, LogOut, Moon, Sun, User as UserIcon } from 'lucide-react';
+import { LogOut, Moon, Sun, User as UserIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Breadcrumbs } from './breadcrumbs';
 import { ClockWidget } from './clock-widget';
+import { NotificationCenter } from './notification-center';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { useAuthStore } from '@/stores/auth.store';
 import { useUIStore } from '@/stores/ui.store';
 import { useLogout } from '@/hooks/use-auth';
-import { useNotifications } from '@/hooks/use-notifications';
 import { useState, useRef, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -14,7 +14,6 @@ export function Header() {
   const user = useAuthStore((s) => s.user);
   const theme = useUIStore((s) => s.theme);
   const setTheme = useUIStore((s) => s.setTheme);
-  const { unreadCount } = useNotifications();
   const logout = useLogout();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -50,19 +49,8 @@ export function Header() {
         {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
       </button>
 
-      {/* Notifications */}
-      <button
-        onClick={() => navigate('/notifications')}
-        className="relative rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
-        title="Notifications"
-      >
-        <Bell className="h-5 w-5" />
-        {unreadCount > 0 && (
-          <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-medium text-white">
-            {unreadCount > 9 ? '9+' : unreadCount}
-          </span>
-        )}
-      </button>
+      {/* Notification Center */}
+      <NotificationCenter />
 
       {/* User menu */}
       <div className="relative" ref={menuRef}>

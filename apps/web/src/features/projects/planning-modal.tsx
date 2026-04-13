@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare } from 'lucide-react';
 import { notify } from '@/lib/notify';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
@@ -26,6 +26,136 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+
+// ─── Task Discussion Button (mini chat popover) ─────────────────────────────
+
+function TaskDiscussionButton({ taskId, taskName }: { taskId: number; taskName: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const { data } = useQuery({
+    queryKey: ['messages', 'task', taskId, 1],
+    queryFn: () => client.get('/messages', { params: { entityType: 'task', entityId: taskId, perPage: 1 } }).then((r) => r.data),
+    enabled: true,
+    staleTime: 60 * 1000,
+  });
+  const msgCount = (data as any)?.meta?.total ?? 0;
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        title={`Discussion${msgCount > 0 ? ` (${msgCount})` : ''}`}
+        className={cn(
+          'w-5 h-5 rounded hover:bg-blue-50 flex items-center justify-center shrink-0 relative',
+          msgCount > 0 ? 'text-blue-500' : 'text-slate-300 hover:text-blue-500',
+        )}
+      >
+        <MessageSquare className="w-3 h-3" />
+        {msgCount > 0 && (
+          <span className="absolute -top-1 -right-1 flex h-3 w-3 items-center justify-center rounded-full bg-blue-500 text-[7px] font-bold text-white">
+            {msgCount > 9 ? '9+' : msgCount}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-30 w-80 rounded-[14px] border border-slate-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="border-b border-slate-100 px-4 py-3 flex items-center justify-between">
+            <h4 className="text-[13px] font-semibold text-slate-800 truncate">
+              Discussion: {taskName}
+            </h4>
+            <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            <TaskDiscussionPanel taskId={taskId} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Lazy-loaded discussion panel for task popover
+function TaskDiscussionPanel({ taskId }: { taskId: number }) {
+  // Dynamically import MessagePanel to avoid circular deps
+  const { data, isLoading } = useQuery({
+    queryKey: ['messages', 'task', taskId],
+    queryFn: () => client.get('/messages', { params: { entityType: 'task', entityId: taskId } }).then((r) => r.data),
+  });
+  const messages = (data as any)?.data ?? [];
+  const createMessage = useMutation({
+    mutationFn: (content: string) => client.post('/messages', { entityType: 'task', entityId: taskId, content }).then((r) => r.data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['messages', 'task', taskId] }),
+  });
+  const queryClient = useQueryClient();
+  const [text, setText] = useState('');
+
+  return (
+    <div className="p-3 space-y-2">
+      {/* Composer */}
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && text.trim()) {
+              createMessage.mutate(text.trim());
+              setText('');
+            }
+          }}
+          placeholder="Type a message..."
+          className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 text-[12px] focus:border-blue-400 focus:outline-none"
+        />
+        <button
+          onClick={() => { if (text.trim()) { createMessage.mutate(text.trim()); setText(''); } }}
+          disabled={!text.trim() || createMessage.isPending}
+          className="px-2 py-1.5 rounded-lg bg-blue-600 text-white text-[11px] font-semibold disabled:opacity-50"
+        >
+          Send
+        </button>
+      </div>
+
+      {/* Messages */}
+      {isLoading ? (
+        <p className="text-[11px] text-slate-400 text-center py-2">Loading...</p>
+      ) : messages.length === 0 ? (
+        <p className="text-[11px] text-slate-400 text-center py-2">No messages yet</p>
+      ) : (
+        <div className="space-y-1.5">
+          {messages.slice(0, 10).map((msg: any) => (
+            <div key={msg.id} className="text-[12px]">
+              {msg.type === 'system' ? (
+                <p className="text-[10px] text-slate-400 italic text-center">{msg.content}</p>
+              ) : (
+                <div>
+                  <span className="font-semibold text-slate-700">
+                    {msg.author?.firstName ?? 'User'}
+                  </span>
+                  <span className="text-slate-400 ml-1 text-[10px]">
+                    {msg.createdAt ? new Date(msg.createdAt).toLocaleDateString() : ''}
+                  </span>
+                  <p className="text-slate-600 mt-0.5">{msg.content}</p>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Inline Editable Cell ────────────────────────────────────────────────────
 
@@ -142,6 +272,7 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       <span className="w-24 shrink-0">
         <span className={cn('inline-block rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold', st.bg, st.text)}>{st.label}</span>
       </span>
+      <TaskDiscussionButton taskId={task.id} taskName={task.name} />
       <button onClick={() => onDeleteTask(task.id)} className="w-5 h-5 rounded hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-3 h-3" /></button>
     </div>
   );
