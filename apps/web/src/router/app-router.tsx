@@ -4,6 +4,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { LoginPage } from '@/features/auth/login-page';
 import { ForgotPasswordSteps } from '@/features/auth/forgot-password-steps';
 import { DashboardPage } from '@/features/dashboard/dashboard-page';
+import { ManagerDashboard } from '@/features/dashboard/manager-dashboard';
 import { TasksPage } from '@/features/tasks/tasks-page';
 import { TaskDetailPage } from '@/features/tasks/task-detail-page';
 import { MyTimePage } from '@/features/time/my-time-page';
@@ -57,6 +58,7 @@ export function AppRouter() {
         }
       >
         <Route index element={<DashboardPage />} />
+        <Route path="dashboard/manager" element={<ManagerDashboard />} />
 
         {/* Tasks */}
         <Route path="tasks" element={<TasksPage />} />

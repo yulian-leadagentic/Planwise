@@ -22,6 +22,7 @@ import { ServiceTypesModule } from './modules/service-types/service-types.module
 import { PhasesModule } from './modules/phases/phases.module';
 import { TemplatesModule } from './modules/templates/templates.module';
 import { MessagesModule } from './modules/messages/messages.module';
+import { ExecutionPlanningModule } from './modules/execution-planning/execution-planning.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { MessagesModule } from './modules/messages/messages.module';
     PhasesModule,
     TemplatesModule,
     MessagesModule,
+    ExecutionPlanningModule,
   ],
 })
 export class AppModule {}
