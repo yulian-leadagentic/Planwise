@@ -3,7 +3,7 @@ import { ArrowLeft, Settings, Plus, UserPlus, X, Pencil, Users } from 'lucide-re
 import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlanningTab } from './planning-modal';
-import { MessagePanel } from '@/features/messaging/message-panel';
+import { ProjectDiscussion } from '@/features/messaging/project-discussion';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { useProject, useProjectMembers, useAddProjectMember, useRemoveProjectMember } from '@/hooks/use-projects';
 import { cn } from '@/lib/utils';
@@ -199,7 +199,7 @@ export function ProjectDetailPage() {
       <div className="px-5 py-6">
         {tab === 'planning' && <PlanningTab projectId={projectId} />}
         {tab === 'discussion' && (
-          <MessagePanel entityType="project" entityId={projectId} />
+          <ProjectDiscussion projectId={projectId} />
         )}
         {tab === 'team' && (
           <TeamTab

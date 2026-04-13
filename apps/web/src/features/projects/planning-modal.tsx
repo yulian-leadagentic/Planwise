@@ -1390,9 +1390,9 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
   const zc = zoneColors[zone.zoneType] || zoneColors.zone;
 
   return (
-    <div style={{ marginLeft: depth > 0 ? depth * 28 : 0 }}>
+    <div style={{ marginLeft: depth > 0 ? depth * 28 : 0 }} className={cn(depth === 0 && 'rounded-[14px] border border-slate-200 bg-white mb-3 overflow-hidden shadow-sm')}>
       {/* Zone row — full width with colored left border */}
-      <div className={cn('flex items-center gap-2.5 py-3 px-4 border-l-[3px] cursor-pointer hover:bg-slate-50/80 group transition-colors duration-100', zc.border, 'border-b border-slate-100')}
+      <div className={cn('flex items-center gap-2.5 py-3 px-4 border-l-[3px] cursor-pointer hover:bg-slate-50/80 group transition-colors duration-100', zc.border, depth === 0 ? 'bg-slate-50/60' : 'border-b border-slate-100')}
         onClick={() => setCollapsed(!collapsed)}>
         <GripVertical className="w-3.5 h-3.5 text-slate-300 hover:text-slate-500 cursor-grab shrink-0 touch-none" onClick={(e) => e.stopPropagation()} />
         {collapsed ? <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
