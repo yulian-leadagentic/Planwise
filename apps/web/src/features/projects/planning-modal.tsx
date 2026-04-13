@@ -123,7 +123,6 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       <span className="w-24 shrink-0">{serviceName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full" style={{ backgroundColor: `${serviceColor}15`, color: serviceColor }}>{serviceName}</span> : <span className="text-slate-300 text-[11px]">-</span>}</span>
       <span className="w-20 shrink-0 text-[11px] text-slate-500 truncate">{task.phase?.name || <span className="text-slate-300">-</span>}</span>
       <InlineEditCell value={task.budgetHours} suffix="h" width="w-14" onSave={(v) => saveField('budgetHours', v)} />
-      <span className="font-mono text-[11px] w-12 text-right shrink-0">{task.loggedMinutes > 0 ? <span className={cn('font-medium', task.budgetHours && (task.loggedMinutes / 60) > Number(task.budgetHours) ? 'text-red-600' : 'text-blue-600')}>{Math.round(task.loggedMinutes / 60 * 10) / 10}h</span> : <span className="text-slate-300">-</span>}</span>
       <InlineEditCell value={task.budgetAmount} prefix="₪" width="w-16" onSave={(v) => saveField('budgetAmount', v)} />
       <span className="w-24 shrink-0">
         <input
@@ -976,7 +975,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
           )}
           <table className="w-full">
             <thead>
-              <tr className="bg-white border-b border-slate-50">
+              <tr className="bg-slate-50 border-b border-slate-200">
                 <th className="w-10 pl-5">
                   <input
                     type="checkbox"
@@ -997,8 +996,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                 <th className={cn(thClass, 'w-28')} onClick={() => handleSort('zone')}>Zone{sortIcon('zone')}</th>
                 <th className={cn(thClass, 'w-28')} onClick={() => handleSort('service')}>Phase/Milestone{sortIcon('service')}</th>
                 <th className={cn(thClass, 'w-20')} onClick={() => handleSort('phase')}>Service{sortIcon('phase')}</th>
-                <th className={cn(thClass, 'w-14 text-right')} onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
-                <th className={cn(thClass, 'w-14 text-right')}>Logged</th>
+                <th className={cn(thClass, 'w-14 text-right')} onClick={() => handleSort('hours')}>Est. Hours{sortIcon('hours')}</th>
                 <th className={cn(thClass, 'w-20 text-right')} onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
                 <th className={cn(thClass, 'w-24')}>Due Date</th>
                 <th className={cn(thClass, 'w-28')}>Assignee</th>
@@ -1007,36 +1005,36 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
               </tr>
             </thead>
             <tbody className="text-[13px]">
-              {tasks.map((task: any) => {
-                const statusMap: Record<string, { dot: string; text: string }> = { not_started: { dot: 'bg-slate-400', text: 'text-slate-500' }, in_progress: { dot: 'bg-blue-500', text: 'text-blue-600' }, in_review: { dot: 'bg-violet-500', text: 'text-violet-600' }, completed: { dot: 'bg-emerald-500', text: 'text-emerald-600' }, on_hold: { dot: 'bg-amber-500', text: 'text-amber-600' }, cancelled: { dot: 'bg-red-500', text: 'text-red-600' } };
+              {tasks.map((task: any, idx: number) => {
                 const st = statusMap[task.status] || statusMap.not_started;
                 const isSelected = selectedTaskIds?.has(task.id) ?? false;
+                const svcName = task.serviceType?.name || task.phaseMilestoneName || task.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || null;
+                const svcColor = task.serviceType?.color || '#3B82F6';
+                const dueDate = task.endDate ? task.endDate.split('T')[0] : '';
                 return (
-                  <tr key={task.id} className={cn('border-b border-slate-50 last:border-0 hover:bg-slate-50 group', isSelected && 'bg-blue-50/40')}>
-                    <td className="pl-5">
-                      <input
-                        type="checkbox"
-                        className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer"
-                        checked={isSelected}
-                        onChange={() => onToggleTask?.(task.id)}
-                      />
+                  <tr key={task.id} className={cn(
+                    'border-b hover:bg-blue-50/30 transition-colors',
+                    isSelected ? 'bg-blue-50/60 border-slate-200' : idx % 2 === 0 ? 'bg-white border-slate-100' : 'bg-slate-50/50 border-slate-100',
+                  )}>
+                    <td className="pl-5 py-2">
+                      <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
                     </td>
-                    <td className="px-3 py-2 font-mono text-xs font-medium text-slate-500">{task.code}</td>
+                    <td className="px-3 py-2 font-mono text-xs font-medium text-slate-500">{task.code || '-'}</td>
                     <td className="px-3 py-2 font-medium text-slate-900">{task.name}</td>
                     <td className="px-3 py-2 text-[12px] text-slate-500">{task.zone?.name || '-'}</td>
-                    <td className="px-3 py-2">{task.serviceType ? <span className="rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold" style={{ backgroundColor: `${task.serviceType.color || '#3B82F6'}15`, color: task.serviceType.color || '#3B82F6' }}>{task.serviceType.name}</span> : <span className="text-slate-300">-</span>}</td>
+                    <td className="px-3 py-2">{svcName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold" style={{ backgroundColor: `${svcColor}15`, color: svcColor }}>{svcName}</span> : <span className="text-slate-300">-</span>}</td>
                     <td className="px-3 py-2 text-[12px] text-slate-500">{task.phase?.name || '-'}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs font-medium text-slate-700">{task.budgetHours ? Number(task.budgetHours) : '-'}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs">{task.loggedMinutes > 0 ? <span className={cn('font-medium', task.budgetHours && (task.loggedMinutes / 60) > Number(task.budgetHours) ? 'text-red-600' : 'text-blue-600')}>{Math.round(task.loggedMinutes / 60 * 10) / 10}h</span> : <span className="text-slate-300">-</span>}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs font-medium text-slate-700">{task.budgetHours ? `${Number(task.budgetHours)}h` : '-'}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-slate-700">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</td>
+                    <td className="px-3 py-2"><input type="date" value={dueDate} className="w-full px-1 py-0.5 rounded border border-slate-200 text-[10px] text-slate-600 bg-transparent focus:outline-none focus:ring-1 focus:ring-blue-400" /></td>
                     <td className="px-3 py-2">
                       <AssigneePicker task={task} members={members} projectId={projectId} onUpdate={onUpdate} />
                     </td>
                     <td className="px-3 py-2">
-                      <span className="inline-flex items-center gap-1"><span className={cn('w-1.5 h-1.5 rounded-full', st.dot)} /><span className={cn('text-[12px]', st.text)}>{(task.status || 'not_started').replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</span></span>
+                      <span className={cn('inline-block rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold', st.bg, st.text)}>{st.label}</span>
                     </td>
                     <td className="px-3 py-2">
-                      <button onClick={() => onDeleteTask(task.id)} className="opacity-0 group-hover:opacity-100 w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600 transition-all duration-150">
+                      <button onClick={() => onDeleteTask(task.id)} className="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600">
                         <Trash2 className="w-3 h-3" />
                       </button>
                     </td>
@@ -1044,7 +1042,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                 );
               })}
               {tasks.length === 0 && !showAddTask && (
-                <tr><td colSpan={11} className="px-5 py-6 text-center text-[13px] text-slate-400">No tasks. Click "Add Task" to create one.</td></tr>
+                <tr><td colSpan={12} className="px-5 py-6 text-center text-[13px] text-slate-400">No tasks.</td></tr>
               )}
             </tbody>
           </table>
@@ -1222,7 +1220,6 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <span className="w-24 shrink-0">Phase/Milestone</span>
               <span className="w-20 shrink-0">Service</span>
               <span className="w-14 text-right shrink-0">Est. Hours</span>
-              <span className="w-12 text-right shrink-0">Logged</span>
               <span className="w-16 text-right shrink-0">Amount</span>
               <span className="w-24 shrink-0">Due Date</span>
               <span className="w-24 shrink-0">Assignees</span>
@@ -1462,11 +1459,19 @@ function PlanningView({ projectId }: { projectId: number }) {
         notify.apiError(err, 'Failed to reorder tasks');
       }
     } else {
-      // Move task to a different zone
+      // Move task to a different zone — insert at the position of the target task
       const oldZoneId = activeTask.zoneId;
-      const newIndex = targetZoneTasks.findIndex((t: any) => t.id === overId);
-      // Build reorder list: move active task to new zone at the target position
-      const items = [{ id: activeId, sortOrder: newIndex >= 0 ? newIndex : 0, zoneId: targetZoneId }];
+      // Build new list: insert activeTask into target zone at the position of overTask
+      const targetList = [...targetZoneTasks];
+      const insertIdx = targetList.findIndex((t: any) => t.id === overId);
+      const insertAt = insertIdx >= 0 ? insertIdx : targetList.length;
+      targetList.splice(insertAt, 0, activeTask);
+      // Reorder all tasks in target zone + move the active task
+      const items = targetList.map((t: any, i: number) => ({
+        id: t.id,
+        sortOrder: i,
+        ...(t.id === activeId ? { zoneId: targetZoneId } : {}),
+      }));
       try {
         await tasksApi.reorder(items);
         invalidate();
@@ -1616,23 +1621,7 @@ function PlanningView({ projectId }: { projectId: number }) {
             </div>
           </div>
 
-          {/* Column header for non-zone grouping */}
-          {groupBy !== 'zone' && (
-            <div className="flex items-center gap-3 py-1.5 px-4 border-b border-slate-100 bg-[#FAFBFC] text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">
-              <span className="w-24 shrink-0">Code</span>
-              <span className="flex-1">Task Name</span>
-              <span className="w-28 shrink-0">Zone</span>
-              <span className="w-24 shrink-0">Phase/Milestone</span>
-              <span className="w-24 shrink-0">Service</span>
-              <span className="w-10 text-right shrink-0">Hours</span>
-              <span className="w-12 text-right shrink-0">Logged</span>
-              <span className="w-16 text-right shrink-0">Amount</span>
-              <span className="w-24 shrink-0">Due Date</span>
-              <span className="w-20 shrink-0">Assignee</span>
-              <span className="w-20 shrink-0">Status</span>
-              <span className="w-5 shrink-0"></span>
-            </div>
-          )}
+          {/* Column header for non-zone grouping — matches ZoneGroup table */}
 
           <DndContext
             sensors={dndSensors}
