@@ -114,8 +114,10 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
     enabled: !!projectId,
   });
 
-  const pd = (planningData as any)?.data ?? planningData;
-  const tasks = (pd as any)?.tasks ?? [];
+  // Unwrap nested response: handle { success, data: { tasks } } or { tasks } or { data: { tasks } }
+  const raw = planningData as any;
+  const pd = raw?.tasks ? raw : raw?.data?.tasks ? raw.data : raw?.data ?? raw;
+  const tasks: any[] = Array.isArray(pd?.tasks) ? pd.tasks : [];
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),

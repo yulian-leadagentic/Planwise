@@ -23,7 +23,7 @@ export function DashboardPage() {
   const { data: clockStatus } = useClockStatus();
   const { data: tasksData, isLoading: tasksLoading } = useTasks({
     assigneeId: user?.id,
-    perPage: 5,
+    perPage: 20,
   });
   const { data: projectsData, isLoading: projectsLoading } = useProjects({
     status: 'active',
@@ -82,8 +82,8 @@ export function DashboardPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={`Welcome back, ${user?.firstName ?? 'User'}`}
-        description="Here's what's happening today"
+        title="My Dashboard"
+        description={`Welcome back, ${user?.firstName ?? 'User'} — here's what's happening today`}
       />
 
       {/* Stats cards */}
@@ -127,7 +127,7 @@ export function DashboardPage() {
               tasks.map((task) => (
                 <button
                   key={task.id}
-                  onClick={() => navigate(`/tasks/${task.id}`)}
+                  onClick={() => navigate(task.projectId ? `/projects/${task.projectId}` : `/tasks/${task.id}`)}
                   className="flex w-full items-center justify-between rounded-md border border-border p-3 text-left hover:bg-muted/50"
                 >
                   <div className="min-w-0 flex-1">

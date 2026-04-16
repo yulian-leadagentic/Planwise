@@ -545,6 +545,9 @@ const statusMap: Record<string, { bg: string; text: string; label: string }> = {
   cancelled: { bg: 'bg-red-100', text: 'text-red-700', label: 'Cancelled' },
 };
 
+// Column grid template shared between headers and data rows
+const TASK_GRID = 'grid grid-cols-[16px_16px_80px_1fr_96px_80px_56px_64px_96px_96px_96px_auto] gap-x-2 items-center';
+
 function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onToggleTask, onUpdate, onDeleteTask }: {
   task: any; idx: number; projectId: number; members: any[];
   selectedTaskIds?: Set<number>; onToggleTask?: (id: number) => void;
@@ -585,19 +588,19 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} className={cn(
-      'flex items-center gap-2 py-1.5 px-4 border-b border-l-[3px] transition-colors text-[13px]',
+      TASK_GRID, 'py-1.5 px-4 border-b border-l-[3px] transition-colors text-[13px]',
       zoneBorderColors[zoneType] || 'border-l-slate-300',
       isDragging && 'opacity-40 bg-blue-50 shadow-lg z-10 border-blue-300',
       isOver && !isDragging && 'border-t-2 border-t-blue-500',
       isSelected ? 'bg-blue-50/60 border-slate-200' : idx % 2 === 0 ? 'bg-white border-slate-100' : 'bg-slate-50/50 border-slate-100',
       !isDragging && !isOver && 'hover:bg-blue-50/30',
     )}>
-      <button {...listeners} className="w-4 h-6 flex items-center justify-center cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 shrink-0 touch-none">
+      <button {...listeners} className="flex items-center justify-center cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 shrink-0 touch-none">
         <GripVertical className="w-3.5 h-3.5" />
       </button>
-      <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer shrink-0" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
-      <span className="font-mono text-[11px] font-medium text-slate-500 w-20 shrink-0 truncate">{task.code || '-'}</span>
-      <span className="font-medium text-slate-900 flex-1 min-w-0 truncate">
+      <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
+      <span className="font-mono text-[11px] font-medium text-slate-500 truncate">{task.code || '-'}</span>
+      <span className="font-medium text-slate-900 min-w-0 truncate">
         {task.name}
         {task.dependencies?.length > 0 && (
           <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] text-amber-600" title={`Depends on: ${task.dependencies.map((d: any) => d.dependsOn?.name || d.dependsOn?.code).join(', ')}`}>
@@ -605,11 +608,11 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           </span>
         )}
       </span>
-      <span className="w-24 shrink-0">{serviceName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full" style={{ backgroundColor: `${serviceColor}15`, color: serviceColor }}>{serviceName}</span> : <span className="text-slate-300 text-[11px]">-</span>}</span>
-      <span className="w-20 shrink-0 text-[11px] text-slate-500 truncate">{task.phase?.name || <span className="text-slate-300">-</span>}</span>
+      <span className="truncate">{serviceName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full" style={{ backgroundColor: `${serviceColor}15`, color: serviceColor }}>{serviceName}</span> : <span className="text-slate-300 text-[11px]">-</span>}</span>
+      <span className="text-[11px] text-slate-500 truncate">{task.phase?.name || <span className="text-slate-300">-</span>}</span>
       <InlineEditCell value={task.budgetHours} suffix="h" width="w-14" onSave={(v) => saveField('budgetHours', v)} />
       <InlineEditCell value={task.budgetAmount} prefix="₪" width="w-16" onSave={(v) => saveField('budgetAmount', v)} />
-      <span className="w-24 shrink-0">
+      <span>
         <input
           type="date"
           value={dueDate}
@@ -621,14 +624,13 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           )}
         />
       </span>
-      <span className="w-24 shrink-0 flex items-center">
+      <span className="flex items-center">
         <AssigneePicker task={task} members={members} projectId={projectId} onUpdate={onUpdate} />
       </span>
-      <span className="w-24 shrink-0">
+      <span>
         <span className={cn('inline-block rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold', st.bg, st.text)}>{st.label}</span>
       </span>
-      {/* Action buttons — visible, properly sized with clear icons */}
-      <div className="flex items-center gap-1 shrink-0">
+      <div className="flex items-center gap-0.5">
         <TaskAttachmentButton taskId={task.id} projectId={projectId} />
         <TaskDiscussionButton taskId={task.id} taskName={task.name} />
         <StatusMenu taskId={task.id} currentStatus={task.status} projectId={projectId} />
@@ -1725,18 +1727,18 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
 
           {/* Task column header row */}
           {directTasks.length > 0 && (
-            <div style={{ marginLeft: 28 }} className="flex items-center gap-3 py-1.5 px-4 bg-slate-50/70 border-b border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider">
-              <span className="w-4 shrink-0" />
-              <span className="w-4 shrink-0" />
-              <span className="w-20 shrink-0">Code</span>
-              <span className="flex-1">Task Name</span>
-              <span className="w-24 shrink-0">Phase/Milestone</span>
-              <span className="w-20 shrink-0">Service</span>
-              <span className="w-14 text-right shrink-0">Est. Hours</span>
-              <span className="w-16 text-right shrink-0">Amount</span>
-              <span className="w-24 shrink-0">Due Date</span>
-              <span className="w-24 shrink-0">Assignees</span>
-              <span className="w-24 shrink-0">Status</span>
+            <div style={{ marginLeft: 28 }} className={cn(TASK_GRID, 'py-1.5 px-4 bg-slate-50/70 border-b border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider')}>
+              <span />
+              <span />
+              <span>Code</span>
+              <span>Task Name</span>
+              <span>Phase/Milestone</span>
+              <span>Service</span>
+              <span className="text-right">Est. Hours</span>
+              <span className="text-right">Amount</span>
+              <span>Due Date</span>
+              <span>Assignees</span>
+              <span>Status</span>
               <span className="w-5 shrink-0" />
             </div>
           )}
