@@ -1,14 +1,16 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Settings, Plus, UserPlus, X, Pencil, Users, MessageSquare } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, lazy, Suspense } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { PlanningTab } from './planning-modal';
 import { ProjectDiscussion } from '@/features/messaging/project-discussion';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
-import { KanbanBoard } from '@/features/tasks/kanban-board';
 import { WorkloadPanel } from './workload-panel';
 import { ActivityFeed } from './activity-feed';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
+
+// Lazy-load DnD-heavy components
+const PlanningTab = lazy(() => import('./planning-modal').then(m => ({ default: m.PlanningTab })));
+const KanbanBoard = lazy(() => import('@/features/tasks/kanban-board').then(m => ({ default: m.KanbanBoard })));
 import { useProject, useProjectMembers, useAddProjectMember, useRemoveProjectMember } from '@/hooks/use-projects';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
@@ -205,8 +207,8 @@ export function ProjectDetailPage() {
 
       {/* Tab content */}
       <div className="px-5 py-6">
-        {tab === 'planning' && <PlanningTab projectId={projectId} />}
-        {tab === 'kanban' && <KanbanBoard projectId={projectId} />}
+        {tab === 'planning' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading planning...</div>}><PlanningTab projectId={projectId} /></Suspense>}
+        {tab === 'kanban' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading board...</div>}><KanbanBoard projectId={projectId} /></Suspense>}
         {tab === 'workload' && <WorkloadPanel projectId={projectId} />}
         {tab === 'activity' && <ActivityFeed projectId={projectId} />}
         {tab === 'discussion' && (

@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { Suspense, lazy } from 'react';
 import { PrivateRoute } from './private-route';
 import { AppShell } from '@/components/layout/app-shell';
 import { LoginPage } from '@/features/auth/login-page';
@@ -8,14 +9,12 @@ import { ManagerDashboard } from '@/features/dashboard/manager-dashboard';
 import { WorkloadDashboardPage } from '@/features/dashboard/workload-dashboard';
 import { TasksPage } from '@/features/tasks/tasks-page';
 import { TaskDetailPage } from '@/features/tasks/task-detail-page';
-import { MyTasksKanbanPage } from '@/features/tasks/my-tasks-kanban';
 import { MyTimePage } from '@/features/time/my-time-page';
 import { TimeGridPage } from '@/features/time/time-grid-page';
 import { ClockDashboardPage } from '@/features/time/clock-dashboard-page';
 import { ProjectListPage } from '@/features/projects/project-list-page';
 import { ProjectDetailPage } from '@/features/projects/project-detail-page';
 import { ProjectFormPage } from '@/features/projects/project-form-page';
-import { PlanningPage } from '@/features/projects/planning-modal';
 import { ContractsPage } from '@/features/contracts/contracts-page';
 import { PeoplePage } from '@/features/people/people-page';
 import { ReportsPage } from '@/features/reports/reports-page';
@@ -44,6 +43,14 @@ import { ActivityLogPage } from '@/features/admin/activity-log-page';
 import { WorkSchedulesPage } from '@/features/admin/work-schedules-page';
 import { CalendarDaysPage } from '@/features/admin/calendar-page';
 
+// Lazy-load DnD-heavy components to avoid @dnd-kit React version conflicts
+const MyTasksKanbanPage = lazy(() => import('@/features/tasks/my-tasks-kanban').then(m => ({ default: m.MyTasksKanbanPage })));
+const PlanningPage = lazy(() => import('@/features/projects/planning-modal').then(m => ({ default: m.PlanningPage })));
+
+function LazyFallback() {
+  return <div className="flex items-center justify-center py-20 text-sm text-slate-400">Loading...</div>;
+}
+
 export function AppRouter() {
   return (
     <Routes>
@@ -65,7 +72,7 @@ export function AppRouter() {
 
         {/* Tasks */}
         <Route path="tasks" element={<TasksPage />} />
-        <Route path="my-tasks" element={<MyTasksKanbanPage />} />
+        <Route path="my-tasks" element={<Suspense fallback={<LazyFallback />}><MyTasksKanbanPage /></Suspense>} />
         <Route path="tasks/:id" element={<TaskDetailPage />} />
 
         {/* Time */}
@@ -81,7 +88,7 @@ export function AppRouter() {
         <Route path="projects/new" element={<ProjectFormPage />} />
         <Route path="projects/:id" element={<ProjectDetailPage />} />
         <Route path="projects/:id/edit" element={<ProjectFormPage />} />
-        <Route path="projects/:id/planning" element={<PlanningPage />} />
+        <Route path="projects/:id/planning" element={<Suspense fallback={<LazyFallback />}><PlanningPage /></Suspense>} />
 
         {/* Contracts */}
         <Route path="contracts" element={<ContractsPage />} />
