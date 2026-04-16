@@ -5,6 +5,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlanningTab } from './planning-modal';
 import { ProjectDiscussion } from '@/features/messaging/project-discussion';
 import { KanbanBoard } from '@/features/tasks/kanban-board';
+import { WorkloadPanel } from './workload-panel';
+import { ActivityFeed } from './activity-feed';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { useProject, useProjectMembers, useAddProjectMember, useRemoveProjectMember } from '@/hooks/use-projects';
 import { cn } from '@/lib/utils';
@@ -12,7 +14,7 @@ import { notify } from '@/lib/notify';
 import client from '@/api/client';
 import { formatDate } from '@/lib/date-utils';
 
-type Tab = 'planning' | 'kanban' | 'team' | 'discussion';
+type Tab = 'planning' | 'kanban' | 'workload' | 'team' | 'discussion' | 'activity';
 
 interface User {
   id: number;
@@ -63,8 +65,10 @@ export function ProjectDetailPage() {
   const tabs: { key: Tab; label: string }[] = [
     { key: 'planning', label: 'Planning' },
     { key: 'kanban', label: 'Kanban' },
+    { key: 'workload', label: 'Workload' },
     { key: 'team', label: 'Team' },
     { key: 'discussion', label: 'Discussion' },
+    { key: 'activity', label: 'Activity' },
   ];
 
   return (
@@ -201,6 +205,8 @@ export function ProjectDetailPage() {
       <div className="px-5 py-6">
         {tab === 'planning' && <PlanningTab projectId={projectId} />}
         {tab === 'kanban' && <KanbanBoard projectId={projectId} />}
+        {tab === 'workload' && <WorkloadPanel projectId={projectId} />}
+        {tab === 'activity' && <ActivityFeed projectId={projectId} />}
         {tab === 'discussion' && (
           <ProjectDiscussion projectId={projectId} />
         )}

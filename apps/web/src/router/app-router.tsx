@@ -7,6 +7,7 @@ import { DashboardPage } from '@/features/dashboard/dashboard-page';
 import { ManagerDashboard } from '@/features/dashboard/manager-dashboard';
 import { TasksPage } from '@/features/tasks/tasks-page';
 import { TaskDetailPage } from '@/features/tasks/task-detail-page';
+import { MyTasksKanbanPage } from '@/features/tasks/my-tasks-kanban';
 import { MyTimePage } from '@/features/time/my-time-page';
 import { TimeGridPage } from '@/features/time/time-grid-page';
 import { ClockDashboardPage } from '@/features/time/clock-dashboard-page';
@@ -62,6 +63,7 @@ export function AppRouter() {
 
         {/* Tasks */}
         <Route path="tasks" element={<TasksPage />} />
+        <Route path="my-tasks" element={<MyTasksKanbanPage />} />
         <Route path="tasks/:id" element={<TaskDetailPage />} />
 
         {/* Time */}
