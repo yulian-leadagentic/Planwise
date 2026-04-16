@@ -1,11 +1,9 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Clock, User as UserIcon } from 'lucide-react';
-import { DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
-import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import { useDroppable } from '@dnd-kit/core';
+import { Clock, User as UserIcon, GripVertical } from 'lucide-react';
+import { DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, useDraggable, useDroppable } from '@dnd-kit/core';
 import { PageHeader } from '@/components/shared/page-header';
+import { TaskDrawer } from './task-drawer';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { tasksApi } from '@/api/tasks.api';
@@ -23,6 +21,32 @@ const zoneBorderColors: Record<string, string> = {
   zone: 'border-l-amber-400', area: 'border-l-purple-400', floor: 'border-l-blue-400',
   section: 'border-l-teal-400', wing: 'border-l-pink-400',
 };
+
+// Priority score for sorting: higher = more urgent
+function getTaskScore(task: any): number {
+  let score = 0;
+  const now = Date.now();
+
+  // Due date urgency (closer = higher score)
+  if (task.endDate) {
+    const daysUntilDue = (new Date(task.endDate).getTime() - now) / 86400000;
+    if (daysUntilDue < 0) score += 1000; // overdue
+    else if (daysUntilDue < 3) score += 500;
+    else if (daysUntilDue < 7) score += 200;
+    else if (daysUntilDue < 14) score += 100;
+    else score += 50;
+  }
+
+  // Priority
+  if (task.priority === 'critical') score += 400;
+  else if (task.priority === 'high') score += 200;
+  else if (task.priority === 'medium') score += 50;
+
+  // Has estimated hours (known scope = more actionable)
+  if (task.budgetHours && Number(task.budgetHours) > 0) score += 20;
+
+  return score;
+}
 
 function QuickTimeLog({ taskId, taskName }: { taskId: number; taskName: string }) {
   const [open, setOpen] = useState(false);
@@ -72,9 +96,9 @@ function QuickTimeLog({ taskId, taskName }: { taskId: number; taskName: string }
   );
 }
 
-function MyTaskCard({ task, onOpenDrawer }: { task: any; onOpenDrawer?: (id: number) => void }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `task-${task.id}` });
-  const style = { transform: CSS.Transform.toString(transform), transition };
+function DraggableTaskCard({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id: number) => void }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: `task-${task.id}` });
+  const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined;
   const zoneType = task.zone?.zoneType || 'zone';
   const projectName = task.project?.name || task.label?.projectName || '';
   const zoneName = task.zone?.name || task.label?.name || '';
@@ -84,28 +108,22 @@ function MyTaskCard({ task, onOpenDrawer }: { task: any; onOpenDrawer?: (id: num
       className={cn(
         'rounded-lg border border-slate-200 bg-white shadow-sm hover:shadow-md transition-all border-l-[3px]',
         zoneBorderColors[zoneType] || 'border-l-slate-300',
-        isDragging && 'opacity-50 shadow-lg ring-2 ring-blue-300',
+        isDragging && 'opacity-40 shadow-lg ring-2 ring-blue-300 z-50',
       )}>
-      {/* Drag handle area */}
-      <div {...listeners} className="px-3 pt-2.5 pb-0.5 cursor-grab active:cursor-grabbing">
-        {/* Project name prominently */}
+      {/* Drag handle */}
+      <div {...listeners} className="flex items-center gap-1 px-3 pt-2 cursor-grab active:cursor-grabbing">
+        <GripVertical className="h-3.5 w-3.5 text-slate-300" />
         {projectName && (
-          <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 rounded px-1.5 py-0.5 inline-block mb-1">
-            {projectName}
-          </span>
+          <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 rounded px-1.5 py-0.5">{projectName}</span>
         )}
-        {task.code && <span className="text-[10px] font-mono text-slate-400 ml-1">{task.code}</span>}
-        <p className="text-[13px] font-medium text-slate-800 line-clamp-2 mt-0.5">{task.name}</p>
+        {task.code && <span className="text-[10px] font-mono text-slate-400">{task.code}</span>}
       </div>
 
-      {/* Click area (not drag) */}
-      <div className="px-3 pb-3 cursor-pointer" onClick={() => onOpenDrawer?.(task.id)}>
-        {/* Zone context */}
-        {zoneName && (
-          <p className="text-[10px] text-slate-400 mt-1 truncate">{zoneName}</p>
-        )}
+      {/* Clickable area → open drawer */}
+      <div className="px-3 pb-3 pt-1 cursor-pointer" onClick={() => onOpenDrawer(task.id)}>
+        <p className="text-[13px] font-medium text-slate-800 line-clamp-2">{task.name}</p>
+        {zoneName && <p className="text-[10px] text-slate-400 mt-0.5 truncate">{zoneName}</p>}
 
-        {/* Meta row */}
         <div className="mt-2 flex items-center gap-2 text-[10px] flex-wrap">
           {task.priority === 'critical' && <span className="rounded bg-red-100 px-1 py-0.5 font-bold text-red-600">Critical</span>}
           {task.priority === 'high' && <span className="rounded bg-amber-100 px-1 py-0.5 font-bold text-amber-600">High</span>}
@@ -125,7 +143,6 @@ function MyTaskCard({ task, onOpenDrawer }: { task: any; onOpenDrawer?: (id: num
           )}
         </div>
 
-        {/* Quick time log */}
         <div className="mt-2">
           <QuickTimeLog taskId={task.id} taskName={task.name} />
         </div>
@@ -134,14 +151,13 @@ function MyTaskCard({ task, onOpenDrawer }: { task: any; onOpenDrawer?: (id: num
   );
 }
 
-function MyTaskColumn({ column, tasks, onOpenDrawer }: { column: typeof columns[0]; tasks: any[]; onOpenDrawer?: (id: number) => void }) {
+function DroppableColumn({ column, tasks, onOpenDrawer }: { column: typeof columns[0]; tasks: any[]; onOpenDrawer: (id: number) => void }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
-  const taskIds = tasks.map((t: any) => `task-${t.id}`);
 
   return (
     <div ref={setNodeRef}
       className={cn('flex flex-col rounded-[14px] border-t-[3px] min-h-[400px]', column.color,
-        isOver ? 'bg-blue-50/50 border-blue-200 border' : `border border-slate-200 ${column.bg}`)}>
+        isOver ? 'bg-blue-50/60 border-blue-300 border-2' : `border border-slate-200 ${column.bg}`)}>
       <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2">
           <h3 className="text-[13px] font-semibold text-slate-700">{column.label}</h3>
@@ -149,9 +165,9 @@ function MyTaskColumn({ column, tasks, onOpenDrawer }: { column: typeof columns[
         </div>
       </div>
       <div className="flex-1 space-y-2 px-3 pb-3">
-        <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
-          {tasks.map((task: any) => <MyTaskCard key={task.id} task={task} onOpenDrawer={onOpenDrawer} />)}
-        </SortableContext>
+        {tasks.map((task: any) => (
+          <DraggableTaskCard key={task.id} task={task} onOpenDrawer={onOpenDrawer} />
+        ))}
         {tasks.length === 0 && <div className="py-8 text-center text-[11px] text-slate-400">No tasks</div>}
       </div>
     </div>
@@ -183,16 +199,17 @@ export function MyTasksKanbanPage() {
       if (map[status]) map[status].push(task);
       else map.not_started.push(task);
     }
+    // Sort "To Do" by priority score (most urgent first)
+    map.not_started.sort((a, b) => getTaskScore(b) - getTaskScore(a));
+    // Sort "In Progress" by due date
+    map.in_progress.sort((a, b) => {
+      if (!a.endDate && !b.endDate) return 0;
+      if (!a.endDate) return 1;
+      if (!b.endDate) return -1;
+      return new Date(a.endDate).getTime() - new Date(b.endDate).getTime();
+    });
     return map;
   }, [tasks]);
-
-  // Find which column a task belongs to
-  const getTaskColumn = (taskId: number): string => {
-    for (const [colId, colTasks] of Object.entries(columnTasks)) {
-      if (colTasks.some((t: any) => t.id === taskId)) return colId;
-    }
-    return 'not_started';
-  };
 
   const handleDragEnd = async (event: DragEndEvent) => {
     setActiveDragId(null);
@@ -200,44 +217,29 @@ export function MyTasksKanbanPage() {
     if (!over) return;
 
     const taskId = Number(String(active.id).replace('task-', ''));
-    const overId = String(over.id);
+    const targetColumnId = String(over.id);
 
-    // Determine target column — could be a column ID or a task ID
-    let targetStatus: string | null = null;
-
-    // Check if dropped on a column directly
-    const directCol = columns.find((c) => c.id === overId);
-    if (directCol) {
-      targetStatus = directCol.id;
-    } else {
-      // Dropped on another task — find that task's column
-      const overTaskId = Number(overId.replace('task-', ''));
-      targetStatus = getTaskColumn(overTaskId);
-    }
-
-    if (!targetStatus) return;
+    // Check if dropped on a column
+    const targetCol = columns.find((c) => c.id === targetColumnId);
+    if (!targetCol) return;
 
     const task = tasks.find((t: any) => t.id === taskId);
-    if (task && task.status !== targetStatus) {
-      try {
-        await tasksApi.update(taskId, { status: targetStatus });
-        queryClient.invalidateQueries({ queryKey: ['tasks'] });
-        const col = columns.find((c) => c.id === targetStatus);
-        notify.success(`Moved to ${col?.label ?? targetStatus}`, { code: 'TASK-STATUS-200' });
-      } catch (err: any) {
-        notify.apiError(err, 'Failed to update status');
-      }
+    if (!task || task.status === targetCol.id) return;
+
+    try {
+      await tasksApi.update(taskId, { status: targetCol.id });
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      notify.success(`Moved to ${targetCol.label}`, { code: 'TASK-STATUS-200' });
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to update status');
     }
   };
 
   const draggedTask = activeDragId ? tasks.find((t: any) => `task-${t.id}` === activeDragId) : null;
 
-  // Lazy import TaskDrawer to avoid circular deps
-  const TaskDrawer = drawerTaskId ? require('./task-drawer').TaskDrawer : null;
-
   return (
     <div className="space-y-6">
-      <PageHeader title="My Tasks" description="Your personal task board — drag to change status, click to view details" />
+      <PageHeader title="My Tasks" description="Your personal task board — drag to change status, click card to view details & log time" />
 
       {isLoading ? (
         <div className="py-12 text-center text-sm text-slate-400">Loading your tasks...</div>
@@ -252,23 +254,23 @@ export function MyTasksKanbanPage() {
           onDragEnd={handleDragEnd}>
           <div className="grid grid-cols-4 gap-3">
             {columns.map((col) => (
-              <MyTaskColumn key={col.id} column={col} tasks={columnTasks[col.id] ?? []}
+              <DroppableColumn key={col.id} column={col} tasks={columnTasks[col.id] ?? []}
                 onOpenDrawer={(id) => setDrawerTaskId(id)} />
             ))}
           </div>
           <DragOverlay>
             {draggedTask && (
-              <div className="rounded-lg border border-blue-300 bg-white p-3 shadow-2xl opacity-90 w-60">
+              <div className="rounded-lg border-2 border-blue-400 bg-white p-3 shadow-2xl w-60">
+                {draggedTask.project?.name && <span className="text-[10px] font-semibold text-blue-600">{draggedTask.project.name}</span>}
                 <p className="text-[13px] font-medium text-slate-800">{draggedTask.name}</p>
-                {draggedTask.project?.name && <p className="text-[10px] text-blue-600 mt-0.5">{draggedTask.project.name}</p>}
               </div>
             )}
           </DragOverlay>
         </DndContext>
       )}
 
-      {/* Task Drawer */}
-      {TaskDrawer && drawerTaskId && (
+      {/* Task Detail Drawer */}
+      {drawerTaskId && (
         <TaskDrawer taskId={drawerTaskId} onClose={() => setDrawerTaskId(null)} />
       )}
     </div>
