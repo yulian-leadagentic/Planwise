@@ -3,6 +3,8 @@ RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
 WORKDIR /app
 COPY . .
 RUN pnpm install --no-frozen-lockfile --shamefully-hoist
+# Ensure single React instance - remove any duplicates
+RUN find /app/node_modules -path "*/node_modules/react/package.json" ! -path "/app/node_modules/.pnpm/react@*/node_modules/react/package.json" -exec dirname {} \; 2>/dev/null | xargs rm -rf 2>/dev/null || true
 ARG CACHEBUST=1
 RUN echo "Build: $CACHEBUST" && cd apps/web && pnpm exec vite build
 

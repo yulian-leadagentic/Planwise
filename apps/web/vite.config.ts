@@ -9,6 +9,8 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
       '@amec/shared': path.resolve(__dirname, '../../packages/shared/src'),
     },
+    // Ensure single React instance (prevents "Invalid hook call" error #310)
+    dedupe: ['react', 'react-dom', '@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities'],
   },
   server: {
     port: 5173,
