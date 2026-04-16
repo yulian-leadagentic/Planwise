@@ -36,14 +36,12 @@ export function DashboardPage() {
     perPage: 100,
   });
 
-  if (tasksLoading || projectsLoading) return <PageSkeleton />;
-
   const rawTasks = tasksData?.data ?? tasksData;
   const tasks: any[] = Array.isArray(rawTasks) ? rawTasks : [];
   const rawProjects = projectsData?.data ?? projectsData;
   const projects: any[] = Array.isArray(rawProjects) ? rawProjects : [];
 
-  // Mini Kanban summary
+  // Mini Kanban summary — must be BEFORE any early return (hooks rule)
   const tasksByStatus = useMemo(() => {
     const map: Record<string, any[]> = {};
     for (const t of tasks) {
@@ -54,7 +52,11 @@ export function DashboardPage() {
     return map;
   }, [tasks]);
 
-  const activeTasks = tasks.filter((t: any) => t.status !== 'completed' && t.status !== 'cancelled');
+  const activeTasks = useMemo(() =>
+    tasks.filter((t: any) => t.status !== 'completed' && t.status !== 'cancelled'),
+  [tasks]);
+
+  if (tasksLoading || projectsLoading) return <PageSkeleton />;
 
   return (
     <div className="space-y-6">
