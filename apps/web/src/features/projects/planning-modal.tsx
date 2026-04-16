@@ -1472,7 +1472,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
               <button onClick={() => setShowAddTask(false)} className="text-[11px] text-slate-400 hover:text-slate-600 px-2 py-1.5">Cancel</button>
             </div>
           )}
-          <table className="w-full">
+          <table className="w-full table-fixed">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
                 <th className="w-10 pl-5">

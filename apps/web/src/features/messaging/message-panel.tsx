@@ -87,6 +87,7 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
   const [content, setContent] = useState('');
   const [mentionSearch, setMentionSearch] = useState<string | null>(null);
   const [mentionedUsers, setMentionedUsers] = useState<{ id: number; name: string }[]>([]);
+  const [showRecipientPicker, setShowRecipientPicker] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const createMessage = useCreateMessage();
 
@@ -152,6 +153,19 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
     }
   };
 
+  const addRecipient = (user: any) => {
+    const name = `${user.firstName} ${user.lastName}`;
+    setMentionedUsers((prev) => {
+      if (prev.some((u) => u.id === user.id)) return prev;
+      return [...prev, { id: user.id, name }];
+    });
+    setShowRecipientPicker(false);
+  };
+
+  const removeRecipient = (userId: number) => {
+    setMentionedUsers((prev) => prev.filter((u) => u.id !== userId));
+  };
+
   return (
     <div className="relative">
       {mentionSearch !== null && (
@@ -161,13 +175,46 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
           onClose={() => setMentionSearch(null)}
         />
       )}
+
+      {/* Recipients (To:) */}
+      {mentionedUsers.length > 0 && (
+        <div className="flex items-center gap-1 mb-1.5 flex-wrap">
+          <span className="text-[11px] font-semibold text-slate-500">To:</span>
+          {mentionedUsers.map((u) => (
+            <span key={u.id} className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] text-blue-700">
+              <AtSign className="h-2.5 w-2.5" />{u.name}
+              <button onClick={() => removeRecipient(u.id)} className="ml-0.5 hover:text-red-600">×</button>
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="flex items-end gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+        {/* Add recipient button */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setShowRecipientPicker(!showRecipientPicker)}
+            title="Send to specific person"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 shrink-0"
+          >
+            <AtSign className="h-4 w-4" />
+          </button>
+          {showRecipientPicker && (
+            <MentionAutocomplete
+              search=""
+              onSelect={addRecipient}
+              onClose={() => setShowRecipientPicker(false)}
+            />
+          )}
+        </div>
+
         <textarea
           ref={textareaRef}
           value={content}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
-          placeholder={parentId ? 'Write a reply...' : 'Write a message... Use @ to mention'}
+          placeholder={parentId ? 'Write a reply...' : mentionedUsers.length > 0 ? 'Write a message to the selected recipients...' : 'Write a message... Use @ to mention or click @ to select recipient'}
           rows={1}
           className="flex-1 resize-none text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none"
           style={{ minHeight: '24px', maxHeight: '120px' }}
@@ -180,15 +227,6 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
           <Send className="h-4 w-4" />
         </button>
       </div>
-      {mentionedUsers.length > 0 && (
-        <div className="flex gap-1 mt-1">
-          {mentionedUsers.map((u) => (
-            <span key={u.id} className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] text-blue-700">
-              <AtSign className="h-2.5 w-2.5" />{u.name}
-            </span>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

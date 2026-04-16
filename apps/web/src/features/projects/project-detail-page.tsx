@@ -1,9 +1,10 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Settings, Plus, UserPlus, X, Pencil, Users } from 'lucide-react';
+import { ArrowLeft, Settings, Plus, UserPlus, X, Pencil, Users, MessageSquare } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlanningTab } from './planning-modal';
 import { ProjectDiscussion } from '@/features/messaging/project-discussion';
+import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
 import { KanbanBoard } from '@/features/tasks/kanban-board';
 import { WorkloadPanel } from './workload-panel';
 import { ActivityFeed } from './activity-feed';
@@ -49,6 +50,7 @@ export function ProjectDetailPage() {
   const projectId = Number(id);
   const [tab, setTab] = useState<Tab>('planning');
   const [showAddMember, setShowAddMember] = useState(false);
+  const [showDiscussionDrawer, setShowDiscussionDrawer] = useState(false);
 
   const { data: project, isLoading } = useProject(projectId);
   const { data: members } = useProjectMembers(projectId);
@@ -219,6 +221,26 @@ export function ProjectDetailPage() {
           />
         )}
       </div>
+
+      {/* Floating Discussion Button (visible on all tabs except Discussion) */}
+      {tab !== 'discussion' && (
+        <button
+          onClick={() => setShowDiscussionDrawer(true)}
+          className="fixed bottom-6 right-6 z-30 flex items-center gap-2 rounded-full bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-lg hover:bg-blue-700 transition-colors"
+        >
+          <MessageSquare className="h-4 w-4" />
+          Discussion
+        </button>
+      )}
+
+      {/* Discussion Drawer */}
+      <DiscussionDrawer
+        open={showDiscussionDrawer}
+        onClose={() => setShowDiscussionDrawer(false)}
+        entityType="project"
+        entityId={projectId}
+        title={project.name}
+      />
     </div>
   );
 }
