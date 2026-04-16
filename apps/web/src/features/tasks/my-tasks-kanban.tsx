@@ -220,6 +220,9 @@ export function MyTasksKanbanPage() {
   const queryClient = useQueryClient();
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
+  const [timeLogTask, setTimeLogTask] = useState<{ id: number; name: string; targetStatus: string } | null>(null);
+  const [timeLogHours, setTimeLogHours] = useState('');
+  const [timeLogNote, setTimeLogNote] = useState('');
 
   const { data: tasksData, isLoading } = useQuery({
     queryKey: ['tasks', 'mine'],
@@ -251,6 +254,23 @@ export function MyTasksKanbanPage() {
     return map;
   }, [tasks]);
 
+  const moveTask = async (taskId: number, targetStatus: string) => {
+    // Optimistic update
+    queryClient.setQueryData(['tasks', 'mine'], (old: any) => {
+      if (!Array.isArray(old)) return old;
+      return old.map((t: any) => t.id === taskId ? { ...t, status: targetStatus } : t);
+    });
+    try {
+      await tasksApi.update(taskId, { status: targetStatus });
+      // Sync project planning views
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['planning'] });
+    } catch (err: any) {
+      queryClient.invalidateQueries({ queryKey: ['tasks', 'mine'] });
+      notify.apiError(err, 'Failed to update status');
+    }
+  };
+
   const handleDragEnd = async (event: DragEndEvent) => {
     setActiveDragId(null);
     const { active, over } = event;
@@ -264,21 +284,33 @@ export function MyTasksKanbanPage() {
     const task = tasks.find((t: any) => t.id === taskId);
     if (!task || task.status === targetCol.id) return;
 
-    // OPTIMISTIC UPDATE — move task immediately in local cache
-    queryClient.setQueryData(['tasks', 'mine'], (old: any) => {
-      if (!Array.isArray(old)) return old;
-      return old.map((t: any) => t.id === taskId ? { ...t, status: targetCol.id } : t);
-    });
+    // If moving to "completed", require time log first
+    if (targetCol.id === 'completed') {
+      setTimeLogTask({ id: taskId, name: task.name, targetStatus: 'completed' });
+      return;
+    }
 
+    await moveTask(taskId, targetCol.id);
+  };
+
+  const handleTimeLogAndComplete = async () => {
+    if (!timeLogTask || !timeLogHours || Number(timeLogHours) <= 0) return;
     try {
-      await tasksApi.update(taskId, { status: targetCol.id });
-      // Refetch to confirm
-      queryClient.invalidateQueries({ queryKey: ['tasks', 'mine'] });
-      notify.success(`Moved to ${targetCol.label}`, { code: 'TASK-STATUS-200' });
+      // Log time first
+      await timeApi.createEntry({
+        taskId: timeLogTask.id,
+        date: new Date().toISOString().split('T')[0],
+        minutes: Math.round(Number(timeLogHours) * 60),
+        note: timeLogNote.trim() || undefined,
+      });
+      // Then move to completed
+      await moveTask(timeLogTask.id, timeLogTask.targetStatus);
+      queryClient.invalidateQueries({ queryKey: ['time'] });
+      setTimeLogTask(null);
+      setTimeLogHours('');
+      setTimeLogNote('');
     } catch (err: any) {
-      // Revert on error
-      queryClient.invalidateQueries({ queryKey: ['tasks', 'mine'] });
-      notify.apiError(err, 'Failed to update status');
+      notify.apiError(err, 'Failed to complete task');
     }
   };
 
@@ -318,6 +350,43 @@ export function MyTasksKanbanPage() {
 
       {drawerTaskId && (
         <TaskDrawer taskId={drawerTaskId} onClose={() => setDrawerTaskId(null)} />
+      )}
+
+      {/* Time Log Required for Done — Modal */}
+      {timeLogTask && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-full max-w-sm rounded-[14px] bg-white shadow-2xl border border-slate-200 p-5">
+            <h3 className="text-sm font-bold text-slate-900 mb-1">Log Time to Complete</h3>
+            <p className="text-[12px] text-slate-500 mb-4">
+              Please log hours worked on "<strong>{timeLogTask.name}</strong>" before marking as Done.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600 mb-1 block">Hours worked *</label>
+                <input type="number" step="0.25" min="0.25" value={timeLogHours} onChange={(e) => setTimeLogHours(e.target.value)}
+                  placeholder="e.g. 4.5" autoFocus
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600 mb-1 block">Note (optional)</label>
+                <input type="text" value={timeLogNote} onChange={(e) => setTimeLogNote(e.target.value)}
+                  placeholder="What was done..."
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button onClick={() => { setTimeLogTask(null); setTimeLogHours(''); setTimeLogNote(''); }}
+                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50">
+                  Cancel
+                </button>
+                <button onClick={handleTimeLogAndComplete}
+                  disabled={!timeLogHours || Number(timeLogHours) <= 0}
+                  className="rounded-lg bg-emerald-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+                  Log & Complete
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

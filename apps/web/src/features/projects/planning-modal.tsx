@@ -88,6 +88,69 @@ function FeasibilityBadge({ projectId }: { projectId: number }) {
   );
 }
 
+// ─── Status Badge Dropdown (clickable badge that opens status picker) ─────────
+
+function StatusBadgeDropdown({ taskId, currentStatus, projectId }: { taskId: number; currentStatus: string; projectId: number }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+
+  const allStatuses = [
+    { value: 'not_started', label: 'Not Started', bg: 'bg-slate-100', text: 'text-slate-600', dot: 'bg-slate-400' },
+    { value: 'in_progress', label: 'In Progress', bg: 'bg-blue-100', text: 'text-blue-700', dot: 'bg-blue-500' },
+    { value: 'in_review', label: 'In Review', bg: 'bg-violet-100', text: 'text-violet-700', dot: 'bg-violet-500' },
+    { value: 'completed', label: 'Completed', bg: 'bg-emerald-100', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+    { value: 'on_hold', label: 'On Hold', bg: 'bg-amber-100', text: 'text-amber-700', dot: 'bg-amber-500' },
+    { value: 'cancelled', label: 'Cancelled', bg: 'bg-red-100', text: 'text-red-700', dot: 'bg-red-500' },
+  ];
+
+  const current = allStatuses.find((s) => s.value === currentStatus) ?? allStatuses[0];
+
+  const handleChange = async (status: string) => {
+    setOpen(false);
+    if (status === currentStatus) return;
+    try {
+      await tasksApi.update(taskId, { status });
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['feasibility', projectId] });
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to change status');
+    }
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        className={cn('inline-flex items-center gap-1 rounded-[5px] px-2 py-0.5 text-[10px] font-bold cursor-pointer hover:ring-2 hover:ring-blue-300 transition-all', current.bg, current.text)}
+      >
+        <span className={cn('w-1.5 h-1.5 rounded-full', current.dot)} />
+        {current.label}
+        <ChevronDown className="h-2.5 w-2.5 opacity-60" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-30 w-40 rounded-lg border border-slate-200 bg-white shadow-xl py-1">
+          {allStatuses.map((s) => (
+            <button key={s.value} onClick={() => handleChange(s.value)}
+              className={cn('w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-slate-50', s.value === currentStatus && 'bg-blue-50')}>
+              <span className={cn('w-2 h-2 rounded-full', s.dot)} />
+              <span className="text-slate-700">{s.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Status Menu (quick status change via dropdown) ──────────────────────────
 
 function StatusMenu({ taskId, currentStatus, projectId }: { taskId: number; currentStatus: string; projectId: number }) {
@@ -627,13 +690,10 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       <span className="flex items-center">
         <AssigneePicker task={task} members={members} projectId={projectId} onUpdate={onUpdate} />
       </span>
-      <span>
-        <span className={cn('inline-block rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold', st.bg, st.text)}>{st.label}</span>
-      </span>
+      <StatusBadgeDropdown taskId={task.id} currentStatus={task.status} projectId={projectId} />
       <div className="flex items-center gap-0.5">
         <TaskAttachmentButton taskId={task.id} projectId={projectId} />
         <TaskDiscussionButton taskId={task.id} taskName={task.name} />
-        <StatusMenu taskId={task.id} currentStatus={task.status} projectId={projectId} />
         <button
           onClick={() => onDeleteTask(task.id)}
           title="Delete task"

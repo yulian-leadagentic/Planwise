@@ -5,6 +5,7 @@ import { LoginPage } from '@/features/auth/login-page';
 import { ForgotPasswordSteps } from '@/features/auth/forgot-password-steps';
 import { DashboardPage } from '@/features/dashboard/dashboard-page';
 import { ManagerDashboard } from '@/features/dashboard/manager-dashboard';
+import { WorkloadDashboardPage } from '@/features/dashboard/workload-dashboard';
 import { TasksPage } from '@/features/tasks/tasks-page';
 import { TaskDetailPage } from '@/features/tasks/task-detail-page';
 import { MyTasksKanbanPage } from '@/features/tasks/my-tasks-kanban';
@@ -60,6 +61,7 @@ export function AppRouter() {
       >
         <Route index element={<DashboardPage />} />
         <Route path="dashboard/manager" element={<ManagerDashboard />} />
+        <Route path="dashboard/workload" element={<WorkloadDashboardPage />} />
 
         {/* Tasks */}
         <Route path="tasks" element={<TasksPage />} />
