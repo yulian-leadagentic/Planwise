@@ -38,8 +38,10 @@ export function DashboardPage() {
 
   if (tasksLoading || projectsLoading) return <PageSkeleton />;
 
-  const tasks = tasksData?.data ?? [];
-  const projects = projectsData?.data ?? [];
+  const rawTasks = tasksData?.data ?? tasksData;
+  const tasks: any[] = Array.isArray(rawTasks) ? rawTasks : [];
+  const rawProjects = projectsData?.data ?? projectsData;
+  const projects: any[] = Array.isArray(rawProjects) ? rawProjects : [];
 
   // Mini Kanban summary
   const tasksByStatus = useMemo(() => {
