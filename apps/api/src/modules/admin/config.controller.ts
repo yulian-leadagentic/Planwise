@@ -128,4 +128,37 @@ export class ConfigController {
     await this.prisma.teamTemplateMember.delete({ where: { id } });
     return { message: 'Member removed' };
   }
+
+  // Departments
+  @Get('departments')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'List departments' })
+  async getDepartments() {
+    return this.prisma.department.findMany({
+      orderBy: { sortOrder: 'asc' },
+      include: { _count: { select: { projects: true } } },
+    });
+  }
+
+  @Post('departments')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Create department' })
+  async createDepartment(@Body() body: { name: string; code?: string }) {
+    return this.prisma.department.create({ data: { name: body.name, code: body.code || null } });
+  }
+
+  @Patch('departments/:id')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Update department' })
+  async updateDepartment(@Param('id', ParseIntPipe) id: number, @Body() body: { name?: string; code?: string }) {
+    return this.prisma.department.update({ where: { id }, data: body });
+  }
+
+  @Delete('departments/:id')
+  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @ApiOperation({ summary: 'Delete department' })
+  async deleteDepartment(@Param('id', ParseIntPipe) id: number) {
+    await this.prisma.department.delete({ where: { id } });
+    return { message: 'Department deleted' };
+  }
 }

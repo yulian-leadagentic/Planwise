@@ -5,16 +5,17 @@ import { z } from 'zod';
 import { ArrowLeft, Loader2, X, Search, UserCircle, Users } from 'lucide-react';
 import { useEffect, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import client from '@/api/client';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { useProject, useCreateProject, useUpdateProject, useProjectTypes } from '@/hooks/use-projects';
 import { notify } from '@/lib/notify';
-import client from '@/api/client';
 
 const projectSchema = z.object({
   name: z.string().min(1, 'Project name is required'),
   number: z.string().optional(),
   description: z.string().optional(),
   projectTypeId: z.coerce.number().min(1, 'Please select a project type'),
+  departmentId: z.preprocess((v) => (v === '' || v === 0 || v === '0' ? undefined : Number(v)), z.number().optional()),
   status: z.string().default('draft'),
   budget: z.coerce.number().optional(),
   startDate: z.string().optional(),
@@ -46,6 +47,14 @@ export function ProjectFormPage() {
 
   const { data: project, isLoading: projectLoading } = useProject(isEdit ? projectId : 0);
   const { data: projectTypes } = useProjectTypes();
+  const { data: departments = [] } = useQuery({
+    queryKey: ['departments'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () => client.get('/admin/config/departments').then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : [];
+    }),
+  });
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
 
@@ -91,6 +100,7 @@ export function ProjectFormPage() {
         number: project.number ?? '',
         description: project.description ?? '',
         projectTypeId: project.projectTypeId,
+        departmentId: (project as any).departmentId ?? undefined,
         status: project.status,
         budget: project.budget ?? undefined,
         startDate: project.startDate ?? '',
@@ -248,6 +258,17 @@ export function ProjectFormPage() {
                   {errors.projectTypeId && (
                     <p className="mt-1 text-[12px] text-red-500">{errors.projectTypeId.message}</p>
                   )}
+                </div>
+
+                {/* Department */}
+                <div>
+                  <label className={labelClass}>Department</label>
+                  <select {...register('departmentId')} className={inputClass}>
+                    <option value="">Select department</option>
+                    {(departments as any[]).map((d: any) => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
                 </div>
 
                 {/* Status */}

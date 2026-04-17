@@ -22,6 +22,11 @@ export class CreateProjectDto {
   @IsInt()
   projectTypeId: number;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  departmentId?: number;
+
   @ApiPropertyOptional({ enum: ProjectStatus })
   @IsOptional()
   @IsEnum(ProjectStatus)
@@ -31,6 +36,11 @@ export class CreateProjectDto {
   @IsOptional()
   @IsNumber()
   budget?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  estimatedValue?: number;
 
   @ApiPropertyOptional()
   @IsOptional()

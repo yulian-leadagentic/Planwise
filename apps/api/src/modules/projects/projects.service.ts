@@ -22,7 +22,7 @@ export class ProjectsService {
         endDate: dto.endDate ? new Date(dto.endDate) : undefined,
       },
       include: {
-        projectType: true,
+        projectType: true, department: true,
         creator: { select: { id: true, firstName: true, lastName: true } },
         leader: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
       },
@@ -82,7 +82,7 @@ export class ProjectsService {
         take: query.take,
         orderBy: { createdAt: 'desc' },
         include: {
-          projectType: true,
+          projectType: true, department: true,
           creator: { select: { id: true, firstName: true, lastName: true } },
           leader: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
           _count: { select: { members: true, labels: true, tasks: true, zones: true } },
@@ -106,7 +106,7 @@ export class ProjectsService {
     const project = await this.prisma.project.findFirst({
       where: { id },
       include: {
-        projectType: true,
+        projectType: true, department: true,
         creator: { select: { id: true, firstName: true, lastName: true, email: true } },
         leader: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
         members: {
@@ -140,7 +140,7 @@ export class ProjectsService {
         endDate: dto.endDate ? new Date(dto.endDate) : undefined,
       },
       include: {
-        projectType: true,
+        projectType: true, department: true,
         creator: { select: { id: true, firstName: true, lastName: true } },
       },
     });

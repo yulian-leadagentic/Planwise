@@ -289,15 +289,30 @@ model ProjectType {
   @@map("project_types")
 }
 
+model Department {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  code      String?  @db.VarChar(20)
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  projects Project[]
+
+  @@map("departments")
+}
+
 model Project {
   id            Int           @id @default(autoincrement())
   name          String
   number        String?
   description   String?
   projectTypeId Int           @map("project_type_id")
+  departmentId  Int?          @map("department_id")
   leaderId      Int?          @map("leader_id")
   status        ProjectStatus @default(draft)
   budget        Decimal?      @db.Decimal(14, 2)
+  estimatedValue Decimal?     @map("estimated_value") @db.Decimal(14, 2)
   startDate     DateTime?     @map("start_date")
   endDate       DateTime?     @map("end_date")
   isArchived    Boolean       @default(false) @map("is_archived")
@@ -306,9 +321,10 @@ model Project {
   updatedAt     DateTime      @updatedAt @map("updated_at")
   deletedAt     DateTime?     @map("deleted_at")
 
-  projectType ProjectType @relation(fields: [projectTypeId], references: [id])
-  creator     User        @relation("ProjectCreatedBy", fields: [createdBy], references: [id])
-  leader      User?       @relation("ProjectLeader", fields: [leaderId], references: [id])
+  projectType ProjectType  @relation(fields: [projectTypeId], references: [id])
+  department  Department?  @relation(fields: [departmentId], references: [id])
+  creator     User         @relation("ProjectCreatedBy", fields: [createdBy], references: [id])
+  leader      User?        @relation("ProjectLeader", fields: [leaderId], references: [id])
 
   members     ProjectMember[]
   labels      Label[]
@@ -319,6 +335,7 @@ model Project {
   tasks       Task[]
 
   @@index([projectTypeId])
+  @@index([departmentId])
   @@index([createdBy])
   @@index([leaderId])
   @@index([status])
