@@ -245,9 +245,48 @@ function TimeBlock({ entry }: { entry: any }) {
   );
 }
 
+// ─── View Mode Types ─────────────────────────────────────────────────────────
+
+type ViewMode = 'day' | 'week' | 'month' | 'year';
+
+// ─── Working Days Calculator ─────────────────────────────────────────────────
+
+function countWorkingDays(year: number, month: number, holidays: Set<string>): { total: number; working: number; holidays: number } {
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  let working = 0;
+  let holidayCount = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(year, month, d);
+    const dow = date.getDay();
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    if (dow === 5 || dow === 6) continue; // Fri+Sat weekend
+    if (holidays.has(dateStr)) { holidayCount++; continue; }
+    working++;
+  }
+  return { total: daysInMonth, working, holidays: holidayCount };
+}
+
+// ─── Israeli Holidays (common preset) ────────────────────────────────────────
+
+const ISRAELI_HOLIDAYS_2026 = [
+  { date: '2026-03-17', name: 'Purim' },
+  { date: '2026-04-02', name: 'Pesach (1st day)' },
+  { date: '2026-04-03', name: 'Pesach (2nd day)' },
+  { date: '2026-04-08', name: 'Pesach (7th day)' },
+  { date: '2026-04-16', name: 'Yom HaShoah' },
+  { date: '2026-04-23', name: 'Yom HaZikaron' },
+  { date: '2026-04-24', name: 'Yom HaAtzmaut' },
+  { date: '2026-05-22', name: 'Shavuot' },
+  { date: '2026-09-12', name: 'Rosh Hashana (1st)' },
+  { date: '2026-09-13', name: 'Rosh Hashana (2nd)' },
+  { date: '2026-09-21', name: 'Yom Kippur' },
+  { date: '2026-09-26', name: 'Sukkot (1st)' },
+  { date: '2026-10-03', name: 'Simchat Torah' },
+];
+
 // ─── Weekly Timesheet Calendar ──────────────────────────────────────────────
 
-export function WeeklyTimesheetPage() {
+function WeekView() {
   const queryClient = useQueryClient();
   const [weekOffset, setWeekOffset] = useState(0);
   const [showEntryForm, setShowEntryForm] = useState<{ date: string; startTime: string; endTime: string } | null>(null);
@@ -338,26 +377,21 @@ export function WeeklyTimesheetPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        title="Timesheet"
-        description="Weekly time reporting — click and drag on the calendar to log time"
-        actions={
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => clockStatus?.isClockedIn ? clockOut.mutate() : clockIn.mutate()}
-              disabled={clockIn.isPending || clockOut.isPending}
-              className={cn('flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50',
-                clockStatus?.isClockedIn ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100' : 'border border-green-200 bg-green-50 text-green-700 hover:bg-green-100')}>
-              <Clock className="h-4 w-4" />
-              {clockStatus?.isClockedIn ? 'Clock Out' : 'Clock In'}
-            </button>
-            <button onClick={() => setShowEntryForm({ date: todayKey, startTime: '09:00', endTime: '10:00' })}
-              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
-              <Plus className="h-4 w-4" /> Add Entry
-            </button>
-          </div>
-        }
-      />
+      {/* Quick actions */}
+      <div className="flex items-center gap-2 justify-end">
+        <button
+          onClick={() => clockStatus?.isClockedIn ? clockOut.mutate() : clockIn.mutate()}
+          disabled={clockIn.isPending || clockOut.isPending}
+          className={cn('flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50',
+            clockStatus?.isClockedIn ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100' : 'border border-green-200 bg-green-50 text-green-700 hover:bg-green-100')}>
+          <Clock className="h-4 w-4" />
+          {clockStatus?.isClockedIn ? 'Clock Out' : 'Clock In'}
+        </button>
+        <button onClick={() => setShowEntryForm({ date: todayKey, startTime: '09:00', endTime: '10:00' })}
+          className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+          <Plus className="h-4 w-4" /> Add Entry
+        </button>
+      </div>
 
       {/* Week navigation + summary */}
       <div className="flex items-center justify-between rounded-[14px] border border-slate-200 bg-white px-5 py-3">
@@ -485,6 +519,155 @@ export function WeeklyTimesheetPage() {
           onSaved={invalidate}
         />
       )}
+    </div>
+  );
+}
+
+// ─── Month View ─────────────────────────────────────────────────────────────
+
+function MonthView() {
+  const [monthOffset, setMonthOffset] = useState(0);
+  const today = new Date();
+  const viewYear = today.getFullYear() + Math.floor((today.getMonth() + monthOffset) / 12);
+  const viewMonth = ((today.getMonth() + monthOffset) % 12 + 12) % 12;
+  const monthName = new Date(viewYear, viewMonth).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  const { data: calendarDays = [] } = useQuery({
+    queryKey: ['admin', 'calendar'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/calendar').then((r) => { const d = r.data?.data ?? r.data; return Array.isArray(d) ? d : []; }),
+  });
+
+  const holidayDates = useMemo(() => {
+    const set = new Set<string>();
+    for (const d of calendarDays) { if (d.date) set.add(typeof d.date === 'string' ? d.date.split('T')[0] : new Date(d.date).toISOString().split('T')[0]); }
+    return set;
+  }, [calendarDays]);
+
+  const workingDays = countWorkingDays(viewYear, viewMonth, holidayDates);
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstDow = (() => { let d = new Date(viewYear, viewMonth, 1).getDay() - 1; return d < 0 ? 6 : d; })();
+  const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between rounded-[14px] border border-slate-200 bg-white px-5 py-3">
+        <button onClick={() => setMonthOffset((o) => o - 1)} className="rounded-md p-1.5 hover:bg-slate-100"><ChevronLeft className="h-5 w-5" /></button>
+        <div className="text-center">
+          <p className="text-sm font-semibold text-slate-700">{monthName}</p>
+          <p className="text-[11px] text-slate-400"><span className="font-semibold text-slate-700">{workingDays.working}</span> working days{workingDays.holidays > 0 && <span> · <span className="text-red-500">{workingDays.holidays} holidays</span></span>}</p>
+        </div>
+        <button onClick={() => setMonthOffset((o) => o + 1)} className="rounded-md p-1.5 hover:bg-slate-100"><ChevronRight className="h-5 w-5" /></button>
+      </div>
+      <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+        <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
+          {DAY_NAMES.map((d) => (<div key={d} className="px-2 py-2.5 text-center text-[11px] font-semibold text-slate-500 uppercase">{d}</div>))}
+        </div>
+        <div className="grid grid-cols-7">
+          {Array.from({ length: firstDow }).map((_, i) => (<div key={`pad-${i}`} className="min-h-[80px] border-b border-r border-slate-100 bg-slate-50/30" />))}
+          {Array.from({ length: daysInMonth }).map((_, i) => {
+            const d = i + 1;
+            const dateStr = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            const dow = new Date(viewYear, viewMonth, d).getDay();
+            const isWeekend = dow === 5 || dow === 6;
+            const isHoliday = holidayDates.has(dateStr);
+            const isToday = dateStr === format(today, 'yyyy-MM-dd');
+            const holiday = calendarDays.find((h: any) => (typeof h.date === 'string' ? h.date.split('T')[0] : new Date(h.date).toISOString().split('T')[0]) === dateStr);
+            return (
+              <div key={d} className={cn('min-h-[80px] border-b border-r border-slate-100 p-1.5', isWeekend && 'bg-slate-50/50', isHoliday && 'bg-red-50/30')}>
+                <span className={cn('text-[13px] font-medium', isToday ? 'text-white bg-blue-600 rounded-full w-7 h-7 inline-flex items-center justify-center' : 'text-slate-700', isWeekend && !isToday && 'text-slate-400')}>{d}</span>
+                {isHoliday && holiday && <div className="mt-1 rounded px-1 py-0.5 bg-red-100 text-[9px] font-medium text-red-700 truncate">{holiday.name}</div>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Year View ──────────────────────────────────────────────────────────────
+
+function YearView() {
+  const [yearOffset, setYearOffset] = useState(0);
+  const today = new Date();
+  const viewYear = today.getFullYear() + yearOffset;
+
+  const { data: calendarDays = [] } = useQuery({
+    queryKey: ['admin', 'calendar'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/calendar').then((r) => { const d = r.data?.data ?? r.data; return Array.isArray(d) ? d : []; }),
+  });
+
+  const holidayDates = useMemo(() => {
+    const set = new Set<string>();
+    for (const d of calendarDays) { if (d.date) set.add(typeof d.date === 'string' ? d.date.split('T')[0] : new Date(d.date).toISOString().split('T')[0]); }
+    return set;
+  }, [calendarDays]);
+
+  const MONTHS = Array.from({ length: 12 }, (_, i) => {
+    const name = new Date(viewYear, i).toLocaleDateString('en-US', { month: 'long' });
+    const wd = countWorkingDays(viewYear, i, holidayDates);
+    return { index: i, name, ...wd };
+  });
+
+  const totalWorking = MONTHS.reduce((s, m) => s + m.working, 0);
+  const totalHolidays = MONTHS.reduce((s, m) => s + m.holidays, 0);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between rounded-[14px] border border-slate-200 bg-white px-5 py-3">
+        <button onClick={() => setYearOffset((o) => o - 1)} className="rounded-md p-1.5 hover:bg-slate-100"><ChevronLeft className="h-5 w-5" /></button>
+        <div className="text-center">
+          <p className="text-lg font-bold text-slate-900">{viewYear}</p>
+          <p className="text-[11px] text-slate-400"><span className="font-semibold text-slate-700">{totalWorking}</span> working days · <span className="text-red-500">{totalHolidays} holidays</span></p>
+        </div>
+        <button onClick={() => setYearOffset((o) => o + 1)} className="rounded-md p-1.5 hover:bg-slate-100"><ChevronRight className="h-5 w-5" /></button>
+      </div>
+      <div className="grid grid-cols-3 lg:grid-cols-4 gap-3">
+        {MONTHS.map((m) => {
+          const isCurrent = viewYear === today.getFullYear() && m.index === today.getMonth();
+          return (
+            <div key={m.index} className={cn('rounded-[14px] border bg-white p-4', isCurrent ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200')}>
+              <h3 className={cn('text-sm font-semibold', isCurrent ? 'text-blue-600' : 'text-slate-900')}>{m.name}</h3>
+              <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+                <div><p className="text-lg font-bold text-slate-700">{m.working}</p><p className="text-[9px] text-slate-400">Working</p></div>
+                <div><p className={cn('text-lg font-bold', m.holidays > 0 ? 'text-red-600' : 'text-slate-300')}>{m.holidays}</p><p className="text-[9px] text-slate-400">Holidays</p></div>
+                <div><p className="text-lg font-bold text-slate-400">{m.total}</p><p className="text-[9px] text-slate-400">Total</p></div>
+              </div>
+              <div className="mt-2 w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                <div className="h-full bg-blue-500 rounded-full" style={{ width: `${(m.working / m.total) * 100}%` }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Timesheet Page ────────────────────────────────────────────────────
+
+export function WeeklyTimesheetPage() {
+  const [viewMode, setViewMode] = useState<ViewMode>('week');
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <PageHeader title="Timesheet" description="Time reporting and calendar" />
+        <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5">
+          {(['day', 'week', 'month', 'year'] as ViewMode[]).map((v) => (
+            <button key={v} onClick={() => setViewMode(v)}
+              className={cn('px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors capitalize',
+                viewMode === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+              {v}
+            </button>
+          ))}
+        </div>
+      </div>
+      {viewMode === 'week' && <WeekView />}
+      {viewMode === 'day' && <WeekView />}
+      {viewMode === 'month' && <MonthView />}
+      {viewMode === 'year' && <YearView />}
     </div>
   );
 }
