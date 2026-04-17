@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, MessageSquare, Search } from 'lucide-react';
+import { Plus, Trash2, MessageSquare, Search, Send, UserCircle } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
 import { useProjects } from '@/hooks/use-projects';
@@ -163,11 +163,20 @@ export function ProjectListPage() {
                       <td className="px-4 py-3 text-right font-mono text-slate-500">-</td>
                       <td className="px-4 py-3 text-right font-mono text-slate-500">-</td>
                       <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => { setChatProjectId(p.id); setChatProjectName(p.name); }}
-                          title="Chat with team"
-                          className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
-                          <MessageSquare className="h-4 w-4" />
-                        </button>
+                        <div className="flex items-center justify-center gap-0.5">
+                          <button onClick={() => { setChatProjectId(p.id); setChatProjectName(p.name); }}
+                            title="Project discussion"
+                            className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+                            <MessageSquare className="h-3.5 w-3.5" />
+                          </button>
+                          {leader && (
+                            <button onClick={() => { setChatProjectId(p.id); setChatProjectName(`Message to ${leader.firstName}`); }}
+                              title={`Quick message to ${leader.firstName} ${leader.lastName}`}
+                              className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors">
+                              <Send className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                         <button onClick={() => { if (confirm(`Delete "${p.name}"?`)) deleteProject.mutate(p.id); }}

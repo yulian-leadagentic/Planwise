@@ -400,57 +400,78 @@ export function WeeklyTimesheetPage() {
           })}
         </div>
 
-        {/* Time grid */}
-        <div className="grid grid-cols-[60px_repeat(7,1fr)] overflow-y-auto" style={{ maxHeight: '600px' }}
+        {/* Time grid — single table for perfect alignment */}
+        <div className="overflow-y-auto" style={{ maxHeight: '600px' }}
           onMouseUp={handleMouseUp} onMouseLeave={() => { setSelecting(null); setSelectEnd(null); }}>
-          {/* Hour labels */}
-          <div>
-            {HOURS.map((hour) => (
-              <div key={hour} className="border-b border-slate-100 text-[10px] text-slate-400 text-right pr-2 pt-1" style={{ height: HOUR_HEIGHT }}>
-                {String(hour).padStart(2, '0')}:00
-              </div>
-            ))}
-          </div>
+          <table className="w-full" style={{ tableLayout: 'fixed', borderCollapse: 'collapse' }}>
+            <colgroup>
+              <col style={{ width: '60px' }} />
+              {weekDays.map((_, i) => <col key={i} />)}
+            </colgroup>
+            <tbody>
+              {HOURS.map((hour) => (
+                <tr key={hour}>
+                  <td className="border-b border-r border-slate-100 text-[10px] text-slate-400 text-right pr-2 pt-1 align-top"
+                    style={{ height: `${HOUR_HEIGHT}px` }}>
+                    {String(hour).padStart(2, '0')}:00
+                  </td>
+                  {weekDays.map((day, dayIdx) => {
+                    const isWeekend = day.getDay() === 5 || day.getDay() === 6;
+                    const isSelecting = selecting?.dayIdx === dayIdx && selectEnd != null && hour >= selecting!.startHour && hour < selectEnd;
+                    const dateKey = format(day, 'yyyy-MM-dd');
+                    const entries = entriesByDay.get(dateKey) ?? [];
 
-          {/* Day columns */}
-          {weekDays.map((day, dayIdx) => {
-            const dateKey = format(day, 'yyyy-MM-dd');
-            const entries = entriesByDay.get(dateKey) ?? [];
-            const isWeekend = day.getDay() === 5 || day.getDay() === 6;
+                    // Find entries that START in this hour
+                    const hourEntries = entries.filter((e: any) => {
+                      if (!e.startTime) return hour === 9; // default to 9am if no startTime
+                      const startH = parseInt(e.startTime.split(':')[0], 10);
+                      return startH === hour;
+                    });
 
-            return (
-              <div key={dayIdx} className={cn('relative border-l border-slate-200', isWeekend && 'bg-slate-50/50')}>
-                {/* Hour grid lines */}
-                {HOURS.map((hour) => (
-                  <div key={hour}
-                    className={cn('border-b border-slate-100 cursor-crosshair hover:bg-blue-50/30',
-                      selecting?.dayIdx === dayIdx && selectEnd && hour >= selecting.startHour && hour < selectEnd && 'bg-blue-100/50')}
-                    style={{ height: HOUR_HEIGHT }}
-                    onMouseDown={() => handleMouseDown(dayIdx, hour)}
-                    onMouseMove={() => handleMouseMove(hour)}
-                  />
-                ))}
+                    return (
+                      <td key={dayIdx}
+                        className={cn('border-b border-l border-slate-100 cursor-crosshair hover:bg-blue-50/20 relative p-0',
+                          isWeekend && 'bg-slate-50/40',
+                          isSelecting && 'bg-blue-100/50')}
+                        style={{ height: `${HOUR_HEIGHT}px` }}
+                        onMouseDown={() => handleMouseDown(dayIdx, hour)}
+                        onMouseMove={() => handleMouseMove(hour)}>
+                        {/* Entries that start in this hour cell */}
+                        {hourEntries.map((entry: any) => {
+                          const startMins = entry.startTime ? timeToMinutes(entry.startTime) : 9 * 60;
+                          const endMins = entry.endTime ? timeToMinutes(entry.endTime) : startMins + (entry.minutes ?? 60);
+                          const offsetInCell = ((startMins % 60) / 60) * HOUR_HEIGHT;
+                          const blockHeight = Math.max(((endMins - startMins) / 60) * HOUR_HEIGHT, 18);
+                          const projectName = entry.project?.name ?? '';
+                          const taskName = entry.task?.name ?? '';
+                          return (
+                            <div key={entry.id}
+                              className={cn('absolute left-0.5 right-0.5 rounded-md border px-1 py-0.5 overflow-hidden text-[9px] z-10',
+                                entry.isBillable !== false ? 'bg-blue-100 border-blue-300 text-blue-800' : 'bg-slate-100 border-slate-300 text-slate-700')}
+                              style={{ top: `${offsetInCell}px`, height: `${blockHeight}px` }}
+                              title={`${entry.startTime ?? ''}-${entry.endTime ?? ''} ${projectName} ${taskName}`}>
+                              <span className="font-semibold">{entry.startTime}-{entry.endTime}</span>
+                              {blockHeight > 24 && <span className="block truncate opacity-80">{projectName}</span>}
+                              {blockHeight > 38 && <span className="block truncate opacity-60">{taskName}</span>}
+                            </div>
+                          );
+                        })}
 
-                {/* Selection overlay */}
-                {selecting?.dayIdx === dayIdx && selectEnd && (
-                  <div className="absolute left-1 right-1 bg-blue-200/40 border-2 border-dashed border-blue-400 rounded-md pointer-events-none"
-                    style={{
-                      top: `${(selecting.startHour - 7) * HOUR_HEIGHT}px`,
-                      height: `${(selectEnd - selecting.startHour) * HOUR_HEIGHT}px`,
-                    }}>
-                    <span className="absolute top-1 left-1 text-[10px] font-semibold text-blue-600">
-                      {String(selecting.startHour).padStart(2, '0')}:00 - {String(selectEnd).padStart(2, '0')}:00
-                    </span>
-                  </div>
-                )}
-
-                {/* Existing time entries */}
-                {entries.map((entry: any) => (
-                  <TimeBlock key={entry.id} entry={entry} />
-                ))}
-              </div>
-            );
-          })}
+                        {/* Selection indicator */}
+                        {isSelecting && hour === selecting!.startHour && (
+                          <div className="absolute inset-0 flex items-start justify-center pt-1 pointer-events-none z-20">
+                            <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 rounded px-1">
+                              {String(selecting!.startHour).padStart(2, '0')}:00-{String(selectEnd).padStart(2, '0')}:00
+                            </span>
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 
