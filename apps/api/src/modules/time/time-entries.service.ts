@@ -16,9 +16,13 @@ export class TimeEntriesService {
         projectId: dto.projectId,
         taskId: dto.taskId,
         date: new Date(dto.date),
+        startTime: dto.startTime ?? null,
+        endTime: dto.endTime ?? null,
         minutes: dto.minutes,
         note: dto.note,
         isBillable: dto.isBillable ?? true,
+        location: dto.location ?? null,
+        completionPct: dto.completionPct ?? null,
       },
       include: {
         project: { select: { id: true, name: true } },

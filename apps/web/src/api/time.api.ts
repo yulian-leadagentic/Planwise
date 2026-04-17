@@ -25,9 +25,13 @@ export interface TimeEntryPayload {
   taskId?: number;
   projectId?: number;
   date: string;
+  startTime?: string;
+  endTime?: string;
   minutes: number;
   note?: string;
   isBillable?: boolean;
+  location?: string;
+  completionPct?: number;
 }
 
 export interface WeeklyGridQuery {

@@ -450,18 +450,22 @@ model TimeClock {
 }
 
 model TimeEntry {
-  id          Int       @id @default(autoincrement())
-  userId      Int       @map("user_id")
-  timeClockId Int?      @map("time_clock_id")
-  projectId   Int?      @map("project_id")
-  taskId      Int?      @map("task_id")
+  id          Int            @id @default(autoincrement())
+  userId      Int            @map("user_id")
+  timeClockId Int?           @map("time_clock_id")
+  projectId   Int?           @map("project_id")
+  taskId      Int?           @map("task_id")
   date        DateTime
+  startTime   String?        @map("start_time") @db.VarChar(5)
+  endTime     String?        @map("end_time") @db.VarChar(5)
   minutes     Int
   note        String?
-  isBillable  Boolean   @default(true) @map("is_billable")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-  deletedAt   DateTime? @map("deleted_at")
+  isBillable  Boolean        @default(true) @map("is_billable")
+  location    String?        @db.VarChar(20)
+  completionPct Int?         @map("completion_pct")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+  deletedAt   DateTime?      @map("deleted_at")
 
   user       User        @relation(fields: [userId], references: [id])
   timeClock  TimeClock?  @relation(fields: [timeClockId], references: [id])

@@ -21,6 +21,16 @@ export class CreateTimeEntryDto {
   @IsDateString()
   date: string;
 
+  @ApiPropertyOptional({ description: 'Start time HH:MM' })
+  @IsOptional()
+  @IsString()
+  startTime?: string;
+
+  @ApiPropertyOptional({ description: 'End time HH:MM' })
+  @IsOptional()
+  @IsString()
+  endTime?: string;
+
   @ApiProperty()
   @IsInt()
   @Min(1)
@@ -35,4 +45,14 @@ export class CreateTimeEntryDto {
   @IsOptional()
   @IsBoolean()
   isBillable?: boolean;
+
+  @ApiPropertyOptional({ description: 'Work location: home or office' })
+  @IsOptional()
+  @IsString()
+  location?: string;
+
+  @ApiPropertyOptional({ description: 'Task completion percentage after this work' })
+  @IsOptional()
+  @IsInt()
+  completionPct?: number;
 }

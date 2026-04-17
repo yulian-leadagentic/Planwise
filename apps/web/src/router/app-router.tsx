@@ -10,6 +10,7 @@ import { WorkloadDashboardPage } from '@/features/dashboard/workload-dashboard';
 import { TasksPage } from '@/features/tasks/tasks-page';
 import { TaskDetailPage } from '@/features/tasks/task-detail-page';
 import { MyTimePage } from '@/features/time/my-time-page';
+import { WeeklyTimesheetPage } from '@/features/time/weekly-timesheet';
 import { TimeGridPage } from '@/features/time/time-grid-page';
 import { ClockDashboardPage } from '@/features/time/clock-dashboard-page';
 import { ProjectListPage } from '@/features/projects/project-list-page';
@@ -79,7 +80,8 @@ export function AppRouter() {
         <Route path="inbox" element={<InboxPage />} />
         <Route path="messages/dashboard" element={<MessagingDashboardPage />} />
         <Route path="messages/search" element={<MessageSearchPage />} />
-        <Route path="time" element={<MyTimePage />} />
+        <Route path="time" element={<WeeklyTimesheetPage />} />
+        <Route path="time/summary" element={<MyTimePage />} />
         <Route path="time/grid" element={<TimeGridPage />} />
         <Route path="time/clock-dashboard" element={<ClockDashboardPage />} />
 
