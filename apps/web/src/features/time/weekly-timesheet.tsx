@@ -267,29 +267,48 @@ export function WeeklyTimesheetPage() {
   const clockIn = useClockIn();
   const clockOut = useClockOut();
 
-  // Fetch entries for the week
+  // Fetch entries for the week — the API returns weekly grid format
   const { data: breakdownData } = useDailyBreakdown(weekStartStr);
-  const breakdown = breakdownData ?? [];
 
-  // Build entries map: dateKey → entries[]
+  // Extract flat entries per day from the grid format
   const entriesByDay = useMemo(() => {
     const map = new Map<string, any[]>();
-    for (const day of breakdown) {
-      map.set(day.date, day.entries ?? []);
-    }
-    return map;
-  }, [breakdown]);
+    const raw = breakdownData as any;
 
-  // Calculate daily totals
+    if (!raw) return map;
+
+    // Handle weekly grid format: { rows: [{ days: { "2026-04-14": { entries: [...] } } }] }
+    if (raw.rows && Array.isArray(raw.rows)) {
+      for (const row of raw.rows) {
+        for (const [dateKey, dayData] of Object.entries(row.days ?? {})) {
+          if (!map.has(dateKey)) map.set(dateKey, []);
+          const entries = (dayData as any)?.entries ?? [];
+          map.get(dateKey)!.push(...entries);
+        }
+      }
+    }
+    // Handle array of daily breakdowns: [{ date, entries }]
+    else if (Array.isArray(raw)) {
+      for (const day of raw) {
+        map.set(day.date, day.entries ?? []);
+      }
+    }
+
+    return map;
+  }, [breakdownData]);
+
+  // Calculate daily totals — use grid dailyTotals if available, else sum from entries
   const dailyTotals = useMemo(() => {
+    const raw = breakdownData as any;
+    if (raw?.dailyTotals) return raw.dailyTotals as Record<string, number>;
     const totals: Record<string, number> = {};
     for (const [date, entries] of entriesByDay.entries()) {
       totals[date] = entries.reduce((s: number, e: any) => s + (e.minutes ?? 0), 0);
     }
     return totals;
-  }, [entriesByDay]);
+  }, [breakdownData, entriesByDay]);
 
-  const weekTotal = Object.values(dailyTotals).reduce((s, m) => s + m, 0);
+  const weekTotal = (breakdownData as any)?.weeklyTotal ?? Object.values(dailyTotals).reduce((s, m) => s + (typeof m === 'number' ? m : 0), 0);
   const todayKey = format(new Date(), 'yyyy-MM-dd');
 
   // Mouse handlers for time selection
