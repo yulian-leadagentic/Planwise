@@ -9,13 +9,17 @@ export class TimeEntriesService {
   constructor(private prisma: PrismaService) {}
 
   async create(userId: number, dto: CreateTimeEntryDto) {
+    // Parse date as local midnight (not UTC) to avoid timezone issues
+    const dateParts = dto.date.split('-').map(Number);
+    const localDate = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+
     return this.prisma.timeEntry.create({
       data: {
         userId,
         timeClockId: dto.timeClockId,
         projectId: dto.projectId,
         taskId: dto.taskId,
-        date: new Date(dto.date),
+        date: localDate,
         startTime: dto.startTime ?? null,
         endTime: dto.endTime ?? null,
         minutes: dto.minutes,
@@ -141,6 +145,7 @@ export class TimeEntriesService {
     const entries = await this.prisma.timeEntry.findMany({
       where: {
         userId,
+        deletedAt: null,
         date: { gte: startOfDay(weekStart), lte: endOfDay(weekEnd) },
       },
       include: {
