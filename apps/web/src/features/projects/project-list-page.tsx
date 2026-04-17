@@ -122,7 +122,8 @@ export function ProjectListPage() {
                   const taskCount = p._count?.tasks ?? 0;
                   const completionRate = 0; // would need aggregation
                   const dept = p.department?.name ?? '-';
-                  const category = p.projectType?.name ?? '-';
+                  const categories = (p.categories ?? []).map((c: any) => c.serviceType?.name).filter(Boolean);
+                  const category = categories.length > 0 ? categories.join(', ') : (p.projectType?.name ?? '-');
 
                   return (
                     <tr key={p.id}

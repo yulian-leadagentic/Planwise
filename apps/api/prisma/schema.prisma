@@ -177,6 +177,11 @@ model User {
   companyName  String?   @map("company_name")
   taxId        String?   @map("tax_id")
   address      String?
+  salaryHourly Decimal?  @map("salary_hourly") @db.Decimal(10, 2)
+  dailyStandardHours Decimal? @map("daily_standard_hours") @db.Decimal(4, 2)
+  employmentDate DateTime? @map("employment_date") @db.Date
+  employmentEndDate DateTime? @map("employment_end_date") @db.Date
+  employeeCategory String? @map("employee_category")
   website      String?
   otpCode      String?   @map("otp_code")
   otpExpiresAt DateTime? @map("otp_expires_at")
@@ -333,6 +338,7 @@ model Project {
   timeEntries TimeEntry[]
   zones       Zone[]
   tasks       Task[]
+  categories  ProjectCategory[]
 
   @@index([projectTypeId])
   @@index([departmentId])
@@ -793,6 +799,18 @@ model Zone {
 
 // ─── Service Types & Phases ────────────────────────────────────────────────
 
+model ProjectCategory {
+  id            Int @id @default(autoincrement())
+  projectId     Int @map("project_id")
+  serviceTypeId Int @map("service_type_id")
+
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  serviceType ServiceType @relation(fields: [serviceTypeId], references: [id])
+
+  @@unique([projectId, serviceTypeId])
+  @@map("project_categories")
+}
+
 model ServiceType {
   id        Int      @id @default(autoincrement())
   name      String   @unique @db.VarChar(100)
@@ -806,6 +824,7 @@ model ServiceType {
   tasks             Task[]
   templateTasks     TemplateTask[]
   templateZoneTasks TemplateZoneTask[]
+  projectCategories ProjectCategory[]
 
   @@map("service_types")
 }

@@ -402,6 +402,53 @@ export class ExecutionPlanningService {
     this.logger.log(`Found ${overdueTasks.length} overdue tasks`);
   }
 
+  // ─── ESTIMATED COST (employee rate × actual hours) ────────────────────
+
+  async calculateEstimatedCost(projectId: number) {
+    // Get all time entries for the project with user salary
+    const entries = await this.prisma.timeEntry.findMany({
+      where: { projectId, deletedAt: null },
+      select: {
+        userId: true,
+        minutes: true,
+        isBillable: true,
+        user: { select: { id: true, firstName: true, lastName: true, salaryHourly: true } },
+      },
+    });
+
+    // Group by user
+    const userCosts = new Map<number, { name: string; hours: number; rate: number; cost: number; billableHours: number }>();
+
+    for (const e of entries) {
+      const uid = e.userId;
+      if (!userCosts.has(uid)) {
+        const rate = e.user.salaryHourly ? Number(e.user.salaryHourly) : 0;
+        userCosts.set(uid, {
+          name: `${e.user.firstName} ${e.user.lastName}`,
+          hours: 0, rate, cost: 0, billableHours: 0,
+        });
+      }
+      const uc = userCosts.get(uid)!;
+      const hours = e.minutes / 60;
+      uc.hours += hours;
+      uc.cost += hours * uc.rate;
+      if (e.isBillable) uc.billableHours += hours;
+    }
+
+    const breakdown = [...userCosts.values()].map((uc) => ({
+      ...uc,
+      hours: Math.round(uc.hours * 100) / 100,
+      cost: Math.round(uc.cost * 100) / 100,
+      billableHours: Math.round(uc.billableHours * 100) / 100,
+    }));
+
+    const totalCost = Math.round(breakdown.reduce((s, b) => s + b.cost, 0) * 100) / 100;
+    const totalHours = Math.round(breakdown.reduce((s, b) => s + b.hours, 0) * 100) / 100;
+    const billableHours = Math.round(breakdown.reduce((s, b) => s + b.billableHours, 0) * 100) / 100;
+
+    return { totalCost, totalHours, billableHours, breakdown };
+  }
+
   @Cron(CronExpression.EVERY_DAY_AT_10AM)
   async checkMissingTimeReports() {
     this.logger.log('Running missing time report check...');

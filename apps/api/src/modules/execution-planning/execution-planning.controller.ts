@@ -51,6 +51,12 @@ export class ExecutionPlanningController {
     return this.eps.calculateFeasibility(projectId, targetDate);
   }
 
+  @Get('projects/:id/estimated-cost')
+  @ApiOperation({ summary: 'Calculate project estimated cost from employee rates × logged hours' })
+  getEstimatedCost(@Param('id', ParseIntPipe) projectId: number) {
+    return this.eps.calculateEstimatedCost(projectId);
+  }
+
   // ─── Progress ───────────────────────────────────────────────────────────
 
   @Get('projects/:id/progress')
