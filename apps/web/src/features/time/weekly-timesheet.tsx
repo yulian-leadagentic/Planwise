@@ -306,6 +306,30 @@ function WeekView() {
   const clockIn = useClockIn();
   const clockOut = useClockOut();
 
+  // Fetch holidays for working day calculation
+  const { data: calendarDays = [] } = useQuery({
+    queryKey: ['admin', 'calendar'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/calendar').then((r) => { const d = r.data?.data ?? r.data; return Array.isArray(d) ? d : []; }),
+  });
+  const holidayDates = useMemo(() => {
+    const set = new Set<string>();
+    for (const d of calendarDays) { if (d.date) set.add(typeof d.date === 'string' ? d.date.split('T')[0] : new Date(d.date).toISOString().split('T')[0]); }
+    return set;
+  }, [calendarDays]);
+
+  // Count working days this week
+  const weekWorkingDays = useMemo(() => {
+    let count = 0;
+    for (let i = 0; i < 7; i++) {
+      const day = addDays(weekStart, i);
+      const dow = day.getDay();
+      const dateStr = format(day, 'yyyy-MM-dd');
+      if (dow !== 5 && dow !== 6 && !holidayDates.has(dateStr)) count++;
+    }
+    return count;
+  }, [weekStart, holidayDates]);
+
   // Fetch entries for the week — the API returns weekly grid format
   const { data: breakdownData } = useDailyBreakdown(weekStartStr);
 
@@ -400,6 +424,7 @@ function WeekView() {
           <p className="text-sm font-semibold text-slate-700">{format(weekDays[0], 'MMM d')} — {format(weekDays[6], 'MMM d, yyyy')}</p>
           <p className="text-[11px] text-slate-400">
             Week total: <span className="font-semibold text-slate-700">{minutesToDisplay(weekTotal)}</span>
+            {' · '}<span className="font-semibold text-slate-600">{weekWorkingDays}</span> working days
             {weekOffset === 0 && ' · This week'}
           </p>
         </div>
@@ -415,9 +440,11 @@ function WeekView() {
             const dateKey = format(day, 'yyyy-MM-dd');
             const isToday = dateKey === todayKey;
             const isWeekend = day.getDay() === 5 || day.getDay() === 6;
+            const isHoliday = holidayDates.has(dateKey);
+            const holidayName = isHoliday ? calendarDays.find((h: any) => (typeof h.date === 'string' ? h.date.split('T')[0] : new Date(h.date).toISOString().split('T')[0]) === dateKey)?.name : null;
             const total = dailyTotals[dateKey] ?? 0;
             return (
-              <div key={i} className={cn('px-2 py-3 text-center border-l border-slate-200', isWeekend && 'bg-slate-100/50')}>
+              <div key={i} className={cn('px-2 py-3 text-center border-l border-slate-200', isWeekend && 'bg-slate-100/50', isHoliday && 'bg-red-50/50')}>
                 <p className={cn('text-[11px] font-semibold', isToday ? 'text-blue-600' : 'text-slate-500')}>
                   {format(day, 'EEE')}
                 </p>
@@ -428,6 +455,9 @@ function WeekView() {
                 </p>
                 {total > 0 && (
                   <p className="text-[10px] font-medium text-slate-400 mt-0.5">{minutesToDisplay(total)}</p>
+                )}
+                {isHoliday && holidayName && (
+                  <p className="text-[8px] font-medium text-red-500 mt-0.5 truncate" title={holidayName}>{holidayName}</p>
                 )}
               </div>
             );

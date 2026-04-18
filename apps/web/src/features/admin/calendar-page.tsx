@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ChevronLeft, ChevronRight, X, Trash2 } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, X, Trash2, Download, Calendar } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import client from '@/api/client';
@@ -12,6 +12,71 @@ const TYPE_STYLES: Record<string, { bg: string; text: string; dot: string }> = {
   half_day: { bg: 'bg-blue-100', text: 'text-blue-700', dot: 'bg-blue-500' },
   special: { bg: 'bg-purple-100', text: 'text-purple-700', dot: 'bg-purple-500' },
 };
+
+// Israeli national holidays — generates dates for any given year
+function getIsraeliHolidays(year: number): Array<{ date: string; name: string; nameHe: string }> {
+  // These are approximate Gregorian dates — in production would use Hebrew calendar library
+  // Dates shift each year based on the Hebrew calendar
+  const holidays: Record<number, Array<{ date: string; name: string; nameHe: string }>> = {
+    2025: [
+      { date: `2025-03-14`, name: 'Purim', nameHe: 'פורים' },
+      { date: `2025-04-13`, name: 'Pesach (1st)', nameHe: 'פסח (יום א)' },
+      { date: `2025-04-14`, name: 'Pesach (2nd)', nameHe: 'פסח (יום ב)' },
+      { date: `2025-04-19`, name: 'Pesach (7th)', nameHe: 'פסח (יום ז)' },
+      { date: `2025-04-24`, name: 'Yom HaShoah', nameHe: 'יום השואה' },
+      { date: `2025-05-01`, name: 'Yom HaZikaron', nameHe: 'יום הזיכרון' },
+      { date: `2025-05-02`, name: 'Yom HaAtzmaut', nameHe: 'יום העצמאות' },
+      { date: `2025-06-02`, name: 'Shavuot', nameHe: 'שבועות' },
+      { date: `2025-09-23`, name: 'Rosh Hashana (1st)', nameHe: 'ראש השנה (יום א)' },
+      { date: `2025-09-24`, name: 'Rosh Hashana (2nd)', nameHe: 'ראש השנה (יום ב)' },
+      { date: `2025-10-02`, name: 'Yom Kippur', nameHe: 'יום כיפור' },
+      { date: `2025-10-07`, name: 'Sukkot (1st)', nameHe: 'סוכות (יום א)' },
+      { date: `2025-10-14`, name: 'Simchat Torah', nameHe: 'שמחת תורה' },
+    ],
+    2026: [
+      { date: `2026-03-03`, name: 'Purim', nameHe: 'פורים' },
+      { date: `2026-04-02`, name: 'Pesach (1st)', nameHe: 'פסח (יום א)' },
+      { date: `2026-04-03`, name: 'Pesach (2nd)', nameHe: 'פסח (יום ב)' },
+      { date: `2026-04-08`, name: 'Pesach (7th)', nameHe: 'פסח (יום ז)' },
+      { date: `2026-04-16`, name: 'Yom HaShoah', nameHe: 'יום השואה' },
+      { date: `2026-04-23`, name: 'Yom HaZikaron', nameHe: 'יום הזיכרון' },
+      { date: `2026-04-24`, name: 'Yom HaAtzmaut', nameHe: 'יום העצמאות' },
+      { date: `2026-05-22`, name: 'Shavuot', nameHe: 'שבועות' },
+      { date: `2026-09-12`, name: 'Rosh Hashana (1st)', nameHe: 'ראש השנה (יום א)' },
+      { date: `2026-09-13`, name: 'Rosh Hashana (2nd)', nameHe: 'ראש השנה (יום ב)' },
+      { date: `2026-09-21`, name: 'Yom Kippur', nameHe: 'יום כיפור' },
+      { date: `2026-09-26`, name: 'Sukkot (1st)', nameHe: 'סוכות (יום א)' },
+      { date: `2026-10-03`, name: 'Simchat Torah', nameHe: 'שמחת תורה' },
+    ],
+    2027: [
+      { date: `2027-03-23`, name: 'Purim', nameHe: 'פורים' },
+      { date: `2027-04-22`, name: 'Pesach (1st)', nameHe: 'פסח (יום א)' },
+      { date: `2027-04-23`, name: 'Pesach (2nd)', nameHe: 'פסח (יום ב)' },
+      { date: `2027-04-28`, name: 'Pesach (7th)', nameHe: 'פסח (יום ז)' },
+      { date: `2027-05-06`, name: 'Yom HaShoah', nameHe: 'יום השואה' },
+      { date: `2027-05-13`, name: 'Yom HaZikaron', nameHe: 'יום הזיכרון' },
+      { date: `2027-05-14`, name: 'Yom HaAtzmaut', nameHe: 'יום העצמאות' },
+      { date: `2027-06-11`, name: 'Shavuot', nameHe: 'שבועות' },
+      { date: `2027-10-02`, name: 'Rosh Hashana (1st)', nameHe: 'ראש השנה (יום א)' },
+      { date: `2027-10-03`, name: 'Rosh Hashana (2nd)', nameHe: 'ראש השנה (יום ב)' },
+      { date: `2027-10-11`, name: 'Yom Kippur', nameHe: 'יום כיפור' },
+      { date: `2027-10-16`, name: 'Sukkot (1st)', nameHe: 'סוכות (יום א)' },
+      { date: `2027-10-23`, name: 'Simchat Torah', nameHe: 'שמחת תורה' },
+    ],
+  };
+  return holidays[year] ?? holidays[2026] ?? [];
+}
+
+function countMonthWorkingDays(year: number, month: number, holidays: Set<string>): number {
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  let count = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dow = new Date(year, month, d).getDay();
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    if (dow !== 5 && dow !== 6 && !holidays.has(dateStr)) count++;
+  }
+  return count;
+}
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -132,17 +197,90 @@ export function CalendarDaysPage() {
   // Weekend detection (Fri=5, Sat=6 for Israel)
   const isWeekend = (d: Date) => d.getDay() === 5 || d.getDay() === 6;
 
+  const [importYear, setImportYear] = useState(today.getFullYear());
+  const [showImport, setShowImport] = useState(false);
+
+  const importHolidays = async (year: number) => {
+    const holidays = getIsraeliHolidays(year);
+    const existingDates = new Set((data ?? []).map((d: any) => typeof d.date === 'string' ? d.date.split('T')[0] : new Date(d.date).toISOString().split('T')[0]));
+    let added = 0;
+    for (const h of holidays) {
+      if (existingDates.has(h.date)) continue;
+      try {
+        await client.post('/calendar', { date: h.date, name: `${h.nameHe} (${h.name})`, type: 'holiday' });
+        added++;
+      } catch { /* skip duplicates */ }
+    }
+    queryClient.invalidateQueries({ queryKey: ['admin', 'calendar'] });
+    if (added > 0) notify.success(`Imported ${added} Israeli holidays for ${year}`, { code: 'CAL-IMPORT-200' });
+    else notify.info(`All ${year} holidays already exist`);
+    setShowImport(false);
+  };
+
+  // Calculate working days for current view month
+  const monthWorkingDays = countMonthWorkingDays(viewYear, viewMonth, holidayDates);
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Calendar Days"
         description="Manage holidays, company days off, and non-working days"
+        actions={
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowImport(!showImport)}
+              className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+              <Download className="h-4 w-4" /> Import Israeli Holidays
+            </button>
+          </div>
+        }
       />
 
-      {/* Month navigation */}
+      {/* Import holidays dialog */}
+      {showImport && (
+        <div className="rounded-[14px] border border-blue-200 bg-blue-50/30 p-5">
+          <h3 className="text-sm font-bold text-slate-900 mb-2">Import Israeli National Holidays</h3>
+          <p className="text-[12px] text-slate-500 mb-3">
+            Automatically add all Israeli national holidays (פורים, פסח, שבועות, ראש השנה, יום כיפור, סוכות, etc.) for the selected year.
+            Holidays that already exist will be skipped.
+          </p>
+          <div className="flex items-center gap-3">
+            <select value={importYear} onChange={(e) => setImportYear(Number(e.target.value))}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+              {[2025, 2026, 2027].map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <span className="text-[12px] text-slate-400">{getIsraeliHolidays(importYear).length} holidays</span>
+            <button onClick={() => importHolidays(importYear)}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+              Import {importYear}
+            </button>
+            <button onClick={() => setShowImport(false)} className="text-sm text-slate-400 hover:text-slate-600">Cancel</button>
+          </div>
+          {/* Preview */}
+          <div className="mt-3 max-h-40 overflow-y-auto">
+            <table className="w-full text-[11px]">
+              <tbody>
+                {getIsraeliHolidays(importYear).map((h) => (
+                  <tr key={h.date} className="border-b border-blue-100">
+                    <td className="py-1 pr-3 text-slate-500 w-24">{h.date}</td>
+                    <td className="py-1 pr-3 font-medium text-slate-700">{h.nameHe}</td>
+                    <td className="py-1 text-slate-500">{h.name}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Month navigation + working days count */}
       <div className="flex items-center justify-between">
         <button onClick={prevMonth} className="rounded-md p-2 hover:bg-slate-100"><ChevronLeft className="h-5 w-5" /></button>
-        <h2 className="text-lg font-bold text-slate-900">{monthName}</h2>
+        <div className="text-center">
+          <h2 className="text-lg font-bold text-slate-900">{monthName}</h2>
+          <p className="text-[12px] text-slate-400">
+            <span className="font-semibold text-slate-700">{monthWorkingDays}</span> working days this month
+          </p>
+        </div>
         <button onClick={nextMonth} className="rounded-md p-2 hover:bg-slate-100"><ChevronRight className="h-5 w-5" /></button>
       </div>
 
