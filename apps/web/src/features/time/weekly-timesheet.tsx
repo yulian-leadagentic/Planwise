@@ -26,6 +26,13 @@ function minutesToTime(mins: number): string {
 
 // ─── Time Entry Form Popup ──────────────────────────────────────────────────
 
+const KANBAN_STATUSES = [
+  { value: 'not_started', label: 'To Do', bg: 'bg-slate-100', text: 'text-slate-600' },
+  { value: 'in_progress', label: 'In Progress', bg: 'bg-blue-100', text: 'text-blue-700' },
+  { value: 'in_review', label: 'In Review', bg: 'bg-violet-100', text: 'text-violet-700' },
+  { value: 'completed', label: 'Done', bg: 'bg-emerald-100', text: 'text-emerald-700' },
+];
+
 function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
   date: string; startTime: string; endTime: string; onClose: () => void; onSaved: () => void;
 }) {
@@ -36,8 +43,11 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
   const [location, setLocation] = useState<'office' | 'home'>('office');
   const [note, setNote] = useState('');
   const [isBillable, setIsBillable] = useState(true);
-  const [completionPct, setCompletionPct] = useState<number | null>(null);
+  const [taskStatus, setTaskStatus] = useState<string>('in_progress');
+  const [showQuickTask, setShowQuickTask] = useState(false);
+  const [quickTaskName, setQuickTaskName] = useState('');
   const createEntry = useCreateTimeEntry();
+  const queryClient = useQueryClient();
 
   // Fetch user's projects
   const { data: projectsData } = useQuery({
@@ -65,8 +75,45 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
   const totalMinutes = Math.max(0, timeToMinutes(end) - timeToMinutes(start));
   const totalHours = (totalMinutes / 60).toFixed(2);
 
-  const handleSubmit = () => {
+  const handleCreateQuickTask = async () => {
+    if (!quickTaskName.trim() || !projectId) return;
+    try {
+      // Get first zone of the project to attach the task
+      const planRes = await client.get(`/projects/${projectId}/planning-data`);
+      const pd = planRes.data?.data ?? planRes.data;
+      const zones = pd?.zones ?? [];
+      const firstZoneId = zones[0]?.id;
+      if (!firstZoneId) { notify.warning('Project has no zones — create one first'); return; }
+
+      const taskRes = await client.post('/tasks', {
+        zoneId: firstZoneId,
+        code: `QT-${Date.now().toString(36).toUpperCase()}`,
+        name: quickTaskName.trim(),
+      });
+      const newTask = taskRes.data?.data ?? taskRes.data;
+      if (newTask?.id) {
+        setTaskId(String(newTask.id));
+        queryClient.invalidateQueries({ queryKey: ['tasks'] });
+        notify.success(`Task "${quickTaskName.trim()}" created`);
+      }
+      setShowQuickTask(false);
+      setQuickTaskName('');
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to create task');
+    }
+  };
+
+  const handleSubmit = async () => {
     if (totalMinutes <= 0) { notify.warning('End time must be after start time'); return; }
+
+    // Update task status if a task is selected
+    if (taskId && taskStatus) {
+      try {
+        await client.patch(`/tasks/${taskId}`, { status: taskStatus });
+        queryClient.invalidateQueries({ queryKey: ['tasks'] });
+        queryClient.invalidateQueries({ queryKey: ['planning'] });
+      } catch { /* ignore status update failure */ }
+    }
 
     createEntry.mutate({
       projectId: projectId ? Number(projectId) : undefined,
@@ -78,7 +125,6 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
       note: note.trim() || undefined,
       isBillable,
       location,
-      completionPct: completionPct ?? undefined,
     }, {
       onSuccess: () => {
         onSaved();
@@ -117,19 +163,39 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
             </select>
           </div>
 
-          {/* Task selector */}
+          {/* Task selector + Quick Task */}
           <div>
-            <label className="text-[12px] font-semibold text-slate-600 mb-1 block">Task</label>
-            <select value={taskId} onChange={(e) => setTaskId(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
-              <option value="">— Select task —</option>
-              {filteredTasks.map((t: any) => (
-                <option key={t.id} value={t.id}>
-                  {t.code ? `${t.code} - ` : ''}{t.name}
-                  {t.zone?.name ? ` (${t.zone.name})` : ''}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-[12px] font-semibold text-slate-600">Task</label>
+              {projectId && (
+                <button type="button" onClick={() => setShowQuickTask(!showQuickTask)}
+                  className="text-[11px] font-semibold text-blue-600 hover:text-blue-700">
+                  + Quick Task
+                </button>
+              )}
+            </div>
+            {showQuickTask ? (
+              <div className="flex gap-2">
+                <input type="text" value={quickTaskName} onChange={(e) => setQuickTaskName(e.target.value)}
+                  placeholder="New task name..." autoFocus
+                  className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
+                <button type="button" onClick={handleCreateQuickTask} disabled={!quickTaskName.trim()}
+                  className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">Create</button>
+                <button type="button" onClick={() => setShowQuickTask(false)}
+                  className="text-sm text-slate-400 px-2">Cancel</button>
+              </div>
+            ) : (
+              <select value={taskId} onChange={(e) => { setTaskId(e.target.value); const t = filteredTasks.find((tk: any) => String(tk.id) === e.target.value); if (t) setTaskStatus(t.status || 'in_progress'); }}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                <option value="">— Select task —</option>
+                {filteredTasks.map((t: any) => (
+                  <option key={t.id} value={t.id}>
+                    {t.code ? `${t.code} - ` : ''}{t.name}
+                    {t.zone?.name ? ` (${t.zone.name})` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* Time range */}
@@ -168,18 +234,21 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
             </div>
           </div>
 
-          {/* Completion percentage */}
-          <div>
-            <label className="text-[12px] font-semibold text-slate-600 mb-1 block">Task Completion</label>
-            <div className="flex items-center gap-1">
-              {[0, 25, 50, 75, 100].map((pct) => (
-                <button key={pct} onClick={() => setCompletionPct(pct)}
-                  className={cn('rounded-lg px-3 py-1.5 text-[12px] font-semibold', completionPct === pct ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}>
-                  {pct}%
-                </button>
-              ))}
+          {/* Task Status (Kanban stages) */}
+          {taskId && (
+            <div>
+              <label className="text-[12px] font-semibold text-slate-600 mb-1 block">Task Status</label>
+              <div className="flex items-center gap-1">
+                {KANBAN_STATUSES.map((s) => (
+                  <button key={s.value} type="button" onClick={() => setTaskStatus(s.value)}
+                    className={cn('rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors',
+                      taskStatus === s.value ? `${s.bg} ${s.text} ring-2 ring-offset-1 ring-blue-400` : 'bg-slate-50 text-slate-500 hover:bg-slate-100')}>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Billable + Note */}
           <div className="flex items-start gap-4">
@@ -483,11 +552,13 @@ function WeekView() {
                     const isWeekend = day.getDay() === 5 || day.getDay() === 6;
                     const isSelecting = selecting?.dayIdx === dayIdx && selectEnd != null && hour >= selecting!.startHour && hour < selectEnd;
                     const dateKey = format(day, 'yyyy-MM-dd');
+                    const dayIsHoliday = holidayDates.has(dateKey);
+                    const isNonWorking = isWeekend || dayIsHoliday;
                     const entries = entriesByDay.get(dateKey) ?? [];
 
                     // Find entries that START in this hour
                     const hourEntries = entries.filter((e: any) => {
-                      if (!e.startTime) return hour === 9; // default to 9am if no startTime
+                      if (!e.startTime) return hour === 9;
                       const startH = parseInt(e.startTime.split(':')[0], 10);
                       return startH === hour;
                     });
@@ -495,7 +566,7 @@ function WeekView() {
                     return (
                       <td key={dayIdx}
                         className={cn('border-b border-l border-slate-100 cursor-crosshair hover:bg-blue-50/20 relative p-0',
-                          isWeekend && 'bg-slate-50/40',
+                          isNonWorking && 'bg-slate-200/40',
                           isSelecting && 'bg-blue-100/50')}
                         style={{ height: `${HOUR_HEIGHT}px` }}
                         onMouseDown={() => handleMouseDown(dayIdx, hour)}
