@@ -9,6 +9,7 @@ import {
   Settings,
   MessageSquare,
   CheckSquare,
+  Activity,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -44,6 +45,7 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { label: 'Operations', href: '/operations', icon: Activity },
   { label: 'Projects', href: '/projects', icon: FolderKanban },
   { label: 'My Tasks', href: '/my-tasks', icon: CheckSquare },
   { label: 'Inbox', href: '/inbox', icon: MessageSquare },
