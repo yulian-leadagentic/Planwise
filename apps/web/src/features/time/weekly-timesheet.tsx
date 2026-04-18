@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/shared/page-header';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { timeApi, type TimeEntryPayload } from '@/api/time.api';
-import { useClockStatus, useClockIn, useClockOut, useDailyBreakdown, useCreateTimeEntry } from '@/hooks/use-time';
+import { useClockStatus, useClockIn, useClockOut, useWeeklyGrid, useCreateTimeEntry } from '@/hooks/use-time';
 import { format, addDays, startOfWeek } from '@/lib/date-utils';
 import { minutesToDisplay } from '@/types';
 import client from '@/api/client';
@@ -399,8 +399,8 @@ function WeekView() {
     return count;
   }, [weekStart, holidayDates]);
 
-  // Fetch entries for the week — the API returns weekly grid format
-  const { data: breakdownData } = useDailyBreakdown(weekStartStr);
+  // Fetch entries for the week via the weekly grid endpoint
+  const { data: breakdownData } = useWeeklyGrid({ weekStart: weekStartStr });
 
   // Extract flat entries per day from the grid format
   const entriesByDay = useMemo(() => {
