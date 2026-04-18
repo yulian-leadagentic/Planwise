@@ -528,6 +528,12 @@ function WeekView() {
                 {isHoliday && holidayName && (
                   <p className="text-[8px] font-medium text-red-500 mt-0.5 truncate" title={holidayName}>{holidayName}</p>
                 )}
+                {/* Green daily total bar */}
+                {typeof total === 'number' && total > 0 && (
+                  <div className="mt-1.5 rounded-sm bg-green-500 text-white text-[10px] font-bold text-center py-0.5">
+                    {(total / 60).toFixed(2)} hrs
+                  </div>
+                )}
               </div>
             );
           })}
@@ -576,18 +582,20 @@ function WeekView() {
                           const startMins = entry.startTime ? timeToMinutes(entry.startTime) : 9 * 60;
                           const endMins = entry.endTime ? timeToMinutes(entry.endTime) : startMins + (entry.minutes ?? 60);
                           const offsetInCell = ((startMins % 60) / 60) * HOUR_HEIGHT;
-                          const blockHeight = Math.max(((endMins - startMins) / 60) * HOUR_HEIGHT, 18);
+                          const durationHours = (endMins - startMins) / 60;
+                          const blockHeight = Math.max(durationHours * HOUR_HEIGHT, 36);
                           const projectName = entry.project?.name ?? '';
                           const taskName = entry.task?.name ?? '';
+                          const timeLabel = `${entry.startTime ?? '?'} – ${entry.endTime ?? '?'}`;
                           return (
                             <div key={entry.id}
-                              className={cn('absolute left-0.5 right-0.5 rounded-md border px-1 py-0.5 overflow-hidden text-[9px] z-10',
-                                entry.isBillable !== false ? 'bg-blue-100 border-blue-300 text-blue-800' : 'bg-slate-100 border-slate-300 text-slate-700')}
+                              className="absolute left-0.5 right-0.5 rounded-md bg-blue-600 text-white px-2 py-1 overflow-hidden z-10 cursor-pointer hover:bg-blue-700 shadow-sm"
                               style={{ top: `${offsetInCell}px`, height: `${blockHeight}px` }}
-                              title={`${entry.startTime ?? ''}-${entry.endTime ?? ''} ${projectName} ${taskName}`}>
-                              <span className="font-semibold">{entry.startTime}-{entry.endTime}</span>
-                              {blockHeight > 24 && <span className="block truncate opacity-80">{projectName}</span>}
-                              {blockHeight > 38 && <span className="block truncate opacity-60">{taskName}</span>}
+                              title={`${timeLabel}\n${projectName}\n${taskName}\n${durationHours.toFixed(2)} hrs`}>
+                              <p className="text-[10px] font-medium opacity-90">{timeLabel}</p>
+                              <p className="text-[11px] font-bold truncate">{projectName || 'No project'}</p>
+                              {blockHeight > 50 && taskName && <p className="text-[10px] truncate opacity-80">{taskName}</p>}
+                              <p className="text-[10px] font-semibold mt-0.5">{durationHours.toFixed(2)} hrs</p>
                             </div>
                           );
                         })}
