@@ -40,12 +40,15 @@ function saveZoneTypeColors(colors: Record<string, string>) {
 // ---------------------------------------------------------------------------
 // Tab definitions
 // ---------------------------------------------------------------------------
-type TabKey = 'zone' | 'service' | 'project';
+type TabKey = 'zone' | 'service' | 'project' | 'department' | 'profession' | 'projectRole';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'zone', label: 'Zone Types' },
-  { key: 'service', label: 'Service Types' },
+  { key: 'service', label: 'Categories' },
   { key: 'project', label: 'Project Types' },
+  { key: 'department', label: 'Departments' },
+  { key: 'profession', label: 'Professions' },
+  { key: 'projectRole', label: 'Project Roles' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -191,6 +194,96 @@ export function TypesPage() {
   });
 
   // -----------------------------------------------------------------------
+  // Departments queries
+  // -----------------------------------------------------------------------
+  const departmentsQuery = useQuery({
+    queryKey: ['admin', 'departments'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/admin/config/departments').then((r) => { const d = r.data?.data ?? r.data; return Array.isArray(d) ? d : []; }),
+    enabled: activeTab === 'department',
+  });
+
+  const createDepartment = useMutation({
+    mutationFn: (payload: { name: string; code?: string }) =>
+      client.post('/admin/config/departments', payload).then((r) => r.data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'departments'] }); notify.success('Department created'); resetForm(); },
+    onError: (err: any) => notify.apiError(err, 'Failed to create department'),
+  });
+
+  const updateDepartment = useMutation({
+    mutationFn: ({ id, ...payload }: { id: number; name?: string; code?: string }) =>
+      client.patch(`/admin/config/departments/${id}`, payload).then((r) => r.data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'departments'] }); notify.success('Department updated'); setEditing(null); },
+    onError: (err: any) => notify.apiError(err, 'Failed to update department'),
+  });
+
+  const deleteDepartment = useMutation({
+    mutationFn: (id: number) => client.delete(`/admin/config/departments/${id}`).then((r) => r.data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'departments'] }); notify.success('Department deleted'); },
+    onError: (err: any) => notify.apiError(err, 'Failed to delete department'),
+  });
+
+  // -----------------------------------------------------------------------
+  // Professions queries
+  // -----------------------------------------------------------------------
+  const professionsQuery = useQuery({
+    queryKey: ['admin', 'professions'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/admin/config/professions').then((r) => { const d = r.data?.data ?? r.data; return Array.isArray(d) ? d : []; }),
+    enabled: activeTab === 'profession',
+  });
+
+  const createProfession = useMutation({
+    mutationFn: (payload: { name: string }) =>
+      client.post('/admin/config/professions', payload).then((r) => r.data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'professions'] }); notify.success('Profession created'); resetForm(); },
+    onError: (err: any) => notify.apiError(err, 'Failed to create profession'),
+  });
+
+  const updateProfession = useMutation({
+    mutationFn: ({ id, ...payload }: { id: number; name?: string }) =>
+      client.patch(`/admin/config/professions/${id}`, payload).then((r) => r.data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'professions'] }); notify.success('Profession updated'); setEditing(null); },
+    onError: (err: any) => notify.apiError(err, 'Failed to update profession'),
+  });
+
+  const deleteProfession = useMutation({
+    mutationFn: (id: number) => client.delete(`/admin/config/professions/${id}`).then((r) => r.data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'professions'] }); notify.success('Profession deleted'); },
+    onError: (err: any) => notify.apiError(err, 'Failed to delete profession'),
+  });
+
+  // -----------------------------------------------------------------------
+  // Project role templates queries
+  // -----------------------------------------------------------------------
+  const projectRolesQuery = useQuery({
+    queryKey: ['admin', 'project-roles'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/admin/config/project-roles').then((r) => { const d = r.data?.data ?? r.data; return Array.isArray(d) ? d : []; }),
+    enabled: activeTab === 'projectRole',
+  });
+
+  const createProjectRole = useMutation({
+    mutationFn: (payload: { name: string }) =>
+      client.post('/admin/config/project-roles', payload).then((r) => r.data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'project-roles'] }); notify.success('Project role created'); resetForm(); },
+    onError: (err: any) => notify.apiError(err, 'Failed to create project role'),
+  });
+
+  const updateProjectRole = useMutation({
+    mutationFn: ({ id, ...payload }: { id: number; name?: string }) =>
+      client.patch(`/admin/config/project-roles/${id}`, payload).then((r) => r.data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'project-roles'] }); notify.success('Project role updated'); setEditing(null); },
+    onError: (err: any) => notify.apiError(err, 'Failed to update project role'),
+  });
+
+  const deleteProjectRole = useMutation({
+    mutationFn: (id: number) => client.delete(`/admin/config/project-roles/${id}`).then((r) => r.data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'project-roles'] }); notify.success('Project role deleted'); },
+    onError: (err: any) => notify.apiError(err, 'Failed to delete project role'),
+  });
+
+  // -----------------------------------------------------------------------
   // Helpers
   // -----------------------------------------------------------------------
   function resetForm() {
@@ -202,17 +295,24 @@ export function TypesPage() {
 
   const isLoading =
     (activeTab === 'service' && serviceTypesQuery.isLoading) ||
-    (activeTab === 'project' && projectTypesQuery.isLoading);
+    (activeTab === 'project' && projectTypesQuery.isLoading) ||
+    (activeTab === 'department' && departmentsQuery.isLoading) ||
+    (activeTab === 'profession' && professionsQuery.isLoading) ||
+    (activeTab === 'projectRole' && projectRolesQuery.isLoading);
 
   const isCreating =
     (activeTab === 'service' && createServiceType.isPending) ||
-    (activeTab === 'project' && createProjectType.isPending);
+    (activeTab === 'project' && createProjectType.isPending) ||
+    (activeTab === 'department' && createDepartment.isPending) ||
+    (activeTab === 'profession' && createProfession.isPending) ||
+    (activeTab === 'projectRole' && createProjectRole.isPending);
 
   const isSaving =
-    updateServiceType.isPending || updateProjectType.isPending;
+    updateServiceType.isPending || updateProjectType.isPending ||
+    updateDepartment.isPending || updateProfession.isPending || updateProjectRole.isPending;
 
   // Build the rows for the active tab
-  const rows: { id: string | number; code: string; name: string; color?: string; static?: boolean }[] =
+  const rows: { id: string | number; code: string; name: string; color?: string; static?: boolean; sortOrder?: number }[] =
     useMemo(() => {
       const q = search.toLowerCase().trim();
 
@@ -225,17 +325,23 @@ export function TypesPage() {
         }));
       } else if (activeTab === 'service') {
         items = (serviceTypesQuery.data ?? []).map((s: any) => ({
-          id: s.id,
-          code: s.code ?? '',
-          name: s.name,
-          color: s.color ?? '',
+          id: s.id, code: s.code ?? '', name: s.name, color: s.color ?? '',
         }));
-      } else {
+      } else if (activeTab === 'project') {
         items = (projectTypesQuery.data ?? []).map((p: any) => ({
-          id: p.id,
-          code: p.code ?? '',
-          name: p.name,
-          color: p.color ?? '',
+          id: p.id, code: p.code ?? '', name: p.name, color: p.color ?? '',
+        }));
+      } else if (activeTab === 'department') {
+        items = (departmentsQuery.data ?? []).map((d: any, idx: number) => ({
+          id: d.id, code: '', name: d.name, sortOrder: d.sortOrder ?? idx + 1,
+        }));
+      } else if (activeTab === 'profession') {
+        items = (professionsQuery.data ?? []).map((p: any) => ({
+          id: p.id, code: '', name: p.name,
+        }));
+      } else if (activeTab === 'projectRole') {
+        items = (projectRolesQuery.data ?? []).map((r: any) => ({
+          id: r.id, code: '', name: r.name,
         }));
       }
 
@@ -245,10 +351,11 @@ export function TypesPage() {
           r.name.toLowerCase().includes(q) ||
           r.code.toLowerCase().includes(q),
       );
-    }, [activeTab, search, serviceTypesQuery.data, projectTypesQuery.data, zoneColors]);
+    }, [activeTab, search, serviceTypesQuery.data, projectTypesQuery.data, departmentsQuery.data, professionsQuery.data, projectRolesQuery.data, zoneColors]);
 
-  // All tabs now have color
-  const hasColor = true;
+  const hasColor = activeTab === 'zone' || activeTab === 'service' || activeTab === 'project';
+  const hasCode = activeTab === 'zone' || activeTab === 'service' || activeTab === 'project' || activeTab === 'department';
+  const hasNumbering = activeTab === 'department';
 
   // -----------------------------------------------------------------------
   // Inline edit handlers
@@ -275,7 +382,6 @@ export function TypesPage() {
     }
 
     if (activeTab === 'zone') {
-      // Save zone color to localStorage
       const updated = { ...zoneColors };
       const defaultColor = ZONE_TYPES.find((z) => z.id === editing.id)?.color || '';
       if (editing.color && editing.color !== defaultColor) {
@@ -288,21 +394,17 @@ export function TypesPage() {
       notify.success('Zone type color saved');
       setEditing(null);
     } else if (activeTab === 'service') {
-      updateServiceType.mutate({
-        id: editing.id as number,
-        name: trimmedName,
-        code: editing.code.trim() || undefined,
-        color: editing.color.trim() || undefined,
-      });
+      updateServiceType.mutate({ id: editing.id as number, name: trimmedName, code: editing.code.trim() || undefined, color: editing.color.trim() || undefined });
     } else if (activeTab === 'project') {
-      updateProjectType.mutate({
-        id: editing.id as number,
-        name: trimmedName,
-        code: editing.code.trim() || undefined,
-        color: editing.color.trim() || undefined,
-      });
+      updateProjectType.mutate({ id: editing.id as number, name: trimmedName, code: editing.code.trim() || undefined, color: editing.color.trim() || undefined });
+    } else if (activeTab === 'department') {
+      updateDepartment.mutate({ id: editing.id as number, name: trimmedName, code: editing.code.trim() || undefined });
+    } else if (activeTab === 'profession') {
+      updateProfession.mutate({ id: editing.id as number, name: trimmedName });
+    } else if (activeTab === 'projectRole') {
+      updateProjectRole.mutate({ id: editing.id as number, name: trimmedName });
     }
-  }, [editing, activeTab, zoneColors, updateServiceType, updateProjectType]);
+  }, [editing, activeTab, zoneColors, updateServiceType, updateProjectType, updateDepartment, updateProfession, updateProjectRole]);
 
   // Escape key handler for inline edit
   useEffect(() => {
@@ -325,17 +427,15 @@ export function TypesPage() {
     if (!trimmedName) return;
 
     if (activeTab === 'service') {
-      createServiceType.mutate({
-        name: trimmedName,
-        code: formCode.trim() || undefined,
-        color: formColor.trim() || undefined,
-      });
+      createServiceType.mutate({ name: trimmedName, code: formCode.trim() || undefined, color: formColor.trim() || undefined });
     } else if (activeTab === 'project') {
-      createProjectType.mutate({
-        name: trimmedName,
-        code: formCode.trim() || undefined,
-        color: formColor.trim() || undefined,
-      });
+      createProjectType.mutate({ name: trimmedName, code: formCode.trim() || undefined, color: formColor.trim() || undefined });
+    } else if (activeTab === 'department') {
+      createDepartment.mutate({ name: trimmedName, code: formCode.trim() || undefined });
+    } else if (activeTab === 'profession') {
+      createProfession.mutate({ name: trimmedName });
+    } else if (activeTab === 'projectRole') {
+      createProjectRole.mutate({ name: trimmedName });
     }
   }
 
@@ -343,11 +443,11 @@ export function TypesPage() {
     if (row.static) return;
     if (!confirm(`Delete "${row.name}"? This action cannot be undone.`)) return;
 
-    if (activeTab === 'service') {
-      deleteServiceType.mutate(row.id as number);
-    } else if (activeTab === 'project') {
-      deleteProjectType.mutate(row.id as number);
-    }
+    if (activeTab === 'service') deleteServiceType.mutate(row.id as number);
+    else if (activeTab === 'project') deleteProjectType.mutate(row.id as number);
+    else if (activeTab === 'department') deleteDepartment.mutate(row.id as number);
+    else if (activeTab === 'profession') deleteProfession.mutate(row.id as number);
+    else if (activeTab === 'projectRole') deleteProjectRole.mutate(row.id as number);
   }
 
   // -----------------------------------------------------------------------
@@ -360,8 +460,9 @@ export function TypesPage() {
     return c.startsWith('#') ? c : `#${c}`;
   }
 
-  // Whether the active tab supports CRUD (delete/create)
   const isMutable = activeTab !== 'zone';
+  const isSimpleList = activeTab === 'profession' || activeTab === 'projectRole';
+  const addLabel = activeTab === 'department' ? 'Add Department' : activeTab === 'profession' ? 'Add Profession' : activeTab === 'projectRole' ? 'Add Role' : 'Add Type';
 
   // -----------------------------------------------------------------------
   // Render
@@ -379,9 +480,9 @@ export function TypesPage() {
 
       {/* Page title */}
       <div>
-        <h1 className="text-xl font-bold tracking-tight text-slate-900">Types</h1>
+        <h1 className="text-xl font-bold tracking-tight text-slate-900">Types & Categories</h1>
         <p className="mt-1 text-[13px] text-slate-400">
-          Manage zone types, service types, and project types
+          Manage types, departments, professions, and project roles
         </p>
       </div>
 
@@ -427,7 +528,7 @@ export function TypesPage() {
               className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap"
             >
               <Plus className="h-4 w-4" />
-              Add Type
+              {addLabel}
             </button>
           )}
         </div>
@@ -438,7 +539,7 @@ export function TypesPage() {
             onSubmit={handleSubmit}
             className="border-b border-slate-100 bg-slate-50/60 px-5 py-4"
           >
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px_160px] gap-3 items-end">
+            <div className={`grid grid-cols-1 ${isSimpleList ? 'sm:grid-cols-[1fr]' : hasColor ? 'sm:grid-cols-[1fr_120px_160px]' : 'sm:grid-cols-[1fr_120px]'} gap-3 items-end`}>
               <div>
                 <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
                   Name <span className="text-red-400">*</span>
@@ -446,58 +547,45 @@ export function TypesPage() {
                 <input
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
-                  placeholder={activeTab === 'service' ? 'e.g. BIM, MEP, Structural' : 'e.g. Civil Engineering'}
+                  placeholder={
+                    activeTab === 'service' ? 'e.g. BIM, MEP, Structural' :
+                    activeTab === 'department' ? 'e.g. Buildings, VDC' :
+                    activeTab === 'profession' ? 'e.g. Architect, MEP Engineer' :
+                    activeTab === 'projectRole' ? 'e.g. BIM Manager, Team Leader' :
+                    'e.g. Civil Engineering'
+                  }
                   className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
                   autoFocus
                 />
               </div>
-              <div>
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
-                  Code
-                </label>
-                <input
-                  value={formCode}
-                  onChange={(e) => setFormCode(e.target.value.toUpperCase())}
-                  placeholder="e.g. BIM"
-                  maxLength={10}
-                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-              <div>
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
-                  Color
-                </label>
-                <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-slate-200 focus-within:border-blue-500">
-                  <span
-                    className="inline-block h-3.5 w-3.5 rounded-full shrink-0 border border-slate-200"
-                    style={{
-                      backgroundColor: resolveColor(formColor) ?? '#CBD5E1',
-                    }}
-                  />
-                  <span className="text-sm text-slate-400">#</span>
+              {!isSimpleList && (
+                <div>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Code</label>
                   <input
-                    value={formColor}
-                    onChange={(e) => setFormColor(e.target.value.replace(/^#/, ''))}
-                    placeholder="3B82F6"
-                    maxLength={7}
-                    className="flex-1 text-sm text-slate-700 focus:outline-none bg-transparent"
+                    value={formCode}
+                    onChange={(e) => setFormCode(e.target.value.toUpperCase())}
+                    placeholder="e.g. BIM"
+                    maxLength={10}
+                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
                   />
                 </div>
-              </div>
+              )}
+              {hasColor && (
+                <div>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Color</label>
+                  <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-slate-200 focus-within:border-blue-500">
+                    <span className="inline-block h-3.5 w-3.5 rounded-full shrink-0 border border-slate-200" style={{ backgroundColor: resolveColor(formColor) ?? '#CBD5E1' }} />
+                    <span className="text-sm text-slate-400">#</span>
+                    <input value={formColor} onChange={(e) => setFormColor(e.target.value.replace(/^#/, ''))} placeholder="3B82F6" maxLength={7} className="flex-1 text-sm text-slate-700 focus:outline-none bg-transparent" />
+                  </div>
+                </div>
+              )}
             </div>
             <div className="flex gap-2 mt-4">
-              <button
-                type="submit"
-                disabled={isCreating}
-                className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
-              >
+              <button type="submit" disabled={isCreating} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-50">
                 {isCreating ? 'Creating...' : 'Create'}
               </button>
-              <button
-                type="button"
-                onClick={resetForm}
-                className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg transition-colors"
-              >
+              <button type="button" onClick={resetForm} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg transition-colors">
                 Cancel
               </button>
             </div>
@@ -520,86 +608,58 @@ export function TypesPage() {
             <thead>
               <tr className="bg-[#FAFBFC]">
                 {hasColor && (
-                  <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-14">
-                    Color
-                  </th>
+                  <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-14">Color</th>
                 )}
-                <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-28">
-                  Code
-                </th>
+                {hasNumbering && (
+                  <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-14">#</th>
+                )}
+                {hasCode && !hasNumbering && (
+                  <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-28">Code</th>
+                )}
                 <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">
-                  Name
+                  {activeTab === 'department' ? 'Department Name' : activeTab === 'profession' ? 'Profession Name' : activeTab === 'projectRole' ? 'Role Name' : 'Name'}
                 </th>
-                <th className="px-5 py-2.5 text-right text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-28">
-                  Actions
-                </th>
+                <th className="px-5 py-2.5 text-right text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-28">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => {
+              {rows.map((row, rowIdx) => {
                 const isEditing = editing?.id === row.id;
 
                 if (isEditing && editing) {
                   return (
-                    <tr
-                      key={row.id}
-                      className="text-[13px] bg-blue-50/30 border-t border-slate-100"
-                    >
+                    <tr key={row.id} className="text-[13px] bg-blue-50/30 border-t border-slate-100">
                       {hasColor && (
                         <td className="px-5 py-2.5">
-                          <ColorInput
-                            value={editing.color}
-                            onChange={(v) => setEditing({ ...editing, color: v })}
-                          />
+                          <ColorInput value={editing.color} onChange={(v) => setEditing({ ...editing, color: v })} />
+                        </td>
+                      )}
+                      {hasNumbering && (
+                        <td className="px-5 py-2.5 text-slate-400 font-medium">{rowIdx + 1}</td>
+                      )}
+                      {hasCode && !hasNumbering && (
+                        <td className="px-5 py-2.5">
+                          <input value={editing.code} onChange={(e) => setEditing({ ...editing, code: e.target.value.toUpperCase() })}
+                            onKeyDown={(e) => { if (e.key === 'Enter') saveEditing(); if (e.key === 'Escape') cancelEditing(); }}
+                            maxLength={10} placeholder="CODE" disabled={activeTab === 'zone'}
+                            className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400" />
                         </td>
                       )}
                       <td className="px-5 py-2.5">
-                        <input
-                          value={editing.code}
-                          onChange={(e) =>
-                            setEditing({ ...editing, code: e.target.value.toUpperCase() })
-                          }
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveEditing();
-                            if (e.key === 'Escape') cancelEditing();
-                          }}
-                          maxLength={10}
-                          placeholder="CODE"
-                          disabled={activeTab === 'zone'}
+                        <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                          onKeyDown={(e) => { if (e.key === 'Enter') saveEditing(); if (e.key === 'Escape') cancelEditing(); }}
+                          placeholder="Name" disabled={activeTab === 'zone'}
                           className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
-                        />
-                      </td>
-                      <td className="px-5 py-2.5">
-                        <input
-                          value={editing.name}
-                          onChange={(e) =>
-                            setEditing({ ...editing, name: e.target.value })
-                          }
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveEditing();
-                            if (e.key === 'Escape') cancelEditing();
-                          }}
-                          placeholder="Name"
-                          disabled={activeTab === 'zone'}
-                          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
-                          autoFocus
-                        />
+                          autoFocus />
                       </td>
                       <td className="px-5 py-2.5 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={saveEditing}
-                            disabled={isSaving}
-                            className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50"
-                            title="Save"
-                          >
+                          <button onClick={saveEditing} disabled={isSaving}
+                            className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50" title="Save">
                             <Check className="h-3.5 w-3.5" />
                           </button>
-                          <button
-                            onClick={cancelEditing}
-                            className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
-                            title="Cancel"
-                          >
+                          <button onClick={cancelEditing}
+                            className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors" title="Cancel">
                             <X className="h-3.5 w-3.5" />
                           </button>
                         </div>
@@ -609,49 +669,38 @@ export function TypesPage() {
                 }
 
                 return (
-                  <tr
-                    key={row.id}
-                    onClick={() => startEditing(row)}
-                    className="text-[13px] hover:bg-slate-50 border-t border-slate-100 transition-colors cursor-pointer"
-                  >
+                  <tr key={row.id} onClick={() => startEditing(row)}
+                    className="text-[13px] hover:bg-slate-50 border-t border-slate-100 transition-colors cursor-pointer">
                     {hasColor && (
                       <td className="px-5 py-3">
                         {resolveColor(row.color) ? (
-                          <span
-                            className="inline-block h-3 w-3 rounded-full"
-                            style={{ backgroundColor: resolveColor(row.color) }}
-                          />
+                          <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: resolveColor(row.color) }} />
                         ) : (
                           <span className="inline-block h-3 w-3 rounded-full bg-slate-200" />
                         )}
                       </td>
                     )}
-                    <td className="px-5 py-3">
-                      {row.code ? (
-                        <span className="rounded-[5px] bg-slate-50 text-slate-600 text-[11px] font-bold tracking-wide px-2 py-0.5">
-                          {row.code}
-                        </span>
-                      ) : (
-                        <span className="text-slate-300">--</span>
-                      )}
-                    </td>
+                    {hasNumbering && (
+                      <td className="px-5 py-3 text-slate-500 font-medium">{rowIdx + 1}</td>
+                    )}
+                    {hasCode && !hasNumbering && (
+                      <td className="px-5 py-3">
+                        {row.code ? (
+                          <span className="rounded-[5px] bg-slate-50 text-slate-600 text-[11px] font-bold tracking-wide px-2 py-0.5">{row.code}</span>
+                        ) : (
+                          <span className="text-slate-300">--</span>
+                        )}
+                      </td>
+                    )}
                     <td className="px-5 py-3 font-medium text-slate-700">{row.name}</td>
                     <td className="px-5 py-3 text-right">
                       {isMutable ? (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDelete(row);
-                          }}
-                          className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] hover:bg-red-50 text-slate-300 hover:text-red-600 transition-colors"
-                          title={`Delete ${row.name}`}
-                        >
+                        <button onClick={(e) => { e.stopPropagation(); handleDelete(row); }}
+                          className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] hover:bg-red-50 text-slate-300 hover:text-red-600 transition-colors" title={`Delete ${row.name}`}>
                           <Trash2 className="h-4 w-4" />
                         </button>
                       ) : (
-                        <span className="rounded-[5px] bg-slate-50 text-slate-400 text-[11px] font-bold tracking-wide px-2 py-0.5">
-                          Static
-                        </span>
+                        <span className="rounded-[5px] bg-slate-50 text-slate-400 text-[11px] font-bold tracking-wide px-2 py-0.5">Static</span>
                       )}
                     </td>
                   </tr>

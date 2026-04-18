@@ -307,6 +307,26 @@ model Department {
   @@map("departments")
 }
 
+model Profession {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("professions")
+}
+
+model ProjectRoleTemplate {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("project_role_templates")
+}
+
 model Project {
   id            Int           @id @default(autoincrement())
   name          String

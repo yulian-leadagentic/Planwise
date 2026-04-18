@@ -161,4 +161,66 @@ export class ConfigController {
     await this.prisma.department.delete({ where: { id } });
     return { message: 'Department deleted' };
   }
+
+  // Professions
+  @Get('professions')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'List professions' })
+  async getProfessions() {
+    return this.prisma.profession.findMany({ orderBy: { sortOrder: 'asc' } });
+  }
+
+  @Post('professions')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Create profession' })
+  async createProfession(@Body() body: { name: string }) {
+    const count = await this.prisma.profession.count();
+    return this.prisma.profession.create({ data: { name: body.name, sortOrder: count + 1 } });
+  }
+
+  @Patch('professions/:id')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Update profession' })
+  async updateProfession(@Param('id', ParseIntPipe) id: number, @Body() body: { name?: string }) {
+    return this.prisma.profession.update({ where: { id }, data: body });
+  }
+
+  @Delete('professions/:id')
+  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @ApiOperation({ summary: 'Delete profession' })
+  async deleteProfession(@Param('id', ParseIntPipe) id: number) {
+    await this.prisma.profession.delete({ where: { id } });
+    return { message: 'Profession deleted' };
+  }
+
+  // Project Role Templates
+  @Get('project-roles')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'List project role templates' })
+  async getProjectRoles() {
+    return this.prisma.projectRoleTemplate.findMany({ orderBy: { sortOrder: 'asc' } });
+  }
+
+  @Post('project-roles')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Create project role template' })
+  async createProjectRole(@Body() body: { name: string }) {
+    const count = await this.prisma.projectRoleTemplate.count();
+    return this.prisma.projectRoleTemplate.create({ data: { name: body.name, sortOrder: count + 1 } });
+  }
+
+  @Patch('project-roles/:id')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Update project role template' })
+  async updateProjectRole(@Param('id', ParseIntPipe) id: number, @Body() body: { name?: string }) {
+    return this.prisma.projectRoleTemplate.update({ where: { id }, data: body });
+  }
+
+  @Delete('project-roles/:id')
+  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @ApiOperation({ summary: 'Delete project role template' })
+  async deleteProjectRole(@Param('id', ParseIntPipe) id: number) {
+    await this.prisma.projectRoleTemplate.delete({ where: { id } });
+    return { message: 'Project role deleted' };
+  }
 }

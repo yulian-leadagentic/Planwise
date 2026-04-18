@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Plus, Users, X } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
@@ -15,70 +15,64 @@ import client from '@/api/client';
 import type { UserListItem } from '@/types';
 import type { ColumnDef } from '@tanstack/react-table';
 
-const columns: ColumnDef<UserListItem, unknown>[] = [
-  {
-    accessorKey: 'name',
-    header: 'Name',
-    cell: ({ row }) => (
-      <div className="flex items-center gap-3">
-        <UserAvatar
-          firstName={row.original.firstName}
-          lastName={row.original.lastName}
-          avatarUrl={row.original.avatarUrl}
-          size="sm"
-        />
-        <div>
-          <p className="font-medium">
-            {row.original.firstName} {row.original.lastName}
-          </p>
+function getColumns(isPartners: boolean): ColumnDef<UserListItem, unknown>[] {
+  const cols: ColumnDef<UserListItem, unknown>[] = [
+    {
+      accessorKey: 'name',
+      header: 'Name',
+      cell: ({ row }) => (
+        <div className="flex items-center gap-3">
+          <UserAvatar firstName={row.original.firstName} lastName={row.original.lastName} avatarUrl={row.original.avatarUrl} size="sm" />
+          <div>
+            <p className="font-medium">{row.original.firstName} {row.original.lastName}</p>
+          </div>
         </div>
-      </div>
-    ),
-  },
-  {
-    accessorKey: 'userType',
-    header: 'Type',
-    cell: ({ row }) => (
-      <span className="text-sm capitalize">{row.original.userType}</span>
-    ),
-  },
-  {
-    accessorKey: 'position',
-    header: 'Position',
-    cell: ({ row }) => row.original.position ?? '-',
-  },
-  {
-    accessorKey: 'department',
-    header: 'Department',
-    cell: ({ row }) => row.original.department ?? '-',
-  },
-  {
-    accessorKey: 'companyName',
-    header: 'Company',
-    cell: ({ row }) => row.original.companyName ?? '-',
-  },
-  {
-    accessorKey: 'roleName',
-    header: 'Role',
-    cell: ({ row }) => row.original.roleName,
-  },
-  {
-    accessorKey: 'isActive',
-    header: 'Status',
-    cell: ({ row }) => (
-      <span
-        className={cn(
-          'rounded-full px-2 py-0.5 text-xs font-medium',
-          row.original.isActive
-            ? 'bg-green-100 text-green-700'
-            : 'bg-gray-100 text-gray-500',
-        )}
-      >
-        {row.original.isActive ? 'Active' : 'Inactive'}
-      </span>
-    ),
-  },
-];
+      ),
+    },
+    {
+      accessorKey: 'email',
+      header: 'Email',
+      cell: ({ row }) => <span className="text-sm text-slate-600">{row.original.email ?? '-'}</span>,
+    },
+    {
+      accessorKey: 'position',
+      header: 'Position',
+      cell: ({ row }) => row.original.position ?? '-',
+    },
+    {
+      accessorKey: 'department',
+      header: 'Department',
+      cell: ({ row }) => row.original.department ?? '-',
+    },
+  ];
+
+  if (isPartners) {
+    cols.push({
+      accessorKey: 'companyName',
+      header: 'Company',
+      cell: ({ row }) => row.original.companyName ?? '-',
+    });
+  }
+
+  cols.push(
+    {
+      accessorKey: 'roleName',
+      header: 'Role',
+      cell: ({ row }) => row.original.roleName,
+    },
+    {
+      accessorKey: 'isActive',
+      header: 'Status',
+      cell: ({ row }) => (
+        <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', row.original.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500')}>
+          {row.original.isActive ? 'Active' : 'Inactive'}
+        </span>
+      ),
+    },
+  );
+
+  return cols;
+}
 
 const emptyPerson = { email: '', password: '', firstName: '', lastName: '', phone: '', roleId: '', userType: 'employee' as string, position: '', department: '', companyName: '' };
 
@@ -118,6 +112,9 @@ export function PeoplePage() {
     });
   };
   const debouncedSearch = useDebounce(peopleSearch, 300);
+
+  const isPartners = peopleTab === 'partners';
+  const columns = useMemo(() => getColumns(isPartners), [isPartners]);
 
   const userType = peopleTab === 'employees' ? 'employee' : 'partner';
   const { data, isLoading } = useUsers({
