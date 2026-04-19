@@ -34,6 +34,7 @@ export class PhasesService {
       data: {
         name: dto.name,
         code: dto.code ?? null,
+        color: dto.color ?? null,
         sortOrder: dto.sortOrder ?? 0,
       },
     });

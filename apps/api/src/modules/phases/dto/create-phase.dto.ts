@@ -11,6 +11,11 @@ export class CreatePhaseDto {
   code?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(7)
+  color?: string;
+
+  @IsOptional()
   @IsInt()
   sortOrder?: number;
 }
