@@ -142,20 +142,41 @@ export class TimeEntriesService {
   }
 
   async getWeeklyGrid(userId: number, weekStartStr: string) {
+    if (!weekStartStr) {
+      return { weekStart: '', weekEnd: '', rows: [], dailyTotals: {}, weeklyTotal: 0 };
+    }
     const weekStart = parseISO(weekStartStr);
     const weekEnd = addDays(weekStart, 6);
 
-    const entries = await this.prisma.timeEntry.findMany({
+    // Use 1-day buffer on each side to handle timezone edge cases
+    const queryStart = addDays(weekStart, -1);
+    const queryEnd = addDays(weekEnd, 1);
+
+    const allEntries = await this.prisma.timeEntry.findMany({
       where: {
         userId,
         deletedAt: null,
-        date: { gte: startOfDay(weekStart), lte: endOfDay(weekEnd) },
+        date: { gte: startOfDay(queryStart), lte: endOfDay(queryEnd) },
       },
       include: {
         project: { select: { id: true, name: true } },
         task: { select: { id: true, name: true } },
       },
       orderBy: { date: 'asc' },
+    });
+
+    // Build the 7 valid day keys for this week
+    const validDayKeys = new Set<string>();
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(weekStart, i);
+      validDayKeys.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    }
+
+    // Filter entries to only those whose date falls within the 7-day week
+    const entries = allEntries.filter((e) => {
+      const d = new Date(e.date);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      return validDayKeys.has(key);
     });
 
     const grid: Record<string, any> = {};

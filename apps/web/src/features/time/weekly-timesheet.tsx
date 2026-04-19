@@ -400,7 +400,20 @@ function WeekView() {
   }, [weekStart, holidayDates]);
 
   // Fetch entries for the week via the weekly grid endpoint
-  const { data: breakdownData } = useWeeklyGrid({ weekStart: weekStartStr });
+  const { data: breakdownRaw, error: weeklyError } = useWeeklyGrid({ weekStart: weekStartStr });
+
+  // Normalize data - handle both wrapped and unwrapped API responses
+  const breakdownData = useMemo(() => {
+    const raw = breakdownRaw as any;
+    if (!raw) return null;
+    // If the response is already the grid structure
+    if (raw.rows) return raw;
+    // If it was double-wrapped: { data: { rows: ... } }
+    if (raw.data?.rows) return raw.data;
+    // If it came as { success, data: { rows } }
+    if (raw.success && raw.data?.rows) return raw.data;
+    return raw;
+  }, [breakdownRaw]);
 
   // Extract flat entries per day from the grid format
   const entriesByDay = useMemo(() => {
@@ -499,6 +512,13 @@ function WeekView() {
         </div>
         <button onClick={() => setWeekOffset((o) => o + 1)} disabled={weekOffset >= 0} className="rounded-md p-1.5 hover:bg-slate-100 disabled:opacity-50"><ChevronRight className="h-5 w-5" /></button>
       </div>
+
+      {/* API error indicator */}
+      {weeklyError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-[12px] text-red-700">
+          Failed to load timesheet data: {(weeklyError as any)?.message ?? 'Unknown error'}
+        </div>
+      )}
 
       {/* Calendar Grid */}
       <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">

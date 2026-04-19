@@ -86,7 +86,13 @@ export const timeApi = {
 
   // Weekly grid — backend: GET /time-entries/weekly
   weeklyGrid: (params: WeeklyGridQuery) =>
-    client.get<ApiResponse<WeeklyGrid>>('/time-entries/weekly', { params }).then((r) => r.data.data),
+    client.get('/time-entries/weekly', { params }).then((r) => {
+      const d = r.data;
+      // Handle both wrapped { success, data: {...} } and direct response
+      if (d?.data?.rows) return d.data;
+      if (d?.rows) return d;
+      return d?.data ?? d;
+    }),
 
   // Daily breakdown — backend: GET /time-entries/daily
   dailyBreakdown: (params: { weekStart: string }) =>
