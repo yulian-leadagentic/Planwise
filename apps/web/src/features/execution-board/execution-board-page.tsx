@@ -110,25 +110,19 @@ const DOT_COLOR: Record<string, string> = {
   cancelled: 'bg-red-500',
 };
 
-function CompletionBar({ pct }: { pct: number }) {
+function CellCompletion({ tasks }: { tasks: Task[] }) {
+  if (tasks.length === 0) return null;
+  const avg = Math.round(tasks.reduce((s, t) => s + t.completionPct, 0) / tasks.length);
   const color =
-    pct >= 100 ? 'bg-emerald-500' : pct >= 60 ? 'bg-blue-500' : pct >= 30 ? 'bg-amber-500' : 'bg-slate-400';
+    avg >= 100 ? 'bg-emerald-500' : avg >= 60 ? 'bg-blue-500' : avg >= 30 ? 'bg-amber-500' : 'bg-slate-300';
   const textColor =
-    pct >= 100
-      ? 'text-emerald-600'
-      : pct >= 60
-        ? 'text-blue-600'
-        : pct >= 30
-          ? 'text-amber-600'
-          : 'text-slate-500';
+    avg >= 100 ? 'text-emerald-600' : avg >= 60 ? 'text-blue-600' : avg >= 30 ? 'text-amber-600' : 'text-slate-500';
   return (
-    <div className="flex items-center gap-1.5 ml-auto shrink-0">
-      <div className="w-[40px] h-[4px] bg-slate-200 rounded-full overflow-hidden">
-        <div className={cn('h-full rounded-full', color)} style={{ width: `${Math.min(pct, 100)}%` }} />
+    <div className="flex items-center gap-1.5 mb-1.5 px-0.5">
+      <div className="flex-1 h-[4px] bg-slate-200 rounded-full overflow-hidden">
+        <div className={cn('h-full rounded-full', color)} style={{ width: `${Math.min(avg, 100)}%` }} />
       </div>
-      <span className={cn('text-[10px] font-bold tabular-nums min-w-[28px] text-right', textColor)}>
-        {pct}%
-      </span>
+      <span className={cn('text-[10px] font-bold tabular-nums shrink-0', textColor)}>{avg}%</span>
     </div>
   );
 }
@@ -199,55 +193,6 @@ export function ExecutionBoardPage() {
   }, []);
 
   const services = data?.services ?? [];
-
-  // Build zone descendant map for completion aggregation
-  const zoneDescendants = useMemo(() => {
-    if (!data) return new Map<number, Set<number>>();
-    const map = new Map<number, Set<number>>();
-
-    function collect(node: ZoneNode): Set<number> {
-      const ids = new Set<number>([node.id]);
-      for (const child of node.children ?? []) {
-        for (const id of collect(child)) ids.add(id);
-      }
-      map.set(node.id, ids);
-      return ids;
-    }
-
-    for (const project of data.projects) {
-      for (const root of data.zones[project.id] ?? []) {
-        collect(root);
-      }
-    }
-    return map;
-  }, [data]);
-
-  // Compute zone completion: avg completionPct across zone + all descendant zones
-  const zoneCompletion = useMemo(() => {
-    const tasks = data?.tasks ?? [];
-    const zoneTaskMap = new Map<number, number[]>();
-    for (const t of tasks) {
-      if (!zoneTaskMap.has(t.zoneId)) zoneTaskMap.set(t.zoneId, []);
-      zoneTaskMap.get(t.zoneId)!.push(t.completionPct);
-    }
-
-    const result = new Map<number, number>();
-    for (const [zoneId, descIds] of zoneDescendants) {
-      let total = 0;
-      let count = 0;
-      for (const id of descIds) {
-        const pcts = zoneTaskMap.get(id);
-        if (pcts) {
-          for (const p of pcts) {
-            total += p;
-            count++;
-          }
-        }
-      }
-      if (count > 0) result.set(zoneId, Math.round(total / count));
-    }
-    return result;
-  }, [data?.tasks, zoneDescendants]);
 
   // Extract phase/milestone columns from tasks
   const { phaseColumns, taskMatrix, hasNoPhase } = useMemo(() => {
@@ -436,8 +381,6 @@ export function ExecutionBoardPage() {
                     );
                   }
 
-                  const pct = zoneCompletion.get(row.id);
-
                   return (
                     <tr
                       key={row.key}
@@ -472,7 +415,6 @@ export function ExecutionBoardPage() {
                               {row.zoneType}
                             </span>
                           )}
-                          {pct != null && <CompletionBar pct={pct} />}
                         </div>
                       </td>
                       {phaseColumns.map((phaseName) => {
@@ -484,6 +426,7 @@ export function ExecutionBoardPage() {
                           >
                             {cellTasks.length > 0 && (
                               <div className="flex flex-col gap-1">
+                                <CellCompletion tasks={cellTasks} />
                                 {cellTasks.map((task) => (
                                   <TaskCard
                                     key={task.id}
