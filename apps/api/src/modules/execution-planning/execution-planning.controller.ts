@@ -230,15 +230,32 @@ export class ExecutionPlanningController {
     const taskCountByUser = await prisma.taskAssignee.groupBy({ by: ['userId'], where: { deletedAt: null, task: { deletedAt: null, status: { notIn: ['completed', 'cancelled'] } } }, _count: true });
     const taskCountMap = new Map(taskCountByUser.map((t: any) => [t.userId, t._count]));
 
+    // Build per-member task list from allTasks
+    const memberTasksMap = new Map<number, any[]>();
+    for (const t of allTasks) {
+      for (const a of (t.assignees ?? [])) {
+        if (!memberTasksMap.has(a.userId)) memberTasksMap.set(a.userId, []);
+        memberTasksMap.get(a.userId)!.push({
+          id: t.id, code: t.code, name: t.name, status: t.status, priority: t.priority,
+          projectId: t.projectId, projectName: t.project?.name, projectNumber: t.project?.number,
+          zone: t.zone?.name, hoursLeft: Number(t.budgetHours ?? 0),
+          daysOverdue: t.endDate && new Date(t.endDate) < now ? Math.round((now.getTime() - new Date(t.endDate).getTime()) / 86400000) : null,
+          endDate: t.endDate,
+        });
+      }
+    }
+
     const deptMap = new Map<string, any>();
     for (const emp of employees) {
       const deptName = emp.department || 'Unassigned';
       if (!deptMap.has(deptName)) deptMap.set(deptName, { name: deptName, members: [] });
       const capacity = Number(emp.dailyStandardHours ?? 8) * 5;
+      const empTasks = memberTasksMap.get(emp.id) ?? [];
       deptMap.get(deptName).members.push({
         id: emp.id, firstName: emp.firstName, lastName: emp.lastName, avatarUrl: emp.avatarUrl, position: emp.position,
         hoursWeek: hoursMap.get(emp.id) ?? 0, capacity, tasks: taskCountMap.get(emp.id) ?? 0,
-        overdueTasks: overdueTasks.filter((t: any) => t.assignees?.some((a: any) => a.userId === emp.id)).length,
+        overdueTasks: empTasks.filter((t: any) => t.daysOverdue !== null && t.daysOverdue > 0).length,
+        taskList: empTasks,
       });
     }
 
