@@ -110,7 +110,7 @@ const DOT_COLOR: Record<string, string> = {
   cancelled: 'bg-red-500',
 };
 
-function CellCompletion({ tasks }: { tasks: Task[] }) {
+function CellSummary({ tasks, isAggregate }: { tasks: Task[]; isAggregate: boolean }) {
   if (tasks.length === 0) return null;
   const avg = Math.round(tasks.reduce((s, t) => s + t.completionPct, 0) / tasks.length);
   const color =
@@ -118,11 +118,16 @@ function CellCompletion({ tasks }: { tasks: Task[] }) {
   const textColor =
     avg >= 100 ? 'text-emerald-600' : avg >= 60 ? 'text-blue-600' : avg >= 30 ? 'text-amber-600' : 'text-slate-500';
   return (
-    <div className="flex items-center gap-1.5 mb-1.5 px-0.5">
-      <div className="flex-1 h-[4px] bg-slate-200 rounded-full overflow-hidden">
-        <div className={cn('h-full rounded-full', color)} style={{ width: `${Math.min(avg, 100)}%` }} />
+    <div className={cn('px-0.5', isAggregate ? '' : 'mb-1.5')}>
+      <div className="flex items-center gap-1.5">
+        <div className="flex-1 h-[4px] bg-slate-200 rounded-full overflow-hidden">
+          <div className={cn('h-full rounded-full', color)} style={{ width: `${Math.min(avg, 100)}%` }} />
+        </div>
+        <span className={cn('text-[10px] font-bold tabular-nums shrink-0', textColor)}>{avg}%</span>
       </div>
-      <span className={cn('text-[10px] font-bold tabular-nums shrink-0', textColor)}>{avg}%</span>
+      {isAggregate && (
+        <span className="text-[10px] text-slate-400">{tasks.length} tasks</span>
+      )}
     </div>
   );
 }
@@ -194,42 +199,71 @@ export function ExecutionBoardPage() {
 
   const services = data?.services ?? [];
 
-  // Extract phase/milestone columns from tasks
-  const { phaseColumns, taskMatrix, hasNoPhase } = useMemo(() => {
+  // Build zoneId → all descendant zone IDs (including self)
+  const zoneDescendants = useMemo(() => {
+    if (!data) return new Map<number, number[]>();
+    const map = new Map<number, number[]>();
+
+    function collect(node: ZoneNode): number[] {
+      const ids = [node.id];
+      for (const child of node.children ?? []) {
+        ids.push(...collect(child));
+      }
+      map.set(node.id, ids);
+      return ids;
+    }
+
+    for (const project of data.projects) {
+      for (const root of data.zones[project.id] ?? []) {
+        collect(root);
+      }
+    }
+    return map;
+  }, [data]);
+
+  // Build direct task matrix: zoneId|phaseName → tasks (only direct zone tasks)
+  const { phaseColumns, directMatrix, hasNoPhase } = useMemo(() => {
     const tasks = data?.tasks ?? [];
     const templates = data?.templates ?? [];
 
-    const nameToTasks = new Map<string, Task[]>();
+    const nameToHasTasks = new Set<string>();
     let _hasNoPhase = false;
-
-    for (const task of tasks) {
-      const phaseName = getTaskPhaseName(task);
-      if (phaseName) {
-        if (!nameToTasks.has(phaseName)) nameToTasks.set(phaseName, []);
-        nameToTasks.get(phaseName)!.push(task);
-      } else {
-        _hasNoPhase = true;
-      }
-    }
-
-    const orderedColumns: string[] = [];
-    for (const tpl of templates) {
-      if (nameToTasks.has(tpl.name)) orderedColumns.push(tpl.name);
-    }
-    for (const name of nameToTasks.keys()) {
-      if (!orderedColumns.includes(name)) orderedColumns.push(name);
-    }
 
     const matrix = new Map<string, Task[]>();
     for (const task of tasks) {
       const phaseName = getTaskPhaseName(task) ?? '__none__';
+      if (phaseName === '__none__') _hasNoPhase = true;
+      else nameToHasTasks.add(phaseName);
       const key = `${task.zoneId}|${phaseName}`;
       if (!matrix.has(key)) matrix.set(key, []);
       matrix.get(key)!.push(task);
     }
 
-    return { phaseColumns: orderedColumns, taskMatrix: matrix, hasNoPhase: _hasNoPhase };
+    // Build ordered columns: template order first, then extras
+    const orderedColumns: string[] = [];
+    for (const tpl of templates) {
+      if (nameToHasTasks.has(tpl.name)) orderedColumns.push(tpl.name);
+    }
+    for (const name of nameToHasTasks) {
+      if (!orderedColumns.includes(name)) orderedColumns.push(name);
+    }
+
+    return { phaseColumns: orderedColumns, directMatrix: matrix, hasNoPhase: _hasNoPhase };
   }, [data?.tasks, data?.templates]);
+
+  // For a zone, get aggregated tasks from all descendant zones for a given phase
+  const getAggregatedTasks = useCallback(
+    (zoneId: number, phaseName: string): Task[] => {
+      const descIds = zoneDescendants.get(zoneId) ?? [zoneId];
+      const result: Task[] = [];
+      for (const id of descIds) {
+        const tasks = directMatrix.get(`${id}|${phaseName}`);
+        if (tasks) result.push(...tasks);
+      }
+      return result;
+    },
+    [zoneDescendants, directMatrix],
+  );
 
   const flatRows = useMemo(() => {
     if (!data) return [];
@@ -381,6 +415,8 @@ export function ExecutionBoardPage() {
                     );
                   }
 
+                  const isParent = row.hasChildren;
+
                   return (
                     <tr
                       key={row.key}
@@ -418,16 +454,17 @@ export function ExecutionBoardPage() {
                         </div>
                       </td>
                       {phaseColumns.map((phaseName) => {
-                        const cellTasks = taskMatrix.get(`${row.id}|${phaseName}`) ?? [];
+                        const aggTasks = getAggregatedTasks(row.id, phaseName);
+                        const directTasks = directMatrix.get(`${row.id}|${phaseName}`) ?? [];
                         return (
                           <td
                             key={phaseName}
                             className="px-2 py-1.5 align-top border-r border-slate-100 last:border-r-0"
                           >
-                            {cellTasks.length > 0 && (
+                            {aggTasks.length > 0 && (
                               <div className="flex flex-col gap-1">
-                                <CellCompletion tasks={cellTasks} />
-                                {cellTasks.map((task) => (
+                                <CellSummary tasks={aggTasks} isAggregate={isParent} />
+                                {directTasks.map((task) => (
                                   <TaskCard
                                     key={task.id}
                                     task={task}
@@ -441,17 +478,23 @@ export function ExecutionBoardPage() {
                       })}
                       {hasNoPhase && (
                         <td className="px-2 py-1.5 align-top">
-                          {(taskMatrix.get(`${row.id}|__none__`) ?? []).length > 0 && (
-                            <div className="flex flex-col gap-1">
-                              {(taskMatrix.get(`${row.id}|__none__`) ?? []).map((task) => (
-                                <TaskCard
-                                  key={task.id}
-                                  task={task}
-                                  onClick={() => navigate(`/tasks/${task.id}`)}
-                                />
-                              ))}
-                            </div>
-                          )}
+                          {(() => {
+                            const aggTasks = getAggregatedTasks(row.id, '__none__');
+                            const directTasks = directMatrix.get(`${row.id}|__none__`) ?? [];
+                            if (aggTasks.length === 0) return null;
+                            return (
+                              <div className="flex flex-col gap-1">
+                                <CellSummary tasks={aggTasks} isAggregate={isParent} />
+                                {directTasks.map((task) => (
+                                  <TaskCard
+                                    key={task.id}
+                                    task={task}
+                                    onClick={() => navigate(`/tasks/${task.id}`)}
+                                  />
+                                ))}
+                              </div>
+                            );
+                          })()}
                         </td>
                       )}
                     </tr>
