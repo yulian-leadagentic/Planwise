@@ -36,16 +36,19 @@ export class TimeEntriesService {
   }
 
   async batchCreate(userId: number, entries: CreateTimeEntryDto[]) {
-    const data = entries.map((dto) => ({
-      userId,
-      timeClockId: dto.timeClockId ?? null,
-      projectId: dto.projectId ?? null,
-      taskId: dto.taskId ?? null,
-      date: new Date(dto.date),
-      minutes: dto.minutes,
-      note: dto.note ?? null,
-      isBillable: dto.isBillable ?? true,
-    }));
+    const data = entries.map((dto) => {
+      const dp = dto.date.split('-').map(Number);
+      return {
+        userId,
+        timeClockId: dto.timeClockId ?? null,
+        projectId: dto.projectId ?? null,
+        taskId: dto.taskId ?? null,
+        date: new Date(dp[0], dp[1] - 1, dp[2]),
+        minutes: dto.minutes,
+        note: dto.note ?? null,
+        isBillable: dto.isBillable ?? true,
+      };
+    });
 
     await this.prisma.timeEntry.createMany({ data });
 
@@ -88,7 +91,7 @@ export class TimeEntriesService {
       where: { id },
       data: {
         ...dto,
-        date: dto.date ? new Date(dto.date) : undefined,
+        date: dto.date ? (() => { const dp = dto.date.split('-').map(Number); return new Date(dp[0], dp[1] - 1, dp[2]); })() : undefined,
       },
       include: {
         project: { select: { id: true, name: true } },
@@ -155,7 +158,6 @@ export class TimeEntriesService {
       orderBy: { date: 'asc' },
     });
 
-    // Build grid: rows = project/task combos, columns = days
     const grid: Record<string, any> = {};
 
     for (const entry of entries) {
@@ -171,7 +173,9 @@ export class TimeEntriesService {
         };
       }
 
-      const dayKey = format(entry.date, 'yyyy-MM-dd');
+      // Use UTC-safe date key extraction to avoid timezone shifts
+      const d = new Date(entry.date);
+      const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       if (!grid[key].days[dayKey]) {
         grid[key].days[dayKey] = { minutes: 0, entries: [] };
       }
@@ -180,12 +184,15 @@ export class TimeEntriesService {
       grid[key].totalMinutes += entry.minutes;
     }
 
-    // Build daily totals
     const dailyTotals: Record<string, number> = {};
     for (let i = 0; i < 7; i++) {
-      const dayKey = format(addDays(weekStart, i), 'yyyy-MM-dd');
+      const d = addDays(weekStart, i);
+      const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       dailyTotals[dayKey] = entries
-        .filter((e) => format(e.date, 'yyyy-MM-dd') === dayKey)
+        .filter((e) => {
+          const ed = new Date(e.date);
+          return ed.getFullYear() === d.getFullYear() && ed.getMonth() === d.getMonth() && ed.getDate() === d.getDate();
+        })
         .reduce((sum, e) => sum + e.minutes, 0);
     }
 
