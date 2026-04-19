@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ChevronLeft, ChevronRight, X, Trash2, Download, Calendar } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, X, Trash2, Download, Calendar, Check, Clock } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import client from '@/api/client';
@@ -151,6 +151,16 @@ export function CalendarDaysPage() {
     onError: (err: any) => notify.apiError(err, 'Failed to add calendar day'),
   });
 
+  const updateMutation = useMutation({
+    mutationFn: ({ id, ...payload }: { id: number; halfDayUntil?: string; type?: string; notes?: string }) =>
+      client.patch(`/calendar/${id}`, payload).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'calendar'] });
+      notify.success('Calendar day updated');
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update'),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (id: number) => client.delete(`/calendar/${id}`).then((r) => r.data),
     onSuccess: () => {
@@ -202,6 +212,19 @@ export function CalendarDaysPage() {
 
   const [importYear, setImportYear] = useState(today.getFullYear());
   const [showImport, setShowImport] = useState(false);
+  const [workingDayEdit, setWorkingDayEdit] = useState<{ id: number; name: string; hours: string } | null>(null);
+
+  // Check which years have holidays imported
+  const importedYears = useMemo(() => {
+    const years = new Set<number>();
+    for (const d of (data ?? [])) {
+      if (d.type === 'holiday' && d.date) {
+        const yr = new Date(d.date).getFullYear();
+        years.add(yr);
+      }
+    }
+    return years;
+  }, [data]);
 
   const importHolidays = async (year: number) => {
     const holidays = getIsraeliHolidays(year);
@@ -262,71 +285,67 @@ export function CalendarDaysPage() {
   const yearTotalWorking = yearMonths.reduce((s, m) => s + m.working, 0);
   const yearTotalHolidays = yearMonths.reduce((s, m) => s + m.holidays, 0);
 
+  const handleSetWorkingDay = (entry: any) => {
+    setWorkingDayEdit({ id: entry.id, name: entry.name, hours: entry.halfDayUntil || '4' });
+  };
+
+  const saveWorkingDay = () => {
+    if (!workingDayEdit) return;
+    updateMutation.mutate({ id: workingDayEdit.id, halfDayUntil: workingDayEdit.hours }, {
+      onSuccess: () => setWorkingDayEdit(null),
+    });
+  };
+
+  const clearWorkingDay = (entry: any) => {
+    updateMutation.mutate({ id: entry.id, halfDayUntil: '' });
+  };
+
   return (
     <div className="space-y-6">
+      <PageHeader title="Calendar Days" description="Manage holidays, company days off, and non-working days" />
+
+      {/* Controls bar: view toggle + import status */}
       <div className="flex items-center justify-between">
-        <PageHeader
-          title="Calendar Days"
-          description="Manage holidays, company days off, and non-working days"
-          actions={
-            <div className="flex items-center gap-2">
-              <button onClick={() => setShowImport(!showImport)}
-                className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                <Download className="h-4 w-4" /> Import Israeli Holidays
-              </button>
+        <div className="flex items-center gap-3">
+          {/* View toggle */}
+          <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5">
+            <button onClick={() => setViewMode('month')}
+              className={cn('px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
+                viewMode === 'month' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+              Month
+            </button>
+            <button onClick={() => setViewMode('year')}
+              className={cn('px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
+                viewMode === 'year' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+              Year
+            </button>
+          </div>
+        </div>
+
+        {/* Import status + button */}
+        <div className="flex items-center gap-3">
+          {importedYears.size > 0 && (
+            <div className="flex items-center gap-1.5 text-[12px] text-emerald-700">
+              <Check className="h-3.5 w-3.5" />
+              <span>Israeli Holidays imported for {Array.from(importedYears).sort().join(', ')}</span>
             </div>
-          }
-        />
-        <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5 shrink-0">
-          <button onClick={() => setViewMode('month')}
-            className={cn('px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
-              viewMode === 'month' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
-            Month
-          </button>
-          <button onClick={() => setViewMode('year')}
-            className={cn('px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
-              viewMode === 'year' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
-            Year
-          </button>
+          )}
+          <div className="flex items-center gap-1.5">
+            <select value={importYear} onChange={(e) => setImportYear(Number(e.target.value))}
+              className="rounded-lg border border-slate-200 px-2 py-1.5 text-[12px]">
+              {[2025, 2026, 2027, 2028].map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <button onClick={() => importHolidays(importYear)}
+              className={cn('flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors',
+                importedYears.has(importYear)
+                  ? 'border border-slate-200 text-slate-500 hover:bg-slate-50'
+                  : 'bg-blue-600 text-white hover:bg-blue-700')}>
+              <Download className="h-3.5 w-3.5" />
+              {importedYears.has(importYear) ? `Re-import ${importYear}` : `Import ${importYear}`}
+            </button>
+          </div>
         </div>
       </div>
-
-      {/* Import holidays dialog */}
-      {showImport && (
-        <div className="rounded-[14px] border border-blue-200 bg-blue-50/30 p-5">
-          <h3 className="text-sm font-bold text-slate-900 mb-2">Import Israeli National Holidays</h3>
-          <p className="text-[12px] text-slate-500 mb-3">
-            Automatically add all Israeli national holidays (פורים, פסח, שבועות, ראש השנה, יום כיפור, סוכות, etc.) for the selected year.
-            Holidays that already exist will be skipped.
-          </p>
-          <div className="flex items-center gap-3">
-            <select value={importYear} onChange={(e) => setImportYear(Number(e.target.value))}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
-              {[2025, 2026, 2027].map((y) => <option key={y} value={y}>{y}</option>)}
-            </select>
-            <span className="text-[12px] text-slate-400">{getIsraeliHolidays(importYear).length} holidays</span>
-            <button onClick={() => importHolidays(importYear)}
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
-              Import {importYear}
-            </button>
-            <button onClick={() => setShowImport(false)} className="text-sm text-slate-400 hover:text-slate-600">Cancel</button>
-          </div>
-          {/* Preview */}
-          <div className="mt-3 max-h-40 overflow-y-auto">
-            <table className="w-full text-[11px]">
-              <tbody>
-                {getIsraeliHolidays(importYear).map((h) => (
-                  <tr key={h.date} className="border-b border-blue-100">
-                    <td className="py-1 pr-3 text-slate-500 w-24">{h.date}</td>
-                    <td className="py-1 pr-3 font-medium text-slate-700">{h.nameHe}</td>
-                    <td className="py-1 text-slate-500">{h.name}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       {/* ═══ MONTH VIEW ═══ */}
       {viewMode === 'month' && (
@@ -381,13 +400,34 @@ export function CalendarDaysPage() {
                     </div>
                     {entries.map((entry: any) => {
                       const style = TYPE_STYLES[entry.type] ?? TYPE_STYLES.special;
+                      const isHoliday = entry.type === 'holiday';
+                      const hasWorkingHours = isHoliday && entry.halfDayUntil;
                       return (
                         <div key={entry.id} className={cn('mt-1 rounded px-1.5 py-0.5 text-[10px] font-medium flex items-center justify-between group', style.bg, style.text)} onClick={(e) => e.stopPropagation()}>
-                          <span className="truncate">{entry.name}</span>
-                          <button onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${entry.name}"?`)) deleteMutation.mutate(entry.id); }}
-                            className="hidden group-hover:flex h-4 w-4 items-center justify-center rounded hover:bg-white/50 shrink-0">
-                            <X className="h-2.5 w-2.5" />
-                          </button>
+                          <span className="truncate">
+                            {entry.name}
+                            {hasWorkingHours && <span className="ml-1 text-blue-600 font-bold">+{entry.halfDayUntil}h</span>}
+                          </span>
+                          <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                            {isHoliday ? (
+                              hasWorkingHours ? (
+                                <button onClick={() => clearWorkingDay(entry)} title="Remove working hours"
+                                  className="h-4 w-4 flex items-center justify-center rounded hover:bg-white/50">
+                                  <X className="h-2.5 w-2.5" />
+                                </button>
+                              ) : (
+                                <button onClick={() => handleSetWorkingDay(entry)} title="Set as working day"
+                                  className="h-4 flex items-center gap-0.5 rounded px-1 hover:bg-white/50 text-[9px] font-bold text-blue-700">
+                                  <Clock className="h-2.5 w-2.5" />Work
+                                </button>
+                              )
+                            ) : (
+                              <button onClick={() => { if (confirm(`Remove "${entry.name}"?`)) deleteMutation.mutate(entry.id); }}
+                                className="h-4 w-4 flex items-center justify-center rounded hover:bg-white/50">
+                                <X className="h-2.5 w-2.5" />
+                              </button>
+                            )}
+                          </div>
                         </div>
                       );
                     })}
@@ -552,7 +592,39 @@ export function CalendarDaysPage() {
         </div>
       )}
 
-      {/* Upcoming days list below calendar */}
+      {/* Working hours modal for holidays */}
+      {workingDayEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setWorkingDayEdit(null)}>
+          <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl border border-slate-200" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-900">Set Working Hours on Holiday</h3>
+              <p className="text-[12px] text-slate-500 mt-1">
+                Mark <strong>{workingDayEdit.name}</strong> as a working day with reduced hours.
+                It will still display as a holiday.
+              </p>
+            </div>
+            <div className="px-5 py-4">
+              <label className="text-[12px] font-semibold text-slate-600 mb-1.5 block">Working Hours</label>
+              <div className="flex items-center gap-2">
+                <input type="number" min="1" max="12" step="0.5" value={workingDayEdit.hours}
+                  onChange={(e) => setWorkingDayEdit({ ...workingDayEdit, hours: e.target.value })}
+                  className="w-20 rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-blue-500 focus:outline-none" autoFocus />
+                <span className="text-[13px] text-slate-500">hours (standard day = 8h)</span>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-100">
+              <button onClick={() => setWorkingDayEdit(null)}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50">Cancel</button>
+              <button onClick={saveWorkingDay} disabled={updateMutation.isPending}
+                className="rounded-lg bg-blue-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                {updateMutation.isPending ? 'Saving...' : 'Set Working Hours'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* All Non-Working Days list */}
       {(data ?? []).length > 0 && (
         <div className="rounded-[14px] border border-slate-200 bg-white p-5">
           <h3 className="text-sm font-bold text-slate-900 mb-3">All Non-Working Days</h3>
@@ -560,16 +632,31 @@ export function CalendarDaysPage() {
             {(data as any[]).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime()).map((d: any) => {
               const style = TYPE_STYLES[d.type] ?? TYPE_STYLES.special;
               const isPast = new Date(d.date) < today;
+              const isHoliday = d.type === 'holiday';
+              const hasWorkingHours = isHoliday && d.halfDayUntil;
               return (
                 <div key={d.id} className={cn('flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-slate-50', isPast && 'opacity-50')}>
                   <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', style.dot)} />
                   <span className="text-[13px] font-medium text-slate-700 w-32">{new Date(d.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-                  <span className="text-[13px] text-slate-800 flex-1">{d.name}</span>
+                  <span className="text-[13px] text-slate-800 flex-1">
+                    {d.name}
+                    {hasWorkingHours && (
+                      <span className="ml-2 text-[11px] font-bold text-blue-600 bg-blue-50 rounded px-1.5 py-0.5">+{d.halfDayUntil}h working</span>
+                    )}
+                  </span>
                   <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold', style.bg, style.text)}>{d.type?.replace(/_/g, ' ')}</span>
-                  <button onClick={() => { if (confirm(`Remove "${d.name}"?`)) deleteMutation.mutate(d.id); }}
-                    className="rounded p-1 text-slate-300 hover:text-red-600 hover:bg-red-50">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  {isHoliday ? (
+                    <button onClick={() => handleSetWorkingDay(d)}
+                      className="rounded px-2 py-1 text-[11px] font-semibold text-blue-600 hover:bg-blue-50 transition-colors"
+                      title="Set working hours">
+                      <Clock className="h-3.5 w-3.5 inline mr-1" />{hasWorkingHours ? 'Edit hours' : 'Set working'}
+                    </button>
+                  ) : (
+                    <button onClick={() => { if (confirm(`Remove "${d.name}"?`)) deleteMutation.mutate(d.id); }}
+                      className="rounded p-1 text-slate-300 hover:text-red-600 hover:bg-red-50">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </div>
               );
             })}
