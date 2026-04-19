@@ -115,9 +115,12 @@ function formatDateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+type CalendarViewMode = 'month' | 'year';
+
 export function CalendarDaysPage() {
   const queryClient = useQueryClient();
   const today = new Date();
+  const [viewMode, setViewMode] = useState<CalendarViewMode>('month');
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [showAddForm, setShowAddForm] = useState(false);
@@ -227,20 +230,66 @@ export function CalendarDaysPage() {
 
   const monthWorkingDays = countMonthWorkingDays(viewYear, viewMonth, holidayDates);
 
+  // Year view data
+  const yearMonths = useMemo(() => {
+    return Array.from({ length: 12 }, (_, i) => {
+      const wd = countMonthWorkingDays(viewYear, i, holidayDates);
+      const daysInMonth = new Date(viewYear, i + 1, 0).getDate();
+      const monthHolidays: any[] = [];
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${viewYear}-${String(i + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const entries = calendarMap.get(dateStr);
+        if (entries) monthHolidays.push(...entries.map((e: any) => ({ ...e, day: d })));
+      }
+      let weekendCount = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dow = new Date(viewYear, i, d).getDay();
+        if (dow === 5 || dow === 6) weekendCount++;
+      }
+      return {
+        index: i,
+        name: new Date(viewYear, i).toLocaleDateString('en-US', { month: 'long' }),
+        shortName: new Date(viewYear, i).toLocaleDateString('en-US', { month: 'short' }),
+        total: daysInMonth,
+        working: wd,
+        holidays: monthHolidays.length,
+        weekends: weekendCount,
+        holidayList: monthHolidays,
+      };
+    });
+  }, [viewYear, holidayDates, calendarMap]);
+
+  const yearTotalWorking = yearMonths.reduce((s, m) => s + m.working, 0);
+  const yearTotalHolidays = yearMonths.reduce((s, m) => s + m.holidays, 0);
+
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Calendar Days"
-        description="Manage holidays, company days off, and non-working days"
-        actions={
-          <div className="flex items-center gap-2">
-            <button onClick={() => setShowImport(!showImport)}
-              className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-              <Download className="h-4 w-4" /> Import Israeli Holidays
-            </button>
-          </div>
-        }
-      />
+      <div className="flex items-center justify-between">
+        <PageHeader
+          title="Calendar Days"
+          description="Manage holidays, company days off, and non-working days"
+          actions={
+            <div className="flex items-center gap-2">
+              <button onClick={() => setShowImport(!showImport)}
+                className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                <Download className="h-4 w-4" /> Import Israeli Holidays
+              </button>
+            </div>
+          }
+        />
+        <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5 shrink-0">
+          <button onClick={() => setViewMode('month')}
+            className={cn('px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
+              viewMode === 'month' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+            Month
+          </button>
+          <button onClick={() => setViewMode('year')}
+            className={cn('px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
+              viewMode === 'year' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+            Year
+          </button>
+        </div>
+      </div>
 
       {/* Import holidays dialog */}
       {showImport && (
@@ -279,99 +328,193 @@ export function CalendarDaysPage() {
         </div>
       )}
 
-      {/* Month navigation + working days count */}
-      <div className="flex items-center justify-between">
-        <button onClick={prevMonth} className="rounded-md p-2 hover:bg-slate-100"><ChevronLeft className="h-5 w-5" /></button>
-        <div className="text-center">
-          <h2 className="text-lg font-bold text-slate-900">{monthName}</h2>
-          <p className="text-[12px] text-slate-400">
-            <span className="font-semibold text-slate-700">{monthWorkingDays}</span> working days this month
-          </p>
-        </div>
-        <button onClick={nextMonth} className="rounded-md p-2 hover:bg-slate-100"><ChevronRight className="h-5 w-5" /></button>
-      </div>
-
-      {/* Legend */}
-      <div className="flex items-center gap-4 text-[11px]">
-        <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500" /> Holiday</div>
-        <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-500" /> Company Day Off</div>
-        <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-blue-500" /> Half Day</div>
-        <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-purple-500" /> Special</div>
-        <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-slate-200" /> Weekend</div>
-      </div>
-
-      {/* Calendar Grid */}
-      <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
-        {/* Day headers */}
-        <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
-          {DAY_NAMES.map((day) => (
-            <div key={day} className="px-2 py-2.5 text-center text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-              {day}
+      {/* ═══ MONTH VIEW ═══ */}
+      {viewMode === 'month' && (
+        <>
+          {/* Month navigation + working days count */}
+          <div className="flex items-center justify-between">
+            <button onClick={prevMonth} className="rounded-md p-2 hover:bg-slate-100"><ChevronLeft className="h-5 w-5" /></button>
+            <div className="text-center">
+              <h2 className="text-lg font-bold text-slate-900">{monthName}</h2>
+              <p className="text-[12px] text-slate-400">
+                <span className="font-semibold text-slate-700">{monthWorkingDays}</span> working days this month
+              </p>
             </div>
-          ))}
-        </div>
+            <button onClick={nextMonth} className="rounded-md p-2 hover:bg-slate-100"><ChevronRight className="h-5 w-5" /></button>
+          </div>
 
-        {/* Day cells */}
-        <div className="grid grid-cols-7">
-          {monthDays.map(({ date, inMonth }, idx) => {
-            const dateKey = formatDateKey(date);
-            const entries = calendarMap.get(dateKey) ?? [];
-            const isToday = dateKey === todayKey;
-            const weekend = isWeekend(date);
-            const hasEntries = entries.length > 0;
-            const isSelected = selectedDate === dateKey;
+          {/* Legend */}
+          <div className="flex items-center gap-4 text-[11px]">
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500" /> Holiday</div>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-500" /> Company Day Off</div>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-blue-500" /> Half Day</div>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-purple-500" /> Special</div>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-slate-200" /> Weekend</div>
+          </div>
 
-            return (
-              <div
-                key={idx}
-                onClick={() => inMonth && handleDateClick(dateKey)}
-                className={cn(
-                  'min-h-[90px] border-b border-r border-slate-100 px-1.5 py-1 cursor-pointer transition-colors',
-                  !inMonth && 'bg-slate-50/50 opacity-40',
-                  inMonth && weekend && !hasEntries && 'bg-slate-50',
-                  inMonth && hasEntries && 'bg-red-50/30',
-                  isSelected && 'ring-2 ring-inset ring-blue-500 bg-blue-50/30',
-                  inMonth && !hasEntries && !weekend && 'hover:bg-blue-50/20',
-                )}
-              >
-                {/* Day number */}
-                <div className="flex items-center justify-between">
-                  <span className={cn(
-                    'text-[13px] font-medium',
-                    !inMonth ? 'text-slate-300' : isToday ? 'text-white bg-blue-600 rounded-full w-7 h-7 flex items-center justify-center' : 'text-slate-700',
-                    weekend && inMonth && !isToday && 'text-slate-400',
-                  )}>
-                    {date.getDate()}
-                  </span>
-                  {weekend && inMonth && (
-                    <span className="text-[9px] text-slate-400 font-medium">Weekend</span>
+          {/* Calendar Grid */}
+          <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+            <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
+              {DAY_NAMES.map((day) => (
+                <div key={day} className="px-2 py-2.5 text-center text-[11px] font-semibold text-slate-500 uppercase tracking-wider">{day}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7">
+              {monthDays.map(({ date, inMonth }, idx) => {
+                const dateKey = formatDateKey(date);
+                const entries = calendarMap.get(dateKey) ?? [];
+                const isToday = dateKey === todayKey;
+                const weekend = isWeekend(date);
+                const hasEntries = entries.length > 0;
+                const isSelected = selectedDate === dateKey;
+                return (
+                  <div key={idx} onClick={() => inMonth && handleDateClick(dateKey)}
+                    className={cn('min-h-[90px] border-b border-r border-slate-100 px-1.5 py-1 cursor-pointer transition-colors',
+                      !inMonth && 'bg-slate-50/50 opacity-40', inMonth && weekend && !hasEntries && 'bg-slate-50',
+                      inMonth && hasEntries && 'bg-red-50/30', isSelected && 'ring-2 ring-inset ring-blue-500 bg-blue-50/30',
+                      inMonth && !hasEntries && !weekend && 'hover:bg-blue-50/20')}>
+                    <div className="flex items-center justify-between">
+                      <span className={cn('text-[13px] font-medium', !inMonth ? 'text-slate-300' : isToday ? 'text-white bg-blue-600 rounded-full w-7 h-7 flex items-center justify-center' : 'text-slate-700', weekend && inMonth && !isToday && 'text-slate-400')}>
+                        {date.getDate()}
+                      </span>
+                      {weekend && inMonth && <span className="text-[9px] text-slate-400 font-medium">Weekend</span>}
+                    </div>
+                    {entries.map((entry: any) => {
+                      const style = TYPE_STYLES[entry.type] ?? TYPE_STYLES.special;
+                      return (
+                        <div key={entry.id} className={cn('mt-1 rounded px-1.5 py-0.5 text-[10px] font-medium flex items-center justify-between group', style.bg, style.text)} onClick={(e) => e.stopPropagation()}>
+                          <span className="truncate">{entry.name}</span>
+                          <button onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${entry.name}"?`)) deleteMutation.mutate(entry.id); }}
+                            className="hidden group-hover:flex h-4 w-4 items-center justify-center rounded hover:bg-white/50 shrink-0">
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ═══ YEAR VIEW ═══ */}
+      {viewMode === 'year' && (
+        <>
+          <div className="flex items-center justify-between">
+            <button onClick={() => setViewYear(viewYear - 1)} className="rounded-md p-2 hover:bg-slate-100"><ChevronLeft className="h-5 w-5" /></button>
+            <div className="text-center">
+              <h2 className="text-lg font-bold text-slate-900">{viewYear}</h2>
+              <p className="text-[12px] text-slate-400">
+                <span className="font-semibold text-slate-700">{yearTotalWorking}</span> working days
+                {yearTotalHolidays > 0 && <> · <span className="text-red-500">{yearTotalHolidays} holidays</span></>}
+              </p>
+            </div>
+            <button onClick={() => setViewYear(viewYear + 1)} className="rounded-md p-2 hover:bg-slate-100"><ChevronRight className="h-5 w-5" /></button>
+          </div>
+
+          <div className="grid grid-cols-3 lg:grid-cols-4 gap-3">
+            {yearMonths.map((m) => {
+              const isCurrent = viewYear === today.getFullYear() && m.index === today.getMonth();
+              return (
+                <div key={m.index}
+                  className={cn('rounded-[14px] border bg-white p-4 cursor-pointer hover:border-blue-300 transition-colors',
+                    isCurrent ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200')}
+                  onClick={() => { setViewMonth(m.index); setViewMode('month'); }}>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className={cn('text-sm font-semibold', isCurrent ? 'text-blue-600' : 'text-slate-900')}>{m.name}</h3>
+                    {m.holidays > 0 && (
+                      <span className="text-[10px] font-bold text-red-600 bg-red-50 rounded px-1.5 py-0.5">{m.holidays}</span>
+                    )}
+                  </div>
+
+                  {/* Stats */}
+                  <div className="grid grid-cols-3 gap-2 text-center mb-3">
+                    <div>
+                      <p className="text-lg font-bold text-slate-700">{m.working}</p>
+                      <p className="text-[9px] text-slate-400">Working</p>
+                    </div>
+                    <div>
+                      <p className={cn('text-lg font-bold', m.holidays > 0 ? 'text-red-600' : 'text-slate-300')}>{m.holidays}</p>
+                      <p className="text-[9px] text-slate-400">Holidays</p>
+                    </div>
+                    <div>
+                      <p className="text-lg font-bold text-slate-400">{m.total}</p>
+                      <p className="text-[9px] text-slate-400">Total</p>
+                    </div>
+                  </div>
+
+                  {/* Working days progress bar */}
+                  <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden mb-2">
+                    <div className="h-full bg-blue-500 rounded-full" style={{ width: `${(m.working / m.total) * 100}%` }} />
+                  </div>
+
+                  {/* Holiday names */}
+                  {m.holidayList.length > 0 && (
+                    <div className="space-y-0.5">
+                      {m.holidayList.slice(0, 3).map((h: any, i: number) => {
+                        const style = TYPE_STYLES[h.type] ?? TYPE_STYLES.special;
+                        return (
+                          <div key={i} className="flex items-center gap-1.5">
+                            <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', style.dot)} />
+                            <span className="text-[10px] text-slate-500 truncate">{h.day} - {h.name}</span>
+                          </div>
+                        );
+                      })}
+                      {m.holidayList.length > 3 && (
+                        <span className="text-[10px] text-slate-400">+{m.holidayList.length - 3} more</span>
+                      )}
+                    </div>
                   )}
                 </div>
+              );
+            })}
+          </div>
 
-                {/* Calendar entries */}
-                {entries.map((entry: any) => {
-                  const style = TYPE_STYLES[entry.type] ?? TYPE_STYLES.special;
+          {/* Year summary table */}
+          <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+            <div className="bg-slate-50 px-5 py-3 border-b border-slate-200">
+              <h3 className="text-[13px] font-semibold text-slate-700">{viewYear} Summary</h3>
+            </div>
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr className="bg-[#FAFBFC] text-[11px] uppercase text-slate-400 tracking-[0.05em]">
+                  <th className="px-5 py-2.5 text-left font-semibold">Month</th>
+                  <th className="px-5 py-2.5 text-center font-semibold">Working</th>
+                  <th className="px-5 py-2.5 text-center font-semibold">Holidays</th>
+                  <th className="px-5 py-2.5 text-center font-semibold">Weekends</th>
+                  <th className="px-5 py-2.5 text-center font-semibold">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {yearMonths.map((m) => {
+                  const isCurrent = viewYear === today.getFullYear() && m.index === today.getMonth();
                   return (
-                    <div
-                      key={entry.id}
-                      className={cn('mt-1 rounded px-1.5 py-0.5 text-[10px] font-medium flex items-center justify-between group', style.bg, style.text)}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <span className="truncate">{entry.name}</span>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${entry.name}"?`)) deleteMutation.mutate(entry.id); }}
-                        className="hidden group-hover:flex h-4 w-4 items-center justify-center rounded hover:bg-white/50 shrink-0"
-                      >
-                        <X className="h-2.5 w-2.5" />
-                      </button>
-                    </div>
+                    <tr key={m.index} className={cn('border-t border-slate-100 hover:bg-slate-50 cursor-pointer', isCurrent && 'bg-blue-50/30')}
+                      onClick={() => { setViewMonth(m.index); setViewMode('month'); }}>
+                      <td className={cn('px-5 py-2.5 font-medium', isCurrent ? 'text-blue-600' : 'text-slate-700')}>{m.name}</td>
+                      <td className="px-5 py-2.5 text-center font-mono font-semibold text-slate-700">{m.working}</td>
+                      <td className="px-5 py-2.5 text-center font-mono">
+                        {m.holidays > 0 ? <span className="font-semibold text-red-600">{m.holidays}</span> : <span className="text-slate-300">0</span>}
+                      </td>
+                      <td className="px-5 py-2.5 text-center font-mono text-slate-400">{m.weekends}</td>
+                      <td className="px-5 py-2.5 text-center font-mono text-slate-400">{m.total}</td>
+                    </tr>
                   );
                 })}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+                <tr className="border-t-2 border-slate-200 bg-slate-50 font-bold">
+                  <td className="px-5 py-2.5 text-slate-900">Total</td>
+                  <td className="px-5 py-2.5 text-center font-mono text-slate-900">{yearTotalWorking}</td>
+                  <td className="px-5 py-2.5 text-center font-mono text-red-600">{yearTotalHolidays}</td>
+                  <td className="px-5 py-2.5 text-center font-mono text-slate-400">{yearMonths.reduce((s, m) => s + m.weekends, 0)}</td>
+                  <td className="px-5 py-2.5 text-center font-mono text-slate-400">{yearMonths.reduce((s, m) => s + m.total, 0)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
 
       {/* Add Day Form (appears when a date is clicked) */}
       {showAddForm && selectedDate && (
