@@ -17,11 +17,11 @@ export class ExecutionBoardController {
   @ApiOperation({ summary: 'Get execution board data (zone × phase matrix)' })
   getData(
     @Query('projectId') projectId?: string,
-    @Query('serviceTypeId') serviceTypeId?: string,
+    @Query('serviceId') serviceId?: string,
   ) {
     return this.service.getData(
       projectId ? +projectId : undefined,
-      serviceTypeId ? +serviceTypeId : undefined,
+      serviceId ? +serviceId : undefined,
     );
   }
 }

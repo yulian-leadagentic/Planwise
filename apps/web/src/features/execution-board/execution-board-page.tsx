@@ -6,18 +6,17 @@ import { PageHeader } from '@/components/shared/page-header';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { ProjectSelect } from '@/components/shared/project-select';
 import { EmptyState } from '@/components/shared/empty-state';
-import { STATUS_COLORS } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 
 interface Phase {
   id: number;
   name: string;
+  code: string | null;
   color: string | null;
-  sortOrder: number;
 }
 
-interface ServiceType {
+interface Service {
   id: number;
   name: string;
   code: string | null;
@@ -35,9 +34,10 @@ interface Task {
   status: string;
   completionPct: number;
   zoneId: number;
+  serviceTypeId: number | null;
   phaseId: number | null;
-  serviceType: ServiceType | null;
-  phase: Phase | null;
+  serviceType: Phase | null;
+  phase: Service | null;
   assignees: Assignee[];
 }
 
@@ -61,7 +61,7 @@ interface BoardData {
   projects: Project[];
   zones: Record<number, ZoneNode[]>;
   tasks: Task[];
-  serviceTypes: ServiceType[];
+  services: Service[];
   phases: Phase[];
 }
 
@@ -77,39 +77,38 @@ interface FlatRow {
   number?: string | null;
 }
 
-function useExecutionBoard(projectId?: number | null, serviceTypeId?: number | null) {
+function useExecutionBoard(projectId?: number | null, serviceId?: number | null) {
   return useQuery<BoardData>({
-    queryKey: ['execution-board', projectId, serviceTypeId],
+    queryKey: ['execution-board', projectId, serviceId],
     queryFn: () =>
       client
         .get('/execution-board', {
           params: {
             ...(projectId ? { projectId } : {}),
-            ...(serviceTypeId ? { serviceTypeId } : {}),
+            ...(serviceId ? { serviceId } : {}),
           },
         })
         .then((r) => r.data?.data ?? r.data),
   });
 }
 
-function TaskCard({ task, onClick }: { task: Task; onClick: () => void }) {
-  const statusClass = STATUS_COLORS[task.status] ?? 'bg-gray-100 text-gray-700';
-  const dotColor: Record<string, string> = {
-    not_started: 'bg-gray-400',
-    in_progress: 'bg-blue-500',
-    in_review: 'bg-purple-500',
-    completed: 'bg-emerald-500',
-    on_hold: 'bg-yellow-500',
-    cancelled: 'bg-red-500',
-  };
+const DOT_COLOR: Record<string, string> = {
+  not_started: 'bg-gray-400',
+  in_progress: 'bg-blue-500',
+  in_review: 'bg-purple-500',
+  completed: 'bg-emerald-500',
+  on_hold: 'bg-yellow-500',
+  cancelled: 'bg-red-500',
+};
 
+function TaskCard({ task, onClick }: { task: Task; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
       className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-left shadow-sm transition-colors hover:border-blue-300 hover:shadow"
     >
       <div className="flex items-center gap-1.5">
-        <span className={cn('h-2 w-2 shrink-0 rounded-full', dotColor[task.status] ?? 'bg-gray-400')} />
+        <span className={cn('h-2 w-2 shrink-0 rounded-full', DOT_COLOR[task.status] ?? 'bg-gray-400')} />
         <span className="flex-1 truncate text-[12px] font-medium text-slate-700">{task.name}</span>
         <span className="shrink-0 text-[11px] font-semibold text-slate-400">{task.completionPct}%</span>
       </div>
@@ -138,10 +137,10 @@ function TaskCard({ task, onClick }: { task: Task; onClick: () => void }) {
 export function ExecutionBoardPage() {
   const navigate = useNavigate();
   const [projectId, setProjectId] = useState<number | null>(null);
-  const [serviceTypeId, setServiceTypeId] = useState<number | null>(null);
+  const [serviceId, setServiceId] = useState<number | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
-  const { data, isLoading } = useExecutionBoard(projectId, serviceTypeId);
+  const { data, isLoading } = useExecutionBoard(projectId, serviceId);
 
   const toggleExpand = useCallback((key: string) => {
     setExpandedIds((prev) => {
@@ -152,13 +151,16 @@ export function ExecutionBoardPage() {
     });
   }, []);
 
+  // DB ServiceType = UI "Phases" (matrix columns)
   const phases = data?.phases ?? [];
-  const serviceTypes = data?.serviceTypes ?? [];
+  // DB Phase = UI "Services" (filter dropdown)
+  const services = data?.services ?? [];
 
+  // Matrix key: zoneId × serviceTypeId (DB field = UI "phase" column)
   const taskMatrix = useMemo(() => {
     const map = new Map<string, Task[]>();
     for (const task of data?.tasks ?? []) {
-      const key = `${task.zoneId}-${task.phaseId ?? 0}`;
+      const key = `${task.zoneId}-${task.serviceTypeId ?? 0}`;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(task);
     }
@@ -233,7 +235,6 @@ export function ExecutionBoardPage() {
         description="Zone × Phase task matrix across projects"
       />
 
-      {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
         <ProjectSelect
           value={projectId}
@@ -242,20 +243,19 @@ export function ExecutionBoardPage() {
           className="w-64"
         />
         <select
-          value={serviceTypeId ?? ''}
-          onChange={(e) => setServiceTypeId(e.target.value ? +e.target.value : null)}
+          value={serviceId ?? ''}
+          onChange={(e) => setServiceId(e.target.value ? +e.target.value : null)}
           className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
         >
           <option value="">All Services</option>
-          {serviceTypes.map((st) => (
-            <option key={st.id} value={st.id}>
-              {st.name}
+          {services.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
             </option>
           ))}
         </select>
       </div>
 
-      {/* Matrix table */}
       {flatRows.length === 0 ? (
         <EmptyState
           icon={Grid3X3}
@@ -291,7 +291,6 @@ export function ExecutionBoardPage() {
                       </div>
                     </th>
                   ))}
-                  {/* "No Phase" column for tasks without a phase */}
                   <th className="px-3 py-2.5 text-center font-semibold min-w-[180px] text-slate-400">
                     No Phase
                   </th>
@@ -329,10 +328,6 @@ export function ExecutionBoardPage() {
                       </tr>
                     );
                   }
-
-                  const zoneHasTasks = phases.some(
-                    (p) => (taskMatrix.get(`${row.id}-${p.id}`)?.length ?? 0) > 0,
-                  ) || (taskMatrix.get(`${row.id}-0`)?.length ?? 0) > 0;
 
                   return (
                     <tr
@@ -391,7 +386,6 @@ export function ExecutionBoardPage() {
                           </td>
                         );
                       })}
-                      {/* No Phase column */}
                       <td className="px-2 py-1.5 align-top">
                         {(taskMatrix.get(`${row.id}-0`) ?? []).length > 0 && (
                           <div className="flex flex-col gap-1">

@@ -21,7 +21,7 @@ const templateCards = [
     title: 'Phase/Milestone Templates',
     description: 'Groups of tasks from the catalog assigned to a phase or milestone',
     icon: Copy,
-    href: '/templates/service',
+    href: '/templates/phases',
     color: 'bg-amber-100 text-amber-700',
   },
   {
@@ -35,7 +35,7 @@ const templateCards = [
     title: 'Services',
     description: 'Manage services: e.g. ניהול מודל, תאום מערכות',
     icon: ListChecks,
-    href: '/templates/phases',
+    href: '/templates/services',
     color: 'bg-cyan-100 text-cyan-700',
   },
   {

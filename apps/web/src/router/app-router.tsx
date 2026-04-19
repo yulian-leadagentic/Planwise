@@ -30,10 +30,10 @@ import { MilestonesPage } from '@/features/reports/milestones-page';
 import { BillingForecastPage } from '@/features/reports/billing-forecast-page';
 import { TemplatesPage } from '@/features/templates/templates-page';
 import { TaskCatalogPage } from '@/features/templates/task-catalog-page';
-import { ServiceTemplatesPage } from '@/features/templates/service-templates-page';
+import { ServiceTemplatesPage } from '@/features/templates/phase-templates-page';
 import { ZoneTemplatesPage } from '@/features/templates/zone-templates-page';
 import { TeamTemplatesPage } from '@/features/templates/team-templates-page';
-import { PhasesPage } from '@/features/templates/phases-page';
+import { PhasesPage } from '@/features/templates/services-page';
 import { TypesPage } from '@/features/templates/types-page';
 import { AdminPage } from '@/features/admin/admin-page';
 import { RolesPage } from '@/features/admin/roles-page';
@@ -115,10 +115,10 @@ export function AppRouter() {
         {/* Templates */}
         <Route path="templates" element={<TemplatesPage />} />
         <Route path="templates/task-catalog" element={<TaskCatalogPage />} />
-        <Route path="templates/service" element={<ServiceTemplatesPage />} />
+        <Route path="templates/phases" element={<ServiceTemplatesPage />} />
         <Route path="templates/zone" element={<ZoneTemplatesPage />} />
         <Route path="templates/team" element={<TeamTemplatesPage />} />
-        <Route path="templates/phases" element={<PhasesPage />} />
+        <Route path="templates/services" element={<PhasesPage />} />
         <Route path="templates/types" element={<TypesPage />} />
         <Route path="templates/project-types" element={<ProjectTypesPage />} />
 

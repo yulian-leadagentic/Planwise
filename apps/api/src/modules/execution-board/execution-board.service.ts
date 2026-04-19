@@ -5,7 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class ExecutionBoardService {
   constructor(private prisma: PrismaService) {}
 
-  async getData(projectId?: number, serviceTypeId?: number) {
+  async getData(projectId?: number, serviceId?: number) {
     const projectWhere: any = {
       deletedAt: null,
       status: { in: ['active', 'on_hold'] },
@@ -20,10 +20,10 @@ export class ExecutionBoardService {
 
     const projectIds = projects.map((p) => p.id);
     if (projectIds.length === 0) {
-      return { projects: [], zones: {}, tasks: [], serviceTypes: [], phases: [] };
+      return { projects: [], zones: {}, tasks: [], services: [], phases: [] };
     }
 
-    const [flatZones, tasks, serviceTypes, phases] = await Promise.all([
+    const [flatZones, tasks, phases, services] = await Promise.all([
       this.prisma.zone.findMany({
         where: { projectId: { in: projectIds }, deletedAt: null },
         orderBy: [{ path: 'asc' }, { sortOrder: 'asc' }],
@@ -33,7 +33,7 @@ export class ExecutionBoardService {
           projectId: { in: projectIds },
           deletedAt: null,
           isArchived: false,
-          ...(serviceTypeId ? { serviceTypeId } : {}),
+          ...(serviceId ? { phaseId: serviceId } : {}),
         },
         include: {
           zone: { select: { id: true, name: true } },
@@ -50,7 +50,9 @@ export class ExecutionBoardService {
         },
         orderBy: [{ zoneId: 'asc' }, { sortOrder: 'asc' }],
       }),
+      // DB ServiceType = UI "Phases/Milestones" (matrix columns)
       this.prisma.serviceType.findMany({ orderBy: { sortOrder: 'asc' } }),
+      // DB Phase = UI "Services" (filter dropdown)
       this.prisma.phase.findMany({ orderBy: { sortOrder: 'asc' } }),
     ]);
 
@@ -74,6 +76,6 @@ export class ExecutionBoardService {
       zones[pid] = roots;
     }
 
-    return { projects, zones, tasks, serviceTypes, phases };
+    return { projects, zones, tasks, services, phases };
   }
 }
