@@ -8,7 +8,6 @@ export class ExecutionBoardService {
   async getData(projectId?: number, serviceId?: number) {
     const projectWhere: any = {
       deletedAt: null,
-      status: { in: ['active', 'on_hold'] },
     };
     if (projectId) projectWhere.id = projectId;
 

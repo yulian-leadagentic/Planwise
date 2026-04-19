@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronRight, Grid3X3, FolderKanban } from 'lucide-react';
@@ -110,6 +110,29 @@ const DOT_COLOR: Record<string, string> = {
   cancelled: 'bg-red-500',
 };
 
+function CompletionBar({ pct }: { pct: number }) {
+  const color =
+    pct >= 100 ? 'bg-emerald-500' : pct >= 60 ? 'bg-blue-500' : pct >= 30 ? 'bg-amber-500' : 'bg-slate-400';
+  const textColor =
+    pct >= 100
+      ? 'text-emerald-600'
+      : pct >= 60
+        ? 'text-blue-600'
+        : pct >= 30
+          ? 'text-amber-600'
+          : 'text-slate-500';
+  return (
+    <div className="flex items-center gap-1.5 ml-auto shrink-0">
+      <div className="w-[40px] h-[4px] bg-slate-200 rounded-full overflow-hidden">
+        <div className={cn('h-full rounded-full', color)} style={{ width: `${Math.min(pct, 100)}%` }} />
+      </div>
+      <span className={cn('text-[10px] font-bold tabular-nums min-w-[28px] text-right', textColor)}>
+        {pct}%
+      </span>
+    </div>
+  );
+}
+
 function TaskCard({ task, onClick }: { task: Task; onClick: () => void }) {
   return (
     <button
@@ -148,8 +171,23 @@ export function ExecutionBoardPage() {
   const [projectId, setProjectId] = useState<number | null>(null);
   const [serviceId, setServiceId] = useState<number | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const didAutoExpand = useRef(false);
 
   const { data, isLoading } = useExecutionBoard(projectId, serviceId);
+
+  // Auto-expand all projects + first-level zones on initial load
+  useEffect(() => {
+    if (!data || didAutoExpand.current) return;
+    didAutoExpand.current = true;
+    const keys = new Set<string>();
+    for (const project of data.projects) {
+      keys.add(`project-${project.id}`);
+      for (const zone of data.zones[project.id] ?? []) {
+        keys.add(`zone-${zone.id}`);
+      }
+    }
+    setExpandedIds(keys);
+  }, [data]);
 
   const toggleExpand = useCallback((key: string) => {
     setExpandedIds((prev) => {
@@ -162,14 +200,62 @@ export function ExecutionBoardPage() {
 
   const services = data?.services ?? [];
 
-  // Extract phase/milestone columns from tasks — only phases present in the data
-  const { phaseColumns, taskMatrix } = useMemo(() => {
+  // Build zone descendant map for completion aggregation
+  const zoneDescendants = useMemo(() => {
+    if (!data) return new Map<number, Set<number>>();
+    const map = new Map<number, Set<number>>();
+
+    function collect(node: ZoneNode): Set<number> {
+      const ids = new Set<number>([node.id]);
+      for (const child of node.children ?? []) {
+        for (const id of collect(child)) ids.add(id);
+      }
+      map.set(node.id, ids);
+      return ids;
+    }
+
+    for (const project of data.projects) {
+      for (const root of data.zones[project.id] ?? []) {
+        collect(root);
+      }
+    }
+    return map;
+  }, [data]);
+
+  // Compute zone completion: avg completionPct across zone + all descendant zones
+  const zoneCompletion = useMemo(() => {
+    const tasks = data?.tasks ?? [];
+    const zoneTaskMap = new Map<number, number[]>();
+    for (const t of tasks) {
+      if (!zoneTaskMap.has(t.zoneId)) zoneTaskMap.set(t.zoneId, []);
+      zoneTaskMap.get(t.zoneId)!.push(t.completionPct);
+    }
+
+    const result = new Map<number, number>();
+    for (const [zoneId, descIds] of zoneDescendants) {
+      let total = 0;
+      let count = 0;
+      for (const id of descIds) {
+        const pcts = zoneTaskMap.get(id);
+        if (pcts) {
+          for (const p of pcts) {
+            total += p;
+            count++;
+          }
+        }
+      }
+      if (count > 0) result.set(zoneId, Math.round(total / count));
+    }
+    return result;
+  }, [data?.tasks, zoneDescendants]);
+
+  // Extract phase/milestone columns from tasks
+  const { phaseColumns, taskMatrix, hasNoPhase } = useMemo(() => {
     const tasks = data?.tasks ?? [];
     const templates = data?.templates ?? [];
-    const templateNameSet = new Set(templates.map((t) => t.name));
 
     const nameToTasks = new Map<string, Task[]>();
-    const noPhase: Task[] = [];
+    let _hasNoPhase = false;
 
     for (const task of tasks) {
       const phaseName = getTaskPhaseName(task);
@@ -177,24 +263,18 @@ export function ExecutionBoardPage() {
         if (!nameToTasks.has(phaseName)) nameToTasks.set(phaseName, []);
         nameToTasks.get(phaseName)!.push(task);
       } else {
-        noPhase.push(task);
+        _hasNoPhase = true;
       }
     }
 
-    // Build ordered column list: template order first, then any extra names alphabetically
     const orderedColumns: string[] = [];
     for (const tpl of templates) {
-      if (nameToTasks.has(tpl.name)) {
-        orderedColumns.push(tpl.name);
-      }
+      if (nameToTasks.has(tpl.name)) orderedColumns.push(tpl.name);
     }
     for (const name of nameToTasks.keys()) {
-      if (!orderedColumns.includes(name)) {
-        orderedColumns.push(name);
-      }
+      if (!orderedColumns.includes(name)) orderedColumns.push(name);
     }
 
-    // Build zone×phase matrix
     const matrix = new Map<string, Task[]>();
     for (const task of tasks) {
       const phaseName = getTaskPhaseName(task) ?? '__none__';
@@ -203,7 +283,7 @@ export function ExecutionBoardPage() {
       matrix.get(key)!.push(task);
     }
 
-    return { phaseColumns: orderedColumns, taskMatrix: matrix };
+    return { phaseColumns: orderedColumns, taskMatrix: matrix, hasNoPhase: _hasNoPhase };
   }, [data?.tasks, data?.templates]);
 
   const flatRows = useMemo(() => {
@@ -255,16 +335,6 @@ export function ExecutionBoardPage() {
     return result;
   }, [data, projectId, expandedIds]);
 
-  // Auto-expand all projects on first load
-  useMemo(() => {
-    if (!data || projectId) return;
-    const projectKeys = data.projects.map((p) => `project-${p.id}`);
-    setExpandedIds((prev) => {
-      if (prev.size > 0) return prev;
-      return new Set(projectKeys);
-    });
-  }, [data, projectId]);
-
   if (isLoading) return <PageSkeleton />;
 
   return (
@@ -277,7 +347,10 @@ export function ExecutionBoardPage() {
       <div className="flex flex-wrap items-center gap-3">
         <ProjectSelect
           value={projectId}
-          onChange={setProjectId}
+          onChange={(id) => {
+            setProjectId(id);
+            didAutoExpand.current = false;
+          }}
           placeholder="All Projects"
           className="w-64"
         />
@@ -311,7 +384,7 @@ export function ExecutionBoardPage() {
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
-                  <th className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left font-semibold min-w-[260px] border-r border-slate-200">
+                  <th className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left font-semibold min-w-[300px] border-r border-slate-200">
                     Zone
                   </th>
                   {phaseColumns.map((name) => (
@@ -322,7 +395,7 @@ export function ExecutionBoardPage() {
                       {name}
                     </th>
                   ))}
-                  {(taskMatrix.get('__none__') || [...taskMatrix.keys()].some((k) => k.endsWith('|__none__'))) && (
+                  {hasNoPhase && (
                     <th className="px-3 py-2.5 text-center font-semibold min-w-[180px] text-slate-400">
                       No Phase
                     </th>
@@ -332,7 +405,7 @@ export function ExecutionBoardPage() {
               <tbody>
                 {flatRows.map((row) => {
                   if (row.type === 'project') {
-                    const totalCols = phaseColumns.length + 2;
+                    const totalCols = phaseColumns.length + (hasNoPhase ? 2 : 1);
                     return (
                       <tr
                         key={row.key}
@@ -363,7 +436,7 @@ export function ExecutionBoardPage() {
                     );
                   }
 
-                  const hasNoPhase = [...taskMatrix.keys()].some((k) => k.endsWith('|__none__'));
+                  const pct = zoneCompletion.get(row.id);
 
                   return (
                     <tr
@@ -399,6 +472,7 @@ export function ExecutionBoardPage() {
                               {row.zoneType}
                             </span>
                           )}
+                          {pct != null && <CompletionBar pct={pct} />}
                         </div>
                       </td>
                       {phaseColumns.map((phaseName) => {
