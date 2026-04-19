@@ -217,7 +217,14 @@ export function CalendarDaysPage() {
     setShowImport(false);
   };
 
-  // Calculate working days for current view month
+  const holidayDates = useMemo(() => {
+    const set = new Set<string>();
+    for (const d of (data ?? [])) {
+      if (d.date) set.add(typeof d.date === 'string' ? d.date.split('T')[0] : formatDateKey(new Date(d.date)));
+    }
+    return set;
+  }, [data]);
+
   const monthWorkingDays = countMonthWorkingDays(viewYear, viewMonth, holidayDates);
 
   return (
