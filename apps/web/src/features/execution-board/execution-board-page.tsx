@@ -9,11 +9,13 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 
-interface Phase {
+const SERVICE_RE = /^\[SERVICE:(.+)\]$/;
+
+interface TemplateRef {
   id: number;
   name: string;
   code: string | null;
-  color: string | null;
+  phaseId: number | null;
 }
 
 interface Service {
@@ -31,12 +33,13 @@ interface Task {
   id: number;
   code: string;
   name: string;
+  description: string | null;
   status: string;
   completionPct: number;
   zoneId: number;
   serviceTypeId: number | null;
   phaseId: number | null;
-  serviceType: Phase | null;
+  serviceType: { id: number; name: string; code: string | null; color: string | null } | null;
   phase: Service | null;
   assignees: Assignee[];
 }
@@ -62,7 +65,7 @@ interface BoardData {
   zones: Record<number, ZoneNode[]>;
   tasks: Task[];
   services: Service[];
-  phases: Phase[];
+  templates: TemplateRef[];
 }
 
 interface FlatRow {
@@ -75,6 +78,12 @@ interface FlatRow {
   projectId?: number;
   zoneType?: string;
   number?: string | null;
+}
+
+function getTaskPhaseName(task: Task): string | null {
+  if (task.serviceType?.name) return task.serviceType.name;
+  const m = task.description?.match(SERVICE_RE);
+  return m ? m[1] : null;
 }
 
 function useExecutionBoard(projectId?: number | null, serviceId?: number | null) {
@@ -151,21 +160,51 @@ export function ExecutionBoardPage() {
     });
   }, []);
 
-  // DB ServiceType = UI "Phases" (matrix columns)
-  const phases = data?.phases ?? [];
-  // DB Phase = UI "Services" (filter dropdown)
   const services = data?.services ?? [];
 
-  // Matrix key: zoneId × serviceTypeId (DB field = UI "phase" column)
-  const taskMatrix = useMemo(() => {
-    const map = new Map<string, Task[]>();
-    for (const task of data?.tasks ?? []) {
-      const key = `${task.zoneId}-${task.serviceTypeId ?? 0}`;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(task);
+  // Extract phase/milestone columns from tasks — only phases present in the data
+  const { phaseColumns, taskMatrix } = useMemo(() => {
+    const tasks = data?.tasks ?? [];
+    const templates = data?.templates ?? [];
+    const templateNameSet = new Set(templates.map((t) => t.name));
+
+    const nameToTasks = new Map<string, Task[]>();
+    const noPhase: Task[] = [];
+
+    for (const task of tasks) {
+      const phaseName = getTaskPhaseName(task);
+      if (phaseName) {
+        if (!nameToTasks.has(phaseName)) nameToTasks.set(phaseName, []);
+        nameToTasks.get(phaseName)!.push(task);
+      } else {
+        noPhase.push(task);
+      }
     }
-    return map;
-  }, [data?.tasks]);
+
+    // Build ordered column list: template order first, then any extra names alphabetically
+    const orderedColumns: string[] = [];
+    for (const tpl of templates) {
+      if (nameToTasks.has(tpl.name)) {
+        orderedColumns.push(tpl.name);
+      }
+    }
+    for (const name of nameToTasks.keys()) {
+      if (!orderedColumns.includes(name)) {
+        orderedColumns.push(name);
+      }
+    }
+
+    // Build zone×phase matrix
+    const matrix = new Map<string, Task[]>();
+    for (const task of tasks) {
+      const phaseName = getTaskPhaseName(task) ?? '__none__';
+      const key = `${task.zoneId}|${phaseName}`;
+      if (!matrix.has(key)) matrix.set(key, []);
+      matrix.get(key)!.push(task);
+    }
+
+    return { phaseColumns: orderedColumns, taskMatrix: matrix };
+  }, [data?.tasks, data?.templates]);
 
   const flatRows = useMemo(() => {
     if (!data) return [];
@@ -275,30 +314,25 @@ export function ExecutionBoardPage() {
                   <th className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left font-semibold min-w-[260px] border-r border-slate-200">
                     Zone
                   </th>
-                  {phases.map((phase) => (
+                  {phaseColumns.map((name) => (
                     <th
-                      key={phase.id}
+                      key={name}
                       className="px-3 py-2.5 text-center font-semibold min-w-[180px] border-r border-slate-100 last:border-r-0"
                     >
-                      <div className="flex items-center justify-center gap-1.5">
-                        {phase.color && (
-                          <span
-                            className="h-2.5 w-2.5 rounded-full"
-                            style={{ backgroundColor: phase.color }}
-                          />
-                        )}
-                        {phase.name}
-                      </div>
+                      {name}
                     </th>
                   ))}
-                  <th className="px-3 py-2.5 text-center font-semibold min-w-[180px] text-slate-400">
-                    No Phase
-                  </th>
+                  {(taskMatrix.get('__none__') || [...taskMatrix.keys()].some((k) => k.endsWith('|__none__'))) && (
+                    <th className="px-3 py-2.5 text-center font-semibold min-w-[180px] text-slate-400">
+                      No Phase
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody>
                 {flatRows.map((row) => {
                   if (row.type === 'project') {
+                    const totalCols = phaseColumns.length + 2;
                     return (
                       <tr
                         key={row.key}
@@ -307,7 +341,7 @@ export function ExecutionBoardPage() {
                       >
                         <td
                           className="sticky left-0 z-10 bg-slate-50/60 px-4 py-2.5 border-r border-slate-200"
-                          colSpan={phases.length + 2}
+                          colSpan={totalCols}
                         >
                           <div className="flex items-center gap-2">
                             <ChevronRight
@@ -328,6 +362,8 @@ export function ExecutionBoardPage() {
                       </tr>
                     );
                   }
+
+                  const hasNoPhase = [...taskMatrix.keys()].some((k) => k.endsWith('|__none__'));
 
                   return (
                     <tr
@@ -365,11 +401,11 @@ export function ExecutionBoardPage() {
                           )}
                         </div>
                       </td>
-                      {phases.map((phase) => {
-                        const cellTasks = taskMatrix.get(`${row.id}-${phase.id}`) ?? [];
+                      {phaseColumns.map((phaseName) => {
+                        const cellTasks = taskMatrix.get(`${row.id}|${phaseName}`) ?? [];
                         return (
                           <td
-                            key={phase.id}
+                            key={phaseName}
                             className="px-2 py-1.5 align-top border-r border-slate-100 last:border-r-0"
                           >
                             {cellTasks.length > 0 && (
@@ -386,19 +422,21 @@ export function ExecutionBoardPage() {
                           </td>
                         );
                       })}
-                      <td className="px-2 py-1.5 align-top">
-                        {(taskMatrix.get(`${row.id}-0`) ?? []).length > 0 && (
-                          <div className="flex flex-col gap-1">
-                            {(taskMatrix.get(`${row.id}-0`) ?? []).map((task) => (
-                              <TaskCard
-                                key={task.id}
-                                task={task}
-                                onClick={() => navigate(`/tasks/${task.id}`)}
-                              />
-                            ))}
-                          </div>
-                        )}
-                      </td>
+                      {hasNoPhase && (
+                        <td className="px-2 py-1.5 align-top">
+                          {(taskMatrix.get(`${row.id}|__none__`) ?? []).length > 0 && (
+                            <div className="flex flex-col gap-1">
+                              {(taskMatrix.get(`${row.id}|__none__`) ?? []).map((task) => (
+                                <TaskCard
+                                  key={task.id}
+                                  task={task}
+                                  onClick={() => navigate(`/tasks/${task.id}`)}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}

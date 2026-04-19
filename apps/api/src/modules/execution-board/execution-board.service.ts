@@ -20,10 +20,10 @@ export class ExecutionBoardService {
 
     const projectIds = projects.map((p) => p.id);
     if (projectIds.length === 0) {
-      return { projects: [], zones: {}, tasks: [], services: [], phases: [] };
+      return { projects: [], zones: {}, tasks: [], services: [], templates: [] };
     }
 
-    const [flatZones, tasks, phases, services] = await Promise.all([
+    const [flatZones, tasks, services, templates] = await Promise.all([
       this.prisma.zone.findMany({
         where: { projectId: { in: projectIds }, deletedAt: null },
         orderBy: [{ path: 'asc' }, { sortOrder: 'asc' }],
@@ -50,10 +50,18 @@ export class ExecutionBoardService {
         },
         orderBy: [{ zoneId: 'asc' }, { sortOrder: 'asc' }],
       }),
-      // DB ServiceType = UI "Phases/Milestones" (matrix columns)
-      this.prisma.serviceType.findMany({ orderBy: { sortOrder: 'asc' } }),
       // DB Phase = UI "Services" (filter dropdown)
       this.prisma.phase.findMany({ orderBy: { sortOrder: 'asc' } }),
+      // Phase/Milestone Templates (columns) — exclude the task catalog
+      this.prisma.template.findMany({
+        where: {
+          type: 'task_list',
+          code: { not: '__TASK_CATALOG__' },
+          isActive: true,
+        },
+        select: { id: true, name: true, code: true, phaseId: true },
+        orderBy: { createdAt: 'asc' },
+      }),
     ]);
 
     const zones: Record<number, any[]> = {};
@@ -76,6 +84,6 @@ export class ExecutionBoardService {
       zones[pid] = roots;
     }
 
-    return { projects, zones, tasks, services, phases };
+    return { projects, zones, tasks, services, templates };
   }
 }
