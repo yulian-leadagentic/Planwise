@@ -168,12 +168,14 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
     onError: (err: any) => notify.apiError(err, 'Failed to remove permission'),
   });
 
-  const handleToggle = (rm: any, field: 'canRead' | 'canWrite' | 'canDelete') => {
+  const handleToggle = (rm: any, field: 'canRead' | 'canWrite' | 'canDelete' | 'canApprove' | 'canExport') => {
     togglePermission.mutate({
       moduleId: rm.moduleId,
       canRead: field === 'canRead' ? !rm.canRead : rm.canRead,
       canWrite: field === 'canWrite' ? !rm.canWrite : rm.canWrite,
       canDelete: field === 'canDelete' ? !rm.canDelete : rm.canDelete,
+      canApprove: field === 'canApprove' ? !rm.canApprove : (rm.canApprove ?? false),
+      canExport: field === 'canExport' ? !rm.canExport : (rm.canExport ?? false),
     });
   };
 
@@ -235,16 +237,18 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
               <thead>
                 <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
                   <th className="px-4 py-2 text-left font-semibold">Module</th>
-                  <th className="px-4 py-2 text-center font-semibold w-20">Read</th>
-                  <th className="px-4 py-2 text-center font-semibold w-20">Write</th>
-                  <th className="px-4 py-2 text-center font-semibold w-20">Delete</th>
-                  <th className="px-4 py-2 text-center font-semibold w-16"></th>
+                  <th className="px-4 py-2 text-center font-semibold w-16">Read</th>
+                  <th className="px-4 py-2 text-center font-semibold w-16">Write</th>
+                  <th className="px-4 py-2 text-center font-semibold w-16">Delete</th>
+                  <th className="px-4 py-2 text-center font-semibold w-16">Approve</th>
+                  <th className="px-4 py-2 text-center font-semibold w-16">Export</th>
+                  <th className="px-4 py-2 text-center font-semibold w-12"></th>
                 </tr>
               </thead>
               <tbody>
                 {modules.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-400">
+                    <td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-400">
                       No modules assigned. Use the dropdown below to add module permissions.
                     </td>
                   </tr>
@@ -260,6 +264,12 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
                     </td>
                     <td className="px-4 py-2.5 text-center">
                       <PermCheckbox checked={rm.canDelete} onChange={() => handleToggle(rm, 'canDelete')} disabled={togglePermission.isPending} />
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <PermCheckbox checked={rm.canApprove ?? false} onChange={() => handleToggle(rm, 'canApprove')} disabled={togglePermission.isPending} />
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <PermCheckbox checked={rm.canExport ?? false} onChange={() => handleToggle(rm, 'canExport')} disabled={togglePermission.isPending} />
                     </td>
                     <td className="px-4 py-2.5 text-center">
                       <button

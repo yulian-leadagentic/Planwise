@@ -266,12 +266,14 @@ model Module {
 }
 
 model RoleModule {
-  id        Int     @id @default(autoincrement())
-  roleId    Int     @map("role_id")
-  moduleId  Int     @map("module_id")
-  canRead   Boolean @default(false) @map("can_read")
-  canWrite  Boolean @default(false) @map("can_write")
-  canDelete Boolean @default(false) @map("can_delete")
+  id         Int     @id @default(autoincrement())
+  roleId     Int     @map("role_id")
+  moduleId   Int     @map("module_id")
+  canRead    Boolean @default(false) @map("can_read")
+  canWrite   Boolean @default(false) @map("can_write")
+  canDelete  Boolean @default(false) @map("can_delete")
+  canApprove Boolean @default(false) @map("can_approve")
+  canExport  Boolean @default(false) @map("can_export")
 
   role   Role   @relation(fields: [roleId], references: [id])
   module Module @relation(fields: [moduleId], references: [id])

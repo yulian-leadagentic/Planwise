@@ -1,14 +1,40 @@
 import { NavLink } from 'react-router-dom';
+import { useMemo } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { NAV_ITEMS } from '@/lib/constants';
 import { useUIStore } from '@/stores/ui.store';
 import { useIsDesktop } from '@/hooks/use-media-query';
+import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
+
+const NAV_MODULE_MAP: Record<string, string> = {
+  '/': 'dashboard',
+  '/operations': 'operations',
+  '/projects': 'projects',
+  '/my-tasks': 'tasks',
+  '/inbox': 'tasks',
+  '/time': 'time',
+  '/contracts': 'contracts',
+  '/reports': 'reports',
+  '/templates': 'templates',
+  '/admin': 'admin',
+};
 
 export function Sidebar() {
   const isDesktop = useIsDesktop();
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUIStore((s) => s.setSidebarCollapsed);
+
+  const { can, isAdmin } = usePermissions();
+
+  const visibleNavItems = useMemo(() => {
+    if (isAdmin) return NAV_ITEMS;
+    return NAV_ITEMS.filter((item) => {
+      const mod = NAV_MODULE_MAP[item.href];
+      if (!mod) return true;
+      return can(mod, 'read');
+    });
+  }, [can, isAdmin]);
 
   // On tablet, always collapsed unless toggled
   const isCollapsed = !isDesktop || sidebarCollapsed;
@@ -33,7 +59,7 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
-        {NAV_ITEMS.map((item) => (
+        {visibleNavItems.map((item) => (
           <NavLink
             key={item.href}
             to={item.href}

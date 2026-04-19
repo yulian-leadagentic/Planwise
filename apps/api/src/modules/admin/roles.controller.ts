@@ -86,33 +86,30 @@ export class RolesController {
   @ApiOperation({ summary: 'Set module permissions for role' })
   async setModulePermission(
     @Param('id', ParseIntPipe) roleId: number,
-    @Body() body: { moduleId: number; canRead: boolean; canWrite: boolean; canDelete: boolean },
+    @Body() body: { moduleId: number; canRead: boolean; canWrite: boolean; canDelete: boolean; canApprove?: boolean; canExport?: boolean },
   ) {
-    // Upsert permission
     const existing = await this.prisma.roleModule.findFirst({
       where: { roleId, moduleId: body.moduleId },
     });
 
+    const permData = {
+      canRead: body.canRead,
+      canWrite: body.canWrite,
+      canDelete: body.canDelete,
+      canApprove: body.canApprove ?? false,
+      canExport: body.canExport ?? false,
+    };
+
     if (existing) {
       return this.prisma.roleModule.update({
         where: { id: existing.id },
-        data: {
-          canRead: body.canRead,
-          canWrite: body.canWrite,
-          canDelete: body.canDelete,
-        },
+        data: permData,
         include: { module: true },
       });
     }
 
     return this.prisma.roleModule.create({
-      data: {
-        roleId,
-        moduleId: body.moduleId,
-        canRead: body.canRead,
-        canWrite: body.canWrite,
-        canDelete: body.canDelete,
-      },
+      data: { roleId, moduleId: body.moduleId, ...permData },
       include: { module: true },
     });
   }

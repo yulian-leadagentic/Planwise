@@ -1,6 +1,6 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ROLES_KEY, RequiredPermission } from '../decorators/roles.decorator';
+import { ROLES_KEY, OWN_DATA_KEY, RequiredPermission } from '../decorators/roles.decorator';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -12,12 +12,18 @@ export class RolesGuard implements CanActivate {
       context.getClass(),
     ]);
 
+    const isOwnData = this.reflector.getAllAndOverride<boolean>(OWN_DATA_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
     if (!requiredPermissions || requiredPermissions.length === 0) {
       return true;
     }
 
     const { user } = context.switchToHttp().getRequest();
     if (!user || !user.roleModules) {
+      if (isOwnData) return true;
       throw new ForbiddenException('Insufficient permissions');
     }
 
@@ -38,12 +44,17 @@ export class RolesGuard implements CanActivate {
           return userModule.canWrite;
         case 'delete':
           return userModule.canDelete;
+        case 'approve':
+          return userModule.canApprove;
+        case 'export':
+          return userModule.canExport;
         default:
           return false;
       }
     });
 
     if (!hasPermission) {
+      if (isOwnData) return true;
       throw new ForbiddenException('Insufficient permissions');
     }
 

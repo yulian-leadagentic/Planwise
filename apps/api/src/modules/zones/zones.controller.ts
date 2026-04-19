@@ -15,97 +15,97 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { ZonesService } from './zones.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
 
 @ApiTags('Zones')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('zones')
 export class ZonesController {
   constructor(private readonly zonesService: ZonesService) {}
 
   @Post()
+  @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Create a new zone' })
   create(@Body() dto: CreateZoneDto) {
     return this.zonesService.create(dto);
   }
 
   @Get()
+  @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'List zones for a project (flat list)' })
   findAll(@Query('projectId', ParseIntPipe) projectId: number) {
     return this.zonesService.findAll(projectId);
   }
 
   @Get('tree/:projectId')
+  @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get zone tree for a project (nested)' })
   findTree(@Param('projectId', ParseIntPipe) projectId: number) {
     return this.zonesService.findTree(projectId);
   }
 
   @Get(':id')
+  @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get a single zone' })
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.zonesService.findOne(id);
   }
 
   @Patch(':id')
+  @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Update a zone' })
-  update(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateZoneDto,
-  ) {
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateZoneDto) {
     return this.zonesService.update(id, dto);
   }
 
   @Delete(':id')
+  @RequirePermissions({ module: 'projects', action: 'delete' })
   @ApiOperation({ summary: 'Soft delete a zone' })
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.zonesService.remove(id);
   }
 
   @Post(':id/copy-structure')
+  @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Copy zone structure to a new parent' })
-  copyStructure(
-    @Param('id', ParseIntPipe) id: number,
-    @Body('newParentId', ParseIntPipe) newParentId: number,
-  ) {
+  copyStructure(@Param('id', ParseIntPipe) id: number, @Body('newParentId', ParseIntPipe) newParentId: number) {
     return this.zonesService.copyStructure(id, newParentId);
   }
 
   @Post(':id/explode-typical')
+  @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Explode typical zone into individual zones' })
   explodeTypical(@Param('id', ParseIntPipe) id: number) {
     return this.zonesService.explodeTypical(id);
   }
 
   @Post(':id/apply-task-template')
+  @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Apply a task template to a zone' })
-  applyTaskTemplate(
-    @Param('id', ParseIntPipe) id: number,
-    @Body('templateId', ParseIntPipe) templateId: number,
-    @CurrentUser() user: any,
-  ) {
+  applyTaskTemplate(@Param('id', ParseIntPipe) id: number, @Body('templateId', ParseIntPipe) templateId: number, @CurrentUser() user: any) {
     return this.zonesService.applyTaskTemplate(id, templateId, user.id);
   }
 
   @Post(':id/duplicate')
+  @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Duplicate a zone with its tasks and service types' })
-  duplicateZone(
-    @Param('id', ParseIntPipe) id: number,
-    @Body('newName') newName: string,
-    @CurrentUser() user: any,
-  ) {
+  duplicateZone(@Param('id', ParseIntPipe) id: number, @Body('newName') newName: string, @CurrentUser() user: any) {
     return this.zonesService.duplicateZone(id, newName, user.id);
   }
 
   @Post('apply-project-template')
+  @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Apply a zone or combined template to a project' })
   applyProjectTemplate(@Body() body: { projectId: number; templateId: number; zoneName?: string }, @CurrentUser() user: any) {
     return this.zonesService.applyProjectTemplate(body.projectId, body.templateId, user.id, body.zoneName);
   }
 
   @Post('reorder')
+  @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Batch reorder zones' })
   reorder(@Body() body: { items: { id: number; sortOrder: number; parentId?: number | null }[] }) {
     return this.zonesService.batchReorder(body.items);
