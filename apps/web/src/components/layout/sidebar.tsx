@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 const NAV_MODULE_MAP: Record<string, string> = {
   '/': 'dashboard',
   '/operations': 'operations',
+  '/execution-board': 'projects',
   '/projects': 'projects',
   '/my-tasks': 'tasks',
   '/inbox': 'tasks',

@@ -8,6 +8,7 @@ import { DashboardPage } from '@/features/dashboard/dashboard-page';
 import { ManagerDashboard } from '@/features/dashboard/manager-dashboard';
 import { OperationsDashboardPage } from '@/features/dashboard/operations-dashboard';
 import { WorkloadDashboardPage } from '@/features/dashboard/workload-dashboard';
+import { ExecutionBoardPage } from '@/features/execution-board/execution-board-page';
 import { TasksPage } from '@/features/tasks/tasks-page';
 import { TaskDetailPage } from '@/features/tasks/task-detail-page';
 import { MyTimePage } from '@/features/time/my-time-page';
@@ -72,6 +73,7 @@ export function AppRouter() {
         <Route path="operations" element={<OperationsDashboardPage />} />
         <Route path="dashboard/manager" element={<ManagerDashboard />} />
         <Route path="dashboard/workload" element={<WorkloadDashboardPage />} />
+        <Route path="execution-board" element={<ExecutionBoardPage />} />
 
         {/* Tasks */}
         <Route path="tasks" element={<TasksPage />} />

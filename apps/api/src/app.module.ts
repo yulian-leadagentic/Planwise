@@ -23,6 +23,7 @@ import { PhasesModule } from './modules/phases/phases.module';
 import { TemplatesModule } from './modules/templates/templates.module';
 import { MessagesModule } from './modules/messages/messages.module';
 import { ExecutionPlanningModule } from './modules/execution-planning/execution-planning.module';
+import { ExecutionBoardModule } from './modules/execution-board/execution-board.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { ExecutionPlanningModule } from './modules/execution-planning/execution-
     TemplatesModule,
     MessagesModule,
     ExecutionPlanningModule,
+    ExecutionBoardModule,
   ],
 })
 export class AppModule {}
