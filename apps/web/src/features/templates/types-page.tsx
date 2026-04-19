@@ -40,15 +40,13 @@ function saveZoneTypeColors(colors: Record<string, string>) {
 // ---------------------------------------------------------------------------
 // Tab definitions
 // ---------------------------------------------------------------------------
-type TabKey = 'zone' | 'service' | 'project' | 'department' | 'profession' | 'projectRole';
+type TabKey = 'zone' | 'service' | 'department' | 'profession';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'zone', label: 'Zone Types' },
-  { key: 'service', label: 'Categories' },
-  { key: 'project', label: 'Project Types' },
+  { key: 'service', label: 'Project Categories' },
   { key: 'department', label: 'Departments' },
   { key: 'profession', label: 'Professions' },
-  { key: 'projectRole', label: 'Project Roles' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -295,21 +293,17 @@ export function TypesPage() {
 
   const isLoading =
     (activeTab === 'service' && serviceTypesQuery.isLoading) ||
-    (activeTab === 'project' && projectTypesQuery.isLoading) ||
     (activeTab === 'department' && departmentsQuery.isLoading) ||
-    (activeTab === 'profession' && professionsQuery.isLoading) ||
-    (activeTab === 'projectRole' && projectRolesQuery.isLoading);
+    (activeTab === 'profession' && professionsQuery.isLoading);
 
   const isCreating =
     (activeTab === 'service' && createServiceType.isPending) ||
-    (activeTab === 'project' && createProjectType.isPending) ||
     (activeTab === 'department' && createDepartment.isPending) ||
-    (activeTab === 'profession' && createProfession.isPending) ||
-    (activeTab === 'projectRole' && createProjectRole.isPending);
+    (activeTab === 'profession' && createProfession.isPending);
 
   const isSaving =
-    updateServiceType.isPending || updateProjectType.isPending ||
-    updateDepartment.isPending || updateProfession.isPending || updateProjectRole.isPending;
+    updateServiceType.isPending ||
+    updateDepartment.isPending || updateProfession.isPending;
 
   // Build the rows for the active tab
   const rows: { id: string | number; code: string; name: string; color?: string; static?: boolean; sortOrder?: number }[] =
@@ -327,10 +321,6 @@ export function TypesPage() {
         items = (serviceTypesQuery.data ?? []).map((s: any) => ({
           id: s.id, code: s.code ?? '', name: s.name, color: s.color ?? '',
         }));
-      } else if (activeTab === 'project') {
-        items = (projectTypesQuery.data ?? []).map((p: any) => ({
-          id: p.id, code: p.code ?? '', name: p.name, color: p.color ?? '',
-        }));
       } else if (activeTab === 'department') {
         items = (departmentsQuery.data ?? []).map((d: any, idx: number) => ({
           id: d.id, code: '', name: d.name, sortOrder: d.sortOrder ?? idx + 1,
@@ -338,10 +328,6 @@ export function TypesPage() {
       } else if (activeTab === 'profession') {
         items = (professionsQuery.data ?? []).map((p: any) => ({
           id: p.id, code: '', name: p.name,
-        }));
-      } else if (activeTab === 'projectRole') {
-        items = (projectRolesQuery.data ?? []).map((r: any) => ({
-          id: r.id, code: '', name: r.name,
         }));
       }
 
@@ -351,10 +337,10 @@ export function TypesPage() {
           r.name.toLowerCase().includes(q) ||
           r.code.toLowerCase().includes(q),
       );
-    }, [activeTab, search, serviceTypesQuery.data, projectTypesQuery.data, departmentsQuery.data, professionsQuery.data, projectRolesQuery.data, zoneColors]);
+    }, [activeTab, search, serviceTypesQuery.data, departmentsQuery.data, professionsQuery.data, zoneColors]);
 
-  const hasColor = activeTab === 'zone' || activeTab === 'service' || activeTab === 'project';
-  const hasCode = activeTab === 'zone' || activeTab === 'service' || activeTab === 'project' || activeTab === 'department';
+  const hasColor = activeTab === 'zone' || activeTab === 'service';
+  const hasCode = activeTab === 'zone' || activeTab === 'service' || activeTab === 'department';
   const hasNumbering = activeTab === 'department';
 
   // -----------------------------------------------------------------------
@@ -395,16 +381,12 @@ export function TypesPage() {
       setEditing(null);
     } else if (activeTab === 'service') {
       updateServiceType.mutate({ id: editing.id as number, name: trimmedName, code: editing.code.trim() || undefined, color: editing.color.trim() || undefined });
-    } else if (activeTab === 'project') {
-      updateProjectType.mutate({ id: editing.id as number, name: trimmedName, code: editing.code.trim() || undefined, color: editing.color.trim() || undefined });
     } else if (activeTab === 'department') {
       updateDepartment.mutate({ id: editing.id as number, name: trimmedName, code: editing.code.trim() || undefined });
     } else if (activeTab === 'profession') {
       updateProfession.mutate({ id: editing.id as number, name: trimmedName });
-    } else if (activeTab === 'projectRole') {
-      updateProjectRole.mutate({ id: editing.id as number, name: trimmedName });
     }
-  }, [editing, activeTab, zoneColors, updateServiceType, updateProjectType, updateDepartment, updateProfession, updateProjectRole]);
+  }, [editing, activeTab, zoneColors, updateServiceType, updateDepartment, updateProfession]);
 
   // Escape key handler for inline edit
   useEffect(() => {
@@ -428,14 +410,10 @@ export function TypesPage() {
 
     if (activeTab === 'service') {
       createServiceType.mutate({ name: trimmedName, code: formCode.trim() || undefined, color: formColor.trim() || undefined });
-    } else if (activeTab === 'project') {
-      createProjectType.mutate({ name: trimmedName, code: formCode.trim() || undefined, color: formColor.trim() || undefined });
     } else if (activeTab === 'department') {
       createDepartment.mutate({ name: trimmedName, code: formCode.trim() || undefined });
     } else if (activeTab === 'profession') {
       createProfession.mutate({ name: trimmedName });
-    } else if (activeTab === 'projectRole') {
-      createProjectRole.mutate({ name: trimmedName });
     }
   }
 
@@ -444,10 +422,8 @@ export function TypesPage() {
     if (!confirm(`Delete "${row.name}"? This action cannot be undone.`)) return;
 
     if (activeTab === 'service') deleteServiceType.mutate(row.id as number);
-    else if (activeTab === 'project') deleteProjectType.mutate(row.id as number);
     else if (activeTab === 'department') deleteDepartment.mutate(row.id as number);
     else if (activeTab === 'profession') deleteProfession.mutate(row.id as number);
-    else if (activeTab === 'projectRole') deleteProjectRole.mutate(row.id as number);
   }
 
   // -----------------------------------------------------------------------
@@ -461,8 +437,8 @@ export function TypesPage() {
   }
 
   const isMutable = activeTab !== 'zone';
-  const isSimpleList = activeTab === 'profession' || activeTab === 'projectRole';
-  const addLabel = activeTab === 'department' ? 'Add Department' : activeTab === 'profession' ? 'Add Profession' : activeTab === 'projectRole' ? 'Add Role' : 'Add Type';
+  const isSimpleList = activeTab === 'profession';
+  const addLabel = activeTab === 'department' ? 'Add Department' : activeTab === 'profession' ? 'Add Profession' : activeTab === 'service' ? 'Add Category' : 'Add Type';
 
   // -----------------------------------------------------------------------
   // Render
@@ -551,7 +527,6 @@ export function TypesPage() {
                     activeTab === 'service' ? 'e.g. BIM, MEP, Structural' :
                     activeTab === 'department' ? 'e.g. Buildings, VDC' :
                     activeTab === 'profession' ? 'e.g. Architect, MEP Engineer' :
-                    activeTab === 'projectRole' ? 'e.g. BIM Manager, Team Leader' :
                     'e.g. Civil Engineering'
                   }
                   className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
@@ -617,7 +592,7 @@ export function TypesPage() {
                   <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-28">Code</th>
                 )}
                 <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">
-                  {activeTab === 'department' ? 'Department Name' : activeTab === 'profession' ? 'Profession Name' : activeTab === 'projectRole' ? 'Role Name' : 'Name'}
+                  {activeTab === 'department' ? 'Department Name' : activeTab === 'profession' ? 'Profession Name' : activeTab === 'service' ? 'Category Name' : 'Name'}
                 </th>
                 <th className="px-5 py-2.5 text-right text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-28">Actions</th>
               </tr>

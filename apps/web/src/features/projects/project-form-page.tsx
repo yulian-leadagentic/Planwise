@@ -87,6 +87,7 @@ export function ProjectFormPage() {
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors },
   } = useForm<ProjectFormData>({
     resolver: zodResolver(projectSchema),
@@ -239,22 +240,33 @@ export function ProjectFormPage() {
                   />
                 </div>
 
-                {/* Project Type */}
+                {/* Project Type with color indicator */}
                 <div>
                   <label className={labelClass}>
                     Project Type <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    {...register('projectTypeId')}
-                    className={errors.projectTypeId ? inputErrorClass : inputClass}
-                  >
-                    <option value="">Select type</option>
-                    {(projectTypes ?? []).map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative">
+                    {(() => {
+                      const selectedId = watch('projectTypeId');
+                      const selectedType = (projectTypes ?? []).find((t: any) => String(t.id) === String(selectedId));
+                      const color = selectedType?.color;
+                      return color ? (
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border border-slate-200 z-10"
+                          style={{ backgroundColor: color.startsWith('#') ? color : `#${color}` }} />
+                      ) : null;
+                    })()}
+                    <select
+                      {...register('projectTypeId')}
+                      className={`${errors.projectTypeId ? inputErrorClass : inputClass} ${watch('projectTypeId') ? 'pl-8' : ''}`}
+                    >
+                      <option value="">Select type</option>
+                      {(projectTypes ?? []).map((t: any) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   {errors.projectTypeId && (
                     <p className="mt-1 text-[12px] text-red-500">{errors.projectTypeId.message}</p>
                   )}

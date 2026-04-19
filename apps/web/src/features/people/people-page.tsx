@@ -36,7 +36,7 @@ function getColumns(isPartners: boolean): ColumnDef<UserListItem, unknown>[] {
     },
     {
       accessorKey: 'position',
-      header: 'Position',
+      header: 'Profession',
       cell: ({ row }) => row.original.position ?? '-',
     },
     {
@@ -86,6 +86,18 @@ export function PeoplePage() {
     queryKey: ['roles'],
     staleTime: 10 * 60 * 1000,
     queryFn: () => client.get('/admin/roles').then((r) => { const d = r.data.data ?? r.data; return Array.isArray(d) ? d : []; }),
+  });
+
+  const { data: departments = [] } = useQuery({
+    queryKey: ['admin', 'departments'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () => client.get('/admin/config/departments').then((r) => { const d = r.data?.data ?? r.data; return Array.isArray(d) ? d : []; }),
+  });
+
+  const { data: professions = [] } = useQuery({
+    queryKey: ['admin', 'professions'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () => client.get('/admin/config/professions').then((r) => { const d = r.data?.data ?? r.data; return Array.isArray(d) ? d : []; }),
   });
 
   const createUser = useMutation({
@@ -255,12 +267,20 @@ export function PeoplePage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Position</label>
-                  <input value={form.position} onChange={(e) => setForm(f => ({ ...f, position: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Profession</label>
+                  <select value={form.position} onChange={(e) => setForm(f => ({ ...f, position: e.target.value }))}
+                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none">
+                    <option value="">Select profession</option>
+                    {professions.map((p: any) => <option key={p.id} value={p.name}>{p.name}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Department</label>
-                  <input value={form.department} onChange={(e) => setForm(f => ({ ...f, department: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                  <select value={form.department} onChange={(e) => setForm(f => ({ ...f, department: e.target.value }))}
+                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none">
+                    <option value="">Select department</option>
+                    {departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
+                  </select>
                 </div>
               </div>
               {peopleTab === 'partners' && (
