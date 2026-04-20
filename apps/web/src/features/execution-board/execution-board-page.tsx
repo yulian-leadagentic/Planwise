@@ -1,11 +1,12 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronRight, Grid3X3, FolderKanban, MapPin } from 'lucide-react';
+import { ChevronRight, Grid3X3, FolderKanban, MapPin, AlertTriangle, AlertCircle, Calendar, Clock } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { ProjectSelect } from '@/components/shared/project-select';
 import { EmptyState } from '@/components/shared/empty-state';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
+import { getTaskHealth, aggregateHealth, type TaskHealth } from '@/lib/task-health';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 
@@ -36,6 +37,10 @@ interface Task {
   description: string | null;
   status: string;
   completionPct: number;
+  budgetHours: number | null;
+  endDate: string | null;
+  loggedMinutes: number;
+  lastActivityDate: string | null;
   zoneId: number;
   serviceTypeId: number | null;
   phaseId: number | null;
@@ -110,22 +115,22 @@ const STATUS_DOT: Record<string, string> = {
   cancelled: 'bg-red-500',
 };
 
-const STATUS_BG: Record<string, string> = {
-  not_started: 'border-slate-200 bg-slate-50/50',
-  in_progress: 'border-blue-200 bg-blue-50/40',
-  in_review: 'border-violet-200 bg-violet-50/40',
-  completed: 'border-emerald-200 bg-emerald-50/40',
-  on_hold: 'border-amber-200 bg-amber-50/40',
-  cancelled: 'border-red-200 bg-red-50/30',
+const STATUS_LABEL: Record<string, string> = {
+  not_started: 'To Do',
+  in_progress: 'In Progress',
+  in_review: 'In Review',
+  completed: 'Done',
+  on_hold: 'On Hold',
+  cancelled: 'Cancelled',
 };
 
-const ZONE_COLORS: Record<string, { border: string; badge: string; text: string }> = {
-  zone:     { border: 'border-l-blue-400',   badge: 'bg-blue-100 text-blue-700',     text: 'text-blue-700' },
-  building: { border: 'border-l-indigo-400', badge: 'bg-indigo-100 text-indigo-700', text: 'text-indigo-700' },
-  floor:    { border: 'border-l-teal-400',   badge: 'bg-teal-100 text-teal-700',     text: 'text-teal-700' },
-  area:     { border: 'border-l-amber-400',  badge: 'bg-amber-100 text-amber-700',   text: 'text-amber-700' },
-  wing:     { border: 'border-l-pink-400',   badge: 'bg-pink-100 text-pink-700',     text: 'text-pink-700' },
-  section:  { border: 'border-l-cyan-400',   badge: 'bg-cyan-100 text-cyan-700',     text: 'text-cyan-700' },
+const ZONE_COLORS: Record<string, { border: string; badge: string }> = {
+  zone:     { border: 'border-l-blue-400',   badge: 'bg-blue-100 text-blue-700' },
+  building: { border: 'border-l-indigo-400', badge: 'bg-indigo-100 text-indigo-700' },
+  floor:    { border: 'border-l-teal-400',   badge: 'bg-teal-100 text-teal-700' },
+  area:     { border: 'border-l-amber-400',  badge: 'bg-amber-100 text-amber-700' },
+  wing:     { border: 'border-l-pink-400',   badge: 'bg-pink-100 text-pink-700' },
+  section:  { border: 'border-l-cyan-400',   badge: 'bg-cyan-100 text-cyan-700' },
 };
 
 const PROJECT_COLORS = [
@@ -137,9 +142,38 @@ const PROJECT_COLORS = [
   { bg: 'bg-cyan-50', border: 'border-cyan-200', icon: 'text-cyan-500' },
 ];
 
-function CellSummary({ tasks, isAggregate }: { tasks: Task[]; isAggregate: boolean }) {
+function formatShortDate(iso: string): string {
+  const d = new Date(iso.split('T')[0]);
+  return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+}
+
+function HealthBadge({ agg, size = 'sm' }: { agg: { critical: number; warning: number; ok: number }; size?: 'sm' | 'md' }) {
+  const { critical, warning } = agg;
+  if (critical === 0 && warning === 0) return null;
+  const cls = size === 'md' ? 'text-[11px] px-2 py-1' : 'text-[10px] px-1.5 py-0.5';
+  const iconSize = size === 'md' ? 'h-3.5 w-3.5' : 'h-3 w-3';
+  return (
+    <div className="flex items-center gap-1 shrink-0">
+      {critical > 0 && (
+        <span className={cn('flex items-center gap-1 rounded-full bg-red-100 text-red-700 font-bold', cls)}>
+          <AlertCircle className={iconSize} />
+          {critical}
+        </span>
+      )}
+      {warning > 0 && (
+        <span className={cn('flex items-center gap-1 rounded-full bg-amber-100 text-amber-700 font-bold', cls)}>
+          <AlertTriangle className={iconSize} />
+          {warning}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function CellSummary({ tasks, healths, isAggregate }: { tasks: Task[]; healths: TaskHealth[]; isAggregate: boolean }) {
   if (tasks.length === 0) return null;
-  const avg = Math.round(tasks.reduce((s, t) => s + t.completionPct, 0) / tasks.length);
+  const avg = Math.round(healths.reduce((s, h) => s + h.computedPct, 0) / healths.length);
+  const agg = aggregateHealth(healths);
   const color =
     avg >= 100 ? 'bg-emerald-500' : avg >= 60 ? 'bg-blue-500' : avg >= 30 ? 'bg-amber-500' : 'bg-slate-300';
   const textColor =
@@ -151,6 +185,7 @@ function CellSummary({ tasks, isAggregate }: { tasks: Task[]; isAggregate: boole
           <div className={cn('h-full rounded-full', color)} style={{ width: `${Math.min(avg, 100)}%` }} />
         </div>
         <span className={cn('text-[10px] font-bold tabular-nums shrink-0', textColor)}>{avg}%</span>
+        <HealthBadge agg={agg} />
       </div>
       {isAggregate && (
         <span className="text-[10px] text-slate-400">{tasks.length} tasks</span>
@@ -159,21 +194,64 @@ function CellSummary({ tasks, isAggregate }: { tasks: Task[]; isAggregate: boole
   );
 }
 
-function TaskCard({ task, onClick }: { task: Task; onClick: () => void }) {
-  const statusBg = STATUS_BG[task.status] ?? STATUS_BG.not_started;
+function TaskCard({ task, health, onClick }: { task: Task; health: TaskHealth; onClick: () => void }) {
+  const borderCls =
+    health.level === 'critical'
+      ? 'border-red-300 bg-red-50/50 ring-1 ring-red-200'
+      : health.level === 'warning'
+        ? 'border-amber-300 bg-amber-50/40'
+        : 'border-slate-200 bg-white';
+
   return (
     <button
       onClick={onClick}
       className={cn(
         'w-full rounded-md border px-2.5 py-1.5 text-left shadow-sm transition-all hover:shadow-md',
-        statusBg,
+        borderCls,
       )}
+      title={health.reasons.join(' • ')}
     >
       <div className="flex items-center gap-1.5">
         <span className={cn('h-2 w-2 shrink-0 rounded-full', STATUS_DOT[task.status] ?? 'bg-slate-400')} />
         <span className="flex-1 truncate text-[12px] font-medium text-slate-700">{task.name}</span>
-        <span className="shrink-0 text-[11px] font-semibold text-slate-400">{task.completionPct}%</span>
+        {health.level === 'critical' && <AlertCircle className="h-3 w-3 text-red-600 shrink-0" />}
+        {health.level === 'warning' && <AlertTriangle className="h-3 w-3 text-amber-600 shrink-0" />}
       </div>
+
+      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+        <span className="text-[10px] text-slate-500 font-medium">{STATUS_LABEL[task.status] ?? task.status}</span>
+        <span className="text-[10px] text-slate-300">·</span>
+        <span className={cn(
+          'text-[10px] font-bold tabular-nums',
+          health.computedPct >= 100 ? 'text-emerald-600' :
+          health.computedPct >= 60 ? 'text-blue-600' :
+          health.computedPct >= 30 ? 'text-amber-600' : 'text-slate-500'
+        )}>
+          {health.computedPct}%
+        </span>
+        {health.estimatedHours > 0 && (
+          <>
+            <span className="text-[10px] text-slate-300">·</span>
+            <span className="text-[10px] text-slate-500 tabular-nums flex items-center gap-0.5">
+              <Clock className="h-2.5 w-2.5" />
+              {health.loggedHours}h / {health.estimatedHours}h
+            </span>
+          </>
+        )}
+      </div>
+
+      {task.endDate && (
+        <div className="mt-1 flex items-center gap-1">
+          <Calendar className={cn('h-2.5 w-2.5', health.isOverdue ? 'text-red-600' : 'text-slate-400')} />
+          <span className={cn(
+            'text-[10px] tabular-nums',
+            health.isOverdue ? 'text-red-600 font-semibold' : 'text-slate-500',
+          )}>
+            {formatShortDate(task.endDate)}
+          </span>
+        </div>
+      )}
+
       {task.assignees.length > 0 && (
         <div className="mt-1 flex -space-x-1.5">
           {task.assignees.slice(0, 3).map((a) => (
@@ -205,7 +283,6 @@ export function ExecutionBoardPage() {
 
   const { data, isLoading } = useExecutionBoard(projectId, serviceId);
 
-  // Auto-expand all projects + first-level zones on initial load
   useEffect(() => {
     if (!data || didAutoExpand.current) return;
     didAutoExpand.current = true;
@@ -230,11 +307,18 @@ export function ExecutionBoardPage() {
 
   const services = data?.services ?? [];
 
-  // Build zoneId → all descendant zone IDs (including self)
+  // Compute task health map
+  const taskHealths = useMemo(() => {
+    const map = new Map<number, TaskHealth>();
+    for (const task of data?.tasks ?? []) {
+      map.set(task.id, getTaskHealth(task));
+    }
+    return map;
+  }, [data?.tasks]);
+
   const zoneDescendants = useMemo(() => {
     if (!data) return new Map<number, number[]>();
     const map = new Map<number, number[]>();
-
     function collect(node: ZoneNode): number[] {
       const ids = [node.id];
       for (const child of node.children ?? []) {
@@ -243,20 +327,15 @@ export function ExecutionBoardPage() {
       map.set(node.id, ids);
       return ids;
     }
-
     for (const project of data.projects) {
-      for (const root of data.zones[project.id] ?? []) {
-        collect(root);
-      }
+      for (const root of data.zones[project.id] ?? []) collect(root);
     }
     return map;
   }, [data]);
 
-  // Build direct task matrix: zoneId|phaseName → tasks
   const { phaseColumns, directMatrix, hasNoPhase } = useMemo(() => {
     const tasks = data?.tasks ?? [];
     const templates = data?.templates ?? [];
-
     const nameToHasTasks = new Set<string>();
     let _hasNoPhase = false;
 
@@ -293,6 +372,39 @@ export function ExecutionBoardPage() {
     },
     [zoneDescendants, directMatrix],
   );
+
+  // Aggregate health per project
+  const projectHealth = useMemo(() => {
+    const map = new Map<number, { critical: number; warning: number; ok: number }>();
+    for (const task of data?.tasks ?? []) {
+      const h = taskHealths.get(task.id);
+      if (!h) continue;
+      // Find project via zone
+      for (const project of data?.projects ?? []) {
+        const descIds = data?.zones[project.id]
+          ? new Set(
+              (function all(nodes: ZoneNode[]): number[] {
+                const ids: number[] = [];
+                for (const n of nodes) {
+                  ids.push(n.id);
+                  ids.push(...all(n.children ?? []));
+                }
+                return ids;
+              })(data.zones[project.id] ?? []),
+            )
+          : new Set<number>();
+        if (descIds.has(task.zoneId)) {
+          const cur = map.get(project.id) ?? { critical: 0, warning: 0, ok: 0 };
+          if (h.level === 'critical') cur.critical++;
+          else if (h.level === 'warning') cur.warning++;
+          else cur.ok++;
+          map.set(project.id, cur);
+          break;
+        }
+      }
+    }
+    return map;
+  }, [data, taskHealths]);
 
   const flatRows = useMemo(() => {
     if (!data) return [];
@@ -352,7 +464,7 @@ export function ExecutionBoardPage() {
     <div className="space-y-5">
       <PageHeader
         title="Execution Board"
-        description="Zone × Phase task matrix across projects"
+        description="Zone × Phase task matrix across projects — risk indicators highlight overdue, at-risk, and stale tasks"
       />
 
       <div className="flex flex-wrap items-center gap-3">
@@ -377,6 +489,12 @@ export function ExecutionBoardPage() {
             </option>
           ))}
         </select>
+
+        {/* Legend */}
+        <div className="ml-auto flex items-center gap-3 text-[11px] text-slate-500">
+          <span className="flex items-center gap-1"><AlertCircle className="h-3 w-3 text-red-600" />Overdue / critical</span>
+          <span className="flex items-center gap-1"><AlertTriangle className="h-3 w-3 text-amber-600" />At risk</span>
+        </div>
       </div>
 
       {flatRows.length === 0 ? (
@@ -401,13 +519,13 @@ export function ExecutionBoardPage() {
                   {phaseColumns.map((name) => (
                     <th
                       key={name}
-                      className="px-3 py-2.5 text-center font-semibold min-w-[180px] border-r border-slate-100 last:border-r-0"
+                      className="px-3 py-2.5 text-center font-semibold min-w-[200px] border-r border-slate-100 last:border-r-0"
                     >
                       {name}
                     </th>
                   ))}
                   {hasNoPhase && (
-                    <th className="px-3 py-2.5 text-center font-semibold min-w-[180px] text-slate-400">
+                    <th className="px-3 py-2.5 text-center font-semibold min-w-[200px] text-slate-400">
                       No Phase
                     </th>
                   )}
@@ -418,6 +536,7 @@ export function ExecutionBoardPage() {
                   if (row.type === 'project') {
                     const totalCols = phaseColumns.length + (hasNoPhase ? 2 : 1);
                     const pc = projectColorMap.get(row.id) ?? PROJECT_COLORS[0];
+                    const agg = projectHealth.get(row.id) ?? { critical: 0, warning: 0, ok: 0 };
                     return (
                       <tr
                         key={row.key}
@@ -438,10 +557,11 @@ export function ExecutionBoardPage() {
                             <FolderKanban className={cn('h-4 w-4', pc.icon)} />
                             <span className="font-semibold text-slate-700">{row.name}</span>
                             {row.number && (
-                              <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium', pc.border, pc.bg === 'bg-blue-50' ? 'text-blue-600' : 'text-slate-500')}>
+                              <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium border', pc.border, 'text-slate-600 bg-white/60')}>
                                 {row.number}
                               </span>
                             )}
+                            <HealthBadge agg={agg} size="md" />
                           </div>
                         </td>
                       </tr>
@@ -490,6 +610,7 @@ export function ExecutionBoardPage() {
                       {phaseColumns.map((phaseName) => {
                         const aggTasks = getAggregatedTasks(row.id, phaseName);
                         const directTasks = directMatrix.get(`${row.id}|${phaseName}`) ?? [];
+                        const aggHealths = aggTasks.map((t) => taskHealths.get(t.id)!).filter(Boolean);
                         return (
                           <td
                             key={phaseName}
@@ -497,11 +618,12 @@ export function ExecutionBoardPage() {
                           >
                             {aggTasks.length > 0 && (
                               <div className="flex flex-col gap-1">
-                                <CellSummary tasks={aggTasks} isAggregate={isParent} />
+                                <CellSummary tasks={aggTasks} healths={aggHealths} isAggregate={isParent} />
                                 {directTasks.map((task) => (
                                   <TaskCard
                                     key={task.id}
                                     task={task}
+                                    health={taskHealths.get(task.id)!}
                                     onClick={() => setDrawerTaskId(task.id)}
                                   />
                                 ))}
@@ -515,14 +637,16 @@ export function ExecutionBoardPage() {
                           {(() => {
                             const aggTasks = getAggregatedTasks(row.id, '__none__');
                             const directTasks = directMatrix.get(`${row.id}|__none__`) ?? [];
+                            const aggHealths = aggTasks.map((t) => taskHealths.get(t.id)!).filter(Boolean);
                             if (aggTasks.length === 0) return null;
                             return (
                               <div className="flex flex-col gap-1">
-                                <CellSummary tasks={aggTasks} isAggregate={isParent} />
+                                <CellSummary tasks={aggTasks} healths={aggHealths} isAggregate={isParent} />
                                 {directTasks.map((task) => (
                                   <TaskCard
                                     key={task.id}
                                     task={task}
+                                    health={taskHealths.get(task.id)!}
                                     onClick={() => setDrawerTaskId(task.id)}
                                   />
                                 ))}
@@ -540,7 +664,6 @@ export function ExecutionBoardPage() {
         </div>
       )}
 
-      {/* Task detail drawer */}
       <TaskDrawer taskId={drawerTaskId} onClose={() => setDrawerTaskId(null)} />
     </div>
   );

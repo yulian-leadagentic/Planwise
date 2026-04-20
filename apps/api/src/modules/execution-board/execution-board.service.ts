@@ -49,9 +49,7 @@ export class ExecutionBoardService {
         },
         orderBy: [{ zoneId: 'asc' }, { sortOrder: 'asc' }],
       }),
-      // DB Phase = UI "Services" (filter dropdown)
       this.prisma.phase.findMany({ orderBy: { sortOrder: 'asc' } }),
-      // Phase/Milestone Templates (columns) — exclude the task catalog
       this.prisma.template.findMany({
         where: {
           type: 'task_list',
@@ -62,6 +60,37 @@ export class ExecutionBoardService {
         orderBy: { createdAt: 'asc' },
       }),
     ]);
+
+    // Aggregate logged time per task
+    const timeAgg = await this.prisma.timeEntry.groupBy({
+      by: ['taskId'],
+      where: {
+        projectId: { in: projectIds },
+        deletedAt: null,
+        taskId: { not: null },
+      },
+      _sum: { minutes: true },
+      _max: { date: true },
+    });
+    const loggedByTask = new Map<number, { minutes: number; lastDate: Date | null }>();
+    for (const row of timeAgg) {
+      if (row.taskId) {
+        loggedByTask.set(row.taskId, {
+          minutes: row._sum.minutes ?? 0,
+          lastDate: row._max.date ?? null,
+        });
+      }
+    }
+
+    // Enrich tasks with logged time data
+    const tasksWithTime = tasks.map((t) => {
+      const logged = loggedByTask.get(t.id);
+      return {
+        ...t,
+        loggedMinutes: logged?.minutes ?? 0,
+        lastActivityDate: logged?.lastDate ?? null,
+      };
+    });
 
     const zones: Record<number, any[]> = {};
     for (const pid of projectIds) {
@@ -83,6 +112,6 @@ export class ExecutionBoardService {
       zones[pid] = roots;
     }
 
-    return { projects, zones, tasks, services, templates };
+    return { projects, zones, tasks: tasksWithTime, services, templates };
   }
 }

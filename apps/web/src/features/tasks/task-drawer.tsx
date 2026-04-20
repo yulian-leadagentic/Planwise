@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Clock, Paperclip, MessageSquare, UserPlus, ChevronDown, Search, Trash2 } from 'lucide-react';
+import { X, Clock, Paperclip, MessageSquare, UserPlus, ChevronDown, Search, Trash2, AlertCircle, AlertTriangle, Calendar } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { tasksApi } from '@/api/tasks.api';
 import { timeApi } from '@/api/time.api';
 import { formatDate, formatRelative } from '@/lib/date-utils';
+import { getTaskHealth } from '@/lib/task-health';
 import client from '@/api/client';
 
 interface TaskDrawerProps {
@@ -94,6 +95,9 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
               </select>
             </div>
 
+            {/* Health banner */}
+            <TaskHealthBanner task={task} />
+
             {/* Tabs */}
             <div className="flex border-b border-slate-200 px-5">
               {[
@@ -120,6 +124,55 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
         )}
       </div>
     </>
+  );
+}
+
+function TaskHealthBanner({ task }: { task: any }) {
+  const health = getTaskHealth(task);
+  if (health.level === 'ok' && health.reasons.length === 0) {
+    return (
+      <div className="px-5 py-2.5 border-b border-slate-100 bg-slate-50/50 flex items-center gap-4 text-[11px] text-slate-600">
+        <span className="flex items-center gap-1">
+          <Clock className="h-3 w-3" /> {health.loggedHours}h / {health.estimatedHours}h
+        </span>
+        <span className="tabular-nums font-semibold text-blue-600">{health.computedPct}% complete</span>
+        {task.endDate && (
+          <span className="flex items-center gap-1 ml-auto">
+            <Calendar className="h-3 w-3" /> Due {new Date(task.endDate.split('T')[0]).toLocaleDateString()}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  const isCritical = health.level === 'critical';
+  const bgCls = isCritical ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200';
+  const textCls = isCritical ? 'text-red-700' : 'text-amber-700';
+  const Icon = isCritical ? AlertCircle : AlertTriangle;
+
+  return (
+    <div className={cn('px-5 py-2.5 border-b flex items-start gap-2', bgCls)}>
+      <Icon className={cn('h-4 w-4 shrink-0 mt-0.5', textCls)} />
+      <div className="flex-1 min-w-0">
+        <div className={cn('text-[11px] font-bold uppercase tracking-wider', textCls)}>
+          {isCritical ? 'At Risk — Needs Attention' : 'Warning'}
+        </div>
+        <ul className={cn('mt-0.5 text-[12px] space-y-0.5', textCls)}>
+          {health.reasons.map((r, i) => <li key={i}>• {r}</li>)}
+        </ul>
+        <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-600">
+          <span className="flex items-center gap-1">
+            <Clock className="h-3 w-3" /> {health.loggedHours}h / {health.estimatedHours}h
+          </span>
+          <span className="tabular-nums font-semibold">{health.computedPct}% complete</span>
+          {task.endDate && (
+            <span className="flex items-center gap-1">
+              <Calendar className="h-3 w-3" /> {new Date(task.endDate.split('T')[0]).toLocaleDateString()}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

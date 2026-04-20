@@ -174,7 +174,18 @@ export class TasksService {
       throw new NotFoundException('Task not found');
     }
 
-    return task;
+    // Aggregate logged time + last activity date for health calculations
+    const timeAgg = await this.prisma.timeEntry.aggregate({
+      where: { taskId: id, deletedAt: null },
+      _sum: { minutes: true },
+      _max: { date: true },
+    });
+
+    return {
+      ...task,
+      loggedMinutes: timeAgg._sum.minutes ?? 0,
+      lastActivityDate: timeAgg._max.date ?? null,
+    };
   }
 
   async update(id: number, dto: UpdateTaskDto, userId?: number) {
