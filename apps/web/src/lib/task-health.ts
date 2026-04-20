@@ -90,7 +90,8 @@ export function getTaskHealth(task: TaskHealthInput): TaskHealth {
       }
     } else if (loggedMinutes === 0) {
       isStale = true;
-      reasons.push('In progress, no hours logged');
+      const label = task.status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+      reasons.push(`${label}, no hours logged`);
       if (level === 'ok') level = 'warning';
     }
   }

@@ -248,30 +248,23 @@ export class TasksService {
   async addAssignee(taskId: number, data: { userId: number; role?: string; hourlyRate?: number }, actorId?: number) {
     await this.findOne(taskId);
 
-    // Check for any row (active or soft-deleted) — the (taskId, userId) unique
-    // constraint spans both, so we upsert to either restore or create.
-    const anyExisting = await this.prisma.taskAssignee.findFirst({
-      where: { taskId, userId: data.userId },
+    // Check if already actively assigned
+    const active = await this.prisma.taskAssignee.findFirst({
+      where: { taskId, userId: data.userId, deletedAt: null },
     });
-
-    if (anyExisting && anyExisting.deletedAt === null) {
+    if (active) {
       throw new ConflictException('User is already assigned to this task');
     }
 
-    const result = anyExisting
-      ? await this.prisma.taskAssignee.update({
-          where: { id: anyExisting.id },
-          data: { deletedAt: null, role: data.role, hourlyRate: data.hourlyRate },
-          include: {
-            user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
-          },
-        })
-      : await this.prisma.taskAssignee.create({
-          data: { taskId, userId: data.userId, role: data.role, hourlyRate: data.hourlyRate },
-          include: {
-            user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
-          },
-        });
+    // Atomic upsert — handles soft-deleted rows and unique constraints
+    const result = await this.prisma.taskAssignee.upsert({
+      where: { taskId_userId: { taskId, userId: data.userId } },
+      create: { taskId, userId: data.userId, role: data.role, hourlyRate: data.hourlyRate },
+      update: { deletedAt: null, role: data.role ?? null, hourlyRate: data.hourlyRate ?? null },
+      include: {
+        user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
+      },
+    });
 
     // Emit assignment event
     if (actorId) {
@@ -292,16 +285,9 @@ export class TasksService {
   }
 
   async removeAssignee(taskId: number, userId: number) {
-    // Find any row (active or soft-deleted) — idempotent removal.
-    const assignee = await this.prisma.taskAssignee.findFirst({
+    await this.prisma.taskAssignee.deleteMany({
       where: { taskId, userId },
     });
-
-    if (!assignee) {
-      return { message: 'Assignee already removed' };
-    }
-
-    await this.prisma.taskAssignee.delete({ where: { id: assignee.id } });
     return { message: 'Assignee removed' };
   }
 
