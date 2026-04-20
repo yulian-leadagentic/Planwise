@@ -41,8 +41,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
       code = this.getErrorCode(status);
     } else if (exception instanceof Error) {
-      message = exception.message;
+      // Log the real error server-side, but never leak it to clients in prod.
       this.logger.error(`Unhandled error: ${exception.message}`, exception.stack);
+      if (process.env.NODE_ENV !== 'production') {
+        message = exception.message;
+      }
+      // In production, message stays as the generic "Internal server error"
     }
 
     response.status(status).json({

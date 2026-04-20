@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateZoneDto } from './dto/create-zone.dto';
@@ -11,9 +12,13 @@ export class ZonesService {
   /**
    * Loads the Task Catalog and returns a map of code → { defaultBudgetHours, defaultBudgetAmount }.
    * Used as a fallback when template tasks don't have their own budget values set.
+   *
+   * Accepts an optional transaction client so callers inside $transaction
+   * read a consistent snapshot of the catalog (no mid-tx drift).
    */
-  private async loadCatalogMap() {
-    const catalog = await this.prisma.template.findFirst({
+  private async loadCatalogMap(tx?: Prisma.TransactionClient) {
+    const client = tx ?? this.prisma;
+    const catalog = await client.template.findFirst({
       where: { code: '__TASK_CATALOG__' },
       include: { templateTasks: true },
     });
@@ -169,70 +174,55 @@ export class ZonesService {
       where: { id, deletedAt: null },
       include: { children: { where: { deletedAt: null } } },
     });
-
-    if (!source) {
-      throw new NotFoundException('Source zone not found');
-    }
+    if (!source) throw new NotFoundException('Source zone not found');
 
     const newParent = await this.prisma.zone.findFirst({
       where: { id: newParentId, deletedAt: null },
     });
+    if (!newParent) throw new NotFoundException('Target parent zone not found');
 
-    if (!newParent) {
-      throw new NotFoundException('Target parent zone not found');
-    }
+    // Wrap the recursive copy in a transaction so a partial failure does not
+    // leave orphan zones behind.
+    const copiedId = await this.prisma.$transaction(async (tx) => {
+      const copyZone = async (
+        sourceZone: any,
+        parentId: number,
+        parentPath: string,
+        depth: number,
+      ): Promise<number> => {
+        const created = await tx.zone.create({
+          data: {
+            projectId: sourceZone.projectId,
+            parentId,
+            zoneType: sourceZone.zoneType || 'zone',
+            name: `${sourceZone.name} (copy)`,
+            code: sourceZone.code ? `${sourceZone.code}-copy` : null,
+            areaSqm: sourceZone.areaSqm,
+            description: sourceZone.description,
+            isTypical: sourceZone.isTypical,
+            typicalCount: sourceZone.typicalCount,
+            path: '',
+            depth,
+          },
+        });
 
-    // Deep copy recursively
-    const copyZone = async (
-      sourceZone: any,
-      parentId: number,
-      parentPath: string,
-      depth: number,
-    ) => {
-      const created = await this.prisma.zone.create({
-        data: {
-          projectId: sourceZone.projectId,
-          parentId,
-          zoneType: sourceZone.zoneType || "zone",
-          name: `${sourceZone.name} (copy)`,
-          code: sourceZone.code ? `${sourceZone.code}-copy` : null,
-          areaSqm: sourceZone.areaSqm,
-          description: sourceZone.description,
-          isTypical: sourceZone.isTypical,
-          typicalCount: sourceZone.typicalCount,
-          path: '',
-          depth,
-        },
-      });
+        const fullPath = parentPath ? `${parentPath}/${created.id}` : `${created.id}`;
+        await tx.zone.update({ where: { id: created.id }, data: { path: fullPath } });
 
-      const fullPath = parentPath
-        ? `${parentPath}/${created.id}`
-        : `${created.id}`;
-      await this.prisma.zone.update({
-        where: { id: created.id },
-        data: { path: fullPath },
-      });
+        const children = await tx.zone.findMany({
+          where: { parentId: sourceZone.id, deletedAt: null },
+        });
+        for (const child of children) {
+          await copyZone(child, created.id, fullPath, depth + 1);
+        }
 
-      // Recursively copy children
-      const children = await this.prisma.zone.findMany({
-        where: { parentId: sourceZone.id, deletedAt: null },
-      });
+        return created.id;
+      };
 
-      for (const child of children) {
-        await copyZone(child, created.id, fullPath, depth + 1);
-      }
+      return copyZone(source, newParentId, newParent.path, newParent.depth + 1);
+    }, { timeout: 30_000 });
 
-      return created;
-    };
-
-    const copied = await copyZone(
-      source,
-      newParentId,
-      newParent.path,
-      newParent.depth + 1,
-    );
-
-    return this.findOne(copied.id);
+    return this.findOne(copiedId);
   }
 
   async explodeTypical(id: number) {
@@ -248,60 +238,50 @@ export class ZonesService {
       return [zone];
     }
 
-    const createdZones: any[] = [];
+    // Wrap explode + soft-delete in a transaction. Without this, a partial
+    // failure leaves half the copies created but the original still active.
+    return this.prisma.$transaction(async (tx) => {
+      const createdZones: any[] = [];
+      for (let i = 1; i <= zone.typicalCount; i++) {
+        const created = await tx.zone.create({
+          data: {
+            projectId: zone.projectId,
+            parentId: zone.parentId,
+            zoneType: zone.zoneType || 'zone',
+            name: `${zone.name} ${i}`,
+            code: zone.code ? `${zone.code}-${i}` : null,
+            areaSqm: zone.areaSqm,
+            description: zone.description,
+            isTypical: false,
+            typicalCount: 1,
+            path: '',
+            depth: zone.depth,
+          },
+        });
 
-    for (let i = 1; i <= zone.typicalCount; i++) {
-      const created = await this.prisma.zone.create({
-        data: {
-          projectId: zone.projectId,
-          parentId: zone.parentId,
-          zoneType: zone.zoneType || "zone",
-          name: `${zone.name} ${i}`,
-          code: zone.code ? `${zone.code}-${i}` : null,
-          areaSqm: zone.areaSqm,
-          description: zone.description,
-          isTypical: false,
-          typicalCount: 1,
-          path: '',
-          depth: zone.depth,
-        },
-        
-      });
+        const parentPath = zone.path.split('/').slice(0, -1).join('/');
+        const fullPath = parentPath ? `${parentPath}/${created.id}` : `${created.id}`;
+        await tx.zone.update({ where: { id: created.id }, data: { path: fullPath } });
+        createdZones.push({ ...created, path: fullPath });
+      }
 
-      const parentPath = zone.path.split('/').slice(0, -1).join('/');
-      const fullPath = parentPath
-        ? `${parentPath}/${created.id}`
-        : `${created.id}`;
-
-      await this.prisma.zone.update({
-        where: { id: created.id },
-        data: { path: fullPath },
-      });
-
-      createdZones.push({ ...created, path: fullPath });
-    }
-
-    // Soft delete the original typical zone
-    await this.prisma.zone.update({
-      where: { id },
-      data: { deletedAt: new Date() },
-    });
-
-    return createdZones;
+      await tx.zone.update({ where: { id }, data: { deletedAt: new Date() } });
+      return createdZones;
+    }, { timeout: 30_000 });
   }
 
   async applyTaskTemplate(zoneId: number, templateId: number, userId: number) {
-    const zone = await this.prisma.zone.findUniqueOrThrow({ where: { id: zoneId } });
-    const template = await this.prisma.template.findUniqueOrThrow({
-      where: { id: templateId },
-      include: { templateTasks: { include: { serviceType: true } } },
-    });
-
-    // Use the service template's phaseId for all tasks (falls back to per-task phaseId)
-    const templatePhaseId = template.phaseId;
-    const catalog = await this.loadCatalogMap();
-
     return this.prisma.$transaction(async (tx) => {
+      const zone = await tx.zone.findUniqueOrThrow({ where: { id: zoneId } });
+      const template = await tx.template.findUniqueOrThrow({
+        where: { id: templateId },
+        include: { templateTasks: { include: { serviceType: true } } },
+      });
+
+      // Use the service template's phaseId for all tasks (falls back to per-task phaseId)
+      const templatePhaseId = template.phaseId;
+      const catalog = await this.loadCatalogMap(tx);
+
       const createdTasks: any[] = [];
       for (const tt of template.templateTasks) {
         if (tt.serviceTypeId) {
@@ -335,7 +315,7 @@ export class ZonesService {
         data: { usageCount: { increment: 1 } },
       });
       return createdTasks;
-    });
+    }, { timeout: 30_000 });
   }
 
   async duplicateZone(zoneId: number, newName: string, userId: number) {
@@ -412,7 +392,7 @@ export class ZonesService {
 
       const result = await copyZoneRecursive(zone, zone.parentId, '', zone.depth, newName);
       return result;
-    });
+    }, { timeout: 30_000 });
   }
 
   async applyProjectTemplate(projectId: number, templateId: number, userId: number, zoneName?: string) {
@@ -446,10 +426,10 @@ export class ZonesService {
       },
     });
 
-    const catalog = await this.loadCatalogMap();
     const resolveBudget = this.resolveBudget.bind(this);
 
     return this.prisma.$transaction(async (tx) => {
+      const catalog = await this.loadCatalogMap(tx);
       const createdZones: any[] = [];
 
       const createZoneRecursive = async (tz: any, parentId: number | null, parentPath: string, depth: number) => {
@@ -589,7 +569,7 @@ export class ZonesService {
       });
 
       return createdZones;
-    });
+    }, { timeout: 30_000 });
   }
 
   async batchReorder(items: { id: number; sortOrder: number; parentId?: number | null }[]) {

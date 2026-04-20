@@ -386,7 +386,14 @@ export class TasksService {
 
     // Only accept relative URLs returned by our own uploader — prevents stored
     // XSS / open-redirect via attacker-controlled javascript:/http:// URLs.
-    if (typeof data.fileUrl !== 'string' || !data.fileUrl.startsWith('/') || data.fileUrl.includes('://')) {
+    // Reject protocol-relative (//host/x) URLs too — they inherit the page's
+    // scheme and would redirect users to an attacker-controlled domain.
+    if (
+      typeof data.fileUrl !== 'string' ||
+      !data.fileUrl.startsWith('/') ||
+      data.fileUrl.startsWith('//') ||
+      data.fileUrl.includes('://')
+    ) {
       throw new BadRequestException('fileUrl must be a relative path returned by /files/upload');
     }
 

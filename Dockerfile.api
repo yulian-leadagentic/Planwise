@@ -1,15 +1,49 @@
-FROM node:20-alpine
+## syntax=docker/dockerfile:1.6
+# ───────────────────────────────────────────────────────────────────────
+# Stage 1 — deps + build (has devDeps, pnpm, source)
+# ───────────────────────────────────────────────────────────────────────
+FROM node:20-alpine AS build
 RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
 RUN apk add --no-cache openssl
+
 WORKDIR /app
-COPY . .
-RUN pnpm install --no-frozen-lockfile --shamefully-hoist
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json ./
+COPY apps/api/package.json apps/api/
+COPY packages/shared/package.json packages/shared/
+RUN pnpm install --frozen-lockfile
+
+# Copy source after install so dependency cache is reused
+COPY apps/api apps/api
+COPY packages/shared packages/shared
+COPY docker-entrypoint.sh ./
+
 RUN cd apps/api && npx prisma generate
 RUN cd apps/api && npx nest build
-RUN mkdir -p uploads
-RUN dos2unix docker-entrypoint.sh 2>/dev/null || sed -i 's/\r$//' docker-entrypoint.sh
-RUN chmod +x docker-entrypoint.sh
+RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
+
+# Prune devDependencies for the runtime image
+RUN pnpm --filter api deploy --prod /deploy \
+    && cp -R apps/api/dist /deploy/dist \
+    && cp -R apps/api/prisma /deploy/prisma
+
+# ───────────────────────────────────────────────────────────────────────
+# Stage 2 — runtime (slim, non-root)
+# ───────────────────────────────────────────────────────────────────────
+FROM node:20-alpine AS runtime
+RUN apk add --no-cache openssl tini
+
+WORKDIR /app
+# Prep dirs with correct ownership, then drop privileges
+RUN mkdir -p /app/apps/api /app/uploads && chown -R node:node /app
+
+COPY --from=build --chown=node:node /deploy /app/apps/api
+COPY --from=build --chown=node:node /app/docker-entrypoint.sh /app/docker-entrypoint.sh
+
+USER node
 ENV NODE_ENV=production
 EXPOSE 3000
 WORKDIR /app/apps/api
+
+# tini = proper PID 1, forwards signals for graceful shutdown
+ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["sh", "/app/docker-entrypoint.sh"]

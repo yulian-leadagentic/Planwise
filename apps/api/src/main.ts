@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
@@ -11,7 +12,9 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // bufferLogs: true so early-boot logs go through pino once it's wired
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.useLogger(app.get(Logger));
 
   // Security
   app.use(helmet());
@@ -41,18 +44,26 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new ResponseInterceptor(), new TimeoutInterceptor());
 
-  // Swagger
-  const config = new DocumentBuilder()
-    .setTitle('AMEC API')
-    .setDescription('AMEC Project Management API')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  // Swagger — disabled in production to avoid leaking internal surface
+  if (process.env.NODE_ENV !== 'production') {
+    const config = new DocumentBuilder()
+      .setTitle('Planwise API')
+      .setDescription('Planwise Project Management API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
+
+  // Graceful shutdown — drains connections on SIGTERM/SIGINT so orchestrators
+  // can roll pods without dropping in-flight requests.
+  app.enableShutdownHooks();
 
   const port = process.env.PORT || 3000;
   await app.listen(port);
-  console.log(`Application running on port ${port}`);
+
+  const logger = app.get(Logger);
+  logger.log(`Application running on port ${port}`, 'Bootstrap');
 }
 bootstrap();

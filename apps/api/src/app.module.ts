@@ -4,6 +4,8 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { LoggerModule } from 'nestjs-pino';
+import * as crypto from 'crypto';
 
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -32,6 +34,38 @@ import { HealthModule } from './modules/health/health.module';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '../../.env',
+    }),
+    LoggerModule.forRoot({
+      pinoHttp: {
+        level: process.env.LOG_LEVEL ?? (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
+        // Pretty-print in dev; JSON in prod for log aggregators
+        transport: process.env.NODE_ENV === 'production'
+          ? undefined
+          : { target: 'pino-pretty', options: { singleLine: true, translateTime: 'HH:MM:ss.l' } },
+        // Redact obvious secrets; extend this list as needed
+        redact: {
+          paths: [
+            'req.headers.authorization',
+            'req.headers.cookie',
+            'req.body.password',
+            'req.body.currentPassword',
+            'req.body.newPassword',
+            'req.body.refreshToken',
+            'res.headers["set-cookie"]',
+          ],
+          censor: '[REDACTED]',
+        },
+        // Add a request-id to every log line so a request can be traced end-to-end
+        genReqId: (req) => (req.headers['x-request-id'] as string) ?? crypto.randomUUID(),
+        customLogLevel: (_req, res, err) => {
+          if (err || res.statusCode >= 500) return 'error';
+          if (res.statusCode >= 400) return 'warn';
+          return 'info';
+        },
+        customProps: (req: any) => ({
+          userId: req.user?.id,
+        }),
+      },
     }),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
     ScheduleModule.forRoot(),
