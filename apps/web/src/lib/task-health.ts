@@ -96,6 +96,25 @@ export function getTaskHealth(task: TaskHealthInput): TaskHealth {
     }
   }
 
+  // Rule 5: Over budget — more hours logged than estimated
+  if (estimatedHours > 0 && loggedHours > estimatedHours) {
+    const overHours = Math.round((loggedHours - estimatedHours) * 10) / 10;
+    const pctOver = Math.round(((loggedHours - estimatedHours) / estimatedHours) * 100);
+    reasons.push(`Over budget by ${overHours}h (+${pctOver}%)`);
+    if (pctOver >= 50) {
+      // Severely over — promote to critical
+      level = 'critical';
+    } else if (level === 'ok') {
+      level = 'warning';
+    }
+  }
+
+  // Rule 6: Effectively done but status still "in_progress"
+  if (task.status === 'in_progress' && estimatedHours > 0 && loggedHours >= estimatedHours) {
+    reasons.push('Hours complete — move to Review/Done');
+    if (level === 'ok') level = 'warning';
+  }
+
   return { level, reasons, computedPct, loggedHours, estimatedHours, isOverdue, isStale };
 }
 
