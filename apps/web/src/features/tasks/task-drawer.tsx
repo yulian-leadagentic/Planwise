@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Clock, Paperclip, MessageSquare, UserPlus, ChevronDown } from 'lucide-react';
+import { X, Clock, Paperclip, MessageSquare, UserPlus, ChevronDown, Search, Trash2 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
@@ -123,16 +123,114 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
   );
 }
 
+function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any[] }) {
+  const queryClient = useQueryClient();
+  const [showPicker, setShowPicker] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const { data: users = [] } = useQuery({
+    queryKey: ['users', 'list'],
+    queryFn: () => client.get('/users').then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : d?.data ?? [];
+    }),
+    staleTime: 5 * 60 * 1000,
+    enabled: showPicker,
+  });
+
+  const addMutation = useMutation({
+    mutationFn: (userId: number) => tasksApi.addAssignee(taskId, { userId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks', taskId] });
+      queryClient.invalidateQueries({ queryKey: ['execution-board'] });
+      setShowPicker(false);
+      setSearch('');
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to assign'),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (userId: number) => tasksApi.removeAssignee(taskId, userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks', taskId] });
+      queryClient.invalidateQueries({ queryKey: ['execution-board'] });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to remove'),
+  });
+
+  const assignedIds = new Set((assignees ?? []).map((a: any) => a.user?.id));
+  const filtered = (users as any[]).filter((u: any) => {
+    if (assignedIds.has(u.id)) return false;
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return `${u.firstName} ${u.lastName}`.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q);
+  });
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <label className="text-[11px] font-semibold text-slate-400 uppercase">Assignees</label>
+        <button onClick={() => setShowPicker(!showPicker)} className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-blue-600 hover:bg-blue-50">
+          <UserPlus className="h-3 w-3" /> Assign
+        </button>
+      </div>
+
+      {showPicker && (
+        <div className="mt-1.5 rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center gap-2 border-b border-slate-100 px-2.5 py-2">
+            <Search className="h-3.5 w-3.5 text-slate-400" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search people..."
+              className="flex-1 bg-transparent text-[12px] outline-none placeholder:text-slate-400" autoFocus />
+          </div>
+          <div className="max-h-32 overflow-y-auto py-1">
+            {filtered.length === 0 ? (
+              <p className="px-3 py-2 text-[11px] text-slate-400">No users found</p>
+            ) : (
+              filtered.slice(0, 10).map((u: any) => (
+                <button key={u.id} onClick={() => addMutation.mutate(u.id)}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-[12px] hover:bg-slate-50">
+                  <div className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 text-[8px] font-semibold flex items-center justify-center">
+                    {(u.firstName?.[0] ?? '')}{(u.lastName?.[0] ?? '')}
+                  </div>
+                  <span className="text-slate-700">{u.firstName} {u.lastName}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-1.5 space-y-1">
+        {(assignees ?? []).length === 0 && !showPicker ? (
+          <p className="text-[12px] text-slate-400 italic">No assignees</p>
+        ) : (
+          (assignees ?? []).map((a: any) => (
+            <div key={a.id} className="flex items-center gap-2 rounded-md bg-slate-50 px-2 py-1.5 group">
+              <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-[9px] font-semibold flex items-center justify-center">
+                {(a.user?.firstName?.[0] ?? '') + (a.user?.lastName?.[0] ?? '')}
+              </div>
+              <span className="flex-1 text-[12px] text-slate-700">{a.user?.firstName} {a.user?.lastName}</span>
+              {a.role && <span className="text-[10px] text-slate-400">({a.role})</span>}
+              <button onClick={() => removeMutation.mutate(a.user?.id)}
+                className="opacity-0 group-hover:opacity-100 rounded p-0.5 text-slate-400 hover:text-red-500 hover:bg-red-50 transition-opacity">
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: string, value: any) => void }) {
   return (
     <div className="space-y-4">
-      {/* Description */}
       <div>
         <label className="text-[11px] font-semibold text-slate-400 uppercase">Description</label>
         <p className="mt-1 text-[13px] text-slate-600">{task.description || <span className="italic text-slate-400">No description</span>}</p>
       </div>
 
-      {/* Metadata grid */}
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-[11px] font-semibold text-slate-400 uppercase">Est. Hours</label>
@@ -156,27 +254,8 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
         </div>
       </div>
 
-      {/* Assignees */}
-      <div>
-        <label className="text-[11px] font-semibold text-slate-400 uppercase">Assignees</label>
-        <div className="mt-1 space-y-1">
-          {(task.assignees ?? []).length === 0 ? (
-            <p className="text-[12px] text-slate-400 italic">No assignees</p>
-          ) : (
-            task.assignees.map((a: any) => (
-              <div key={a.id} className="flex items-center gap-2 rounded-md bg-slate-50 px-2 py-1.5">
-                <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-[9px] font-semibold flex items-center justify-center">
-                  {(a.user?.firstName?.[0] ?? '') + (a.user?.lastName?.[0] ?? '')}
-                </div>
-                <span className="text-[12px] text-slate-700">{a.user?.firstName} {a.user?.lastName}</span>
-                {a.role && <span className="text-[10px] text-slate-400">({a.role})</span>}
-              </div>
-            ))
-          )}
-        </div>
-      </div>
+      <AssigneeManager taskId={task.id} assignees={task.assignees} />
 
-      {/* Zone + Phase info */}
       <div className="grid grid-cols-2 gap-3 text-[12px]">
         {task.zone && <div><span className="text-slate-400">Zone:</span> <span className="text-slate-700 font-medium">{task.zone.name}</span></div>}
         {task.phase && <div><span className="text-slate-400">Service:</span> <span className="text-slate-700 font-medium">{task.phase.name}</span></div>}

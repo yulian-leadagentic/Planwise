@@ -1,11 +1,11 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronRight, Grid3X3, FolderKanban } from 'lucide-react';
+import { ChevronRight, Grid3X3, FolderKanban, MapPin } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { ProjectSelect } from '@/components/shared/project-select';
 import { EmptyState } from '@/components/shared/empty-state';
+import { TaskDrawer } from '@/features/tasks/task-drawer';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 
@@ -101,14 +101,41 @@ function useExecutionBoard(projectId?: number | null, serviceId?: number | null)
   });
 }
 
-const DOT_COLOR: Record<string, string> = {
-  not_started: 'bg-gray-400',
+const STATUS_DOT: Record<string, string> = {
+  not_started: 'bg-slate-400',
   in_progress: 'bg-blue-500',
-  in_review: 'bg-purple-500',
+  in_review: 'bg-violet-500',
   completed: 'bg-emerald-500',
-  on_hold: 'bg-yellow-500',
+  on_hold: 'bg-amber-500',
   cancelled: 'bg-red-500',
 };
+
+const STATUS_BG: Record<string, string> = {
+  not_started: 'border-slate-200 bg-slate-50/50',
+  in_progress: 'border-blue-200 bg-blue-50/40',
+  in_review: 'border-violet-200 bg-violet-50/40',
+  completed: 'border-emerald-200 bg-emerald-50/40',
+  on_hold: 'border-amber-200 bg-amber-50/40',
+  cancelled: 'border-red-200 bg-red-50/30',
+};
+
+const ZONE_COLORS: Record<string, { border: string; badge: string; text: string }> = {
+  zone:     { border: 'border-l-blue-400',   badge: 'bg-blue-100 text-blue-700',     text: 'text-blue-700' },
+  building: { border: 'border-l-indigo-400', badge: 'bg-indigo-100 text-indigo-700', text: 'text-indigo-700' },
+  floor:    { border: 'border-l-teal-400',   badge: 'bg-teal-100 text-teal-700',     text: 'text-teal-700' },
+  area:     { border: 'border-l-amber-400',  badge: 'bg-amber-100 text-amber-700',   text: 'text-amber-700' },
+  wing:     { border: 'border-l-pink-400',   badge: 'bg-pink-100 text-pink-700',     text: 'text-pink-700' },
+  section:  { border: 'border-l-cyan-400',   badge: 'bg-cyan-100 text-cyan-700',     text: 'text-cyan-700' },
+};
+
+const PROJECT_COLORS = [
+  { bg: 'bg-blue-50', border: 'border-blue-200', icon: 'text-blue-500' },
+  { bg: 'bg-violet-50', border: 'border-violet-200', icon: 'text-violet-500' },
+  { bg: 'bg-emerald-50', border: 'border-emerald-200', icon: 'text-emerald-500' },
+  { bg: 'bg-amber-50', border: 'border-amber-200', icon: 'text-amber-500' },
+  { bg: 'bg-rose-50', border: 'border-rose-200', icon: 'text-rose-500' },
+  { bg: 'bg-cyan-50', border: 'border-cyan-200', icon: 'text-cyan-500' },
+];
 
 function CellSummary({ tasks, isAggregate }: { tasks: Task[]; isAggregate: boolean }) {
   if (tasks.length === 0) return null;
@@ -133,13 +160,17 @@ function CellSummary({ tasks, isAggregate }: { tasks: Task[]; isAggregate: boole
 }
 
 function TaskCard({ task, onClick }: { task: Task; onClick: () => void }) {
+  const statusBg = STATUS_BG[task.status] ?? STATUS_BG.not_started;
   return (
     <button
       onClick={onClick}
-      className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-left shadow-sm transition-colors hover:border-blue-300 hover:shadow"
+      className={cn(
+        'w-full rounded-md border px-2.5 py-1.5 text-left shadow-sm transition-all hover:shadow-md',
+        statusBg,
+      )}
     >
       <div className="flex items-center gap-1.5">
-        <span className={cn('h-2 w-2 shrink-0 rounded-full', DOT_COLOR[task.status] ?? 'bg-gray-400')} />
+        <span className={cn('h-2 w-2 shrink-0 rounded-full', STATUS_DOT[task.status] ?? 'bg-slate-400')} />
         <span className="flex-1 truncate text-[12px] font-medium text-slate-700">{task.name}</span>
         <span className="shrink-0 text-[11px] font-semibold text-slate-400">{task.completionPct}%</span>
       </div>
@@ -166,10 +197,10 @@ function TaskCard({ task, onClick }: { task: Task; onClick: () => void }) {
 }
 
 export function ExecutionBoardPage() {
-  const navigate = useNavigate();
   const [projectId, setProjectId] = useState<number | null>(null);
   const [serviceId, setServiceId] = useState<number | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
   const didAutoExpand = useRef(false);
 
   const { data, isLoading } = useExecutionBoard(projectId, serviceId);
@@ -221,7 +252,7 @@ export function ExecutionBoardPage() {
     return map;
   }, [data]);
 
-  // Build direct task matrix: zoneId|phaseName → tasks (only direct zone tasks)
+  // Build direct task matrix: zoneId|phaseName → tasks
   const { phaseColumns, directMatrix, hasNoPhase } = useMemo(() => {
     const tasks = data?.tasks ?? [];
     const templates = data?.templates ?? [];
@@ -239,7 +270,6 @@ export function ExecutionBoardPage() {
       matrix.get(key)!.push(task);
     }
 
-    // Build ordered columns: template order first, then extras
     const orderedColumns: string[] = [];
     for (const tpl of templates) {
       if (nameToHasTasks.has(tpl.name)) orderedColumns.push(tpl.name);
@@ -251,7 +281,6 @@ export function ExecutionBoardPage() {
     return { phaseColumns: orderedColumns, directMatrix: matrix, hasNoPhase: _hasNoPhase };
   }, [data?.tasks, data?.templates]);
 
-  // For a zone, get aggregated tasks from all descendant zones for a given phase
   const getAggregatedTasks = useCallback(
     (zoneId: number, phaseName: string): Task[] => {
       const descIds = zoneDescendants.get(zoneId) ?? [zoneId];
@@ -315,6 +344,9 @@ export function ExecutionBoardPage() {
   }, [data, projectId, expandedIds]);
 
   if (isLoading) return <PageSkeleton />;
+
+  const projectColorMap = new Map<number, (typeof PROJECT_COLORS)[0]>();
+  (data?.projects ?? []).forEach((p, i) => projectColorMap.set(p.id, PROJECT_COLORS[i % PROJECT_COLORS.length]));
 
   return (
     <div className="space-y-5">
@@ -385,14 +417,15 @@ export function ExecutionBoardPage() {
                 {flatRows.map((row) => {
                   if (row.type === 'project') {
                     const totalCols = phaseColumns.length + (hasNoPhase ? 2 : 1);
+                    const pc = projectColorMap.get(row.id) ?? PROJECT_COLORS[0];
                     return (
                       <tr
                         key={row.key}
-                        className="border-t border-slate-200 bg-slate-50/60 hover:bg-slate-100/60 cursor-pointer"
+                        className={cn('border-t border-slate-200 cursor-pointer hover:brightness-95 transition-all', pc.bg)}
                         onClick={() => toggleExpand(row.key)}
                       >
                         <td
-                          className="sticky left-0 z-10 bg-slate-50/60 px-4 py-2.5 border-r border-slate-200"
+                          className={cn('sticky left-0 z-10 px-4 py-2.5 border-r', pc.bg, pc.border)}
                           colSpan={totalCols}
                         >
                           <div className="flex items-center gap-2">
@@ -402,10 +435,10 @@ export function ExecutionBoardPage() {
                                 expandedIds.has(row.key) && 'rotate-90',
                               )}
                             />
-                            <FolderKanban className="h-4 w-4 text-blue-500" />
+                            <FolderKanban className={cn('h-4 w-4', pc.icon)} />
                             <span className="font-semibold text-slate-700">{row.name}</span>
                             {row.number && (
-                              <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                              <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium', pc.border, pc.bg === 'bg-blue-50' ? 'text-blue-600' : 'text-slate-500')}>
                                 {row.number}
                               </span>
                             )}
@@ -416,13 +449,14 @@ export function ExecutionBoardPage() {
                   }
 
                   const isParent = row.hasChildren;
+                  const zc = ZONE_COLORS[row.zoneType ?? ''] ?? ZONE_COLORS.zone;
 
                   return (
                     <tr
                       key={row.key}
                       className="border-t border-slate-100 hover:bg-slate-50/40"
                     >
-                      <td className="sticky left-0 z-10 bg-white px-4 py-2 border-r border-slate-200">
+                      <td className={cn('sticky left-0 z-10 bg-white px-4 py-2 border-r border-slate-200 border-l-[3px]', zc.border)}>
                         <div
                           className="flex items-center gap-1.5 cursor-pointer"
                           style={{ paddingLeft: `${row.depth * 20}px` }}
@@ -436,7 +470,7 @@ export function ExecutionBoardPage() {
                               )}
                             />
                           ) : (
-                            <span className="w-3.5" />
+                            <MapPin className="h-3 w-3 text-slate-300 shrink-0" />
                           )}
                           <span
                             className={cn(
@@ -447,7 +481,7 @@ export function ExecutionBoardPage() {
                             {row.name}
                           </span>
                           {row.zoneType && (
-                            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-400 capitalize shrink-0">
+                            <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium capitalize shrink-0', zc.badge)}>
                               {row.zoneType}
                             </span>
                           )}
@@ -468,7 +502,7 @@ export function ExecutionBoardPage() {
                                   <TaskCard
                                     key={task.id}
                                     task={task}
-                                    onClick={() => navigate(`/tasks/${task.id}`)}
+                                    onClick={() => setDrawerTaskId(task.id)}
                                   />
                                 ))}
                               </div>
@@ -489,7 +523,7 @@ export function ExecutionBoardPage() {
                                   <TaskCard
                                     key={task.id}
                                     task={task}
-                                    onClick={() => navigate(`/tasks/${task.id}`)}
+                                    onClick={() => setDrawerTaskId(task.id)}
                                   />
                                 ))}
                               </div>
@@ -505,6 +539,9 @@ export function ExecutionBoardPage() {
           </div>
         </div>
       )}
+
+      {/* Task detail drawer */}
+      <TaskDrawer taskId={drawerTaskId} onClose={() => setDrawerTaskId(null)} />
     </div>
   );
 }
