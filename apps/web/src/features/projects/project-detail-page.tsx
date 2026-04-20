@@ -76,7 +76,7 @@ export function ProjectDetailPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="bg-slate-50">
       {/* Header */}
       <div className="bg-white border-b border-slate-200">
         <div className="px-5 pt-5 pb-0">
