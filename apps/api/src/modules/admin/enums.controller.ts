@@ -18,10 +18,13 @@ import {
 } from '@prisma/client';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { OwnData } from '../../common/decorators/roles.decorator';
 
 @ApiTags('Admin - Enums')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@OwnData()
 @Controller('enums')
 export class EnumsController {
   @Get()

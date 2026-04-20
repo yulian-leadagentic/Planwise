@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Suspense, lazy } from 'react';
 import { PrivateRoute } from './private-route';
+import { RoutePermissionGuard } from './route-permission-guard';
 import { AppShell } from '@/components/layout/app-shell';
 import { LoginPage } from '@/features/auth/login-page';
 import { ForgotPasswordSteps } from '@/features/auth/forgot-password-steps';
@@ -71,7 +72,9 @@ export function AppRouter() {
       <Route
         element={
           <PrivateRoute>
-            <AppShell />
+            <RoutePermissionGuard>
+              <AppShell />
+            </RoutePermissionGuard>
           </PrivateRoute>
         }
       >

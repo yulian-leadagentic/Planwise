@@ -93,7 +93,7 @@ export class ReportsController {
   }
 
   @Get('export')
-  @RequirePermissions({ module: 'reports', action: 'read' })
+  @RequirePermissions({ module: 'reports', action: 'export' })
   @ApiOperation({ summary: 'Export report as Excel or PDF' })
   async exportReport(
     @Query('type') type: string,

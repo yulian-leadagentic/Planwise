@@ -12,11 +12,13 @@ import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes, ApiBody } from '@nes
 
 import { FilesService } from './files.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { OwnData } from '../../common/decorators/roles.decorator';
 
 @ApiTags('Files')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@OwnData()
 @Controller('files')
 export class FilesController {
   constructor(private readonly filesService: FilesService) {}

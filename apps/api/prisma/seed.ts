@@ -28,6 +28,36 @@ async function main() {
     modules.push(mod);
   }
 
+  // Sub-modules (must be created AFTER top-level modules to reference parentId)
+  const projectsMod = modules.find((m: any) => m.name === 'Projects');
+  const tasksMod = modules.find((m: any) => m.name === 'Tasks');
+  const timeMod = modules.find((m: any) => m.name === 'Time');
+  const templatesMod = modules.find((m: any) => m.name === 'Templates');
+  const adminMod = modules.find((m: any) => m.name === 'Admin');
+  const dashboardMod = modules.find((m: any) => m.name === 'Dashboard');
+
+  const subModuleData = [
+    { name: 'Project Planning', route: 'project-planning', icon: 'Layers', sortOrder: 41, parentId: projectsMod?.id },
+    { name: 'Task Approval', route: 'task-approval', icon: 'CheckCircle', sortOrder: 21, parentId: tasksMod?.id },
+    { name: 'Task Reassignment', route: 'task-reassignment', icon: 'UserPlus', sortOrder: 22, parentId: tasksMod?.id },
+    { name: 'Time Approval', route: 'time-approval', icon: 'Clock', sortOrder: 31, parentId: timeMod?.id },
+    { name: 'Task Templates', route: 'task-templates', icon: 'BookOpen', sortOrder: 81, parentId: templatesMod?.id },
+    { name: 'Zone Templates', route: 'zone-templates', icon: 'Map', sortOrder: 82, parentId: templatesMod?.id },
+    { name: 'Personal Data', route: 'personal-data', icon: 'User', sortOrder: 91, parentId: adminMod?.id },
+    { name: 'Calendar', route: 'calendar', icon: 'Calendar', sortOrder: 92, parentId: adminMod?.id },
+    { name: 'Roles', route: 'roles', icon: 'Shield', sortOrder: 93, parentId: adminMod?.id },
+    { name: 'Operations', route: '/operations', icon: 'Activity', sortOrder: 10, parentId: dashboardMod?.id },
+  ];
+  for (const sm of subModuleData) {
+    if (!sm.parentId) continue;
+    const existing = await prisma.module.findFirst({ where: { name: sm.name } });
+    if (!existing) {
+      const sub = await prisma.module.create({ data: sm });
+      modules.push(sub);
+    }
+  }
+  console.log(`  Seeded ${subModuleData.length} sub-modules`);
+
   // Roles
   let adminRole = await prisma.role.findFirst({ where: { name: 'Admin' } });
   if (!adminRole) {
@@ -49,10 +79,10 @@ async function main() {
   // Role-module permissions (upsert to avoid duplicates)
   for (const mod of modules) {
     const perms = [
-      { roleId: adminRole.id, moduleId: mod.id, canRead: true, canWrite: true, canDelete: true },
-      { roleId: managerRole.id, moduleId: mod.id, canRead: true, canWrite: mod.name !== 'Admin', canDelete: false },
-      { roleId: employeeRole.id, moduleId: mod.id, canRead: mod.name !== 'Admin', canWrite: ['Tasks', 'Time'].includes(mod.name), canDelete: false },
-      { roleId: partnerRole.id, moduleId: mod.id, canRead: ['Dashboard', 'Tasks', 'Time', 'Projects'].includes(mod.name), canWrite: ['Tasks', 'Time'].includes(mod.name), canDelete: false },
+      { roleId: adminRole.id, moduleId: mod.id, canRead: true, canWrite: true, canDelete: true, canApprove: true, canExport: true },
+      { roleId: managerRole.id, moduleId: mod.id, canRead: true, canWrite: mod.name !== 'Admin', canDelete: false, canApprove: ['Time', 'Tasks', 'Time Approval', 'Task Approval'].includes(mod.name), canExport: ['Reports'].includes(mod.name) },
+      { roleId: employeeRole.id, moduleId: mod.id, canRead: mod.name !== 'Admin', canWrite: ['Tasks', 'Time'].includes(mod.name), canDelete: false, canApprove: false, canExport: false },
+      { roleId: partnerRole.id, moduleId: mod.id, canRead: ['Dashboard', 'Tasks', 'Time', 'Projects'].includes(mod.name), canWrite: ['Tasks', 'Time'].includes(mod.name), canDelete: false, canApprove: false, canExport: false },
     ];
     for (const p of perms) {
       const existing = await prisma.roleModule.findFirst({
