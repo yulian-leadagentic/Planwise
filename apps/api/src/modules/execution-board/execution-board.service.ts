@@ -56,7 +56,13 @@ export class ExecutionBoardService {
           code: { not: '__TASK_CATALOG__' },
           isActive: true,
         },
-        select: { id: true, name: true, code: true, phaseId: true },
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          phaseId: true,
+          phase: { select: { id: true, name: true, color: true } },
+        },
         orderBy: { createdAt: 'asc' },
       }),
     ]);

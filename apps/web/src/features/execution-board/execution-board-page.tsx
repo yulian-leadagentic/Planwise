@@ -17,6 +17,7 @@ interface TemplateRef {
   name: string;
   code: string | null;
   phaseId: number | null;
+  phase: { id: number; name: string; color: string | null } | null;
 }
 
 interface Service {
@@ -194,66 +195,84 @@ function CellSummary({ tasks, healths, isAggregate }: { tasks: Task[]; healths: 
   );
 }
 
+const STATUS_PILL: Record<string, string> = {
+  not_started: 'bg-slate-100 text-slate-600',
+  in_progress: 'bg-blue-100 text-blue-700',
+  in_review: 'bg-violet-100 text-violet-700',
+  completed: 'bg-emerald-100 text-emerald-700',
+  on_hold: 'bg-amber-100 text-amber-700',
+  cancelled: 'bg-red-100 text-red-700',
+};
+
 function TaskCard({ task, health, onClick }: { task: Task; health: TaskHealth; onClick: () => void }) {
   const borderCls =
     health.level === 'critical'
-      ? 'border-red-300 bg-red-50/50 ring-1 ring-red-200'
+      ? 'border-red-300 bg-red-50 ring-1 ring-red-200'
       : health.level === 'warning'
-        ? 'border-amber-300 bg-amber-50/40'
+        ? 'border-amber-300 bg-amber-50/60'
         : 'border-slate-200 bg-white';
+
+  const pctColor =
+    health.computedPct >= 100 ? 'bg-emerald-500' :
+    health.computedPct >= 60 ? 'bg-blue-500' :
+    health.computedPct >= 30 ? 'bg-amber-500' : 'bg-slate-300';
 
   return (
     <button
       onClick={onClick}
       className={cn(
-        'w-full rounded-md border px-2.5 py-1.5 text-left shadow-sm transition-all hover:shadow-md',
+        'w-full rounded-md border px-2 py-2 text-left shadow-sm transition-all hover:shadow-md space-y-1.5',
         borderCls,
       )}
-      title={health.reasons.join(' • ')}
+      title={health.reasons.length > 0 ? health.reasons.join(' • ') : undefined}
     >
+      {/* Line 1: task name + risk icon */}
+      <div className="flex items-start gap-1.5">
+        <span className={cn('h-2 w-2 mt-1 shrink-0 rounded-full', STATUS_DOT[task.status] ?? 'bg-slate-400')} />
+        <span className="flex-1 text-[12px] font-semibold text-slate-800 leading-tight break-words">{task.name}</span>
+        {health.level === 'critical' && <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />}
+        {health.level === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />}
+      </div>
+
+      {/* Line 2: Kanban stage pill */}
       <div className="flex items-center gap-1.5">
-        <span className={cn('h-2 w-2 shrink-0 rounded-full', STATUS_DOT[task.status] ?? 'bg-slate-400')} />
-        <span className="flex-1 truncate text-[12px] font-medium text-slate-700">{task.name}</span>
-        {health.level === 'critical' && <AlertCircle className="h-3 w-3 text-red-600 shrink-0" />}
-        {health.level === 'warning' && <AlertTriangle className="h-3 w-3 text-amber-600 shrink-0" />}
-      </div>
-
-      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-        <span className="text-[10px] text-slate-500 font-medium">{STATUS_LABEL[task.status] ?? task.status}</span>
-        <span className="text-[10px] text-slate-300">·</span>
-        <span className={cn(
-          'text-[10px] font-bold tabular-nums',
-          health.computedPct >= 100 ? 'text-emerald-600' :
-          health.computedPct >= 60 ? 'text-blue-600' :
-          health.computedPct >= 30 ? 'text-amber-600' : 'text-slate-500'
-        )}>
-          {health.computedPct}%
+        <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider', STATUS_PILL[task.status] ?? STATUS_PILL.not_started)}>
+          {STATUS_LABEL[task.status] ?? task.status}
         </span>
-        {health.estimatedHours > 0 && (
-          <>
-            <span className="text-[10px] text-slate-300">·</span>
-            <span className="text-[10px] text-slate-500 tabular-nums flex items-center gap-0.5">
-              <Clock className="h-2.5 w-2.5" />
-              {health.loggedHours}h / {health.estimatedHours}h
-            </span>
-          </>
-        )}
       </div>
 
+      {/* Line 3: completion bar */}
+      <div className="flex items-center gap-1.5">
+        <div className="flex-1 h-[4px] bg-slate-200 rounded-full overflow-hidden">
+          <div className={cn('h-full rounded-full', pctColor)} style={{ width: `${Math.min(health.computedPct, 100)}%` }} />
+        </div>
+        <span className="text-[10px] font-bold tabular-nums text-slate-700 min-w-[28px] text-right">{health.computedPct}%</span>
+      </div>
+
+      {/* Line 4: hours spent */}
+      <div className="flex items-center gap-1 text-[10px] text-slate-600">
+        <Clock className="h-2.5 w-2.5 shrink-0" />
+        <span className="tabular-nums font-medium">
+          {health.loggedHours}h {health.estimatedHours > 0 ? `/ ${health.estimatedHours}h est.` : 'logged'}
+        </span>
+      </div>
+
+      {/* Line 5: due date */}
       {task.endDate && (
-        <div className="mt-1 flex items-center gap-1">
-          <Calendar className={cn('h-2.5 w-2.5', health.isOverdue ? 'text-red-600' : 'text-slate-400')} />
+        <div className="flex items-center gap-1 text-[10px]">
+          <Calendar className={cn('h-2.5 w-2.5 shrink-0', health.isOverdue ? 'text-red-600' : 'text-slate-400')} />
           <span className={cn(
-            'text-[10px] tabular-nums',
-            health.isOverdue ? 'text-red-600 font-semibold' : 'text-slate-500',
+            'tabular-nums',
+            health.isOverdue ? 'text-red-600 font-bold' : 'text-slate-500 font-medium',
           )}>
-            {formatShortDate(task.endDate)}
+            Due {formatShortDate(task.endDate)}
+            {health.isOverdue && ' (overdue)'}
           </span>
         </div>
       )}
 
       {task.assignees.length > 0 && (
-        <div className="mt-1 flex -space-x-1.5">
+        <div className="flex -space-x-1.5 pt-0.5">
           {task.assignees.slice(0, 3).map((a) => (
             <div
               key={a.user.id}
@@ -333,17 +352,29 @@ export function ExecutionBoardPage() {
     return map;
   }, [data]);
 
-  const { phaseColumns, directMatrix, hasNoPhase } = useMemo(() => {
+  const { phaseColumns, directMatrix, hasNoPhase, phaseToService } = useMemo(() => {
     const tasks = data?.tasks ?? [];
     const templates = data?.templates ?? [];
     const nameToHasTasks = new Set<string>();
     let _hasNoPhase = false;
 
+    // Build phase-name → service info from templates and also task.phase (fallback)
+    const nameToService = new Map<string, { name: string; color: string | null }>();
+    for (const tpl of templates) {
+      if (tpl.phase) nameToService.set(tpl.name, { name: tpl.phase.name, color: tpl.phase.color });
+    }
+
     const matrix = new Map<string, Task[]>();
     for (const task of tasks) {
       const phaseName = getTaskPhaseName(task) ?? '__none__';
       if (phaseName === '__none__') _hasNoPhase = true;
-      else nameToHasTasks.add(phaseName);
+      else {
+        nameToHasTasks.add(phaseName);
+        // Fallback: use task.phase (the DB Phase = UI "Service") when template mapping is missing
+        if (!nameToService.has(phaseName) && task.phase) {
+          nameToService.set(phaseName, { name: task.phase.name, color: task.phase.color });
+        }
+      }
       const key = `${task.zoneId}|${phaseName}`;
       if (!matrix.has(key)) matrix.set(key, []);
       matrix.get(key)!.push(task);
@@ -357,7 +388,12 @@ export function ExecutionBoardPage() {
       if (!orderedColumns.includes(name)) orderedColumns.push(name);
     }
 
-    return { phaseColumns: orderedColumns, directMatrix: matrix, hasNoPhase: _hasNoPhase };
+    return {
+      phaseColumns: orderedColumns,
+      directMatrix: matrix,
+      hasNoPhase: _hasNoPhase,
+      phaseToService: nameToService,
+    };
   }, [data?.tasks, data?.templates]);
 
   const getAggregatedTasks = useCallback(
@@ -516,14 +552,33 @@ export function ExecutionBoardPage() {
                   <th className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left font-semibold min-w-[300px] border-r border-slate-200">
                     Zone
                   </th>
-                  {phaseColumns.map((name) => (
-                    <th
-                      key={name}
-                      className="px-3 py-2.5 text-center font-semibold min-w-[200px] border-r border-slate-100 last:border-r-0"
-                    >
-                      {name}
-                    </th>
-                  ))}
+                  {phaseColumns.map((name) => {
+                    const svc = phaseToService.get(name);
+                    return (
+                      <th
+                        key={name}
+                        className="px-3 py-2 text-center font-semibold min-w-[200px] border-r border-slate-100 last:border-r-0"
+                      >
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className="text-slate-700">{name}</span>
+                          {svc ? (
+                            <span
+                              className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium normal-case tracking-normal"
+                              style={{
+                                backgroundColor: svc.color ? `${svc.color}22` : '#e0f2fe',
+                                color: svc.color ?? '#0369a1',
+                              }}
+                            >
+                              {svc.color && <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: svc.color }} />}
+                              {svc.name}
+                            </span>
+                          ) : (
+                            <span className="text-[9px] text-slate-300 normal-case tracking-normal">— no service —</span>
+                          )}
+                        </div>
+                      </th>
+                    );
+                  })}
                   {hasNoPhase && (
                     <th className="px-3 py-2.5 text-center font-semibold min-w-[200px] text-slate-400">
                       No Phase
