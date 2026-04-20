@@ -8,6 +8,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
 import { getTaskHealth, aggregateHealth, type TaskHealth } from '@/lib/task-health';
 import { STATUS_DOT, STATUS_PILL, STATUS_LABEL, formatShortDate } from '@/lib/task-constants';
+import { queryKeys } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 
@@ -95,7 +96,7 @@ function getTaskPhaseName(task: Task): string | null {
 
 function useExecutionBoard(projectId?: number | null, serviceId?: number | null) {
   return useQuery<BoardData>({
-    queryKey: ['execution-board', projectId, serviceId],
+    queryKey: queryKeys.executionBoard.with(projectId ?? null, serviceId ?? null),
     queryFn: () =>
       client
         .get('/execution-board', {
@@ -169,7 +170,7 @@ function CellSummary({ tasks, healths, isAggregate }: { tasks: Task[]; healths: 
         <HealthBadge agg={agg} />
       </div>
       {isAggregate && (
-        <span className="text-[10px] text-slate-400">{tasks.length} tasks</span>
+        <span className="text-[10px] text-slate-500">{tasks.length} tasks</span>
       )}
     </div>
   );
@@ -543,14 +544,14 @@ export function ExecutionBoardPage() {
                               {svc.name}
                             </span>
                           ) : (
-                            <span className="text-[9px] text-slate-300 normal-case tracking-normal">— no service —</span>
+                            <span className="text-[9px] text-slate-500 normal-case tracking-normal">— no service —</span>
                           )}
                         </div>
                       </th>
                     );
                   })}
                   {hasNoPhase && (
-                    <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2.5 text-center font-semibold min-w-[200px] text-slate-400 border-b border-slate-100">
+                    <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2.5 text-center font-semibold min-w-[200px] text-slate-600 border-b border-slate-100">
                       No Deliverable
                     </th>
                   )}

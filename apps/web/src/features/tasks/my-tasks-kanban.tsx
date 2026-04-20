@@ -11,6 +11,7 @@ import { timeApi } from '@/api/time.api';
 import client from '@/api/client';
 import { getTaskHealth } from '@/lib/task-health';
 import { STATUS_PILL, STATUS_LABEL, ZONE_BORDER_COLORS, formatShortDate } from '@/lib/task-constants';
+import { queryKeys } from '@/lib/query-keys';
 
 type TabMode = 'time' | 'kanban';
 
@@ -84,8 +85,8 @@ function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskProjectId
       isBillable: true,
     }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['time'] });
-      queryClient.invalidateQueries({ queryKey: ['tasks', 'mine'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.time.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.mine() });
       notify.success(`Logged ${totalHours}h`, { code: 'TIME-LOG-200' });
       setOpen(false);
       setNote('');
@@ -176,9 +177,9 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
 
       {/* Clickable area → open drawer */}
       <div className="px-3 pb-3 pt-1 cursor-pointer space-y-1.5" onClick={() => onOpenDrawer(task.id)}>
-        {task.code && <span className="text-[9px] font-mono text-slate-400">{task.code}</span>}
+        {task.code && <span className="text-[9px] font-mono text-slate-500">{task.code}</span>}
         <p className="text-[13px] font-semibold text-slate-800 leading-tight break-words">{task.name}</p>
-        {zoneName && <p className="text-[10px] text-slate-400 truncate">{zoneName}</p>}
+        {zoneName && <p className="text-[10px] text-slate-500 truncate">{zoneName}</p>}
 
         {/* Kanban stage pill */}
         <div className="flex items-center gap-1.5 flex-wrap">
@@ -309,7 +310,7 @@ function TimeReportingRow({ task }: { task: any }) {
         note: note.trim() || undefined,
         isBillable: true,
       });
-      queryClient.invalidateQueries({ queryKey: ['time'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.time.all });
       notify.success(`Logged ${totalHours}h for ${task.name}`);
       setNote('');
     } catch (err: any) {
@@ -342,7 +343,7 @@ function TimeReportingRow({ task }: { task: any }) {
             <span className={cn('text-[10px] font-semibold rounded px-1.5 py-0.5 shrink-0', statusColor)}>{statusLabel}</span>
           </div>
           <p className="text-[13px] font-medium text-slate-800 truncate mt-0.5">{task.name}</p>
-          {zoneName && <p className="text-[10px] text-slate-400 truncate">{zoneName}</p>}
+          {zoneName && <p className="text-[10px] text-slate-500 truncate">{zoneName}</p>}
         </div>
 
         {/* Date */}
@@ -401,7 +402,7 @@ function TimeReportingTab({ tasks }: { tasks: any[] }) {
   // Fetch recent time entries for today
   const today = new Date().toISOString().split('T')[0];
   const { data: recentEntriesData } = useQuery({
-    queryKey: ['time', 'entries', { date: today }],
+    queryKey: queryKeys.time.entries({ date: today }),
     queryFn: () => timeApi.listEntries({ date: today }),
     staleTime: 30 * 1000,
   });
@@ -472,7 +473,7 @@ function TimeReportingTab({ tasks }: { tasks: any[] }) {
                 <span className="font-semibold text-slate-700 w-14">{((e.minutes ?? 0) / 60).toFixed(2)}h</span>
                 <span className="text-blue-600 font-medium">{e.project?.name ?? ''}</span>
                 <span className="text-slate-500 flex-1 truncate">{e.task?.name ?? ''}</span>
-                {e.note && <span className="text-slate-400 truncate max-w-[200px]">{e.note}</span>}
+                {e.note && <span className="text-slate-600 truncate max-w-[200px]">{e.note}</span>}
               </div>
             ))}
           </div>
@@ -506,7 +507,7 @@ export function MyTasksKanbanPage() {
   const [filterPhaseName, setFilterPhaseName] = useState<string | null>(null);
 
   const { data: tasksData, isLoading } = useQuery({
-    queryKey: ['tasks', 'mine'],
+    queryKey: queryKeys.tasks.mine(),
     queryFn: () => tasksApi.mine().then((r: any) => {
       const d = r?.data ?? r;
       return Array.isArray(d) ? d : d?.data ?? [];
@@ -517,7 +518,7 @@ export function MyTasksKanbanPage() {
 
   // Fetch service (Phase DB model) lookups for filter dropdown
   const { data: servicesData } = useQuery({
-    queryKey: ['phases'],
+    queryKey: queryKeys.phases.all,
     queryFn: () => client.get('/phases').then((r) => r.data?.data ?? r.data),
     staleTime: 10 * 60 * 1000,
   });
@@ -589,10 +590,10 @@ export function MyTasksKanbanPage() {
     try {
       await tasksApi.update(taskId, { status: targetStatus });
       // Sync project planning views
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
-      queryClient.invalidateQueries({ queryKey: ['planning'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.planning.all });
     } catch (err: any) {
-      queryClient.invalidateQueries({ queryKey: ['tasks', 'mine'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.mine() });
       notify.apiError(err, 'Failed to update status');
     }
   };
@@ -631,7 +632,7 @@ export function MyTasksKanbanPage() {
       });
       // Then move to completed
       await moveTask(timeLogTask.id, timeLogTask.targetStatus);
-      queryClient.invalidateQueries({ queryKey: ['time'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.time.all });
       setTimeLogTask(null);
       setTimeLogHours('');
       setTimeLogNote('');
@@ -700,13 +701,13 @@ export function MyTasksKanbanPage() {
             Clear filters
           </button>
         )}
-        <span className="ml-auto text-[11px] text-slate-400 tabular-nums">
+        <span className="ml-auto text-[11px] text-slate-600 tabular-nums">
           {tasks.length} of {allTasks.length} tasks
         </span>
       </div>
 
       {isLoading ? (
-        <div className="py-12 text-center text-sm text-slate-400">Loading your tasks...</div>
+        <div className="py-12 text-center text-sm text-slate-600">Loading your tasks...</div>
       ) : activeTab === 'time' ? (
         <TimeReportingTab tasks={tasks} />
       ) : tasks.length === 0 ? (

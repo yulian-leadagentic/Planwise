@@ -7,6 +7,7 @@ import { tasksApi } from '@/api/tasks.api';
 import { timeApi } from '@/api/time.api';
 import { formatDate, formatRelative } from '@/lib/date-utils';
 import { getTaskHealth } from '@/lib/task-health';
+import { queryKeys } from '@/lib/query-keys';
 import client from '@/api/client';
 
 interface TaskDrawerProps {
@@ -34,7 +35,7 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
   const drawerRef = useRef<HTMLDivElement>(null);
 
   const { data: task, isLoading } = useQuery({
-    queryKey: ['tasks', taskId],
+    queryKey: queryKeys.tasks.detail(taskId!),
     queryFn: () => tasksApi.get(taskId!),
     enabled: !!taskId,
   });
@@ -57,10 +58,10 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
     mutationFn: ({ field, value }: { field: string; value: any }) =>
       tasksApi.update(taskId!, { [field]: value }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tasks', taskId] });
-      queryClient.invalidateQueries({ queryKey: ['tasks', 'mine'] });
-      queryClient.invalidateQueries({ queryKey: ['planning'] });
-      queryClient.invalidateQueries({ queryKey: ['execution-board'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.detail(taskId!) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.mine() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.planning.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.executionBoard.all });
     },
     onError: (err: any) => notify.apiError(err, 'Failed to update'),
   });
@@ -197,7 +198,7 @@ function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any
   const [search, setSearch] = useState('');
 
   const { data: users = [] } = useQuery({
-    queryKey: ['users', 'list'],
+    queryKey: queryKeys.users.list(),
     queryFn: () => client.get('/users').then((r) => {
       const d = r.data?.data ?? r.data;
       return Array.isArray(d) ? d : d?.data ?? [];
@@ -209,8 +210,8 @@ function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any
   const addMutation = useMutation({
     mutationFn: (userId: number) => tasksApi.addAssignee(taskId, { userId }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tasks', taskId] });
-      queryClient.invalidateQueries({ queryKey: ['execution-board'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.detail(taskId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.executionBoard.all });
       setShowPicker(false);
       setSearch('');
     },
@@ -220,8 +221,8 @@ function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any
   const removeMutation = useMutation({
     mutationFn: (userId: number) => tasksApi.removeAssignee(taskId, userId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tasks', taskId] });
-      queryClient.invalidateQueries({ queryKey: ['execution-board'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.detail(taskId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.executionBoard.all });
     },
     onError: (err: any) => notify.apiError(err, 'Failed to remove'),
   });
@@ -279,8 +280,10 @@ function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any
               </div>
               <span className="flex-1 text-[12px] text-slate-700">{a.user?.firstName} {a.user?.lastName}</span>
               {a.role && <span className="text-[10px] text-slate-400">({a.role})</span>}
-              <button onClick={() => removeMutation.mutate(a.user?.id)}
-                className="opacity-0 group-hover:opacity-100 rounded p-0.5 text-slate-400 hover:text-red-500 hover:bg-red-50 transition-opacity">
+              <button
+                onClick={() => removeMutation.mutate(a.user?.id)}
+                aria-label={`Remove ${a.user?.firstName ?? 'assignee'}`}
+                className="opacity-60 group-hover:opacity-100 rounded p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 transition-opacity">
                 <X className="h-3 w-3" />
               </button>
             </div>
@@ -344,7 +347,7 @@ function TaskTimeTab({ taskId, taskName }: { taskId: number; taskName: string })
   const queryClient = useQueryClient();
 
   const { data: entries = [] } = useQuery({
-    queryKey: ['time-entries', 'task', taskId],
+    queryKey: queryKeys.time.entriesByTask(taskId),
     queryFn: () => client.get('/time-entries', { params: { taskId } }).then((r) => {
       const d = r.data?.data ?? r.data;
       return Array.isArray(d) ? d : d?.data ?? [];
@@ -357,8 +360,8 @@ function TaskTimeTab({ taskId, taskName }: { taskId: number; taskName: string })
       minutes: Math.round(Number(hours) * 60), note: note.trim() || undefined,
     }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['time-entries', 'task', taskId] });
-      queryClient.invalidateQueries({ queryKey: ['time'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.time.entriesByTask(taskId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.time.all });
       notify.success(`Logged ${hours}h`, { code: 'TIME-LOG-200' });
       setHours(''); setNote('');
     },
@@ -410,7 +413,7 @@ function TaskDiscussionTab({ taskId }: { taskId: number }) {
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['messages', 'task', taskId],
+    queryKey: queryKeys.messages.byTask(taskId),
     queryFn: () => client.get('/messages', { params: { entityType: 'task', entityId: taskId } }).then((r) => r.data),
   });
 
@@ -418,7 +421,7 @@ function TaskDiscussionTab({ taskId }: { taskId: number }) {
 
   const sendMessage = useMutation({
     mutationFn: (content: string) => client.post('/messages', { entityType: 'task', entityId: taskId, content }).then((r) => r.data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['messages', 'task', taskId] }); setText(''); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: queryKeys.messages.byTask(taskId) }); setText(''); },
   });
 
   return (

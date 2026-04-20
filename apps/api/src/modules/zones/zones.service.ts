@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
+import { buildCatalogMap, resolveBudget as resolveBudgetUtil } from './zones.util';
 
 @Injectable()
 export class ZonesService {
@@ -22,28 +23,18 @@ export class ZonesService {
       where: { code: '__TASK_CATALOG__' },
       include: { templateTasks: true },
     });
-    const map = new Map<string, { hours: any; amount: any }>();
-    if (!catalog) return map;
-    for (const t of catalog.templateTasks) {
-      if (t.code) {
-        map.set(t.code, { hours: t.defaultBudgetHours, amount: t.defaultBudgetAmount });
-      }
-    }
-    return map;
+    return buildCatalogMap(catalog?.templateTasks ?? []);
   }
 
   /**
    * Resolves budget for a task: template task value OR catalog fallback by code.
+   * Thin wrapper around the pure `resolveBudget` utility.
    */
   private resolveBudget(
     tt: { code?: string | null; defaultBudgetHours?: any; defaultBudgetAmount?: any },
     catalog: Map<string, { hours: any; amount: any }>,
   ) {
-    const fallback = tt.code ? catalog.get(tt.code) : undefined;
-    return {
-      budgetHours: tt.defaultBudgetHours ?? fallback?.hours ?? null,
-      budgetAmount: tt.defaultBudgetAmount ?? fallback?.amount ?? null,
-    };
+    return resolveBudgetUtil(tt, catalog);
   }
 
   async findAll(projectId: number) {
