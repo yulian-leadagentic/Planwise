@@ -5,6 +5,14 @@ import { ConfigService } from '@nestjs/config';
 
 import { PrismaService } from '../../../prisma/prisma.service';
 
+function requireSecret(config: ConfigService, key: string): string {
+  const value = config.get<string>(key);
+  if (!value || value.length < 32) {
+    throw new Error(`${key} must be set and at least 32 characters long`);
+  }
+  return value;
+}
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(
@@ -14,7 +22,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_ACCESS_SECRET', 'amec-access-secret-change-in-production-32chars'),
+      secretOrKey: requireSecret(configService, 'JWT_ACCESS_SECRET'),
     });
   }
 

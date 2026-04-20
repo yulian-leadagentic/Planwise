@@ -8,9 +8,18 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 
 import { PrismaService } from '../../prisma/prisma.service';
+
+function requireSecret(config: ConfigService, key: string): string {
+  const value = config.get<string>(key);
+  if (!value || value.length < 32) {
+    throw new Error(`${key} must be set and at least 32 characters long`);
+  }
+  return value;
+}
 
 @Injectable()
 export class AuthService {
@@ -56,7 +65,7 @@ export class AuthService {
     const payload = { sub: user.id, email: user.email, roleId: user.roleId };
     const accessToken = this.jwtService.sign(payload);
     const refreshToken = this.jwtService.sign(payload, {
-      secret: this.configService.get('JWT_REFRESH_SECRET', 'amec-refresh-secret'),
+      secret: requireSecret(this.configService, 'JWT_REFRESH_SECRET'),
       expiresIn: '7d',
     });
 
@@ -86,7 +95,7 @@ export class AuthService {
     const payload = { sub: user.id, email: user.email, roleId: user.roleId };
     const accessToken = this.jwtService.sign(payload);
     const refreshToken = this.jwtService.sign(payload, {
-      secret: this.configService.get('JWT_REFRESH_SECRET', 'amec-refresh-secret'),
+      secret: requireSecret(this.configService, 'JWT_REFRESH_SECRET'),
       expiresIn: '7d',
     });
 
@@ -97,7 +106,7 @@ export class AuthService {
     const user = await this.prisma.user.findFirst({ where: { email, isActive: true } });
     if (!user) return; // Silent fail for security
 
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
     const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
     await this.prisma.user.update({

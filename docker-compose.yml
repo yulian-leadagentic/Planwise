@@ -3,10 +3,10 @@ services:
     image: mysql:8.0
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root_password
-      MYSQL_DATABASE: amec
-      MYSQL_USER: amec
-      MYSQL_PASSWORD: your_password
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-amec}
+      MYSQL_USER: ${MYSQL_USER:?MYSQL_USER is required}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
     ports:
       - '3307:3306'
     volumes:
@@ -39,24 +39,24 @@ services:
       redis:
         condition: service_started
     environment:
-      DATABASE_URL: mysql://amec:your_password@mysql:3306/amec
-      JWT_ACCESS_SECRET: amec-access-secret-change-in-production-32chars
-      JWT_ACCESS_EXPIRY: 1h
-      JWT_REFRESH_SECRET: amec-refresh-secret-change-in-production-32chars
-      JWT_REFRESH_EXPIRY: 7d
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required (min 32 chars)}
+      JWT_ACCESS_EXPIRY: ${JWT_ACCESS_EXPIRY:-1h}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required (min 32 chars)}
+      JWT_REFRESH_EXPIRY: ${JWT_REFRESH_EXPIRY:-7d}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 3000
-      APP_URL: http://localhost:5173
-      API_URL: http://localhost:3000
-      MAIL_HOST: smtp.gmail.com
-      MAIL_PORT: 587
-      MAIL_USER: noreply@amec.com
-      MAIL_PASSWORD: placeholder
-      MAIL_FROM: noreply@amec.com
+      APP_URL: ${APP_URL:-http://localhost:5173}
+      API_URL: ${API_URL:-http://localhost:3000}
+      MAIL_HOST: ${MAIL_HOST:-smtp.gmail.com}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USER: ${MAIL_USER:-noreply@example.com}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-noreply@example.com}
       UPLOAD_DIR: /app/uploads
-      MAX_FILE_SIZE: 10485760
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-10485760}
     volumes:
       - uploads:/app/uploads
 

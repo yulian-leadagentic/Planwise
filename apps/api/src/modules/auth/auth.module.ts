@@ -16,10 +16,16 @@ import { UsersModule } from '../users/users.module';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_ACCESS_SECRET', 'amec-access-secret-change-in-production-32chars'),
-        signOptions: { expiresIn: config.get<string>('JWT_ACCESS_EXPIRY', '1h') },
-      }),
+      useFactory: (config: ConfigService) => {
+        const secret = config.get<string>('JWT_ACCESS_SECRET');
+        if (!secret || secret.length < 32) {
+          throw new Error('JWT_ACCESS_SECRET must be set and at least 32 characters long');
+        }
+        return {
+          secret,
+          signOptions: { expiresIn: config.get<string>('JWT_ACCESS_EXPIRY', '1h') },
+        };
+      },
     }),
     UsersModule,
   ],

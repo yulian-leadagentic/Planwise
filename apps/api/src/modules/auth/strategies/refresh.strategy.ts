@@ -6,6 +6,14 @@ import { Request } from 'express';
 
 import { PrismaService } from '../../../prisma/prisma.service';
 
+function requireSecret(config: ConfigService, key: string): string {
+  const value = config.get<string>(key);
+  if (!value || value.length < 32) {
+    throw new Error(`${key} must be set and at least 32 characters long`);
+  }
+  return value;
+}
+
 @Injectable()
 export class RefreshStrategy extends PassportStrategy(Strategy, 'refresh') {
   constructor(
@@ -20,7 +28,7 @@ export class RefreshStrategy extends PassportStrategy(Strategy, 'refresh') {
         return null;
       },
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_REFRESH_SECRET', 'amec-refresh-secret'),
+      secretOrKey: requireSecret(configService, 'JWT_REFRESH_SECRET'),
     });
   }
 

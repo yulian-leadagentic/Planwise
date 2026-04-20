@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
 
@@ -64,12 +64,15 @@ export class TasksService {
     });
   }
 
-  async findAll(query: QueryTasksDto) {
+  async findAll(query: QueryTasksDto, restrictToProjectIds?: number[]) {
     const where: Prisma.TaskWhereInput = {
       deletedAt: null,
     };
 
     if (query.projectId) where.projectId = query.projectId;
+    else if (restrictToProjectIds && restrictToProjectIds.length > 0) {
+      where.projectId = { in: restrictToProjectIds };
+    }
     if (query.zoneId) where.zoneId = query.zoneId;
     if (query.serviceTypeId) where.serviceTypeId = query.serviceTypeId;
     if (query.phaseId) where.phaseId = query.phaseId;
@@ -381,6 +384,12 @@ export class TasksService {
   async addAttachment(taskId: number, userId: number, data: { fileName: string; fileUrl: string; fileSize?: number; mimeType?: string }) {
     await this.findOne(taskId);
 
+    // Only accept relative URLs returned by our own uploader — prevents stored
+    // XSS / open-redirect via attacker-controlled javascript:/http:// URLs.
+    if (typeof data.fileUrl !== 'string' || !data.fileUrl.startsWith('/') || data.fileUrl.includes('://')) {
+      throw new BadRequestException('fileUrl must be a relative path returned by /files/upload');
+    }
+
     return this.prisma.taskAttachment.create({
       data: {
         taskId,
@@ -399,5 +408,21 @@ export class TasksService {
   async removeAttachment(attachmentId: number) {
     await this.prisma.taskAttachment.delete({ where: { id: attachmentId } });
     return { message: 'Attachment removed' };
+  }
+
+  /**
+   * Resolves an attachment → its task ID then runs the supplied access check.
+   * Throws NotFoundException if the attachment does not exist.
+   */
+  async assertAttachmentAccess(
+    attachmentId: number,
+    check: (taskId: number) => Promise<void>,
+  ): Promise<void> {
+    const att = await this.prisma.taskAttachment.findUnique({
+      where: { id: attachmentId },
+      select: { taskId: true },
+    });
+    if (!att) throw new NotFoundException('Attachment not found');
+    await check(att.taskId);
   }
 }

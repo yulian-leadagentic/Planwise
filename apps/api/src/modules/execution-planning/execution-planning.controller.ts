@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, ParseIntPipe, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, ParseIntPipe, UseGuards, ForbiddenException } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { ExecutionPlanningService } from './execution-planning.service';
@@ -6,13 +6,17 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions, OwnData } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 
 @ApiTags('Execution Planning')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller()
 export class ExecutionPlanningController {
-  constructor(private readonly eps: ExecutionPlanningService) {}
+  constructor(
+    private readonly eps: ExecutionPlanningService,
+    private readonly access: ProjectAccessService,
+  ) {}
 
   // ─── Workload ───────────────────────────────────────────────────────────
 
@@ -20,10 +24,15 @@ export class ExecutionPlanningController {
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get user workload (planned vs capacity per day)' })
   getUserWorkload(
+    @CurrentUser() user: any,
     @Param('userId', ParseIntPipe) userId: number,
     @Query('from') from: string,
     @Query('to') to: string,
   ) {
+    // Only super-admins can see arbitrary users' workload; everyone else only their own
+    if (user.id !== userId && user.roleId !== 1) {
+      throw new ForbiddenException('You can only view your own workload');
+    }
     return this.eps.getUserWorkload(userId, from, to);
   }
 
@@ -37,11 +46,13 @@ export class ExecutionPlanningController {
   @Get('projects/:id/workload')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get project team workload' })
-  getProjectWorkload(
+  async getProjectWorkload(
+    @CurrentUser() user: any,
     @Param('id', ParseIntPipe) projectId: number,
     @Query('from') from: string,
     @Query('to') to: string,
   ) {
+    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
     return this.eps.getProjectWorkload(projectId, from, to);
   }
 
@@ -50,17 +61,20 @@ export class ExecutionPlanningController {
   @Get('projects/:id/feasibility')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Calculate project feasibility' })
-  getFeasibility(
+  async getFeasibility(
+    @CurrentUser() user: any,
     @Param('id', ParseIntPipe) projectId: number,
     @Query('targetDate') targetDate?: string,
   ) {
+    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
     return this.eps.calculateFeasibility(projectId, targetDate);
   }
 
   @Get('projects/:id/estimated-cost')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Calculate project estimated cost from employee rates × logged hours' })
-  getEstimatedCost(@Param('id', ParseIntPipe) projectId: number) {
+  async getEstimatedCost(@CurrentUser() user: any, @Param('id', ParseIntPipe) projectId: number) {
+    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
     return this.eps.calculateEstimatedCost(projectId);
   }
 
@@ -69,7 +83,8 @@ export class ExecutionPlanningController {
   @Get('projects/:id/progress')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get project weighted progress' })
-  getProgress(@Param('id', ParseIntPipe) projectId: number) {
+  async getProgress(@CurrentUser() user: any, @Param('id', ParseIntPipe) projectId: number) {
+    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
     return this.eps.getProjectProgress(projectId);
   }
 
@@ -147,12 +162,16 @@ export class ExecutionPlanningController {
   @Get('dashboard/operations')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Operations dashboard — projects at risk, team load, overdue tasks' })
-  async getOperationsDashboard() {
+  async getOperationsDashboard(@CurrentUser() user: any) {
     const prisma = this.eps['prisma'];
     const now = new Date();
 
+    // Scope to projects the caller can access
+    const acc = await this.access.getAccessibleProjectIds(user.id, user.roleId);
+    const projectScope = acc.all ? {} : { id: { in: acc.projectIds } };
+
     const activeProjects = await prisma.project.findMany({
-      where: { deletedAt: null, status: { in: ['active', 'on_hold'] } },
+      where: { ...projectScope, deletedAt: null, status: { in: ['active', 'on_hold'] } },
       include: {
         leader: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
         department: { select: { id: true, name: true } },

@@ -1,15 +1,35 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 
 @Injectable()
 export class ExecutionBoardService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private access: ProjectAccessService,
+  ) {}
 
-  async getData(projectId?: number, serviceId?: number) {
+  async getData(
+    userId: number,
+    roleId: number | null | undefined,
+    projectId?: number,
+    serviceId?: number,
+  ) {
+    // Project-scoped authorization: filter to projects the caller can see
+    const accessible = await this.access.getAccessibleProjectIds(userId, roleId);
+    if (projectId) {
+      // explicit project filter — must be allowed
+      await this.access.assertProjectAccess(userId, projectId, roleId);
+    }
+
     const projectWhere: any = {
       deletedAt: null,
     };
-    if (projectId) projectWhere.id = projectId;
+    if (projectId) {
+      projectWhere.id = projectId;
+    } else if (!accessible.all) {
+      projectWhere.id = { in: accessible.projectIds };
+    }
 
     const projects = await this.prisma.project.findMany({
       where: projectWhere,
