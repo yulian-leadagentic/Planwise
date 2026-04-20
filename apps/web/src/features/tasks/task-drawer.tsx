@@ -39,12 +39,18 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
     enabled: !!taskId,
   });
 
-  // Focus trap + close on Escape
+  // Focus drawer on open + close on Escape + restore focus on close
   useEffect(() => {
     if (!taskId) return;
+    const prevFocus = document.activeElement as HTMLElement;
+    setTimeout(() => drawerRef.current?.focus(), 0);
+
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
+    return () => {
+      document.removeEventListener('keydown', handler);
+      prevFocus?.focus?.();
+    };
   }, [taskId, onClose]);
 
   const updateTask = useMutation({
@@ -52,7 +58,9 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
       tasksApi.update(taskId!, { [field]: value }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks', taskId] });
+      queryClient.invalidateQueries({ queryKey: ['tasks', 'mine'] });
       queryClient.invalidateQueries({ queryKey: ['planning'] });
+      queryClient.invalidateQueries({ queryKey: ['execution-board'] });
     },
     onError: (err: any) => notify.apiError(err, 'Failed to update'),
   });
@@ -62,16 +70,23 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
   return (
     <>
       {/* Backdrop */}
-      <div className="fixed inset-0 z-40 bg-black/20" onClick={onClose} />
+      <div className="fixed inset-0 z-40 bg-black/20" onClick={onClose} aria-hidden="true" />
 
       {/* Drawer */}
-      <div ref={drawerRef} className="fixed inset-y-0 right-0 z-50 w-[520px] max-w-[90vw] bg-white border-l border-slate-200 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
+      <div
+        ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="task-drawer-title"
+        tabIndex={-1}
+        className="fixed inset-y-0 right-0 z-50 w-[520px] max-w-[90vw] bg-white border-l border-slate-200 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200 focus:outline-none"
+      >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-          <h2 className="text-sm font-bold text-slate-900 truncate">
+          <h2 id="task-drawer-title" className="text-sm font-bold text-slate-900 truncate">
             {isLoading ? 'Loading...' : (task as any)?.name || 'Task'}
           </h2>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-600">
+          <button onClick={onClose} className="rounded-md p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600" aria-label="Close task drawer">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -85,11 +100,11 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
             {/* Task code + quick status */}
             <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
               {(task as any).code && <span className="font-mono text-[11px] text-slate-400">{(task as any).code}</span>}
-              <select value={(task as any).status} onChange={(e) => updateTask.mutate({ field: 'status', value: e.target.value })}
+              <select aria-label="Task status" value={(task as any).status} onChange={(e) => updateTask.mutate({ field: 'status', value: e.target.value })}
                 className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold border-0 cursor-pointer focus:outline-none', statusColors[(task as any).status] || statusColors.not_started)}>
                 {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>)}
               </select>
-              <select value={(task as any).priority} onChange={(e) => updateTask.mutate({ field: 'priority', value: e.target.value })}
+              <select aria-label="Task priority" value={(task as any).priority} onChange={(e) => updateTask.mutate({ field: 'priority', value: e.target.value })}
                 className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold border-0 cursor-pointer focus:outline-none', priorityColors[(task as any).priority] || priorityColors.medium)}>
                 {PRIORITY_OPTIONS.map((p) => <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>)}
               </select>
@@ -277,6 +292,7 @@ function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any
 }
 
 function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: string, value: any) => void }) {
+  const inputClass = 'mt-1 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none';
   return (
     <div className="space-y-4">
       <div>
@@ -286,24 +302,28 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-[11px] font-semibold text-slate-400 uppercase">Est. Hours</label>
-          <input type="number" value={task.budgetHours ?? ''} onBlur={(e) => onUpdate('budgetHours', e.target.value ? Number(e.target.value) : null)}
-            onChange={() => {}} className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none" />
+          <label className="text-[11px] font-semibold text-slate-400 uppercase" htmlFor="td-hours">Est. Hours</label>
+          <input id="td-hours" type="number" key={`h-${task.id}`} defaultValue={task.budgetHours ?? ''}
+            onBlur={(e) => onUpdate('budgetHours', e.target.value ? Number(e.target.value) : null)}
+            className={inputClass} />
         </div>
         <div>
-          <label className="text-[11px] font-semibold text-slate-400 uppercase">Amount</label>
-          <input type="number" value={task.budgetAmount ?? ''} onBlur={(e) => onUpdate('budgetAmount', e.target.value ? Number(e.target.value) : null)}
-            onChange={() => {}} className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none" />
+          <label className="text-[11px] font-semibold text-slate-400 uppercase" htmlFor="td-amount">Amount</label>
+          <input id="td-amount" type="number" key={`a-${task.id}`} defaultValue={task.budgetAmount ?? ''}
+            onBlur={(e) => onUpdate('budgetAmount', e.target.value ? Number(e.target.value) : null)}
+            className={inputClass} />
         </div>
         <div>
-          <label className="text-[11px] font-semibold text-slate-400 uppercase">Due Date</label>
-          <input type="date" value={task.endDate?.split('T')[0] ?? ''} onChange={(e) => onUpdate('endDate', e.target.value || undefined)}
-            className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none" />
+          <label className="text-[11px] font-semibold text-slate-400 uppercase" htmlFor="td-due">Due Date</label>
+          <input id="td-due" type="date" key={`d-${task.id}`} defaultValue={task.endDate?.split('T')[0] ?? ''}
+            onChange={(e) => onUpdate('endDate', e.target.value || undefined)}
+            className={inputClass} />
         </div>
         <div>
-          <label className="text-[11px] font-semibold text-slate-400 uppercase">Completion</label>
-          <input type="number" min="0" max="100" value={task.completionPct ?? 0} onBlur={(e) => onUpdate('completionPct', Number(e.target.value))}
-            onChange={() => {}} className="mt-1 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none" />
+          <label className="text-[11px] font-semibold text-slate-400 uppercase" htmlFor="td-pct">Completion</label>
+          <input id="td-pct" type="number" min="0" max="100" key={`p-${task.id}`} defaultValue={task.completionPct ?? 0}
+            onBlur={(e) => onUpdate('completionPct', Number(e.target.value))}
+            className={inputClass} />
         </div>
       </div>
 

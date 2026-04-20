@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Clock, User as UserIcon, GripVertical, CalendarClock, ListChecks, Columns3, Play, Check, AlertCircle, AlertTriangle, Calendar } from 'lucide-react';
-import { DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, useDraggable, useDroppable } from '@dnd-kit/core';
+import { DndContext, DragOverlay, closestCorners, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, useDraggable, useDroppable } from '@dnd-kit/core';
 import { PageHeader } from '@/components/shared/page-header';
 import { TaskDrawer } from './task-drawer';
 import { cn } from '@/lib/utils';
@@ -158,7 +158,7 @@ function formatShortDate(iso: string): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
 
-function DraggableTaskCard({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id: number) => void }) {
+function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; onOpenDrawer: (id: number) => void; onStatusChange: (taskId: number, status: string) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: `task-${task.id}` });
   const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined;
   const zoneType = task.zone?.zoneType || 'zone';
@@ -255,7 +255,18 @@ function DraggableTaskCard({ task, onOpenDrawer }: { task: any; onOpenDrawer: (i
           </div>
         )}
 
-        <div className="pt-1">
+        {/* Keyboard-accessible status change (WCAG 2.5.7 Dragging Movements alternative) */}
+        <div className="pt-1 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          <select
+            aria-label="Change task status"
+            value={task.status}
+            onChange={(e) => onStatusChange(task.id, e.target.value)}
+            className="flex-1 rounded border border-slate-200 bg-white px-1.5 py-1 text-[10px] focus:border-blue-400 focus:outline-none"
+          >
+            {columns.map((c) => (
+              <option key={c.id} value={c.id}>{c.label}</option>
+            ))}
+          </select>
           <QuickTimeLog taskId={task.id} taskProjectId={task.projectId} />
         </div>
       </div>
@@ -263,7 +274,7 @@ function DraggableTaskCard({ task, onOpenDrawer }: { task: any; onOpenDrawer: (i
   );
 }
 
-function DroppableColumn({ column, tasks, onOpenDrawer }: { column: typeof columns[0]; tasks: any[]; onOpenDrawer: (id: number) => void }) {
+function DroppableColumn({ column, tasks, onOpenDrawer, onStatusChange }: { column: typeof columns[0]; tasks: any[]; onOpenDrawer: (id: number) => void; onStatusChange: (taskId: number, status: string) => void }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
 
   return (
@@ -278,7 +289,7 @@ function DroppableColumn({ column, tasks, onOpenDrawer }: { column: typeof colum
       </div>
       <div className="flex-1 space-y-2 px-3 pb-3">
         {tasks.map((task: any) => (
-          <DraggableTaskCard key={task.id} task={task} onOpenDrawer={onOpenDrawer} />
+          <DraggableTaskCard key={task.id} task={task} onOpenDrawer={onOpenDrawer} onStatusChange={onStatusChange} />
         ))}
         {tasks.length === 0 && (
           <div className={cn('py-8 text-center text-[11px] rounded-lg border-2 border-dashed', isOver ? 'border-blue-400 text-blue-500' : 'border-slate-200 text-slate-400')}>
@@ -572,7 +583,10 @@ export function MyTasksKanbanPage() {
 
   const hasActiveFilter = filterProjectId || filterServiceId || filterPhaseName;
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor),
+  );
 
   const columnTasks = useMemo(() => {
     const map: Record<string, any[]> = {};
@@ -735,7 +749,8 @@ export function MyTasksKanbanPage() {
           <div className="grid grid-cols-4 gap-3">
             {columns.map((col) => (
               <DroppableColumn key={col.id} column={col} tasks={columnTasks[col.id] ?? []}
-                onOpenDrawer={(id) => setDrawerTaskId(id)} />
+                onOpenDrawer={(id) => setDrawerTaskId(id)}
+                onStatusChange={(taskId, status) => moveTask(taskId, status)} />
             ))}
           </div>
           <DragOverlay>

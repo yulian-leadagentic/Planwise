@@ -25,6 +25,7 @@ import { TemplatesModule } from './modules/templates/templates.module';
 import { MessagesModule } from './modules/messages/messages.module';
 import { ExecutionPlanningModule } from './modules/execution-planning/execution-planning.module';
 import { ExecutionBoardModule } from './modules/execution-board/execution-board.module';
+import { HealthModule } from './modules/health/health.module';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { ExecutionBoardModule } from './modules/execution-board/execution-board.
     MessagesModule,
     ExecutionPlanningModule,
     ExecutionBoardModule,
+    HealthModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
