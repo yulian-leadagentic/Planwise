@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Clock, User as UserIcon, GripVertical, CalendarClock, ListChecks, Columns3, Play, Check } from 'lucide-react';
+import { Clock, User as UserIcon, GripVertical, CalendarClock, ListChecks, Columns3, Play, Check, AlertCircle, AlertTriangle, Calendar } from 'lucide-react';
 import { DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, useDraggable, useDroppable } from '@dnd-kit/core';
 import { PageHeader } from '@/components/shared/page-header';
 import { TaskDrawer } from './task-drawer';
@@ -8,6 +8,8 @@ import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { tasksApi } from '@/api/tasks.api';
 import { timeApi } from '@/api/time.api';
+import client from '@/api/client';
+import { getTaskHealth } from '@/lib/task-health';
 
 type TabMode = 'time' | 'kanban';
 
@@ -59,21 +61,37 @@ function getStartByDate(task: any): string | null {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
 
-function QuickTimeLog({ taskId, taskName }: { taskId: number; taskName: string }) {
+function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskProjectId?: number | null }) {
   const [open, setOpen] = useState(false);
-  const [hours, setHours] = useState('');
+  const today = new Date().toISOString().split('T')[0];
+  const [date, setDate] = useState(today);
+  const [start, setStart] = useState('09:00');
+  const [end, setEnd] = useState('10:00');
   const [note, setNote] = useState('');
   const queryClient = useQueryClient();
 
+  const [sh, sm] = start.split(':').map(Number);
+  const [eh, em] = end.split(':').map(Number);
+  const totalMinutes = Math.max(0, (eh * 60 + em) - (sh * 60 + sm));
+  const totalHours = (totalMinutes / 60).toFixed(2);
+
   const logTime = useMutation({
     mutationFn: () => timeApi.createEntry({
-      taskId, date: new Date().toISOString().split('T')[0],
-      minutes: Math.round(Number(hours) * 60), note: note.trim() || undefined,
+      taskId,
+      projectId: taskProjectId ?? undefined,
+      date,
+      startTime: start,
+      endTime: end,
+      minutes: totalMinutes,
+      note: note.trim() || undefined,
+      isBillable: true,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['time'] });
-      notify.success(`Logged ${hours}h`, { code: 'TIME-LOG-200' });
-      setOpen(false); setHours(''); setNote('');
+      queryClient.invalidateQueries({ queryKey: ['tasks', 'mine'] });
+      notify.success(`Logged ${totalHours}h`, { code: 'TIME-LOG-200' });
+      setOpen(false);
+      setNote('');
     },
     onError: (err: any) => notify.apiError(err, 'Failed'),
   });
@@ -89,15 +107,25 @@ function QuickTimeLog({ taskId, taskName }: { taskId: number; taskName: string }
 
   return (
     <div className="mt-2 rounded-md border border-blue-200 bg-blue-50/50 p-2 space-y-1.5" onClick={(e) => e.stopPropagation()}>
-      <div className="flex gap-1.5">
-        <input type="number" step="0.25" min="0.25" max="24" value={hours} onChange={(e) => setHours(e.target.value)}
-          placeholder="Hours" className="w-16 px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" autoFocus />
-        <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
-          placeholder="Note..." className="flex-1 px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
+      <div className="flex items-center gap-1">
+        <label className="text-[9px] font-semibold text-slate-500 uppercase w-10">Date</label>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+          className="flex-1 px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
       </div>
+      <div className="flex items-center gap-1">
+        <label className="text-[9px] font-semibold text-slate-500 uppercase w-10">Time</label>
+        <input type="time" value={start} onChange={(e) => setStart(e.target.value)} step="300"
+          className="w-[78px] px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
+        <span className="text-[10px] text-slate-400">→</span>
+        <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} step="300"
+          className="w-[78px] px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
+        <span className="ml-auto text-[11px] font-bold text-blue-600 tabular-nums">{totalHours}h</span>
+      </div>
+      <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
+        placeholder="Note (optional)…" className="w-full px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
       <div className="flex gap-1">
-        <button onClick={() => { if (hours && Number(hours) > 0) logTime.mutate(); }}
-          disabled={!hours || Number(hours) <= 0 || logTime.isPending}
+        <button onClick={() => { if (totalMinutes > 0) logTime.mutate(); }}
+          disabled={totalMinutes <= 0 || logTime.isPending}
           className="rounded bg-blue-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
           {logTime.isPending ? 'Saving...' : 'Save'}
         </button>
@@ -107,84 +135,128 @@ function QuickTimeLog({ taskId, taskName }: { taskId: number; taskName: string }
   );
 }
 
+const STATUS_PILL: Record<string, string> = {
+  not_started: 'bg-slate-100 text-slate-600',
+  in_progress: 'bg-blue-100 text-blue-700',
+  in_review: 'bg-violet-100 text-violet-700',
+  completed: 'bg-emerald-100 text-emerald-700',
+  on_hold: 'bg-amber-100 text-amber-700',
+  cancelled: 'bg-red-100 text-red-700',
+};
+
+const STATUS_LABEL_MAP: Record<string, string> = {
+  not_started: 'To Do',
+  in_progress: 'In Progress',
+  in_review: 'In Review',
+  completed: 'Done',
+  on_hold: 'On Hold',
+  cancelled: 'Cancelled',
+};
+
+function formatShortDate(iso: string): string {
+  const d = new Date(iso.split('T')[0]);
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+}
+
 function DraggableTaskCard({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id: number) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: `task-${task.id}` });
   const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined;
   const zoneType = task.zone?.zoneType || 'zone';
   const projectName = task.project?.name || task.label?.projectName || '';
   const zoneName = task.zone?.name || task.label?.name || '';
-  const startBy = getStartByDate(task);
-  const now = new Date();
-  const isOverdue = task.endDate && new Date(task.endDate) < now && task.status !== 'completed';
-  const startByDate = startBy ? new Date(task.endDate) : null;
-  const startByPassed = startByDate ? (() => {
-    const hours = Number(task.budgetHours || 0);
-    const workDays = Math.ceil(hours / 8);
-    const d = new Date(task.endDate);
-    let counted = 0;
-    while (counted < workDays) { d.setDate(d.getDate() - 1); if (d.getDay() !== 5 && d.getDay() !== 6) counted++; }
-    return d < now;
-  })() : false;
+  const health = getTaskHealth(task);
+
+  const borderCls =
+    health.level === 'critical'
+      ? 'border-red-300 bg-red-50 ring-1 ring-red-200'
+      : health.level === 'warning'
+        ? 'border-amber-300 bg-amber-50/50'
+        : 'border-slate-200 bg-white';
+
+  const pctColor =
+    health.computedPct >= 100 ? 'bg-emerald-500' :
+    health.computedPct >= 60 ? 'bg-blue-500' :
+    health.computedPct >= 30 ? 'bg-amber-500' : 'bg-slate-300';
 
   return (
     <div ref={setNodeRef} style={style} {...attributes}
       className={cn(
-        'rounded-lg border border-slate-200 bg-white shadow-sm hover:shadow-md transition-all border-l-[3px]',
+        'rounded-lg border shadow-sm hover:shadow-md transition-all border-l-[3px]',
+        borderCls,
         zoneBorderColors[zoneType] || 'border-l-slate-300',
         isDragging && 'opacity-40 shadow-lg ring-2 ring-blue-300 z-50',
-      )}>
-      {/* Drag handle */}
+      )}
+      title={health.reasons.length > 0 ? health.reasons.join(' • ') : undefined}
+    >
+      {/* Drag handle + project */}
       <div {...listeners} className="flex items-center gap-1.5 px-3 pt-2 cursor-grab active:cursor-grabbing">
         <GripVertical className="h-3 w-3 text-slate-300" />
         {projectName && (
           <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 rounded px-1.5 py-0.5 truncate max-w-[140px]">{projectName}</span>
         )}
+        <div className="ml-auto flex items-center gap-1">
+          {health.level === 'critical' && <AlertCircle className="h-3.5 w-3.5 text-red-600" />}
+          {health.level === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />}
+        </div>
       </div>
 
       {/* Clickable area → open drawer */}
-      <div className="px-3 pb-3 pt-1 cursor-pointer" onClick={() => onOpenDrawer(task.id)}>
+      <div className="px-3 pb-3 pt-1 cursor-pointer space-y-1.5" onClick={() => onOpenDrawer(task.id)}>
         {task.code && <span className="text-[9px] font-mono text-slate-400">{task.code}</span>}
-        <p className="text-[13px] font-medium text-slate-800 line-clamp-2">{task.name}</p>
-        {zoneName && <p className="text-[10px] text-slate-400 mt-0.5 truncate">{zoneName}</p>}
+        <p className="text-[13px] font-semibold text-slate-800 leading-tight break-words">{task.name}</p>
+        {zoneName && <p className="text-[10px] text-slate-400 truncate">{zoneName}</p>}
 
-        <div className="mt-2 flex items-center gap-1.5 text-[10px] flex-wrap">
-          {task.priority === 'critical' && <span className="rounded bg-red-100 px-1 py-0.5 font-bold text-red-600">Critical</span>}
-          {task.priority === 'high' && <span className="rounded bg-amber-100 px-1 py-0.5 font-bold text-amber-600">High</span>}
-          {task.budgetHours != null && Number(task.budgetHours) > 0 && <span className="text-slate-500">{Number(task.budgetHours)}h est.</span>}
-          {isOverdue && <span className="rounded bg-red-100 px-1 py-0.5 font-bold text-red-600">Overdue</span>}
+        {/* Kanban stage pill */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider', STATUS_PILL[task.status] ?? STATUS_PILL.not_started)}>
+            {STATUS_LABEL_MAP[task.status] ?? task.status}
+          </span>
+          {task.priority === 'critical' && <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-bold text-red-600">Critical</span>}
+          {task.priority === 'high' && <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-600">High</span>}
         </div>
 
-        {/* Dates row */}
-        <div className="mt-1.5 space-y-0.5">
-          {task.endDate && (
-            <div className="flex items-center gap-1 text-[10px]">
-              <span className="text-slate-400">Due:</span>
-              <span className={cn('font-medium', isOverdue ? 'text-red-600' : 'text-slate-600')}>
-                {new Date(task.endDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
-              </span>
-            </div>
-          )}
-          {startBy && (
-            <div className="flex items-center gap-1 text-[10px]">
-              <CalendarClock className="h-3 w-3 text-amber-500" />
-              <span className="text-slate-400">Start by:</span>
-              <span className={cn('font-medium', startByPassed ? 'text-red-600' : 'text-amber-600')}>{startBy}</span>
-            </div>
-          )}
+        {/* Completion bar */}
+        <div className="flex items-center gap-1.5">
+          <div className="flex-1 h-[4px] bg-slate-200 rounded-full overflow-hidden">
+            <div className={cn('h-full rounded-full', pctColor)} style={{ width: `${Math.min(health.computedPct, 100)}%` }} />
+          </div>
+          <span className="text-[10px] font-bold tabular-nums text-slate-700 min-w-[28px] text-right">{health.computedPct}%</span>
         </div>
 
-        {/* Progress */}
-        {task.completionPct > 0 && (
-          <div className="mt-1.5 flex items-center gap-1">
-            <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
-              <div className="h-full bg-blue-500 rounded-full" style={{ width: `${task.completionPct}%` }} />
-            </div>
-            <span className="text-[10px] text-blue-600 font-medium shrink-0">{task.completionPct}%</span>
+        {/* Hours */}
+        <div className="flex items-center gap-1 text-[10px] text-slate-600">
+          <Clock className="h-2.5 w-2.5 shrink-0" />
+          <span className="tabular-nums font-medium">
+            {health.loggedHours}h {health.estimatedHours > 0 ? `/ ${health.estimatedHours}h est.` : 'logged'}
+          </span>
+        </div>
+
+        {/* Due date */}
+        {task.endDate && (
+          <div className="flex items-center gap-1 text-[10px]">
+            <Calendar className={cn('h-2.5 w-2.5 shrink-0', health.isOverdue ? 'text-red-600' : 'text-slate-400')} />
+            <span className={cn(
+              'tabular-nums',
+              health.isOverdue ? 'text-red-600 font-bold' : 'text-slate-500 font-medium',
+            )}>
+              Due {formatShortDate(task.endDate)}
+              {health.isOverdue && ' (overdue)'}
+            </span>
           </div>
         )}
 
-        <div className="mt-2">
-          <QuickTimeLog taskId={task.id} taskName={task.name} />
+        {/* Risk reasons (visible) */}
+        {health.reasons.length > 0 && (
+          <div className={cn(
+            'rounded px-1.5 py-1 text-[10px]',
+            health.level === 'critical' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700',
+          )}>
+            {health.reasons[0]}
+          </div>
+        )}
+
+        <div className="pt-1">
+          <QuickTimeLog taskId={task.id} taskProjectId={task.projectId} />
         </div>
       </div>
     </div>
@@ -436,12 +508,17 @@ function TimeReportingTab({ tasks }: { tasks: any[] }) {
 
 export function MyTasksKanbanPage() {
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<TabMode>('time');
+  const [activeTab, setActiveTab] = useState<TabMode>('kanban');
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
   const [timeLogTask, setTimeLogTask] = useState<{ id: number; name: string; targetStatus: string } | null>(null);
   const [timeLogHours, setTimeLogHours] = useState('');
   const [timeLogNote, setTimeLogNote] = useState('');
+
+  // Filters
+  const [filterProjectId, setFilterProjectId] = useState<number | null>(null);
+  const [filterServiceId, setFilterServiceId] = useState<number | null>(null);
+  const [filterPhaseName, setFilterPhaseName] = useState<string | null>(null);
 
   const { data: tasksData, isLoading } = useQuery({
     queryKey: ['tasks', 'mine'],
@@ -451,7 +528,49 @@ export function MyTasksKanbanPage() {
     }),
   });
 
-  const tasks: any[] = Array.isArray(tasksData) ? tasksData : [];
+  const allTasks: any[] = Array.isArray(tasksData) ? tasksData : [];
+
+  // Fetch service (Phase DB model) lookups for filter dropdown
+  const { data: servicesData } = useQuery({
+    queryKey: ['phases'],
+    queryFn: () => client.get('/phases').then((r) => r.data?.data ?? r.data),
+    staleTime: 10 * 60 * 1000,
+  });
+  const services: any[] = Array.isArray(servicesData) ? servicesData : [];
+
+  // Derive unique project options from tasks
+  const projectOptions = useMemo(() => {
+    const map = new Map<number, { id: number; name: string }>();
+    for (const t of allTasks) {
+      if (t.project?.id && !map.has(t.project.id)) map.set(t.project.id, { id: t.project.id, name: t.project.name });
+    }
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [allTasks]);
+
+  // Derive unique phase (template) names used across tasks
+  const phaseOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const t of allTasks) {
+      const name = t.serviceType?.name || t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1];
+      if (name) names.add(name);
+    }
+    return Array.from(names).sort();
+  }, [allTasks]);
+
+  // Apply filters
+  const tasks = useMemo(() => {
+    return allTasks.filter((t) => {
+      if (filterProjectId && t.project?.id !== filterProjectId) return false;
+      if (filterServiceId && t.phaseId !== filterServiceId) return false;
+      if (filterPhaseName) {
+        const n = t.serviceType?.name || t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1];
+        if (n !== filterPhaseName) return false;
+      }
+      return true;
+    });
+  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName]);
+
+  const hasActiveFilter = filterProjectId || filterServiceId || filterPhaseName;
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
@@ -553,6 +672,51 @@ export function MyTasksKanbanPage() {
         </div>
       </div>
 
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={filterProjectId ?? ''}
+          onChange={(e) => setFilterProjectId(e.target.value ? +e.target.value : null)}
+          className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+        >
+          <option value="">All Projects</option>
+          {projectOptions.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+        <select
+          value={filterServiceId ?? ''}
+          onChange={(e) => setFilterServiceId(e.target.value ? +e.target.value : null)}
+          className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+        >
+          <option value="">All Services</option>
+          {services.map((s: any) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+        <select
+          value={filterPhaseName ?? ''}
+          onChange={(e) => setFilterPhaseName(e.target.value || null)}
+          className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+        >
+          <option value="">All Phases</option>
+          {phaseOptions.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+        {hasActiveFilter && (
+          <button
+            onClick={() => { setFilterProjectId(null); setFilterServiceId(null); setFilterPhaseName(null); }}
+            className="text-[12px] text-slate-500 hover:text-slate-700 underline"
+          >
+            Clear filters
+          </button>
+        )}
+        <span className="ml-auto text-[11px] text-slate-400 tabular-nums">
+          {tasks.length} of {allTasks.length} tasks
+        </span>
+      </div>
+
       {isLoading ? (
         <div className="py-12 text-center text-sm text-slate-400">Loading your tasks...</div>
       ) : activeTab === 'time' ? (
@@ -560,7 +724,9 @@ export function MyTasksKanbanPage() {
       ) : tasks.length === 0 ? (
         <div className="py-12 text-center">
           <UserIcon className="mx-auto h-12 w-12 text-slate-300" />
-          <p className="mt-3 text-sm text-slate-500">No tasks assigned to you</p>
+          <p className="mt-3 text-sm text-slate-500">
+            {hasActiveFilter ? 'No tasks match the active filters' : 'No tasks assigned to you'}
+          </p>
         </div>
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCorners}

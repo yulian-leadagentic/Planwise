@@ -119,22 +119,50 @@ export class TasksService {
   }
 
   async findMine(userId: number) {
-    return this.prisma.task.findMany({
+    const tasks = await this.prisma.task.findMany({
       where: {
         deletedAt: null,
-        assignees: { some: { userId } },
+        isArchived: false,
+        assignees: { some: { userId, deletedAt: null } },
       },
       orderBy: { createdAt: 'desc' },
       include: {
-        zone: { select: { id: true, name: true } },
+        zone: { select: { id: true, name: true, zoneType: true } },
+        project: { select: { id: true, name: true, number: true } },
         serviceType: { select: { id: true, name: true, code: true, color: true } },
-        phase: { select: { id: true, name: true } },
+        phase: { select: { id: true, name: true, color: true } },
         assignees: {
+          where: { deletedAt: null },
           include: {
             user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
           },
         },
       },
+    });
+
+    if (tasks.length === 0) return tasks;
+
+    const taskIds = tasks.map((t) => t.id);
+    const timeAgg = await this.prisma.timeEntry.groupBy({
+      by: ['taskId'],
+      where: { taskId: { in: taskIds }, deletedAt: null },
+      _sum: { minutes: true },
+      _max: { date: true },
+    });
+    const timeByTask = new Map<number, { minutes: number; lastDate: Date | null }>();
+    for (const row of timeAgg) {
+      if (row.taskId != null) {
+        timeByTask.set(row.taskId, { minutes: row._sum.minutes ?? 0, lastDate: row._max.date ?? null });
+      }
+    }
+
+    return tasks.map((t) => {
+      const agg = timeByTask.get(t.id);
+      return {
+        ...t,
+        loggedMinutes: agg?.minutes ?? 0,
+        lastActivityDate: agg?.lastDate ?? null,
+      };
     });
   }
 
