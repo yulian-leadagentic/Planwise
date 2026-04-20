@@ -11,8 +11,7 @@ import { STATUS_DOT, STATUS_PILL, STATUS_LABEL, formatShortDate } from '@/lib/ta
 import { queryKeys } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
-
-const SERVICE_RE = /^\[SERVICE:(.+)\]$/;
+import { getTaskPhaseName } from './execution-board.util';
 
 interface TemplateRef {
   id: number;
@@ -88,11 +87,6 @@ interface FlatRow {
   number?: string | null;
 }
 
-function getTaskPhaseName(task: Task): string | null {
-  if (task.serviceType?.name) return task.serviceType.name;
-  const m = task.description?.match(SERVICE_RE);
-  return m ? m[1] : null;
-}
 
 function useExecutionBoard(projectId?: number | null, serviceId?: number | null) {
   return useQuery<BoardData>({
