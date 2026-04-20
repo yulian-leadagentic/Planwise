@@ -544,12 +544,11 @@ export function ExecutionBoardPage() {
           }
         />
       ) : (
-        <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
-          <div className="overflow-x-auto">
+        <div className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
-                  <th className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left font-semibold min-w-[300px] border-r border-slate-200">
+                  <th className="sticky top-0 left-0 z-30 bg-slate-50 px-4 py-2.5 text-left font-semibold min-w-[300px] border-r border-b border-slate-200">
                     Zone
                   </th>
                   {phaseColumns.map((name) => {
@@ -557,7 +556,7 @@ export function ExecutionBoardPage() {
                     return (
                       <th
                         key={name}
-                        className="px-3 py-2 text-center font-semibold min-w-[200px] border-r border-slate-100 last:border-r-0"
+                        className="sticky top-0 z-20 bg-slate-50 px-3 py-2 text-center font-semibold min-w-[200px] border-r border-b border-slate-100 last:border-r-0"
                       >
                         <div className="flex flex-col items-center gap-0.5">
                           <span className="text-slate-700">{name}</span>
@@ -580,7 +579,7 @@ export function ExecutionBoardPage() {
                     );
                   })}
                   {hasNoPhase && (
-                    <th className="px-3 py-2.5 text-center font-semibold min-w-[200px] text-slate-400">
+                    <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2.5 text-center font-semibold min-w-[200px] text-slate-400 border-b border-slate-100">
                       No Deliverable
                     </th>
                   )}
@@ -715,7 +714,6 @@ export function ExecutionBoardPage() {
                 })}
               </tbody>
             </table>
-          </div>
         </div>
       )}
 
