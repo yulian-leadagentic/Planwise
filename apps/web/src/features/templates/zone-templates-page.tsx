@@ -405,7 +405,7 @@ function ZoneCatalogPickerModal({
           name: ct.name,
           defaultBudgetHours: ct.defaultBudgetHours,
           defaultBudgetAmount: ct.defaultBudgetAmount,
-          // phaseId is set at the phase/milestone template level, not per-task
+          // phaseId is set at the deliverable template level, not per-task
         });
       }
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
@@ -637,10 +637,10 @@ function ServicePickerModal({
         }
       }
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
-      notify.success(`Added ${toAdd.length} phase/milestone template${toAdd.length > 1 ? 's' : ''}`, { code: 'SVC-ADD-200' });
+      notify.success(`Added ${toAdd.length} deliverable template${toAdd.length > 1 ? 's' : ''}`, { code: 'SVC-ADD-200' });
       onClose();
     } catch (err: any) {
-      notify.apiError(err, 'Failed to add phase/milestone');
+      notify.apiError(err, 'Failed to add deliverable');
     } finally {
       setAdding(false);
     }
@@ -650,18 +650,18 @@ function ServicePickerModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="text-lg font-semibold">Select Phase/Milestone Templates</h2>
+          <h2 className="text-lg font-semibold">Select Deliverable Templates</h2>
           <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent"><X className="h-5 w-5" /></button>
         </div>
         <div className="border-b border-border px-5 py-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search phase/milestone templates..." className={`${inputClass} pl-9`} autoFocus />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search deliverable templates..." className={`${inputClass} pl-9`} autoFocus />
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">
           {filtered.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">{search ? 'No templates match.' : 'No phase/milestone templates available.'}</p>
+            <p className="py-8 text-center text-sm text-muted-foreground">{search ? 'No templates match.' : 'No deliverable templates available.'}</p>
           ) : (
             <table className="w-full text-sm">
               <thead>
@@ -734,7 +734,7 @@ function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, readOnl
       >
         {expanded ? <ChevronDown className="h-3 w-3 text-blue-500" /> : <ChevronRight className="h-3 w-3 text-blue-500" />}
         <Copy className="h-3.5 w-3.5 shrink-0 text-blue-600" />
-        <span className="text-sm text-blue-700 font-medium">Phase/Milestone: {serviceName}</span>
+        <span className="text-sm text-blue-700 font-medium">Deliverable: {serviceName}</span>
         {servicePhase && (
           <span className="rounded-full bg-cyan-100 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700">
             {servicePhase.name}
@@ -746,7 +746,7 @@ function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, readOnl
         {!readOnly && <button
           onClick={(e) => { e.stopPropagation(); onDeleteAll(); }}
           className="ml-auto rounded p-0.5 text-muted-foreground hover:bg-red-100 hover:text-red-600"
-          title="Remove this phase/milestone and all its tasks"
+          title="Remove this deliverable and all its tasks"
         >
           <X className="h-3 w-3" />
         </button>}
@@ -1161,7 +1161,7 @@ function RootServicePickerModal({
       notify.success(`Added ${toAdd.length} service${toAdd.length > 1 ? 's' : ''}`, { code: 'SVC-ADD-200' });
       onClose();
     } catch (err: any) {
-      notify.apiError(err, 'Failed to add phase/milestone');
+      notify.apiError(err, 'Failed to add deliverable');
     } finally {
       setAdding(false);
     }
@@ -1171,7 +1171,7 @@ function RootServicePickerModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="text-lg font-semibold">Select Phase/Milestone Templates</h2>
+          <h2 className="text-lg font-semibold">Select Deliverable Templates</h2>
           <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent"><X className="h-5 w-5" /></button>
         </div>
         <div className="border-b border-border px-5 py-3">
@@ -1182,7 +1182,7 @@ function RootServicePickerModal({
         </div>
         <div className="flex-1 overflow-y-auto">
           {filtered.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">No phase/milestone templates available.</p>
+            <p className="py-8 text-center text-sm text-muted-foreground">No deliverable templates available.</p>
           ) : (
             <table className="w-full text-sm">
               <thead><tr className="border-b border-border bg-muted/50 text-xs">
@@ -1517,7 +1517,7 @@ function EditorView({
                   <Layers className="h-3.5 w-3.5 text-amber-600" /> Zone
                 </button>
                 <button onClick={() => { setShowRootServicePicker(true); setShowRootAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
-                  <Copy className="h-3.5 w-3.5 text-blue-600" /> Phase/Milestone
+                  <Copy className="h-3.5 w-3.5 text-blue-600" /> Deliverable
                 </button>
                 <button onClick={() => { setShowRootCatalogPicker(true); setShowRootAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
                   <CheckSquare className="h-3.5 w-3.5 text-green-600" /> Task from Catalog
@@ -1544,7 +1544,7 @@ function EditorView({
                   if (confirm(`Remove service "${svcName}" and all its ${svcTasks.length} tasks?`)) {
                     Promise.all(svcTasks.map((t: any) => client.delete(`/templates/tasks/${t.id}`))).then(() => {
                       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
-                      notify.success(`Removed phase/milestone: ${svcName}`, { code: 'SVC-DELETE-200' });
+                      notify.success(`Removed deliverable: ${svcName}`, { code: 'SVC-DELETE-200' });
                     });
                   }
                 }} />

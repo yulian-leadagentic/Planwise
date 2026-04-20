@@ -30,7 +30,7 @@ import { MilestonesPage } from '@/features/reports/milestones-page';
 import { BillingForecastPage } from '@/features/reports/billing-forecast-page';
 import { TemplatesPage } from '@/features/templates/templates-page';
 import { TaskCatalogPage } from '@/features/templates/task-catalog-page';
-import { ServiceTemplatesPage } from '@/features/templates/phase-templates-page';
+import { DeliverableTemplatesPage } from '@/features/templates/deliverable-templates-page';
 import { ZoneTemplatesPage } from '@/features/templates/zone-templates-page';
 import { TeamTemplatesPage } from '@/features/templates/team-templates-page';
 import { PhasesPage } from '@/features/templates/services-page';
@@ -115,7 +115,7 @@ export function AppRouter() {
         {/* Templates */}
         <Route path="templates" element={<TemplatesPage />} />
         <Route path="templates/task-catalog" element={<TaskCatalogPage />} />
-        <Route path="templates/phases" element={<ServiceTemplatesPage />} />
+        <Route path="templates/deliverables" element={<DeliverableTemplatesPage />} />
         <Route path="templates/zone" element={<ZoneTemplatesPage />} />
         <Route path="templates/team" element={<TeamTemplatesPage />} />
         <Route path="templates/services" element={<PhasesPage />} />

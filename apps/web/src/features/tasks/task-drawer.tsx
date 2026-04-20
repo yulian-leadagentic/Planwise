@@ -312,7 +312,7 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
       <div className="grid grid-cols-2 gap-3 text-[12px]">
         {task.zone && <div><span className="text-slate-400">Zone:</span> <span className="text-slate-700 font-medium">{task.zone.name}</span></div>}
         {task.phase && <div><span className="text-slate-400">Service:</span> <span className="text-slate-700 font-medium">{task.phase.name}</span></div>}
-        {task.serviceType && <div><span className="text-slate-400">Phase/Milestone:</span> <span className="text-slate-700 font-medium">{task.serviceType.name}</span></div>}
+        {task.serviceType && <div><span className="text-slate-400">Deliverable:</span> <span className="text-slate-700 font-medium">{task.serviceType.name}</span></div>}
       </div>
     </div>
   );

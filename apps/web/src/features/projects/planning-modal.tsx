@@ -840,7 +840,7 @@ function CatalogPickerForZone({ zoneId, projectId, onClose, onDone }: {
   );
 }
 
-// ─── Phase/Milestone Template Picker (applies a task_list template's tasks to a zone) ─
+// ─── Deliverable Template Picker (applies a task_list template's tasks to a zone) ─
 
 function PhaseTemplatePickerForZone({ zoneId, projectId, onClose, onDone }: {
   zoneId: number; projectId: number; onClose: () => void; onDone: () => void;
@@ -879,7 +879,7 @@ function PhaseTemplatePickerForZone({ zoneId, projectId, onClose, onDone }: {
         }
       }
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
-      notify.success(`Added ${toAdd.length} phase/milestone template${toAdd.length !== 1 ? 's' : ''}`, { code: 'TPL-APPLY-200' });
+      notify.success(`Added ${toAdd.length} deliverable template${toAdd.length !== 1 ? 's' : ''}`, { code: 'TPL-APPLY-200' });
       onDone();
     } catch (err: any) {
       notify.apiError(err, 'Failed to apply template');
@@ -892,7 +892,7 @@ function PhaseTemplatePickerForZone({ zoneId, projectId, onClose, onDone }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-[14px] border border-slate-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-          <h2 className="text-base font-semibold">Select Phase/Milestone Templates</h2>
+          <h2 className="text-base font-semibold">Select Deliverable Templates</h2>
           <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100"><X className="h-4 w-4" /></button>
         </div>
         <div className="border-b border-slate-200 px-5 py-3">
@@ -903,7 +903,7 @@ function PhaseTemplatePickerForZone({ zoneId, projectId, onClose, onDone }: {
         </div>
         <div className="flex-1 overflow-y-auto">
           {isLoading ? <p className="py-8 text-center text-sm text-slate-400">Loading...</p> : filtered.length === 0 ? (
-            <p className="py-8 text-center text-sm text-slate-400">{search ? 'No templates match.' : 'No phase/milestone templates available.'}</p>
+            <p className="py-8 text-center text-sm text-slate-400">{search ? 'No templates match.' : 'No deliverable templates available.'}</p>
           ) : (
             <table className="w-full text-sm">
               <thead><tr className="border-b border-slate-100 bg-slate-50 text-xs">
@@ -1553,7 +1553,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                 <th className={cn(thClass, 'w-20')} onClick={() => handleSort('code')}>Code{sortIcon('code')}</th>
                 <th className={thClass} onClick={() => handleSort('name')}>Task Name{sortIcon('name')}</th>
                 <th className={cn(thClass, 'w-28')} onClick={() => handleSort('zone')}>Zone{sortIcon('zone')}</th>
-                <th className={cn(thClass, 'w-28')} onClick={() => handleSort('service')}>Phase/Milestone{sortIcon('service')}</th>
+                <th className={cn(thClass, 'w-28')} onClick={() => handleSort('service')}>Deliverable{sortIcon('service')}</th>
                 <th className={cn(thClass, 'w-20')} onClick={() => handleSort('phase')}>Service{sortIcon('phase')}</th>
                 <th className={cn(thClass, 'w-14 text-right')} onClick={() => handleSort('hours')}>Est. Hours{sortIcon('hours')}</th>
                 <th className={cn(thClass, 'w-20 text-right')} onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
@@ -1727,7 +1727,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
                 <button onClick={() => { setShowAddTask(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Create New Task</button>
                 <button onClick={() => { setShowCatalogPicker(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Task from Catalog</button>
                 <div className="my-1 border-t border-slate-100" />
-                <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Phase/Milestone</div>
+                <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Deliverable</div>
                 <button onClick={() => { setShowPhasePicker(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">From Template</button>
                 <div className="my-1 border-t border-slate-100" />
                 <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Zones</div>
@@ -1792,7 +1792,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <span />
               <span>Code</span>
               <span>Task Name</span>
-              <span>Phase/Milestone</span>
+              <span>Deliverable</span>
               <span>Service</span>
               <span className="text-right">Est. Hours</span>
               <span className="text-right">Amount</span>
@@ -2108,8 +2108,8 @@ function PlanningView({ projectId }: { projectId: number }) {
     for (const t of sorted) {
       let key = '';
       if (groupBy === 'service') {
-        // "service" groupBy = Phase/Milestone grouping (by template name from [SERVICE:] tag)
-        key = t.serviceType?.name || t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || 'No Phase/Milestone';
+        // "service" groupBy = Deliverable grouping (by template name from [SERVICE:] tag)
+        key = t.serviceType?.name || t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || 'No Deliverable';
       } else {
         // "phase" groupBy = Service grouping (by the phase/service entity)
         key = t.phase?.name || 'No Service';
@@ -2173,7 +2173,7 @@ function PlanningView({ projectId }: { projectId: number }) {
               <span className="text-[11px] font-semibold text-slate-400">Group:</span>
               <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as any)} className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none">
                 <option value="zone">Zone</option>
-                <option value="service">Phase/Milestone</option>
+                <option value="service">Deliverable</option>
                 <option value="phase">Service</option>
                 <option value="none">No Grouping</option>
               </select>

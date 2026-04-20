@@ -500,7 +500,7 @@ export function ExecutionBoardPage() {
     <div className="space-y-5">
       <PageHeader
         title="Execution Board"
-        description="Zone × Phase task matrix across projects — risk indicators highlight overdue, at-risk, and stale tasks"
+        description="Zone × Deliverable task matrix across projects — risk indicators highlight overdue, at-risk, and stale tasks"
       />
 
       <div className="flex flex-wrap items-center gap-3">
@@ -581,7 +581,7 @@ export function ExecutionBoardPage() {
                   })}
                   {hasNoPhase && (
                     <th className="px-3 py-2.5 text-center font-semibold min-w-[200px] text-slate-400">
-                      No Phase
+                      No Deliverable
                     </th>
                   )}
                 </tr>

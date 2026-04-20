@@ -699,7 +699,7 @@ export function MyTasksKanbanPage() {
           onChange={(e) => setFilterPhaseName(e.target.value || null)}
           className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
         >
-          <option value="">All Phases</option>
+          <option value="">All Deliverables</option>
           {phaseOptions.map((name) => (
             <option key={name} value={name}>{name}</option>
           ))}
