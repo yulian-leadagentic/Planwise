@@ -609,7 +609,7 @@ const statusMap: Record<string, { bg: string; text: string; label: string }> = {
 };
 
 // Column grid template shared between headers and data rows
-const TASK_GRID = 'grid grid-cols-[16px_16px_80px_1fr_96px_80px_56px_64px_96px_96px_96px_auto] gap-x-2 items-center';
+const TASK_GRID = 'grid grid-cols-[16px_16px_80px_1fr_96px_80px_56px_64px_96px_96px_96px_84px] gap-x-2 items-center';
 
 function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onToggleTask, onUpdate, onDeleteTask }: {
   task: any; idx: number; projectId: number; members: any[];
