@@ -8,6 +8,39 @@ import { UpdateZoneDto } from './dto/update-zone.dto';
 export class ZonesService {
   constructor(private prisma: PrismaService) {}
 
+  /**
+   * Loads the Task Catalog and returns a map of code → { defaultBudgetHours, defaultBudgetAmount }.
+   * Used as a fallback when template tasks don't have their own budget values set.
+   */
+  private async loadCatalogMap() {
+    const catalog = await this.prisma.template.findFirst({
+      where: { code: '__TASK_CATALOG__' },
+      include: { templateTasks: true },
+    });
+    const map = new Map<string, { hours: any; amount: any }>();
+    if (!catalog) return map;
+    for (const t of catalog.templateTasks) {
+      if (t.code) {
+        map.set(t.code, { hours: t.defaultBudgetHours, amount: t.defaultBudgetAmount });
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Resolves budget for a task: template task value OR catalog fallback by code.
+   */
+  private resolveBudget(
+    tt: { code?: string | null; defaultBudgetHours?: any; defaultBudgetAmount?: any },
+    catalog: Map<string, { hours: any; amount: any }>,
+  ) {
+    const fallback = tt.code ? catalog.get(tt.code) : undefined;
+    return {
+      budgetHours: tt.defaultBudgetHours ?? fallback?.hours ?? null,
+      budgetAmount: tt.defaultBudgetAmount ?? fallback?.amount ?? null,
+    };
+  }
+
   async findAll(projectId: number) {
     return this.prisma.zone.findMany({
       where: { projectId, deletedAt: null },
@@ -266,6 +299,7 @@ export class ZonesService {
 
     // Use the service template's phaseId for all tasks (falls back to per-task phaseId)
     const templatePhaseId = template.phaseId;
+    const catalog = await this.loadCatalogMap();
 
     return this.prisma.$transaction(async (tx) => {
       const createdTasks: any[] = [];
@@ -277,6 +311,7 @@ export class ZonesService {
             update: {},
           });
         }
+        const { budgetHours, budgetAmount } = this.resolveBudget(tt, catalog);
         const task = await tx.task.create({
           data: {
             zoneId,
@@ -285,8 +320,8 @@ export class ZonesService {
             code: tt.code,
             name: tt.name,
             description: tt.description,
-            budgetHours: tt.defaultBudgetHours,
-            budgetAmount: tt.defaultBudgetAmount,
+            budgetHours,
+            budgetAmount,
             phaseId: templatePhaseId ?? tt.phaseId,
             priority: tt.defaultPriority,
             status: 'not_started',
@@ -411,6 +446,9 @@ export class ZonesService {
       },
     });
 
+    const catalog = await this.loadCatalogMap();
+    const resolveBudget = this.resolveBudget.bind(this);
+
     return this.prisma.$transaction(async (tx) => {
       const createdZones: any[] = [];
 
@@ -438,11 +476,12 @@ export class ZonesService {
           // Use the service template's phaseId for all its tasks
           const servicePhaseId = (tz.linkedTaskTemplate as any).phaseId;
           for (const tt of tz.linkedTaskTemplate.templateTasks) {
+            const budget = resolveBudget(tt, catalog);
             await tx.task.create({
               data: {
                 zoneId: zone.id, projectId, serviceTypeId: tt.serviceTypeId,
                 code: tt.code, name: tt.name, description: tt.description,
-                budgetHours: tt.defaultBudgetHours, budgetAmount: tt.defaultBudgetAmount,
+                budgetHours: budget.budgetHours, budgetAmount: budget.budgetAmount,
                 phaseId: servicePhaseId ?? tt.phaseId, priority: tt.defaultPriority, status: 'not_started', createdBy: userId,
               },
             });
@@ -452,11 +491,12 @@ export class ZonesService {
         // Create tasks from templateZoneTasks (inline tasks on the zone)
         if (tz.templateZoneTasks?.length) {
           for (const tzt of tz.templateZoneTasks) {
+            const budget = resolveBudget(tzt, catalog);
             await tx.task.create({
               data: {
                 zoneId: zone.id, projectId, serviceTypeId: tzt.serviceTypeId,
                 code: tzt.code, name: tzt.name, description: tzt.description,
-                budgetHours: tzt.defaultBudgetHours, budgetAmount: tzt.defaultBudgetAmount,
+                budgetHours: budget.budgetHours, budgetAmount: budget.budgetAmount,
                 phaseId: tzt.phaseId, priority: tzt.defaultPriority, status: 'not_started', createdBy: userId,
               },
             });
@@ -490,11 +530,12 @@ export class ZonesService {
             // Copy root-level templateTasks using referenced template's phaseId
             const refPhaseId = refTemplate.phaseId;
             for (const tt of (refTemplate.templateTasks || [])) {
+              const budget = resolveBudget(tt, catalog);
               await tx.task.create({
                 data: {
                   zoneId: zone.id, projectId, serviceTypeId: tt.serviceTypeId,
                   code: tt.code, name: tt.name, description: tt.description,
-                  budgetHours: tt.defaultBudgetHours, budgetAmount: tt.defaultBudgetAmount,
+                  budgetHours: budget.budgetHours, budgetAmount: budget.budgetAmount,
                   phaseId: refPhaseId ?? tt.phaseId, priority: tt.defaultPriority || 'medium', status: 'not_started', createdBy: userId,
                 },
               });
@@ -524,11 +565,12 @@ export class ZonesService {
       // Create tasks from root-level templateTasks on the main zone
       if (template.templateTasks?.length) {
         for (const tt of template.templateTasks) {
+          const budget = resolveBudget(tt, catalog);
           await tx.task.create({
             data: {
               zoneId: mainZone.id, projectId, serviceTypeId: tt.serviceTypeId,
               code: tt.code, name: tt.name, description: tt.description,
-              budgetHours: tt.defaultBudgetHours, budgetAmount: tt.defaultBudgetAmount,
+              budgetHours: budget.budgetHours, budgetAmount: budget.budgetAmount,
               phaseId: tt.phaseId, priority: tt.defaultPriority || 'medium', status: 'not_started', createdBy: userId,
             },
           });
