@@ -1785,9 +1785,9 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
             </div>
           )}
 
-          {/* Task column header row */}
+          {/* Task column header row — border-l-[3px] transparent to match body rows' colored left border */}
           {directTasks.length > 0 && (
-            <div style={{ marginLeft: 28 }} className={cn(TASK_GRID, 'py-1.5 px-4 bg-slate-50/70 border-b border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider')}>
+            <div style={{ marginLeft: 28 }} className={cn(TASK_GRID, 'py-1.5 px-4 bg-slate-50/70 border-b border-l-[3px] border-l-transparent border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider')}>
               <span />
               <span />
               <span>Code</span>
