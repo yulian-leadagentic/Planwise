@@ -148,6 +148,7 @@ export class TasksService {
         phase: true,
         creator: { select: { id: true, firstName: true, lastName: true } },
         assignees: {
+          where: { deletedAt: null },
           include: {
             user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
           },
@@ -247,25 +248,30 @@ export class TasksService {
   async addAssignee(taskId: number, data: { userId: number; role?: string; hourlyRate?: number }, actorId?: number) {
     await this.findOne(taskId);
 
-    const existing = await this.prisma.taskAssignee.findFirst({
-      where: { taskId, userId: data.userId, deletedAt: null },
+    // Check for any row (active or soft-deleted) — the (taskId, userId) unique
+    // constraint spans both, so we upsert to either restore or create.
+    const anyExisting = await this.prisma.taskAssignee.findFirst({
+      where: { taskId, userId: data.userId },
     });
 
-    if (existing) {
+    if (anyExisting && anyExisting.deletedAt === null) {
       throw new ConflictException('User is already assigned to this task');
     }
 
-    const result = await this.prisma.taskAssignee.create({
-      data: {
-        taskId,
-        userId: data.userId,
-        role: data.role,
-        hourlyRate: data.hourlyRate,
-      },
-      include: {
-        user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
-      },
-    });
+    const result = anyExisting
+      ? await this.prisma.taskAssignee.update({
+          where: { id: anyExisting.id },
+          data: { deletedAt: null, role: data.role, hourlyRate: data.hourlyRate },
+          include: {
+            user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
+          },
+        })
+      : await this.prisma.taskAssignee.create({
+          data: { taskId, userId: data.userId, role: data.role, hourlyRate: data.hourlyRate },
+          include: {
+            user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
+          },
+        });
 
     // Emit assignment event
     if (actorId) {
@@ -286,12 +292,13 @@ export class TasksService {
   }
 
   async removeAssignee(taskId: number, userId: number) {
+    // Find any row (active or soft-deleted) — idempotent removal.
     const assignee = await this.prisma.taskAssignee.findFirst({
-      where: { taskId, userId, deletedAt: null },
+      where: { taskId, userId },
     });
 
     if (!assignee) {
-      throw new NotFoundException('Assignee not found');
+      return { message: 'Assignee already removed' };
     }
 
     await this.prisma.taskAssignee.delete({ where: { id: assignee.id } });
