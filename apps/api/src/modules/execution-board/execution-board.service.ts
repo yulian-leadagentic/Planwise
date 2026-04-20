@@ -31,15 +31,21 @@ export class ExecutionBoardService {
       projectWhere.id = { in: accessible.projectIds };
     }
 
+    // Hard caps prevent the "god query" from exploding with real data.
+    // Users who hit these can filter by project or service to narrow down.
+    const MAX_PROJECTS = 50;
+    const MAX_TASKS = 5000;
+
     const projects = await this.prisma.project.findMany({
       where: projectWhere,
       select: { id: true, name: true, number: true, status: true },
       orderBy: { name: 'asc' },
+      take: MAX_PROJECTS,
     });
 
     const projectIds = projects.map((p) => p.id);
     if (projectIds.length === 0) {
-      return { projects: [], zones: {}, tasks: [], services: [], templates: [] };
+      return { projects: [], zones: {}, tasks: [], services: [], templates: [], truncated: false };
     }
 
     const [flatZones, tasks, services, templates] = await Promise.all([
@@ -54,6 +60,7 @@ export class ExecutionBoardService {
           isArchived: false,
           ...(serviceId ? { phaseId: serviceId } : {}),
         },
+        take: MAX_TASKS + 1,
         include: {
           zone: { select: { id: true, name: true } },
           serviceType: { select: { id: true, name: true, code: true, color: true } },
@@ -138,6 +145,9 @@ export class ExecutionBoardService {
       zones[pid] = roots;
     }
 
-    return { projects, zones, tasks: tasksWithTime, services, templates };
+    // Drop the extra row used to detect truncation
+    const truncated = tasks.length > MAX_TASKS;
+    const finalTasks = truncated ? tasksWithTime.slice(0, MAX_TASKS) : tasksWithTime;
+    return { projects, zones, tasks: finalTasks, services, templates, truncated };
   }
 }

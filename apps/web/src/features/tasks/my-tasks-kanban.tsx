@@ -10,6 +10,7 @@ import { tasksApi } from '@/api/tasks.api';
 import { timeApi } from '@/api/time.api';
 import client from '@/api/client';
 import { getTaskHealth } from '@/lib/task-health';
+import { STATUS_PILL, STATUS_LABEL, ZONE_BORDER_COLORS, formatShortDate } from '@/lib/task-constants';
 
 type TabMode = 'time' | 'kanban';
 
@@ -20,11 +21,7 @@ const columns = [
   { id: 'completed', label: 'Done', color: 'border-t-emerald-500', bg: 'bg-emerald-50/30' },
 ];
 
-const zoneBorderColors: Record<string, string> = {
-  site: 'border-l-indigo-400', building: 'border-l-amber-500', level: 'border-l-teal-400',
-  zone: 'border-l-amber-400', area: 'border-l-purple-400', floor: 'border-l-blue-400',
-  section: 'border-l-teal-400', wing: 'border-l-pink-400',
-};
+// zoneBorderColors imported from '@/lib/task-constants' as ZONE_BORDER_COLORS
 
 function getTaskScore(task: any): number {
   let score = 0;
@@ -135,29 +132,6 @@ function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskProjectId
   );
 }
 
-const STATUS_PILL: Record<string, string> = {
-  not_started: 'bg-slate-100 text-slate-600',
-  in_progress: 'bg-blue-100 text-blue-700',
-  in_review: 'bg-violet-100 text-violet-700',
-  completed: 'bg-emerald-100 text-emerald-700',
-  on_hold: 'bg-amber-100 text-amber-700',
-  cancelled: 'bg-red-100 text-red-700',
-};
-
-const STATUS_LABEL_MAP: Record<string, string> = {
-  not_started: 'To Do',
-  in_progress: 'In Progress',
-  in_review: 'In Review',
-  completed: 'Done',
-  on_hold: 'On Hold',
-  cancelled: 'Cancelled',
-};
-
-function formatShortDate(iso: string): string {
-  const d = new Date(iso.split('T')[0]);
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
-}
-
 function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; onOpenDrawer: (id: number) => void; onStatusChange: (taskId: number, status: string) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: `task-${task.id}` });
   const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined;
@@ -183,7 +157,7 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
       className={cn(
         'rounded-lg border shadow-sm hover:shadow-md transition-all border-l-[3px]',
         borderCls,
-        zoneBorderColors[zoneType] || 'border-l-slate-300',
+        ZONE_BORDER_COLORS[zoneType] || 'border-l-slate-300',
         isDragging && 'opacity-40 shadow-lg ring-2 ring-blue-300 z-50',
       )}
       title={health.reasons.length > 0 ? health.reasons.join(' • ') : undefined}
@@ -209,7 +183,7 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
         {/* Kanban stage pill */}
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider', STATUS_PILL[task.status] ?? STATUS_PILL.not_started)}>
-            {STATUS_LABEL_MAP[task.status] ?? task.status}
+            {STATUS_LABEL[task.status] ?? task.status}
           </span>
           {task.priority === 'critical' && <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-bold text-red-600">Critical</span>}
           {task.priority === 'high' && <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-600">High</span>}

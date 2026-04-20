@@ -7,6 +7,7 @@ import { ProjectSelect } from '@/components/shared/project-select';
 import { EmptyState } from '@/components/shared/empty-state';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
 import { getTaskHealth, aggregateHealth, type TaskHealth } from '@/lib/task-health';
+import { STATUS_DOT, STATUS_PILL, STATUS_LABEL, formatShortDate } from '@/lib/task-constants';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 
@@ -107,23 +108,7 @@ function useExecutionBoard(projectId?: number | null, serviceId?: number | null)
   });
 }
 
-const STATUS_DOT: Record<string, string> = {
-  not_started: 'bg-slate-400',
-  in_progress: 'bg-blue-500',
-  in_review: 'bg-violet-500',
-  completed: 'bg-emerald-500',
-  on_hold: 'bg-amber-500',
-  cancelled: 'bg-red-500',
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  not_started: 'To Do',
-  in_progress: 'In Progress',
-  in_review: 'In Review',
-  completed: 'Done',
-  on_hold: 'On Hold',
-  cancelled: 'Cancelled',
-};
+// STATUS_DOT, STATUS_PILL, STATUS_LABEL imported from '@/lib/task-constants'
 
 const ZONE_COLORS: Record<string, { border: string; badge: string }> = {
   zone:     { border: 'border-l-blue-400',   badge: 'bg-blue-100 text-blue-700' },
@@ -142,11 +127,6 @@ const PROJECT_COLORS = [
   { bg: 'bg-rose-50', border: 'border-rose-200', icon: 'text-rose-500' },
   { bg: 'bg-cyan-50', border: 'border-cyan-200', icon: 'text-cyan-500' },
 ];
-
-function formatShortDate(iso: string): string {
-  const d = new Date(iso.split('T')[0]);
-  return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
-}
 
 function HealthBadge({ agg, size = 'sm' }: { agg: { critical: number; warning: number; ok: number }; size?: 'sm' | 'md' }) {
   const { critical, warning } = agg;
@@ -194,15 +174,6 @@ function CellSummary({ tasks, healths, isAggregate }: { tasks: Task[]; healths: 
     </div>
   );
 }
-
-const STATUS_PILL: Record<string, string> = {
-  not_started: 'bg-slate-100 text-slate-600',
-  in_progress: 'bg-blue-100 text-blue-700',
-  in_review: 'bg-violet-100 text-violet-700',
-  completed: 'bg-emerald-100 text-emerald-700',
-  on_hold: 'bg-amber-100 text-amber-700',
-  cancelled: 'bg-red-100 text-red-700',
-};
 
 function TaskCard({ task, health, onClick }: { task: Task; health: TaskHealth; onClick: () => void }) {
   const borderCls =

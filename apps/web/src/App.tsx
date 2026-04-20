@@ -3,6 +3,7 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { BrowserRouter } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AppRouter } from './router/app-router';
+import { AuthBootstrap } from './router/auth-bootstrap';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -18,7 +19,9 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <AppRouter />
+        <AuthBootstrap>
+          <AppRouter />
+        </AuthBootstrap>
         <Toaster
           position="top-right"
           richColors
