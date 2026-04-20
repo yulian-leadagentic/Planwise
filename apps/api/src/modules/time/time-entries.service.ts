@@ -13,7 +13,7 @@ export class TimeEntriesService {
     const dateParts = dto.date.split('-').map(Number);
     const localDate = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
 
-    return this.prisma.timeEntry.create({
+    const entry = await this.prisma.timeEntry.create({
       data: {
         userId,
         timeClockId: dto.timeClockId,
@@ -32,6 +32,33 @@ export class TimeEntriesService {
         project: { select: { id: true, name: true } },
         task: { select: { id: true, name: true } },
       },
+    });
+
+    // Update task completionPct based on logged hours vs budget
+    if (dto.taskId) {
+      await this.syncTaskCompletion(dto.taskId);
+    }
+
+    return entry;
+  }
+
+  private async syncTaskCompletion(taskId: number) {
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      select: { budgetHours: true },
+    });
+    if (!task?.budgetHours || Number(task.budgetHours) === 0) return;
+
+    const agg = await this.prisma.timeEntry.aggregate({
+      where: { taskId, deletedAt: null },
+      _sum: { minutes: true },
+    });
+    const loggedHours = (agg._sum.minutes ?? 0) / 60;
+    const pct = Math.min(100, Math.round((loggedHours / Number(task.budgetHours)) * 100));
+
+    await this.prisma.task.update({
+      where: { id: taskId },
+      data: { completionPct: pct },
     });
   }
 
