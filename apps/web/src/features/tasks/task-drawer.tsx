@@ -8,6 +8,7 @@ import { timeApi } from '@/api/time.api';
 import { formatDate, formatRelative } from '@/lib/date-utils';
 import { getTaskHealth } from '@/lib/task-health';
 import { queryKeys } from '@/lib/query-keys';
+import { TimeEntryForm } from '@/features/time/time-entry-form';
 import client from '@/api/client';
 
 interface TaskDrawerProps {
@@ -133,7 +134,7 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
             {/* Content */}
             <div className="flex-1 overflow-y-auto px-5 py-4">
               {tab === 'details' && <TaskDetailsTab task={task as any} onUpdate={(f, v) => updateTask.mutate({ field: f, value: v })} />}
-              {tab === 'time' && <TaskTimeTab taskId={taskId!} taskName={(task as any).name} />}
+              {tab === 'time' && <TaskTimeTab taskId={taskId!} />}
               {tab === 'discussion' && <TaskDiscussionTab taskId={taskId!} />}
             </div>
           </>
@@ -341,11 +342,7 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
   );
 }
 
-function TaskTimeTab({ taskId, taskName }: { taskId: number; taskName: string }) {
-  const [hours, setHours] = useState('');
-  const [note, setNote] = useState('');
-  const queryClient = useQueryClient();
-
+function TaskTimeTab({ taskId }: { taskId: number }) {
   const { data: entries = [] } = useQuery({
     queryKey: queryKeys.time.entriesByTask(taskId),
     queryFn: () => client.get('/time-entries', { params: { taskId } }).then((r) => {
@@ -354,53 +351,24 @@ function TaskTimeTab({ taskId, taskName }: { taskId: number; taskName: string })
     }),
   });
 
-  const logTime = useMutation({
-    mutationFn: () => timeApi.createEntry({
-      taskId, date: new Date().toISOString().split('T')[0],
-      minutes: Math.round(Number(hours) * 60), note: note.trim() || undefined,
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.time.entriesByTask(taskId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.time.all });
-      notify.success(`Logged ${hours}h`, { code: 'TIME-LOG-200' });
-      setHours(''); setNote('');
-    },
-    onError: (err: any) => notify.apiError(err, 'Failed to log time'),
-  });
-
-  const totalMinutes = (entries as any[]).reduce((s, e) => s + (e.minutes ?? 0), 0);
+  const totalMinutes = (entries as any[]).reduce((s: number, e: any) => s + (e.minutes ?? 0), 0);
 
   return (
     <div className="space-y-4">
-      {/* Quick log */}
-      <div className="rounded-lg border border-slate-200 p-3 space-y-2">
-        <h4 className="text-[12px] font-semibold text-slate-600">Log Time</h4>
-        <div className="flex gap-2">
-          <input type="number" step="0.25" min="0.25" value={hours} onChange={(e) => setHours(e.target.value)}
-            placeholder="Hours" className="w-20 px-2 py-1.5 rounded border border-slate-200 text-sm focus:border-blue-400 focus:outline-none" />
-          <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
-            placeholder="Note..." className="flex-1 px-2 py-1.5 rounded border border-slate-200 text-sm focus:border-blue-400 focus:outline-none" />
-          <button onClick={() => { if (hours && Number(hours) > 0) logTime.mutate(); }}
-            disabled={!hours || logTime.isPending}
-            className="rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
-            Log
-          </button>
-        </div>
-      </div>
+      <TimeEntryForm taskId={taskId} variant="full" />
 
-      {/* Summary */}
-      <div className="text-[12px] text-slate-500">
+      <div className="text-[12px] text-slate-600">
         Total logged: <span className="font-semibold text-slate-700">{Math.round(totalMinutes / 60 * 10) / 10}h</span>
         {(entries as any[]).length > 0 && <span> ({(entries as any[]).length} entries)</span>}
       </div>
 
-      {/* Entries list */}
       <div className="space-y-1">
         {(entries as any[]).slice(0, 20).map((e: any) => (
           <div key={e.id} className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2 text-[12px]">
-            <span className="text-slate-500">{e.date ? new Date(e.date).toLocaleDateString() : '-'}</span>
-            <span className="font-medium text-slate-700">{Math.round((e.minutes ?? 0) / 60 * 10) / 10}h</span>
-            {e.note && <span className="text-slate-400 truncate max-w-[150px]">{e.note}</span>}
+            <span className="text-slate-600">{e.date ? new Date(e.date).toLocaleDateString() : '-'}</span>
+            <span className="font-medium text-slate-700">{e.startTime ?? ''}{e.startTime && e.endTime ? ` – ${e.endTime}` : ''}</span>
+            <span className="font-semibold text-slate-700">{Math.round((e.minutes ?? 0) / 60 * 10) / 10}h</span>
+            {e.note && <span className="text-slate-600 truncate max-w-[150px]">{e.note}</span>}
           </div>
         ))}
       </div>

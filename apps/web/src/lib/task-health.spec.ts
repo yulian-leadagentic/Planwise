@@ -1,0 +1,90 @@
+import { getTaskHealth, aggregateHealth } from './task-health';
+
+describe('getTaskHealth', () => {
+  const base = { status: 'in_progress', endDate: null, budgetHours: 10, loggedMinutes: 300, lastActivityDate: null, completionPct: 0 };
+
+  it('returns ok for completed tasks regardless of other fields', () => {
+    const h = getTaskHealth({ ...base, status: 'completed', endDate: '2020-01-01' });
+    expect(h.level).toBe('ok');
+    expect(h.computedPct).toBe(100);
+  });
+
+  it('marks overdue when endDate is in the past', () => {
+    const yesterday = new Date(Date.now() - 86400000 * 2).toISOString();
+    const h = getTaskHealth({ ...base, endDate: yesterday });
+    expect(h.level).toBe('critical');
+    expect(h.isOverdue).toBe(true);
+    expect(h.reasons.some((r) => r.includes('overdue'))).toBe(true);
+  });
+
+  it('warns when due within 3 days and not started', () => {
+    const soon = new Date(Date.now() + 86400000 * 2).toISOString();
+    const h = getTaskHealth({ ...base, status: 'not_started', endDate: soon, loggedMinutes: 0 });
+    expect(h.level).toBe('critical');
+    expect(h.reasons.some((r) => r.includes('not started'))).toBe(true);
+  });
+
+  it('warns when in progress with no hours logged', () => {
+    const h = getTaskHealth({ ...base, loggedMinutes: 0, lastActivityDate: null });
+    expect(h.level).toBe('warning');
+    expect(h.reasons.some((r) => r.includes('no hours logged'))).toBe(true);
+  });
+
+  it('uses actual status name in stale warning (not hardcoded)', () => {
+    const h = getTaskHealth({ ...base, status: 'in_review', loggedMinutes: 0, lastActivityDate: null });
+    expect(h.reasons.some((r) => r.includes('In Review'))).toBe(true);
+  });
+
+  it('computes completion as loggedHours / budgetHours', () => {
+    const h = getTaskHealth({ ...base, budgetHours: 10, loggedMinutes: 300 }); // 5h / 10h
+    expect(h.computedPct).toBe(50);
+    expect(h.loggedHours).toBe(5);
+    expect(h.estimatedHours).toBe(10);
+  });
+
+  it('falls back to completionPct when no budgetHours', () => {
+    const h = getTaskHealth({ ...base, budgetHours: null, loggedMinutes: 0, completionPct: 75 });
+    expect(h.computedPct).toBe(75);
+  });
+
+  it('warns when over budget', () => {
+    const h = getTaskHealth({ ...base, budgetHours: 10, loggedMinutes: 720 }); // 12h / 10h
+    expect(h.reasons.some((r) => r.includes('Over budget'))).toBe(true);
+  });
+
+  it('escalates to critical when severely over budget (≥50%)', () => {
+    const h = getTaskHealth({ ...base, budgetHours: 10, loggedMinutes: 960 }); // 16h / 10h = 60% over
+    expect(h.level).toBe('critical');
+  });
+
+  it('warns when hours complete but status still in_progress', () => {
+    const h = getTaskHealth({ ...base, budgetHours: 10, loggedMinutes: 600, lastActivityDate: new Date().toISOString() });
+    expect(h.reasons.some((r) => r.includes('Hours complete'))).toBe(true);
+  });
+
+  it('detects stale task (no activity for 5+ days)', () => {
+    const oldDate = new Date(Date.now() - 86400000 * 7).toISOString();
+    const h = getTaskHealth({ ...base, lastActivityDate: oldDate, loggedMinutes: 60 });
+    expect(h.isStale).toBe(true);
+    expect(h.reasons.some((r) => r.includes('No activity'))).toBe(true);
+  });
+
+  it('caps computedPct at 100', () => {
+    const h = getTaskHealth({ ...base, budgetHours: 5, loggedMinutes: 600 }); // 10h / 5h
+    expect(h.computedPct).toBe(100);
+  });
+});
+
+describe('aggregateHealth', () => {
+  it('counts levels correctly', () => {
+    const items = [
+      getTaskHealth({ status: 'in_progress', loggedMinutes: 0, lastActivityDate: null }),     // warning
+      getTaskHealth({ status: 'completed' }),                                                    // ok
+      getTaskHealth({ status: 'not_started', endDate: new Date(Date.now() - 86400000).toISOString() }), // critical
+    ];
+    const agg = aggregateHealth(items);
+    expect(agg.critical).toBe(1);
+    expect(agg.warning).toBe(1);
+    expect(agg.ok).toBe(1);
+  });
+});

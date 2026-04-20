@@ -95,7 +95,7 @@ export function ProjectDetailPage() {
               <h1 className="text-xl font-bold tracking-tight text-slate-900">
                 {project.name}
               </h1>
-              <button onClick={() => navigate(`/projects/${projectId}/edit`)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-300 hover:text-slate-600" title="Edit project">
+              <button onClick={() => navigate(`/projects/${projectId}/edit`)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-500 hover:text-slate-700" aria-label="Edit project">
                 <Pencil className="h-3.5 w-3.5" />
               </button>
               <span className="rounded-[5px] bg-blue-50 px-2.5 py-1 text-[11px] font-bold tracking-wide text-blue-600 uppercase">
@@ -322,7 +322,8 @@ function TeamTab({
               </div>
               <button
                 onClick={() => handleRemove(member.id)}
-                className="rounded p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                className="rounded p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors"
+                aria-label="Remove member"
                 title="Remove member"
               >
                 <X className="h-4 w-4" />

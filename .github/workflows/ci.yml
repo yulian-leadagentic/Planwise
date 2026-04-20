@@ -36,5 +36,8 @@ jobs:
       - name: Unit tests (API)
         run: cd apps/api && pnpm test
 
+      - name: Unit tests (Web)
+        run: cd apps/web && pnpm test
+
       - name: Build web
         run: cd apps/web && npx vite build
