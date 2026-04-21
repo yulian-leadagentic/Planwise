@@ -1,8 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Shield, ChevronDown, ChevronRight, Plus, Trash2, Pencil } from 'lucide-react';
+import { Shield, ChevronDown, ChevronRight, Plus, Trash2, Pencil, Users, UserMinus } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { UserAvatar } from '@/components/shared/user-avatar';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
@@ -307,6 +308,96 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
               </select>
             </div>
           )}
+
+          <RoleUsersSection roleId={role.id} roleName={role.name} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RoleUsersSection({ roleId, roleName }: { roleId: number; roleName: string }) {
+  const queryClient = useQueryClient();
+
+  const { data: users = [], isLoading } = useQuery({
+    queryKey: ['admin', 'roles', roleId, 'users'],
+    queryFn: () => client.get(`/admin/roles/${roleId}/users`).then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : [];
+    }),
+  });
+
+  const { data: allRoles = [] } = useQuery({
+    queryKey: ['admin', 'roles'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/admin/roles').then((r) => r.data.data),
+  });
+
+  const [reassigningId, setReassigningId] = useState<number | null>(null);
+
+  const reassign = useMutation({
+    mutationFn: ({ userId, newRoleId }: { userId: number; newRoleId: number }) =>
+      client.patch(`/users/${userId}`, { roleId: newRoleId }).then((r) => r.data),
+    onMutate: ({ userId }) => setReassigningId(userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'roles'] });
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      notify.success('Role reassigned', { code: 'USER-ROLE-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to reassign'),
+    onSettled: () => setReassigningId(null),
+  });
+
+  return (
+    <div className="mt-6 pt-5 border-t border-slate-200">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-[13px] font-semibold text-slate-700 flex items-center gap-2">
+          <Users className="h-3.5 w-3.5" /> Users with the "{roleName}" role
+        </h4>
+        <p className="text-[11px] text-slate-400">{users.length} user{users.length !== 1 ? 's' : ''}</p>
+      </div>
+
+      {isLoading ? (
+        <p className="text-[12px] text-slate-400 py-3 text-center">Loading…</p>
+      ) : users.length === 0 ? (
+        <p className="text-[12px] text-slate-400 py-3 text-center italic">No users have this role yet.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {users.map((u: any) => {
+            const isSaving = reassigningId === u.id;
+            return (
+              <div key={u.id} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
+                <UserAvatar firstName={u.firstName} lastName={u.lastName} avatarUrl={u.avatarUrl} size="sm" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[13px] font-medium text-slate-800 truncate">{u.firstName} {u.lastName}</p>
+                  <p className="text-[11px] text-slate-500 truncate">{u.email}{u.position ? ` · ${u.position}` : ''}</p>
+                </div>
+                <select
+                  aria-label={`Reassign ${u.firstName} to another role`}
+                  value={roleId}
+                  disabled={isSaving}
+                  onChange={(e) => {
+                    const newId = Number(e.target.value);
+                    if (newId && newId !== roleId) {
+                      if (confirm(`Move ${u.firstName} ${u.lastName} from "${roleName}" to this new role?`)) {
+                        reassign.mutate({ userId: u.id, newRoleId: newId });
+                      } else {
+                        e.target.value = String(roleId);
+                      }
+                    }
+                  }}
+                  className={cn(
+                    'rounded-md border border-slate-200 bg-white px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none',
+                    isSaving && 'opacity-50 cursor-wait',
+                  )}
+                >
+                  {(allRoles as any[]).map((r: any) => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

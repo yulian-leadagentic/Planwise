@@ -12,14 +12,14 @@ import { PageHeader } from '@/components/shared/page-header';
 const adminCards = [
   {
     title: 'People Management',
-    description: 'Manage employees and partners',
+    description: 'Create users, assign roles, activate / deactivate accounts',
     icon: Users,
     href: '/people',
     color: 'bg-violet-100 text-violet-700',
   },
   {
     title: 'Roles & Permissions',
-    description: 'Manage user roles and module access',
+    description: 'Define roles, toggle module permissions, view role members',
     icon: Shield,
     href: '/admin/roles',
     color: 'bg-blue-100 text-blue-700',

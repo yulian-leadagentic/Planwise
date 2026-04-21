@@ -32,6 +32,7 @@ export interface UserListItem {
   position: string | null;
   department: string | null;
   companyName: string | null;
+  roleId: number;
   roleName: string;
   isActive: boolean;
 }

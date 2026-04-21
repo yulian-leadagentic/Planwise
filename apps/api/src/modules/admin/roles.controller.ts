@@ -131,4 +131,27 @@ export class RolesController {
 
     return { message: 'Module permission removed' };
   }
+
+  // ─── Users with this role (inverse lookup) ─────────────────────────
+
+  @Get(':id/users')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'List users assigned to this role' })
+  async findUsers(@Param('id', ParseIntPipe) roleId: number) {
+    return this.prisma.user.findMany({
+      where: { roleId, deletedAt: null },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        avatarUrl: true,
+        userType: true,
+        position: true,
+        department: true,
+        isActive: true,
+      },
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+    });
+  }
 }

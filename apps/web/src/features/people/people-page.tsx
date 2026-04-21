@@ -9,13 +9,20 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { useUsers } from '@/hooks/use-users';
 import { useFilterStore } from '@/stores/filter.store';
 import { useDebounce } from '@/hooks/use-debounce';
+import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import client from '@/api/client';
 import type { UserListItem } from '@/types';
 import type { ColumnDef } from '@tanstack/react-table';
 
-function getColumns(isPartners: boolean): ColumnDef<UserListItem, unknown>[] {
+function getColumns(
+  isPartners: boolean,
+  roles: any[],
+  canEdit: boolean,
+  onChangeRole: (userId: number, roleId: number) => void,
+  savingUserId: number | null,
+): ColumnDef<UserListItem, unknown>[] {
   const cols: ColumnDef<UserListItem, unknown>[] = [
     {
       accessorKey: 'name',
@@ -58,7 +65,34 @@ function getColumns(isPartners: boolean): ColumnDef<UserListItem, unknown>[] {
     {
       accessorKey: 'roleName',
       header: 'Role',
-      cell: ({ row }) => row.original.roleName,
+      cell: ({ row }) => {
+        const user = row.original;
+        const currentRoleId = (user as any).roleId;
+        if (!canEdit) {
+          return <span className="text-sm">{user.roleName ?? '—'}</span>;
+        }
+        const isSaving = savingUserId === user.id;
+        return (
+          <select
+            aria-label={`Role for ${user.firstName} ${user.lastName}`}
+            value={currentRoleId ?? ''}
+            disabled={isSaving}
+            onChange={(e) => {
+              const newRoleId = Number(e.target.value);
+              if (newRoleId && newRoleId !== currentRoleId) onChangeRole(user.id, newRoleId);
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className={cn(
+              'rounded-md border border-slate-200 bg-white px-2 py-1 text-sm focus:border-blue-400 focus:outline-none',
+              isSaving && 'opacity-50 cursor-wait',
+            )}
+          >
+            {roles.map((r: any) => (
+              <option key={r.id} value={r.id}>{r.name}</option>
+            ))}
+          </select>
+        );
+      },
     },
     {
       accessorKey: 'isActive',
@@ -124,9 +158,28 @@ export function PeoplePage() {
     });
   };
   const debouncedSearch = useDebounce(peopleSearch, 300);
+  const { can, isAdmin } = usePermissions();
+  const [savingUserId, setSavingUserId] = useState<number | null>(null);
+
+  const updateRole = useMutation({
+    mutationFn: ({ userId, roleId }: { userId: number; roleId: number }) =>
+      client.patch(`/users/${userId}`, { roleId }).then((r) => r.data),
+    onMutate: ({ userId }) => setSavingUserId(userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'roles'] });
+      notify.success('Role updated', { code: 'USER-ROLE-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update role'),
+    onSettled: () => setSavingUserId(null),
+  });
 
   const isPartners = peopleTab === 'partners';
-  const columns = useMemo(() => getColumns(isPartners), [isPartners]);
+  const canEditRoles = isAdmin || can('admin', 'write');
+  const columns = useMemo(
+    () => getColumns(isPartners, roles, canEditRoles, (userId, roleId) => updateRole.mutate({ userId, roleId }), savingUserId),
+    [isPartners, roles, canEditRoles, savingUserId],
+  );
 
   const userType = peopleTab === 'employees' ? 'employee' : 'partner';
   const { data, isLoading } = useUsers({

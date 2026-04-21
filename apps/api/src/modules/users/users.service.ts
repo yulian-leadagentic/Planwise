@@ -80,14 +80,21 @@ export class UsersService {
           isActive: true,
           lastLoginAt: true,
           createdAt: true,
+          roleId: true,
           role: { select: { id: true, name: true } },
         },
       }),
       this.prisma.user.count({ where }),
     ]);
 
+    // Flatten role so the response matches the shared UserListItem shape
+    const flat = data.map((u: any) => ({
+      ...u,
+      roleName: u.role?.name ?? null,
+    }));
+
     return {
-      data,
+      data: flat,
       meta: {
         total,
         page: query.page ?? 1,
