@@ -100,6 +100,12 @@ function useExecutionBoard(projectId?: number | null, serviceId?: number | null)
           },
         })
         .then((r) => r.data?.data ?? r.data),
+    // Treat data as stale immediately so any invalidation (e.g., after
+    // updating a task in the drawer) triggers a refetch without waiting
+    // out the global 5-minute staleTime.
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -146,27 +152,62 @@ function HealthBadge({ agg, size = 'sm' }: { agg: { critical: number; warning: n
   );
 }
 
-function CellSummary({ tasks, healths, isAggregate }: { tasks: Task[]; healths: TaskHealth[]; isAggregate: boolean }) {
+function CellSummary({ tasks, healths, isAggregate, expanded, onToggle }: { tasks: Task[]; healths: TaskHealth[]; isAggregate: boolean; expanded: boolean; onToggle: () => void }) {
   if (tasks.length === 0) return null;
-  const avg = Math.round(healths.reduce((s, h) => s + h.computedPct, 0) / healths.length);
+
+  // Completion = sum of estimated hours for COMPLETED tasks / sum of all
+  // estimated hours. A task is only "done" when its status is 'completed' —
+  // logged hours alone do not count as 100%.
+  let completedHours = 0;
+  let totalHours = 0;
+  let completedCount = 0;
+  for (const task of tasks) {
+    const est = Number(task.budgetHours) || 0;
+    totalHours += est;
+    if (task.status === 'completed') {
+      completedHours += est;
+      completedCount++;
+    }
+  }
+  const pct = totalHours > 0
+    ? Math.round((completedHours / totalHours) * 100)
+    : Math.round((completedCount / tasks.length) * 100);
+
   const agg = aggregateHealth(healths);
   const color =
-    avg >= 100 ? 'bg-emerald-500' : avg >= 60 ? 'bg-blue-500' : avg >= 30 ? 'bg-amber-500' : 'bg-slate-300';
+    pct >= 100 ? 'bg-emerald-500' : pct >= 60 ? 'bg-blue-500' : pct >= 30 ? 'bg-amber-500' : 'bg-slate-300';
   const textColor =
-    avg >= 100 ? 'text-emerald-600' : avg >= 60 ? 'text-blue-600' : avg >= 30 ? 'text-amber-600' : 'text-slate-500';
+    pct >= 100 ? 'text-emerald-600' : pct >= 60 ? 'text-blue-600' : pct >= 30 ? 'text-amber-600' : 'text-slate-500';
+
   return (
-    <div className={cn('px-0.5', isAggregate ? '' : 'mb-1.5')}>
+    <button
+      type="button"
+      onClick={onToggle}
+      className={cn(
+        'w-full text-left px-1 py-0.5 rounded hover:bg-slate-50 transition-colors',
+        isAggregate ? '' : 'mb-1',
+      )}
+      aria-expanded={expanded}
+      aria-label={`${pct}% complete, ${tasks.length} tasks. Click to ${expanded ? 'collapse' : 'expand'}.`}
+    >
       <div className="flex items-center gap-1.5">
+        <ChevronRight
+          className={cn(
+            'h-3 w-3 text-slate-400 shrink-0 transition-transform duration-150',
+            expanded && 'rotate-90',
+          )}
+        />
         <div className="flex-1 h-[4px] bg-slate-200 rounded-full overflow-hidden">
-          <div className={cn('h-full rounded-full', color)} style={{ width: `${Math.min(avg, 100)}%` }} />
+          <div className={cn('h-full rounded-full', color)} style={{ width: `${Math.min(pct, 100)}%` }} />
         </div>
-        <span className={cn('text-[10px] font-bold tabular-nums shrink-0', textColor)}>{avg}%</span>
+        <span className={cn('text-[10px] font-bold tabular-nums shrink-0', textColor)}>{pct}%</span>
         <HealthBadge agg={agg} />
       </div>
-      {isAggregate && (
-        <span className="text-[10px] text-slate-500">{tasks.length} tasks</span>
-      )}
-    </div>
+      <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5 pl-4">
+        <span>{completedCount}/{tasks.length} done</span>
+        {totalHours > 0 && <span>· {totalHours}h est.</span>}
+      </div>
+    </button>
   );
 }
 
@@ -177,11 +218,6 @@ function TaskCard({ task, health, onClick }: { task: Task; health: TaskHealth; o
       : health.level === 'warning'
         ? 'border-amber-300 bg-amber-50/60'
         : 'border-slate-200 bg-white';
-
-  const pctColor =
-    health.computedPct >= 100 ? 'bg-emerald-500' :
-    health.computedPct >= 60 ? 'bg-blue-500' :
-    health.computedPct >= 30 ? 'bg-amber-500' : 'bg-slate-300';
 
   return (
     <button
@@ -207,15 +243,7 @@ function TaskCard({ task, health, onClick }: { task: Task; health: TaskHealth; o
         </span>
       </div>
 
-      {/* Line 3: completion bar */}
-      <div className="flex items-center gap-1.5">
-        <div className="flex-1 h-[4px] bg-slate-200 rounded-full overflow-hidden">
-          <div className={cn('h-full rounded-full', pctColor)} style={{ width: `${Math.min(health.computedPct, 100)}%` }} />
-        </div>
-        <span className="text-[10px] font-bold tabular-nums text-slate-700 min-w-[28px] text-right">{health.computedPct}%</span>
-      </div>
-
-      {/* Line 4: hours spent */}
+      {/* Hours spent */}
       <div className="flex items-center gap-1 text-[10px] text-slate-600">
         <Clock className="h-2.5 w-2.5 shrink-0" />
         <span className="tabular-nums font-medium">
@@ -223,7 +251,7 @@ function TaskCard({ task, health, onClick }: { task: Task; health: TaskHealth; o
         </span>
       </div>
 
-      {/* Line 5: due date */}
+      {/* Due date */}
       {task.endDate && (
         <div className="flex items-center gap-1 text-[10px]">
           <Calendar className={cn('h-2.5 w-2.5 shrink-0', health.isOverdue ? 'text-red-600' : 'text-slate-400')} />
@@ -263,10 +291,22 @@ export function ExecutionBoardPage() {
   const [projectId, setProjectId] = useState<number | null>(null);
   const [serviceId, setServiceId] = useState<number | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  // Cells default collapsed — user clicks a cell's summary bar to reveal
+  // the individual task cards. Key format: `${zoneId}|${phaseName}`.
+  const [expandedCells, setExpandedCells] = useState<Set<string>>(new Set());
   const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
   const didAutoExpand = useRef(false);
 
   const { data, isLoading } = useExecutionBoard(projectId, serviceId);
+
+  const toggleCell = useCallback((key: string) => {
+    setExpandedCells((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!data || didAutoExpand.current) return;
@@ -631,6 +671,8 @@ export function ExecutionBoardPage() {
                         const aggTasks = getAggregatedTasks(row.id, phaseName);
                         const directTasks = directMatrix.get(`${row.id}|${phaseName}`) ?? [];
                         const aggHealths = aggTasks.map((t) => taskHealths.get(t.id)!).filter(Boolean);
+                        const cellKey = `${row.id}|${phaseName}`;
+                        const expanded = expandedCells.has(cellKey);
                         return (
                           <td
                             key={phaseName}
@@ -638,8 +680,14 @@ export function ExecutionBoardPage() {
                           >
                             {aggTasks.length > 0 && (
                               <div className="flex flex-col gap-1">
-                                <CellSummary tasks={aggTasks} healths={aggHealths} isAggregate={isParent} />
-                                {directTasks.map((task) => (
+                                <CellSummary
+                                  tasks={aggTasks}
+                                  healths={aggHealths}
+                                  isAggregate={isParent}
+                                  expanded={expanded}
+                                  onToggle={() => toggleCell(cellKey)}
+                                />
+                                {expanded && directTasks.map((task) => (
                                   <TaskCard
                                     key={task.id}
                                     task={task}
@@ -658,11 +706,19 @@ export function ExecutionBoardPage() {
                             const aggTasks = getAggregatedTasks(row.id, '__none__');
                             const directTasks = directMatrix.get(`${row.id}|__none__`) ?? [];
                             const aggHealths = aggTasks.map((t) => taskHealths.get(t.id)!).filter(Boolean);
+                            const cellKey = `${row.id}|__none__`;
+                            const expanded = expandedCells.has(cellKey);
                             if (aggTasks.length === 0) return null;
                             return (
                               <div className="flex flex-col gap-1">
-                                <CellSummary tasks={aggTasks} healths={aggHealths} isAggregate={isParent} />
-                                {directTasks.map((task) => (
+                                <CellSummary
+                                  tasks={aggTasks}
+                                  healths={aggHealths}
+                                  isAggregate={isParent}
+                                  expanded={expanded}
+                                  onToggle={() => toggleCell(cellKey)}
+                                />
+                                {expanded && directTasks.map((task) => (
                                   <TaskCard
                                     key={task.id}
                                     task={task}
