@@ -640,24 +640,47 @@ export function ExecutionBoardPage() {
                     >
                       <td className={cn('sticky left-0 z-10 bg-white px-4 py-2 border-r border-slate-200 border-l-[3px]', zc.border)}>
                         <div
-                          className="flex items-center gap-1.5 cursor-pointer"
+                          className="flex items-center gap-1.5"
                           style={{ paddingLeft: `${row.depth * 20}px` }}
-                          onClick={() => {
-                            if (row.hasChildren) toggleExpand(row.key);
-                            toggleZoneExpand(row.id);
-                          }}
                         >
-                          <ChevronRight
-                            className={cn(
-                              'h-3.5 w-3.5 text-slate-400 transition-transform duration-150 shrink-0',
-                              zoneExpanded && 'rotate-90',
-                            )}
-                          />
+                          {/* Tree chevron: parent zones toggle child visibility */}
+                          {row.hasChildren ? (
+                            <button
+                              type="button"
+                              onClick={() => toggleExpand(row.key)}
+                              className="shrink-0 p-0.5 rounded hover:bg-slate-100"
+                              aria-label={expandedIds.has(row.key) ? 'Collapse sub-zones' : 'Expand sub-zones'}
+                            >
+                              <ChevronRight
+                                className={cn(
+                                  'h-3.5 w-3.5 text-slate-400 transition-transform duration-150',
+                                  expandedIds.has(row.key) && 'rotate-90',
+                                )}
+                              />
+                            </button>
+                          ) : (
+                            <span className="w-4.5" />
+                          )}
+                          {/* Task expand chevron: toggles task cards for this zone */}
+                          <button
+                            type="button"
+                            onClick={() => toggleZoneExpand(row.id)}
+                            className="shrink-0 p-0.5 rounded hover:bg-slate-100"
+                            aria-label={zoneExpanded ? 'Collapse tasks' : 'Expand tasks'}
+                          >
+                            <ChevronRight
+                              className={cn(
+                                'h-3 w-3 transition-transform duration-150',
+                                zoneExpanded ? 'rotate-90 text-blue-500' : 'text-slate-300',
+                              )}
+                            />
+                          </button>
                           <span
                             className={cn(
-                              'truncate text-[13px]',
+                              'truncate text-[13px] cursor-pointer',
                               row.hasChildren ? 'font-semibold text-slate-700' : 'text-slate-600',
                             )}
+                            onClick={() => toggleZoneExpand(row.id)}
                           >
                             {row.name}
                           </span>
