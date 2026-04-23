@@ -20,6 +20,7 @@ import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ApiPaginated } from '../../common/decorators/api-paginated.decorator';
 import { ProjectAccessService } from '../../common/services/project-access.service';
+import { StageTransitionService } from '../../common/services/stage-transition.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
@@ -32,6 +33,7 @@ export class TasksController {
   constructor(
     private readonly tasksService: TasksService,
     private readonly access: ProjectAccessService,
+    private readonly transitions: StageTransitionService,
   ) {}
 
   @Post()
@@ -68,6 +70,18 @@ export class TasksController {
     return this.tasksService.findMine(user.id);
   }
 
+  @Get('allowed-transitions')
+  @RequirePermissions({ module: 'tasks', action: 'read' })
+  @ApiOperation({ summary: 'Get allowed status transitions for the current user\'s role' })
+  async getAllowedTransitions(@CurrentUser() user: any, @Query('fromStatus') fromStatus?: string) {
+    if (fromStatus) {
+      const targets = await this.transitions.getAllowedTargets(user.roleId, fromStatus);
+      return { fromStatus, targets };
+    }
+    const matrix = await this.transitions.getMatrix(user.roleId);
+    return { matrix, unrestricted: Object.keys(matrix).length === 0 };
+  }
+
   @Get(':id')
   @RequirePermissions({ module: 'tasks', action: 'read' })
   @ApiOperation({ summary: 'Get task by ID' })
@@ -81,6 +95,13 @@ export class TasksController {
   @ApiOperation({ summary: 'Update a task' })
   async update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateTaskDto, @CurrentUser() user: any) {
     await this.access.assertTaskAccess(user.id, id, user.roleId);
+    // If status is changing, enforce stage-transition rules
+    if (dto.status) {
+      const currentTask = await this.tasksService.findOne(id);
+      if ((currentTask as any).status !== dto.status) {
+        await this.transitions.assertTransition(user.roleId, (currentTask as any).status, dto.status);
+      }
+    }
     return this.tasksService.update(id, dto, user?.id);
   }
 

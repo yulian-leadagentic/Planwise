@@ -12,6 +12,7 @@ import client from '@/api/client';
 import { getTaskHealth } from '@/lib/task-health';
 import { STATUS_PILL, STATUS_LABEL, ZONE_BORDER_COLORS, formatShortDate } from '@/lib/task-constants';
 import { queryKeys } from '@/lib/query-keys';
+import { useAllowedTransitions } from '@/hooks/use-allowed-transitions';
 
 type TabMode = 'time' | 'kanban';
 
@@ -232,20 +233,27 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
 
         {/* Keyboard-accessible status change (WCAG 2.5.7 Dragging Movements alternative) */}
         <div className="pt-1 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-          <select
-            aria-label="Change task status"
-            value={task.status}
-            onChange={(e) => onStatusChange(task.id, e.target.value)}
-            className="flex-1 rounded border border-slate-200 bg-white px-1.5 py-1 text-[10px] focus:border-blue-400 focus:outline-none"
-          >
-            {columns.map((c) => (
-              <option key={c.id} value={c.id}>{c.label}</option>
-            ))}
-          </select>
+          <KanbanStatusSelect status={task.status} onStatusChange={(s) => onStatusChange(task.id, s)} />
           <QuickTimeLog taskId={task.id} taskProjectId={task.projectId} />
         </div>
       </div>
     </div>
+  );
+}
+
+function KanbanStatusSelect({ status, onStatusChange }: { status: string; onStatusChange: (s: string) => void }) {
+  const { allowedStatuses } = useAllowedTransitions(status);
+  return (
+    <select
+      aria-label="Change task status"
+      value={status}
+      onChange={(e) => onStatusChange(e.target.value)}
+      className="flex-1 rounded border border-slate-200 bg-white px-1.5 py-1 text-[10px] focus:border-blue-400 focus:outline-none"
+    >
+      {columns.filter((c) => allowedStatuses.includes(c.id)).map((c) => (
+        <option key={c.id} value={c.id}>{c.label}</option>
+      ))}
+    </select>
   );
 }
 

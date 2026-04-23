@@ -224,6 +224,7 @@ model User {
   taskAttachments      TaskAttachment[]
   notificationsActed   Notification[]     @relation("NotificationActor")
   notificationPrefs    NotificationPreference[]
+  resourceOverrides    ResourceOverride[] @relation("UserResourceOverrides")
 
   @@index([roleId])
   @@index([email])
@@ -240,8 +241,10 @@ model Role {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  users       User[]
-  roleModules RoleModule[]
+  users              User[]
+  roleModules        RoleModule[]
+  stageTransitions   RoleStageTransition[]
+  resourceOverrides  ResourceOverride[]
 
   @@map("roles")
 }
@@ -281,6 +284,48 @@ model RoleModule {
   @@index([roleId])
   @@index([moduleId])
   @@map("role_modules")
+}
+
+// ─── Fine-grained RBAC: stage transitions + resource overrides ──────
+
+/// Controls which Kanban status transitions a role is allowed to perform.
+/// If NO rows exist for a role, the role can perform ALL transitions (backward
+/// compatible). Once ANY row exists for a role, only the listed transitions
+/// are allowed — unlisted moves are blocked.
+model RoleStageTransition {
+  id         Int    @id @default(autoincrement())
+  roleId     Int    @map("role_id")
+  fromStatus String @map("from_status") @db.VarChar(30)
+  toStatus   String @map("to_status") @db.VarChar(30)
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, fromStatus, toStatus])
+  @@index([roleId])
+  @@map("role_stage_transitions")
+}
+
+/// Per-resource permission overrides. Can ONLY narrow the default role-module
+/// permission — never widen. If a row exists for a resource + role/user, its
+/// flags replace the module-level flags for that specific resource.
+model ResourceOverride {
+  id           Int     @id @default(autoincrement())
+  resourceType String  @map("resource_type") @db.VarChar(30)
+  resourceId   Int     @map("resource_id")
+  roleId       Int?    @map("role_id")
+  userId       Int?    @map("user_id")
+  canRead      Boolean @default(true)  @map("can_read")
+  canWrite     Boolean @default(false) @map("can_write")
+  canDelete    Boolean @default(false) @map("can_delete")
+
+  role Role? @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user User? @relation("UserResourceOverrides", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([resourceType, resourceId, roleId, userId])
+  @@index([resourceType, resourceId])
+  @@index([roleId])
+  @@index([userId])
+  @@map("resource_overrides")
 }
 
 model ProjectType {

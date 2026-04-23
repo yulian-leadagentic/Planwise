@@ -15,13 +15,19 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+import { StageTransitionService } from '../../common/services/stage-transition.service';
+import { ResourceOverrideService } from '../../common/services/resource-override.service';
 
 @ApiTags('Admin - Roles')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('admin/roles')
 export class RolesController {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private stageTransitions: StageTransitionService,
+    private resourceOverrides: ResourceOverrideService,
+  ) {}
 
   @Post()
   @RequirePermissions({ module: 'admin', action: 'write' })
@@ -153,5 +159,61 @@ export class RolesController {
       },
       orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
     });
+  }
+
+  // ─── Stage Transitions ────────────────────────────────────────────
+
+  @Get(':id/stage-transitions')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'Get stage transition matrix for a role' })
+  async getStageTransitions(@Param('id', ParseIntPipe) roleId: number) {
+    return this.stageTransitions.getMatrix(roleId);
+  }
+
+  @Post(':id/stage-transitions')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Set the full stage transition matrix for a role' })
+  async setStageTransitions(
+    @Param('id', ParseIntPipe) roleId: number,
+    @Body() body: { transitions: { from: string; to: string }[] },
+  ) {
+    await this.stageTransitions.setMatrix(roleId, body.transitions ?? []);
+    return this.stageTransitions.getMatrix(roleId);
+  }
+
+  // ─── Resource Overrides ───────────────────────────────────────────
+
+  @Get('resource-overrides/:resourceType/:resourceId')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'List permission overrides for a resource' })
+  async listOverrides(
+    @Param('resourceType') resourceType: string,
+    @Param('resourceId', ParseIntPipe) resourceId: number,
+  ) {
+    return this.resourceOverrides.listOverrides(resourceType, resourceId);
+  }
+
+  @Post('resource-overrides')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Set a permission override for a resource + role/user' })
+  async setOverride(
+    @Body() body: {
+      resourceType: string;
+      resourceId: number;
+      roleId?: number;
+      userId?: number;
+      canRead: boolean;
+      canWrite: boolean;
+      canDelete: boolean;
+    },
+  ) {
+    return this.resourceOverrides.setOverride(body);
+  }
+
+  @Delete('resource-overrides/:id')
+  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @ApiOperation({ summary: 'Remove a permission override' })
+  async removeOverride(@Param('id', ParseIntPipe) id: number) {
+    return this.resourceOverrides.removeOverride(id);
   }
 }

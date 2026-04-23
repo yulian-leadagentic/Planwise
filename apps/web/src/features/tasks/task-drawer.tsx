@@ -9,6 +9,7 @@ import { formatDate, formatRelative } from '@/lib/date-utils';
 import { getTaskHealth } from '@/lib/task-health';
 import { queryKeys } from '@/lib/query-keys';
 import { TimeEntryForm } from '@/features/time/time-entry-form';
+import { useAllowedTransitions } from '@/hooks/use-allowed-transitions';
 import client from '@/api/client';
 
 interface TaskDrawerProps {
@@ -102,10 +103,10 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
             {/* Task code + quick status */}
             <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
               {(task as any).code && <span className="font-mono text-[11px] text-slate-400">{(task as any).code}</span>}
-              <select aria-label="Task status" value={(task as any).status} onChange={(e) => updateTask.mutate({ field: 'status', value: e.target.value })}
-                className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold border-0 cursor-pointer focus:outline-none', statusColors[(task as any).status] || statusColors.not_started)}>
-                {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>)}
-              </select>
+              <StatusSelect
+                currentStatus={(task as any).status}
+                onChange={(s) => updateTask.mutate({ field: 'status', value: s })}
+              />
               <select aria-label="Task priority" value={(task as any).priority} onChange={(e) => updateTask.mutate({ field: 'priority', value: e.target.value })}
                 className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold border-0 cursor-pointer focus:outline-none', priorityColors[(task as any).priority] || priorityColors.medium)}>
                 {PRIORITY_OPTIONS.map((p) => <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>)}
@@ -141,6 +142,22 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
         )}
       </div>
     </>
+  );
+}
+
+function StatusSelect({ currentStatus, onChange }: { currentStatus: string; onChange: (s: string) => void }) {
+  const { allowedStatuses } = useAllowedTransitions(currentStatus);
+  return (
+    <select
+      aria-label="Task status"
+      value={currentStatus}
+      onChange={(e) => onChange(e.target.value)}
+      className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold border-0 cursor-pointer focus:outline-none', statusColors[currentStatus] || statusColors.not_started)}
+    >
+      {STATUS_OPTIONS.filter((s) => allowedStatuses.includes(s)).map((s) => (
+        <option key={s} value={s}>{s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>
+      ))}
+    </select>
   );
 }
 

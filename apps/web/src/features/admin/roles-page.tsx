@@ -310,6 +310,7 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
           )}
 
           <RoleUsersSection roleId={role.id} roleName={role.name} />
+          <StageTransitionEditor roleId={role.id} />
         </div>
       )}
     </div>
@@ -400,6 +401,123 @@ function RoleUsersSection({ roleId, roleName }: { roleId: number; roleName: stri
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+const ALL_STATUSES = ['not_started', 'in_progress', 'in_review', 'completed', 'on_hold', 'cancelled'];
+const STATUS_NAMES: Record<string, string> = {
+  not_started: 'To Do', in_progress: 'In Progress', in_review: 'In Review',
+  completed: 'Done', on_hold: 'On Hold', cancelled: 'Cancelled',
+};
+
+function StageTransitionEditor({ roleId }: { roleId: number }) {
+  const queryClient = useQueryClient();
+
+  const { data: matrix = {}, isLoading } = useQuery({
+    queryKey: ['admin', 'roles', roleId, 'stage-transitions'],
+    queryFn: () => client.get(`/admin/roles/${roleId}/stage-transitions`).then((r) => r.data?.data ?? r.data),
+  });
+
+  const isUnrestricted = Object.keys(matrix).length === 0;
+
+  const isAllowed = (from: string, to: string): boolean => {
+    if (isUnrestricted) return true;
+    return (matrix[from] ?? []).includes(to);
+  };
+
+  const saveMutation = useMutation({
+    mutationFn: (transitions: { from: string; to: string }[]) =>
+      client.post(`/admin/roles/${roleId}/stage-transitions`, { transitions }).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'roles', roleId, 'stage-transitions'] });
+      notify.success('Stage transitions updated', { code: 'STAGE-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update'),
+  });
+
+  const toggleTransition = (from: string, to: string) => {
+    // Build full list from current matrix
+    const transitions: { from: string; to: string }[] = [];
+    if (isUnrestricted) {
+      // First click = start configuring: allow ALL except the one clicked
+      for (const f of ALL_STATUSES) {
+        for (const t of ALL_STATUSES) {
+          if (f === t) continue;
+          if (f === from && t === to) continue;
+          transitions.push({ from: f, to: t });
+        }
+      }
+    } else {
+      // Copy existing, toggle the clicked one
+      for (const f of ALL_STATUSES) {
+        for (const t of ALL_STATUSES) {
+          if (f === t) continue;
+          const currently = (matrix[f] ?? []).includes(t);
+          const toggled = f === from && t === to ? !currently : currently;
+          if (toggled) transitions.push({ from: f, to: t });
+        }
+      }
+    }
+    saveMutation.mutate(transitions);
+  };
+
+  const resetToUnrestricted = () => {
+    saveMutation.mutate([]);
+  };
+
+  if (isLoading) return <p className="text-[12px] text-slate-400 py-3 text-center">Loading…</p>;
+
+  return (
+    <div className="mt-6 pt-5 border-t border-slate-200">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-[13px] font-semibold text-slate-700">
+          Kanban Stage Transitions
+        </h4>
+        {!isUnrestricted && (
+          <button onClick={resetToUnrestricted} disabled={saveMutation.isPending}
+            className="text-[11px] text-blue-600 hover:text-blue-700 font-semibold">
+            Reset (allow all)
+          </button>
+        )}
+      </div>
+      {isUnrestricted && (
+        <p className="text-[11px] text-slate-500 mb-2">
+          No restrictions — this role can perform all transitions. Click any cell to start configuring.
+        </p>
+      )}
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <table className="w-full text-[11px]">
+          <thead>
+            <tr className="bg-slate-50">
+              <th className="px-2 py-1.5 text-left font-semibold text-slate-500">From ↓ / To →</th>
+              {ALL_STATUSES.map((s) => (
+                <th key={s} className="px-2 py-1.5 text-center font-semibold text-slate-500">{STATUS_NAMES[s]}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {ALL_STATUSES.map((from) => (
+              <tr key={from} className="border-t border-slate-100">
+                <td className="px-2 py-1.5 font-medium text-slate-700">{STATUS_NAMES[from]}</td>
+                {ALL_STATUSES.map((to) => {
+                  if (from === to) return <td key={to} className="bg-slate-100" />;
+                  const allowed = isAllowed(from, to);
+                  return (
+                    <td key={to} className="px-2 py-1 text-center">
+                      <PermCheckbox
+                        checked={allowed}
+                        onChange={() => toggleTransition(from, to)}
+                        disabled={saveMutation.isPending}
+                      />
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
