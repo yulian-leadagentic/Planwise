@@ -20,7 +20,8 @@ COPY packages/shared packages/shared
 COPY docker-entrypoint.sh ./
 
 RUN cd apps/api && /app/node_modules/.bin/prisma generate
-RUN cd apps/api && /app/node_modules/.bin/nest build
+# Use SWC builder — skips type-checking (done in CI), much faster
+RUN cd apps/api && /app/node_modules/.bin/nest build --builder swc
 RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
 
 # Prune devDependencies for the runtime image
