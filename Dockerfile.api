@@ -7,18 +7,20 @@ RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
 RUN apk add --no-cache openssl
 
 WORKDIR /app
+# Copy ALL workspace package.json files so pnpm resolves the full lockfile
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json ./
 COPY apps/api/package.json apps/api/
+COPY apps/web/package.json apps/web/
 COPY packages/shared/package.json packages/shared/
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --shamefully-hoist
 
 # Copy source after install so dependency cache is reused
 COPY apps/api apps/api
 COPY packages/shared packages/shared
 COPY docker-entrypoint.sh ./
 
-RUN cd apps/api && npx prisma generate
-RUN cd apps/api && npx nest build
+RUN cd apps/api && /app/node_modules/.bin/prisma generate
+RUN cd apps/api && /app/node_modules/.bin/nest build
 RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
 
 # Prune devDependencies for the runtime image
