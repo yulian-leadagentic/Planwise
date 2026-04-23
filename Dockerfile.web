@@ -23,7 +23,7 @@ RUN find /app/node_modules -path "*/node_modules/react/package.json" \
     -exec dirname {} \; 2>/dev/null | xargs -r rm -rf 2>/dev/null || true
 
 ARG CACHEBUST=1
-RUN echo "Build: $CACHEBUST" && cd apps/web && npx vite build
+RUN echo "Build: $CACHEBUST" && cd apps/web && /app/node_modules/.bin/vite build
 
 # ───────────────────────────────────────────────────────────────────────
 # Stage 2 — runtime (nginx, non-root)
