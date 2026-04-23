@@ -82,7 +82,15 @@ export class RolesController {
   @RequirePermissions({ module: 'admin', action: 'delete' })
   @ApiOperation({ summary: 'Delete a role' })
   async remove(@Param('id', ParseIntPipe) id: number) {
-    await this.prisma.role.delete({ where: { id } });
+    // Clean up all related records before deleting the role.
+    // RoleStageTransition and ResourceOverride have onDelete:Cascade
+    // in the schema, but RoleModule does not — must delete manually.
+    await this.prisma.$transaction([
+      this.prisma.roleModule.deleteMany({ where: { roleId: id } }),
+      this.prisma.roleStageTransition.deleteMany({ where: { roleId: id } }),
+      this.prisma.resourceOverride.deleteMany({ where: { roleId: id } }),
+      this.prisma.role.delete({ where: { id } }),
+    ]);
     return { message: 'Role deleted' };
   }
 
