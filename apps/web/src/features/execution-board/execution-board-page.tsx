@@ -291,19 +291,20 @@ export function ExecutionBoardPage() {
   const [projectId, setProjectId] = useState<number | null>(null);
   const [serviceId, setServiceId] = useState<number | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  // Cells default collapsed — user clicks a cell's summary bar to reveal
-  // the individual task cards. Key format: `${zoneId}|${phaseName}`.
-  const [expandedCells, setExpandedCells] = useState<Set<string>>(new Set());
+  // Zone-level collapse: when a zone is collapsed (default), all cells
+  // show only the summary bar. When expanded, task cards are revealed
+  // across ALL deliverable columns for that zone.
+  const [expandedZones, setExpandedZones] = useState<Set<number>>(new Set());
   const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
   const didAutoExpand = useRef(false);
 
   const { data, isLoading } = useExecutionBoard(projectId, serviceId);
 
-  const toggleCell = useCallback((key: string) => {
-    setExpandedCells((prev) => {
+  const toggleZoneExpand = useCallback((zoneId: number) => {
+    setExpandedZones((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      if (next.has(zoneId)) next.delete(zoneId);
+      else next.add(zoneId);
       return next;
     });
   }, []);
@@ -630,6 +631,7 @@ export function ExecutionBoardPage() {
 
                   const isParent = row.hasChildren;
                   const zc = ZONE_COLORS[row.zoneType ?? ''] ?? ZONE_COLORS.zone;
+                  const zoneExpanded = expandedZones.has(row.id);
 
                   return (
                     <tr
@@ -640,18 +642,17 @@ export function ExecutionBoardPage() {
                         <div
                           className="flex items-center gap-1.5 cursor-pointer"
                           style={{ paddingLeft: `${row.depth * 20}px` }}
-                          onClick={() => row.hasChildren && toggleExpand(row.key)}
+                          onClick={() => {
+                            if (row.hasChildren) toggleExpand(row.key);
+                            toggleZoneExpand(row.id);
+                          }}
                         >
-                          {row.hasChildren ? (
-                            <ChevronRight
-                              className={cn(
-                                'h-3.5 w-3.5 text-slate-400 transition-transform duration-150 shrink-0',
-                                expandedIds.has(row.key) && 'rotate-90',
-                              )}
-                            />
-                          ) : (
-                            <MapPin className="h-3 w-3 text-slate-300 shrink-0" />
-                          )}
+                          <ChevronRight
+                            className={cn(
+                              'h-3.5 w-3.5 text-slate-400 transition-transform duration-150 shrink-0',
+                              zoneExpanded && 'rotate-90',
+                            )}
+                          />
                           <span
                             className={cn(
                               'truncate text-[13px]',
@@ -671,8 +672,6 @@ export function ExecutionBoardPage() {
                         const aggTasks = getAggregatedTasks(row.id, phaseName);
                         const directTasks = directMatrix.get(`${row.id}|${phaseName}`) ?? [];
                         const aggHealths = aggTasks.map((t) => taskHealths.get(t.id)!).filter(Boolean);
-                        const cellKey = `${row.id}|${phaseName}`;
-                        const expanded = expandedCells.has(cellKey);
                         return (
                           <td
                             key={phaseName}
@@ -684,10 +683,10 @@ export function ExecutionBoardPage() {
                                   tasks={aggTasks}
                                   healths={aggHealths}
                                   isAggregate={isParent}
-                                  expanded={expanded}
-                                  onToggle={() => toggleCell(cellKey)}
+                                  expanded={zoneExpanded}
+                                  onToggle={() => toggleZoneExpand(row.id)}
                                 />
-                                {expanded && directTasks.map((task) => (
+                                {zoneExpanded && directTasks.map((task) => (
                                   <TaskCard
                                     key={task.id}
                                     task={task}
@@ -706,8 +705,6 @@ export function ExecutionBoardPage() {
                             const aggTasks = getAggregatedTasks(row.id, '__none__');
                             const directTasks = directMatrix.get(`${row.id}|__none__`) ?? [];
                             const aggHealths = aggTasks.map((t) => taskHealths.get(t.id)!).filter(Boolean);
-                            const cellKey = `${row.id}|__none__`;
-                            const expanded = expandedCells.has(cellKey);
                             if (aggTasks.length === 0) return null;
                             return (
                               <div className="flex flex-col gap-1">
@@ -715,10 +712,10 @@ export function ExecutionBoardPage() {
                                   tasks={aggTasks}
                                   healths={aggHealths}
                                   isAggregate={isParent}
-                                  expanded={expanded}
-                                  onToggle={() => toggleCell(cellKey)}
+                                  expanded={zoneExpanded}
+                                  onToggle={() => toggleZoneExpand(row.id)}
                                 />
-                                {expanded && directTasks.map((task) => (
+                                {zoneExpanded && directTasks.map((task) => (
                                   <TaskCard
                                     key={task.id}
                                     task={task}
