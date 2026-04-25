@@ -8,6 +8,7 @@ import {
   Bell,
 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
+import { usePermissions } from '@/hooks/use-permissions';
 
 const adminCards = [
   {
@@ -15,6 +16,7 @@ const adminCards = [
     description: 'Create users, assign roles, activate / deactivate accounts',
     icon: Users,
     href: '/people',
+    module: 'people',
     color: 'bg-violet-100 text-violet-700',
   },
   {
@@ -22,6 +24,7 @@ const adminCards = [
     description: 'Define roles, toggle module permissions, view role members',
     icon: Shield,
     href: '/admin/roles',
+    module: 'admin/roles',
     color: 'bg-blue-100 text-blue-700',
   },
   {
@@ -29,6 +32,7 @@ const adminCards = [
     description: 'View system-wide audit trail',
     icon: Activity,
     href: '/admin/activity-log',
+    module: 'admin/activity-log',
     color: 'bg-purple-100 text-purple-700',
   },
   {
@@ -36,6 +40,7 @@ const adminCards = [
     description: 'Real-time view of team clock status',
     icon: Clock,
     href: '/admin/clock-dashboard',
+    module: 'admin/clock-dashboard',
     color: 'bg-rose-100 text-rose-700',
   },
   {
@@ -43,6 +48,7 @@ const adminCards = [
     description: 'Configure employee work schedules and shifts',
     icon: Calendar,
     href: '/admin/work-schedules',
+    module: 'admin/work-schedules',
     color: 'bg-cyan-100 text-cyan-700',
   },
   {
@@ -50,6 +56,7 @@ const adminCards = [
     description: 'Manage holidays and company days off',
     icon: Calendar,
     href: '/admin/calendar',
+    module: 'admin/calendar',
     color: 'bg-orange-100 text-orange-700',
   },
   {
@@ -57,17 +64,21 @@ const adminCards = [
     description: 'Configure notification rules, channels, and integrations',
     icon: Bell,
     href: '/admin/notification-settings',
+    module: 'admin/notification-settings',
     color: 'bg-amber-100 text-amber-700',
   },
 ];
 
 export function AdminPage() {
+  const { can, isAdmin } = usePermissions();
+  const visible = isAdmin ? adminCards : adminCards.filter((c) => can(c.module, 'read'));
+
   return (
     <div className="space-y-6">
       <PageHeader title="Administration" description="System configuration and management" />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {adminCards.map((card) => (
+        {visible.map((card) => (
           <Link
             key={card.href}
             to={card.href}

@@ -27,7 +27,7 @@ export class CalendarController {
   constructor(private readonly calendarService: CalendarService) {}
 
   @Post()
-  @RequirePermissions({ module: 'admin', action: 'write' })
+  @RequirePermissions({ module: 'admin/calendar', action: 'write' })
   @ApiOperation({ summary: 'Create a calendar day' })
   create(@CurrentUser() user: any, @Body() dto: CreateCalendarDayDto) {
     return this.calendarService.create(user.id, dto);
@@ -40,14 +40,14 @@ export class CalendarController {
   }
 
   @Patch(':id')
-  @RequirePermissions({ module: 'admin', action: 'write' })
+  @RequirePermissions({ module: 'admin/calendar', action: 'write' })
   @ApiOperation({ summary: 'Update a calendar day' })
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: Partial<CreateCalendarDayDto>) {
     return this.calendarService.update(id, dto);
   }
 
   @Delete(':id')
-  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @RequirePermissions({ module: 'admin/calendar', action: 'delete' })
   @ApiOperation({ summary: 'Delete a calendar day' })
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.calendarService.remove(id);

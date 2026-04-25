@@ -26,21 +26,21 @@ export class ServiceTypesController {
   constructor(private readonly serviceTypesService: ServiceTypesService) {}
 
   @Get()
-  @RequirePermissions({ module: 'templates', action: 'read' })
+  @RequirePermissions({ module: 'templates/types', action: 'read' })
   @ApiOperation({ summary: 'List all service types' })
   findAll() {
     return this.serviceTypesService.findAll();
   }
 
   @Post()
-  @RequirePermissions({ module: 'templates', action: 'write' })
+  @RequirePermissions({ module: 'templates/types', action: 'write' })
   @ApiOperation({ summary: 'Create a service type' })
   create(@Body() dto: CreateServiceTypeDto) {
     return this.serviceTypesService.create(dto);
   }
 
   @Patch(':id')
-  @RequirePermissions({ module: 'templates', action: 'write' })
+  @RequirePermissions({ module: 'templates/types', action: 'write' })
   @ApiOperation({ summary: 'Update a service type' })
   update(
     @Param('id', ParseIntPipe) id: number,
@@ -50,7 +50,7 @@ export class ServiceTypesController {
   }
 
   @Delete(':id')
-  @RequirePermissions({ module: 'templates', action: 'delete' })
+  @RequirePermissions({ module: 'templates/types', action: 'delete' })
   @ApiOperation({ summary: 'Delete a service type' })
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.serviceTypesService.remove(id);

@@ -26,28 +26,28 @@ export class WorkSchedulesController {
   constructor(private readonly workSchedulesService: WorkSchedulesService) {}
 
   @Post()
-  @RequirePermissions({ module: 'time', action: 'write' })
+  @RequirePermissions({ module: 'admin/work-schedules', action: 'write' })
   @ApiOperation({ summary: 'Create a work schedule' })
   create(@Body() dto: CreateWorkScheduleDto) {
     return this.workSchedulesService.create(dto);
   }
 
   @Get()
-  @RequirePermissions({ module: 'time', action: 'read' })
+  @RequirePermissions({ module: 'admin/work-schedules', action: 'read' })
   @ApiOperation({ summary: 'Get work schedules for a user' })
   findByUser(@Query('userId', ParseIntPipe) userId: number) {
     return this.workSchedulesService.findByUser(userId);
   }
 
   @Patch(':id')
-  @RequirePermissions({ module: 'time', action: 'write' })
+  @RequirePermissions({ module: 'admin/work-schedules', action: 'write' })
   @ApiOperation({ summary: 'Update a work schedule' })
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: Partial<CreateWorkScheduleDto>) {
     return this.workSchedulesService.update(id, dto);
   }
 
   @Delete(':id')
-  @RequirePermissions({ module: 'time', action: 'delete' })
+  @RequirePermissions({ module: 'admin/work-schedules', action: 'delete' })
   @ApiOperation({ summary: 'Delete a work schedule' })
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.workSchedulesService.remove(id);

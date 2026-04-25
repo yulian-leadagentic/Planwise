@@ -30,7 +30,7 @@ export class RolesController {
   ) {}
 
   @Post()
-  @RequirePermissions({ module: 'admin', action: 'write' })
+  @RequirePermissions({ module: 'admin/roles', action: 'write' })
   @ApiOperation({ summary: 'Create a role' })
   async create(@Body() body: { name: string; description?: string }) {
     return this.prisma.role.create({
@@ -40,7 +40,7 @@ export class RolesController {
   }
 
   @Get()
-  @RequirePermissions({ module: 'admin', action: 'read' })
+  @RequirePermissions({ module: 'admin/roles', action: 'read' })
   @ApiOperation({ summary: 'List all roles' })
   async findAll() {
     return this.prisma.role.findMany({
@@ -53,7 +53,7 @@ export class RolesController {
   }
 
   @Get(':id')
-  @RequirePermissions({ module: 'admin', action: 'read' })
+  @RequirePermissions({ module: 'admin/roles', action: 'read' })
   @ApiOperation({ summary: 'Get role by ID' })
   async findOne(@Param('id', ParseIntPipe) id: number) {
     return this.prisma.role.findUnique({
@@ -66,7 +66,7 @@ export class RolesController {
   }
 
   @Patch(':id')
-  @RequirePermissions({ module: 'admin', action: 'write' })
+  @RequirePermissions({ module: 'admin/roles', action: 'write' })
   @ApiOperation({ summary: 'Update a role' })
   async update(
     @Param('id', ParseIntPipe) id: number,
@@ -79,7 +79,7 @@ export class RolesController {
   }
 
   @Delete(':id')
-  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @RequirePermissions({ module: 'admin/roles', action: 'delete' })
   @ApiOperation({ summary: 'Delete a role' })
   async remove(@Param('id', ParseIntPipe) id: number) {
     // Clean up all related records before deleting the role.
@@ -96,7 +96,7 @@ export class RolesController {
 
   // Role Modules (permissions)
   @Post(':id/modules')
-  @RequirePermissions({ module: 'admin', action: 'write' })
+  @RequirePermissions({ module: 'admin/roles', action: 'write' })
   @ApiOperation({ summary: 'Set module permissions for role' })
   async setModulePermission(
     @Param('id', ParseIntPipe) roleId: number,
@@ -129,7 +129,7 @@ export class RolesController {
   }
 
   @Delete(':id/modules/:moduleId')
-  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @RequirePermissions({ module: 'admin/roles', action: 'delete' })
   @ApiOperation({ summary: 'Remove module permission from role' })
   async removeModulePermission(
     @Param('id', ParseIntPipe) roleId: number,
@@ -149,7 +149,7 @@ export class RolesController {
   // ─── Users with this role (inverse lookup) ─────────────────────────
 
   @Get(':id/users')
-  @RequirePermissions({ module: 'admin', action: 'read' })
+  @RequirePermissions({ module: 'admin/roles', action: 'read' })
   @ApiOperation({ summary: 'List users assigned to this role' })
   async findUsers(@Param('id', ParseIntPipe) roleId: number) {
     return this.prisma.user.findMany({
@@ -172,14 +172,14 @@ export class RolesController {
   // ─── Stage Transitions ────────────────────────────────────────────
 
   @Get(':id/stage-transitions')
-  @RequirePermissions({ module: 'admin', action: 'read' })
+  @RequirePermissions({ module: 'admin/roles', action: 'read' })
   @ApiOperation({ summary: 'Get stage transition matrix for a role' })
   async getStageTransitions(@Param('id', ParseIntPipe) roleId: number) {
     return this.stageTransitions.getMatrix(roleId);
   }
 
   @Post(':id/stage-transitions')
-  @RequirePermissions({ module: 'admin', action: 'write' })
+  @RequirePermissions({ module: 'admin/roles', action: 'write' })
   @ApiOperation({ summary: 'Set the full stage transition matrix for a role' })
   async setStageTransitions(
     @Param('id', ParseIntPipe) roleId: number,
@@ -192,7 +192,7 @@ export class RolesController {
   // ─── Resource Overrides ───────────────────────────────────────────
 
   @Get('resource-overrides/:resourceType/:resourceId')
-  @RequirePermissions({ module: 'admin', action: 'read' })
+  @RequirePermissions({ module: 'admin/roles', action: 'read' })
   @ApiOperation({ summary: 'List permission overrides for a resource' })
   async listOverrides(
     @Param('resourceType') resourceType: string,
@@ -202,7 +202,7 @@ export class RolesController {
   }
 
   @Post('resource-overrides')
-  @RequirePermissions({ module: 'admin', action: 'write' })
+  @RequirePermissions({ module: 'admin/roles', action: 'write' })
   @ApiOperation({ summary: 'Set a permission override for a resource + role/user' })
   async setOverride(
     @Body() body: {
@@ -219,7 +219,7 @@ export class RolesController {
   }
 
   @Delete('resource-overrides/:id')
-  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @RequirePermissions({ module: 'admin/roles', action: 'delete' })
   @ApiOperation({ summary: 'Remove a permission override' })
   async removeOverride(@Param('id', ParseIntPipe) id: number) {
     return this.resourceOverrides.removeOverride(id);

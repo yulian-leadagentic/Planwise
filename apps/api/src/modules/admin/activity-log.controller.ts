@@ -14,7 +14,7 @@ export class ActivityLogController {
   constructor(private prisma: PrismaService) {}
 
   @Get()
-  @RequirePermissions({ module: 'admin', action: 'read' })
+  @RequirePermissions({ module: 'admin/activity-log', action: 'read' })
   @ApiOperation({ summary: 'List activity logs with filters' })
   async findAll(
     @Query('page') page?: number,

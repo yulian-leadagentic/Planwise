@@ -79,7 +79,7 @@ export class ConfigController {
 
   // Team Templates
   @Get('team-templates')
-  @RequirePermissions({ module: 'admin', action: 'read' })
+  @RequirePermissions({ module: 'templates/team', action: 'read' })
   async getTeamTemplates() {
     return this.prisma.teamTemplate.findMany({
       orderBy: { createdAt: 'desc' },
@@ -94,7 +94,7 @@ export class ConfigController {
   }
 
   @Post('team-templates')
-  @RequirePermissions({ module: 'admin', action: 'write' })
+  @RequirePermissions({ module: 'templates/team', action: 'write' })
   async createTeamTemplate(@Body() body: { name: string }, @Req() req: any) {
     return this.prisma.teamTemplate.create({
       data: { name: body.name, createdBy: req.user?.id || 1 },
@@ -103,7 +103,7 @@ export class ConfigController {
   }
 
   @Delete('team-templates/:id')
-  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @RequirePermissions({ module: 'templates/team', action: 'delete' })
   async deleteTeamTemplate(@Param('id', ParseIntPipe) id: number) {
     await this.prisma.teamTemplateMember.deleteMany({ where: { teamTemplateId: id } });
     await this.prisma.teamTemplate.delete({ where: { id } });
@@ -111,7 +111,7 @@ export class ConfigController {
   }
 
   @Post('team-templates/:id/members')
-  @RequirePermissions({ module: 'admin', action: 'write' })
+  @RequirePermissions({ module: 'templates/team', action: 'write' })
   async addTeamTemplateMember(
     @Param('id', ParseIntPipe) templateId: number,
     @Body() body: { userId: number; role?: string },
@@ -123,7 +123,7 @@ export class ConfigController {
   }
 
   @Delete('team-template-members/:id')
-  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @RequirePermissions({ module: 'templates/team', action: 'delete' })
   async removeTeamTemplateMember(@Param('id', ParseIntPipe) id: number) {
     await this.prisma.teamTemplateMember.delete({ where: { id } });
     return { message: 'Member removed' };

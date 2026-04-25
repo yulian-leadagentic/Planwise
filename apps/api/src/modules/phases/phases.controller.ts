@@ -26,21 +26,21 @@ export class PhasesController {
   constructor(private readonly phasesService: PhasesService) {}
 
   @Get()
-  @RequirePermissions({ module: 'templates', action: 'read' })
+  @RequirePermissions({ module: 'templates/services', action: 'read' })
   @ApiOperation({ summary: 'List all phases' })
   findAll() {
     return this.phasesService.findAll();
   }
 
   @Post()
-  @RequirePermissions({ module: 'templates', action: 'write' })
+  @RequirePermissions({ module: 'templates/services', action: 'write' })
   @ApiOperation({ summary: 'Create a phase' })
   create(@Body() dto: CreatePhaseDto) {
     return this.phasesService.create(dto);
   }
 
   @Patch(':id')
-  @RequirePermissions({ module: 'templates', action: 'write' })
+  @RequirePermissions({ module: 'templates/services', action: 'write' })
   @ApiOperation({ summary: 'Update a phase' })
   update(
     @Param('id', ParseIntPipe) id: number,
@@ -50,7 +50,7 @@ export class PhasesController {
   }
 
   @Delete(':id')
-  @RequirePermissions({ module: 'templates', action: 'delete' })
+  @RequirePermissions({ module: 'templates/services', action: 'delete' })
   @ApiOperation({ summary: 'Delete a phase' })
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.phasesService.remove(id);
