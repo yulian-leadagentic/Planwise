@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Plus, Users, X } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { Plus, Users, X, Pencil, KeyRound } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
 import { FilterBar } from '@/components/shared/filter-bar';
@@ -21,6 +21,8 @@ function getColumns(
   roles: any[],
   canEdit: boolean,
   onChangeRole: (userId: number, roleId: number) => void,
+  onEdit: (user: UserListItem) => void,
+  onResetPassword: (user: UserListItem) => void,
   savingUserId: number | null,
 ): ColumnDef<UserListItem, unknown>[] {
   const cols: ColumnDef<UserListItem, unknown>[] = [
@@ -105,6 +107,33 @@ function getColumns(
     },
   );
 
+  if (canEdit) {
+    cols.push({
+      id: 'actions',
+      header: '',
+      cell: ({ row }) => (
+        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            onClick={() => onEdit(row.original)}
+            className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
+            title="Edit user details"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onResetPassword(row.original)}
+            className="p-1.5 rounded hover:bg-amber-50 text-slate-400 hover:text-amber-600"
+            title="Reset password"
+          >
+            <KeyRound className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ),
+    });
+  }
+
   return cols;
 }
 
@@ -160,6 +189,8 @@ export function PeoplePage() {
   const debouncedSearch = useDebounce(peopleSearch, 300);
   const { can, isAdmin } = usePermissions();
   const [savingUserId, setSavingUserId] = useState<number | null>(null);
+  const [editingUser, setEditingUser] = useState<UserListItem | null>(null);
+  const [resettingUser, setResettingUser] = useState<UserListItem | null>(null);
 
   const updateRole = useMutation({
     mutationFn: ({ userId, roleId }: { userId: number; roleId: number }) =>
@@ -175,10 +206,18 @@ export function PeoplePage() {
   });
 
   const isPartners = peopleTab === 'partners';
-  const canEditRoles = isAdmin || can('admin', 'write');
+  const canEditPeople = isAdmin || can('people', 'write');
   const columns = useMemo(
-    () => getColumns(isPartners, roles, canEditRoles, (userId, roleId) => updateRole.mutate({ userId, roleId }), savingUserId),
-    [isPartners, roles, canEditRoles, savingUserId],
+    () => getColumns(
+      isPartners,
+      roles,
+      canEditPeople,
+      (userId, roleId) => updateRole.mutate({ userId, roleId }),
+      (user) => setEditingUser(user),
+      (user) => setResettingUser(user),
+      savingUserId,
+    ),
+    [isPartners, roles, canEditPeople, savingUserId],
   );
 
   const userType = peopleTab === 'employees' ? 'employee' : 'partner';
@@ -352,6 +391,243 @@ export function PeoplePage() {
           </div>
         </div>
       )}
+
+      {editingUser && (
+        <EditPersonModal
+          user={editingUser}
+          roles={roles}
+          departments={departments}
+          professions={professions}
+          onClose={() => setEditingUser(null)}
+        />
+      )}
+
+      {resettingUser && (
+        <ResetPasswordModal
+          user={resettingUser}
+          onClose={() => setResettingUser(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
+
+function EditPersonModal({
+  user,
+  roles,
+  departments,
+  professions,
+  onClose,
+}: {
+  user: UserListItem;
+  roles: any[];
+  departments: any[];
+  professions: any[];
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const isPartner = user.userType === 'partner';
+  const [form, setForm] = useState({
+    email: user.email ?? '',
+    firstName: user.firstName ?? '',
+    lastName: user.lastName ?? '',
+    phone: (user as any).phone ?? '',
+    roleId: String((user as any).roleId ?? ''),
+    position: user.position ?? '',
+    department: user.department ?? '',
+    companyName: user.companyName ?? '',
+    isActive: user.isActive,
+  });
+
+  // Lock background scroll while open
+  useEffect(() => {
+    const original = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = original; };
+  }, []);
+
+  const update = useMutation({
+    mutationFn: (payload: any) => client.patch(`/users/${user.id}`, payload).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'roles'] });
+      notify.success('Person updated', { code: 'USER-UPDATE-200' });
+      onClose();
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update person'),
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.email || !form.firstName || !form.lastName || !form.roleId) {
+      notify.warning('Please fill all required fields', { code: 'USER-UPDATE-400' });
+      return;
+    }
+    update.mutate({
+      email: form.email,
+      firstName: form.firstName,
+      lastName: form.lastName,
+      phone: form.phone || undefined,
+      roleId: Number(form.roleId),
+      position: form.position || undefined,
+      department: form.department || undefined,
+      companyName: form.companyName || undefined,
+      isActive: form.isActive,
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-[480px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <h2 className="text-base font-bold text-slate-900">Edit {isPartner ? 'Partner' : 'Employee'}</h2>
+          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">First Name *</label>
+              <input value={form.firstName} onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))} className={inputClass} />
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Last Name *</label>
+              <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className={inputClass} />
+            </div>
+          </div>
+          <div>
+            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Email *</label>
+            <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} className={inputClass} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Role *</label>
+              <select value={form.roleId} onChange={(e) => setForm(f => ({ ...f, roleId: e.target.value }))} className={inputClass}>
+                <option value="">Select role</option>
+                {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Phone</label>
+              <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className={inputClass} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Profession</label>
+              <select value={form.position} onChange={(e) => setForm(f => ({ ...f, position: e.target.value }))} className={inputClass}>
+                <option value="">Select profession</option>
+                {professions.map((p: any) => <option key={p.id} value={p.name}>{p.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Department</label>
+              <select value={form.department} onChange={(e) => setForm(f => ({ ...f, department: e.target.value }))} className={inputClass}>
+                <option value="">Select department</option>
+                {departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
+              </select>
+            </div>
+          </div>
+          {isPartner && (
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Company Name</label>
+              <input value={form.companyName} onChange={(e) => setForm(f => ({ ...f, companyName: e.target.value }))} className={inputClass} />
+            </div>
+          )}
+          <label className="flex items-center gap-2 cursor-pointer pt-1">
+            <input
+              type="checkbox"
+              checked={form.isActive}
+              onChange={(e) => setForm(f => ({ ...f, isActive: e.target.checked }))}
+              className="h-4 w-4 rounded border-slate-300 text-blue-600"
+            />
+            <span className="text-sm text-slate-700">Active</span>
+          </label>
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <button type="button" onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+            <button type="submit" disabled={update.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
+              {update.isPending ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ResetPasswordModal({
+  user,
+  onClose,
+}: {
+  user: UserListItem;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+
+  useEffect(() => {
+    const original = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = original; };
+  }, []);
+
+  const reset = useMutation({
+    mutationFn: () => client.patch(`/users/${user.id}`, { password }).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      notify.success(`Password reset for ${user.firstName} ${user.lastName}`, { code: 'USER-PWD-200' });
+      onClose();
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to reset password'),
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password.length < 6) {
+      notify.warning('Password must be at least 6 characters', { code: 'USER-PWD-400' });
+      return;
+    }
+    if (password !== confirm) {
+      notify.warning('Passwords do not match', { code: 'USER-PWD-400' });
+      return;
+    }
+    reset.mutate();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-[420px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <h2 className="text-base font-bold text-slate-900">Reset Password</h2>
+          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          <p className="text-[13px] text-slate-600">
+            Set a new password for <span className="font-semibold text-slate-900">{user.firstName} {user.lastName}</span>.
+            They'll need to use this password on their next login.
+          </p>
+          <div>
+            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">New Password *</label>
+            <input type="password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} minLength={6} className={inputClass} />
+          </div>
+          <div>
+            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Confirm Password *</label>
+            <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} minLength={6} className={inputClass} />
+          </div>
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <button type="button" onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+            <button type="submit" disabled={reset.isPending} className="bg-amber-600 hover:bg-amber-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
+              {reset.isPending ? 'Resetting...' : 'Reset Password'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
