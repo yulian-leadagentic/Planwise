@@ -438,18 +438,19 @@ export class MessagesService {
   async getInbox(userId: number, page = 1, perPage = 20) {
     const skip = (page - 1) * perPage;
 
-    // Messages where user is mentioned or is the author of a reply
+    // Surface a thread (top-level message) when the user is connected to it:
+    //   - mentioned in the parent OR any reply
+    //   - authored the parent (so a starter sees their own thread)
+    //   - replied to the thread
     const where: Prisma.MessageWhereInput = {
       deletedAt: null,
+      parentId: null,
       OR: [
         { mentions: { some: { userId } } },
-        {
-          replies: {
-            some: { authorId: userId, deletedAt: null },
-          },
-        },
+        { authorId: userId },
+        { replies: { some: { authorId: userId, deletedAt: null } } },
+        { replies: { some: { mentions: { some: { userId } }, deletedAt: null } } },
       ],
-      parentId: null, // only top-level
     };
 
     const [data, total] = await Promise.all([

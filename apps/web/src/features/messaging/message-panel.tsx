@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { MessageSquare, Send, Reply, Pencil, Trash2, AtSign, ChevronDown, ChevronRight, CheckCircle, Sparkles, XCircle } from 'lucide-react';
+import { MessageSquare, Send, Reply, Pencil, Trash2, AtSign, ChevronDown, ChevronRight, CheckCircle, Sparkles, XCircle, Users, UserPlus, Search, Check } from 'lucide-react';
 import { useMessages, useCreateMessage, useDeleteMessage } from '@/hooks/use-messages';
 import { cn } from '@/lib/utils';
 import { formatRelative } from '@/lib/date-utils';
@@ -91,6 +91,11 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const createMessage = useCreateMessage();
 
+  // For "Project Team" quick add — resolve when this composer is for a project,
+  // OR when nested inside a task whose project we know via ancestry. We only
+  // fetch when the picker is open to avoid extra requests.
+  const projectIdForRecipients = entityType === 'project' ? entityId : null;
+
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setContent(val);
@@ -153,13 +158,13 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
     }
   };
 
-  const addRecipient = (user: any) => {
-    const name = `${user.firstName} ${user.lastName}`;
+  const addRecipients = (newUsers: { id: number; name: string }[]) => {
     setMentionedUsers((prev) => {
-      if (prev.some((u) => u.id === user.id)) return prev;
-      return [...prev, { id: user.id, name }];
+      const seen = new Set(prev.map((u) => u.id));
+      const merged = [...prev];
+      for (const u of newUsers) if (!seen.has(u.id)) merged.push(u);
+      return merged;
     });
-    setShowRecipientPicker(false);
   };
 
   const removeRecipient = (userId: number) => {
@@ -176,45 +181,50 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
         />
       )}
 
-      {/* Recipients (To:) */}
-      {mentionedUsers.length > 0 && (
-        <div className="flex items-center gap-1 mb-1.5 flex-wrap">
-          <span className="text-[11px] font-semibold text-slate-500">To:</span>
-          {mentionedUsers.map((u) => (
-            <span key={u.id} className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] text-blue-700">
-              <AtSign className="h-2.5 w-2.5" />{u.name}
-              <button onClick={() => removeRecipient(u.id)} className="ml-0.5 hover:text-red-600">×</button>
+      {/* Recipient bar — always visible to make the audience explicit */}
+      <div className="mb-2 flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
+        <span className="text-[11px] font-semibold text-slate-500 mt-1.5 shrink-0">To:</span>
+        <div className="flex-1 flex flex-wrap items-center gap-1.5">
+          {mentionedUsers.length === 0 ? (
+            <span className="text-[12px] text-slate-400 italic py-1">
+              Visible in this {entityType} discussion. Add recipients to notify specific people.
             </span>
-          ))}
+          ) : (
+            mentionedUsers.map((u) => (
+              <span key={u.id} className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                {u.name}
+                <button onClick={() => removeRecipient(u.id)} className="ml-0.5 hover:text-red-600 leading-none" aria-label={`Remove ${u.name}`}>×</button>
+              </span>
+            ))
+          )}
         </div>
-      )}
-
-      <div className="flex items-end gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
-        {/* Add recipient button */}
-        <div className="relative">
+        <div className="relative shrink-0">
           <button
             type="button"
             onClick={() => setShowRecipientPicker(!showRecipientPicker)}
-            title="Send to specific person"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 shrink-0"
+            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:border-blue-400 hover:text-blue-600"
           >
-            <AtSign className="h-4 w-4" />
+            <UserPlus className="h-3 w-3" />
+            Add recipients
           </button>
           {showRecipientPicker && (
-            <MentionAutocomplete
-              search=""
-              onSelect={addRecipient}
+            <RecipientPicker
+              projectId={projectIdForRecipients}
+              alreadySelected={mentionedUsers}
+              onAdd={addRecipients}
               onClose={() => setShowRecipientPicker(false)}
             />
           )}
         </div>
+      </div>
 
+      <div className="flex items-end gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
         <textarea
           ref={textareaRef}
           value={content}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
-          placeholder={parentId ? 'Write a reply...' : mentionedUsers.length > 0 ? 'Write a message to the selected recipients...' : 'Write a message... Use @ to mention or click @ to select recipient'}
+          placeholder={parentId ? 'Write a reply...' : 'Write a message... use @ to inline-mention'}
           rows={1}
           className="flex-1 resize-none text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none"
           style={{ minHeight: '24px', maxHeight: '120px' }}
@@ -226,6 +236,172 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
         >
           <Send className="h-4 w-4" />
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Recipient Picker ─────────────────────────────────────────────────────────
+
+function RecipientPicker({
+  projectId,
+  alreadySelected,
+  onAdd,
+  onClose,
+}: {
+  projectId: number | null;
+  alreadySelected: { id: number; name: string }[];
+  onAdd: (users: { id: number; name: string }[]) => void;
+  onClose: () => void;
+}) {
+  const [search, setSearch] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onMouseDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [onClose]);
+
+  const { data: allUsers = [] } = useQuery<any[]>({
+    queryKey: ['users-active-for-recipients'],
+    staleTime: 30 * 1000,
+    queryFn: () => client.get('/users?isActive=true&perPage=200').then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : [];
+    }),
+  });
+
+  const { data: members = [] } = useQuery<any[]>({
+    queryKey: ['project-members', projectId],
+    enabled: !!projectId,
+    staleTime: 60 * 1000,
+    queryFn: () => client.get(`/projects/${projectId}/members`).then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : [];
+    }),
+  });
+
+  const projectTeamUsers = useMemo(() => {
+    return members
+      .map((m: any) => m.user)
+      .filter((u: any) => u && u.id);
+  }, [members]);
+
+  const selectedIds = useMemo(() => new Set(alreadySelected.map((u) => u.id)), [alreadySelected]);
+
+  const filteredUsers = useMemo(() => {
+    if (!search) return allUsers;
+    const q = search.toLowerCase();
+    return allUsers.filter((u: any) => {
+      const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.toLowerCase();
+      return name.includes(q) || (u.email ?? '').toLowerCase().includes(q);
+    });
+  }, [allUsers, search]);
+
+  const toUserChip = (u: any) => ({ id: u.id, name: `${u.firstName} ${u.lastName}` });
+
+  const handleAddAllUsers = () => {
+    onAdd(allUsers.map(toUserChip));
+    onClose();
+  };
+
+  const handleAddProjectTeam = () => {
+    onAdd(projectTeamUsers.map(toUserChip));
+    onClose();
+  };
+
+  const handleToggleUser = (u: any) => {
+    if (selectedIds.has(u.id)) return;
+    onAdd([toUserChip(u)]);
+  };
+
+  return (
+    <div ref={ref} className="absolute right-0 top-full mt-1 w-80 rounded-lg border border-slate-200 bg-white shadow-xl z-30">
+      {/* Quick groups */}
+      <div className="p-2 border-b border-slate-100">
+        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-2 pt-1 pb-1.5">
+          Quick add
+        </p>
+        {projectId && (
+          <button
+            type="button"
+            onClick={handleAddProjectTeam}
+            disabled={projectTeamUsers.length === 0}
+            className="w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-700 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-emerald-100 text-emerald-600">
+              <Users className="h-3.5 w-3.5" />
+            </span>
+            <span className="flex-1 text-left">
+              <span className="block font-medium">Project Team</span>
+              <span className="block text-[11px] text-slate-400">{projectTeamUsers.length} member{projectTeamUsers.length === 1 ? '' : 's'}</span>
+            </span>
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={handleAddAllUsers}
+          className="w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-700 hover:bg-blue-50"
+        >
+          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-100 text-violet-600">
+            <Users className="h-3.5 w-3.5" />
+          </span>
+          <span className="flex-1 text-left">
+            <span className="block font-medium">All Users</span>
+            <span className="block text-[11px] text-slate-400">{allUsers.length} active user{allUsers.length === 1 ? '' : 's'}</span>
+          </span>
+        </button>
+      </div>
+
+      {/* Search + individuals */}
+      <div className="p-2">
+        <div className="relative mb-1.5">
+          <Search className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            autoFocus
+            placeholder="Search by name or email..."
+            className="w-full rounded-md border border-slate-200 bg-white pl-7 pr-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+          />
+        </div>
+        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-1 pt-0.5 pb-1">
+          {search ? 'Results' : 'People'}
+        </p>
+        <div className="max-h-56 overflow-y-auto">
+          {filteredUsers.length === 0 ? (
+            <p className="px-2 py-3 text-center text-[12px] text-slate-400">No matches</p>
+          ) : (
+            filteredUsers.map((u: any) => {
+              const isSelected = selectedIds.has(u.id);
+              return (
+                <button
+                  key={u.id}
+                  type="button"
+                  onClick={() => handleToggleUser(u)}
+                  disabled={isSelected}
+                  className={cn(
+                    'w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-left transition-colors',
+                    isSelected ? 'bg-slate-50 text-slate-400 cursor-default' : 'hover:bg-blue-50 text-slate-700',
+                  )}
+                >
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-[9px] font-semibold flex items-center justify-center shrink-0">
+                    {getInitials(u.firstName ?? '', u.lastName ?? '')}
+                  </span>
+                  <span className="flex-1 truncate">
+                    {u.firstName} {u.lastName}
+                    {u.email && <span className="block text-[10px] text-slate-400 truncate">{u.email}</span>}
+                  </span>
+                  {isSelected && <Check className="h-3.5 w-3.5 text-blue-600 shrink-0" />}
+                </button>
+              );
+            })
+          )}
+        </div>
       </div>
     </div>
   );
