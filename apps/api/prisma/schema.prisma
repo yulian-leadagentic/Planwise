@@ -222,6 +222,7 @@ model User {
   messages             Message[]          @relation("MessageAuthor")
   messageMentions      MessageMention[]
   taskAttachments      TaskAttachment[]
+  projectFiles         ProjectFile[]
   notificationsActed   Notification[]     @relation("NotificationActor")
   notificationPrefs    NotificationPreference[]
   resourceOverrides    ResourceOverride[] @relation("UserResourceOverrides")
@@ -252,7 +253,7 @@ model Role {
 model Module {
   id        Int      @id @default(autoincrement())
   name      String
-  route     String
+  route     String   @unique
   icon      String?
   sortOrder Int      @default(0) @map("sort_order")
   parentId  Int?     @map("parent_id")
@@ -406,6 +407,7 @@ model Project {
   zones       Zone[]
   tasks       Task[]
   categories  ProjectCategory[]
+  files       ProjectFile[]
 
   @@index([projectTypeId])
   @@index([departmentId])
@@ -986,6 +988,30 @@ model TaskAttachment {
 
   @@index([taskId])
   @@map("task_attachments")
+}
+
+enum ProjectFileKind {
+  upload
+  link
+}
+
+model ProjectFile {
+  id          Int             @id @default(autoincrement())
+  projectId   Int             @map("project_id")
+  kind        ProjectFileKind
+  name        String          @db.VarChar(255)
+  url         String          @db.VarChar(1000)
+  fileSize    Int?            @map("file_size")
+  mimeType    String?         @map("mime_type") @db.VarChar(100)
+  description String?         @db.Text
+  uploadedBy  Int             @map("uploaded_by")
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  project  Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploader User    @relation(fields: [uploadedBy], references: [id])
+
+  @@index([projectId])
+  @@map("project_files")
 }
 
 model TaskDependency {

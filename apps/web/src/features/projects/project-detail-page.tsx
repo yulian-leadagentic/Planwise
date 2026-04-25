@@ -6,6 +6,7 @@ import { ProjectDiscussion } from '@/features/messaging/project-discussion';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
 import { WorkloadPanel } from './workload-panel';
 import { ActivityFeed } from './activity-feed';
+import { FilesTab } from './files-tab';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 
 // Lazy-load DnD-heavy components
@@ -17,7 +18,7 @@ import { notify } from '@/lib/notify';
 import client from '@/api/client';
 import { formatDate } from '@/lib/date-utils';
 
-type Tab = 'planning' | 'kanban' | 'workload' | 'team' | 'discussion' | 'activity';
+type Tab = 'planning' | 'kanban' | 'workload' | 'team' | 'files' | 'discussion' | 'activity';
 
 interface User {
   id: number;
@@ -71,6 +72,7 @@ export function ProjectDetailPage() {
     { key: 'kanban', label: 'Kanban' },
     { key: 'workload', label: 'Workload' },
     { key: 'team', label: 'Team' },
+    { key: 'files', label: 'Files' },
     { key: 'discussion', label: 'Discussion' },
     { key: 'activity', label: 'Activity' },
   ];
@@ -210,6 +212,7 @@ export function ProjectDetailPage() {
         {tab === 'planning' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading planning...</div>}><PlanningTab projectId={projectId} /></Suspense>}
         {tab === 'kanban' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading board...</div>}><KanbanBoard projectId={projectId} /></Suspense>}
         {tab === 'workload' && <WorkloadPanel projectId={projectId} />}
+        {tab === 'files' && <FilesTab projectId={projectId} />}
         {tab === 'activity' && <ActivityFeed projectId={projectId} />}
         {tab === 'discussion' && (
           <ProjectDiscussion projectId={projectId} />

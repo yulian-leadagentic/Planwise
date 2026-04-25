@@ -18,6 +18,7 @@ import { UsersModule } from './modules/users/users.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { FilesModule } from './modules/files/files.module';
+import { ProjectFilesModule } from './modules/project-files/project-files.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { ZonesModule } from './modules/zones/zones.module';
 import { PlanningModule } from './modules/planning/planning.module';
@@ -81,6 +82,7 @@ import { HealthModule } from './modules/health/health.module';
     ReportsModule,
     NotificationsModule,
     FilesModule,
+    ProjectFilesModule,
     AdminModule,
     ZonesModule,
     PlanningModule,

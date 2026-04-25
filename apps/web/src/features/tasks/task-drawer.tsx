@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Clock, Paperclip, MessageSquare, UserPlus, ChevronDown, Search, Trash2, AlertCircle, AlertTriangle, Calendar } from 'lucide-react';
+import { X, Clock, Paperclip, MessageSquare, UserPlus, ChevronDown, Search, Trash2, AlertCircle, AlertTriangle, Calendar, FileText } from 'lucide-react';
+import { FilesTab } from '@/features/projects/files-tab';
+import { MessagePanel } from '@/features/messaging/message-panel';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
@@ -33,7 +35,7 @@ const priorityColors: Record<string, string> = {
 
 export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<'details' | 'time' | 'discussion'>('details');
+  const [tab, setTab] = useState<'time' | 'details' | 'files' | 'discussion'>('time');
   const drawerRef = useRef<HTMLDivElement>(null);
 
   const { data: task, isLoading } = useQuery({
@@ -119,8 +121,9 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
             {/* Tabs */}
             <div className="flex border-b border-slate-200 px-5">
               {[
-                { key: 'details' as const, label: 'Details' },
                 { key: 'time' as const, label: 'Time', icon: Clock },
+                { key: 'details' as const, label: 'Details' },
+                { key: 'files' as const, label: 'Files', icon: FileText },
                 { key: 'discussion' as const, label: 'Discussion', icon: MessageSquare },
               ].map((t) => (
                 <button key={t.key} onClick={() => setTab(t.key)}
@@ -136,6 +139,7 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
             <div className="flex-1 overflow-y-auto px-5 py-4">
               {tab === 'details' && <TaskDetailsTab task={task as any} onUpdate={(f, v) => updateTask.mutate({ field: f, value: v })} />}
               {tab === 'time' && <TaskTimeTab taskId={taskId!} />}
+              {tab === 'files' && (task as any).projectId && <FilesTab projectId={(task as any).projectId} />}
               {tab === 'discussion' && <TaskDiscussionTab taskId={taskId!} />}
             </div>
           </>
@@ -314,6 +318,9 @@ function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any
 
 function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: string, value: any) => void }) {
   const inputClass = 'mt-1 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none';
+  const readOnlyClass = 'mt-1 w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm text-slate-600';
+  const fmtDate = (iso?: string | null) => iso ? new Date(iso).toLocaleDateString() : '—';
+
   return (
     <div className="space-y-4">
       <div>
@@ -321,30 +328,30 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
         <p className="mt-1 text-[13px] text-slate-600">{task.description || <span className="italic text-slate-400">No description</span>}</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="text-[11px] font-semibold text-slate-400 uppercase" htmlFor="td-hours">Est. Hours</label>
-          <input id="td-hours" type="number" key={`h-${task.id}`} defaultValue={task.budgetHours ?? ''}
-            onBlur={(e) => onUpdate('budgetHours', e.target.value ? Number(e.target.value) : null)}
-            className={inputClass} />
-        </div>
-        <div>
-          <label className="text-[11px] font-semibold text-slate-400 uppercase" htmlFor="td-amount">Amount</label>
-          <input id="td-amount" type="number" key={`a-${task.id}`} defaultValue={task.budgetAmount ?? ''}
-            onBlur={(e) => onUpdate('budgetAmount', e.target.value ? Number(e.target.value) : null)}
-            className={inputClass} />
-        </div>
-        <div>
-          <label className="text-[11px] font-semibold text-slate-400 uppercase" htmlFor="td-due">Due Date</label>
-          <input id="td-due" type="date" key={`d-${task.id}`} defaultValue={task.endDate?.split('T')[0] ?? ''}
-            onChange={(e) => onUpdate('endDate', e.target.value || undefined)}
-            className={inputClass} />
-        </div>
-        <div>
-          <label className="text-[11px] font-semibold text-slate-400 uppercase" htmlFor="td-pct">Completion</label>
-          <input id="td-pct" type="number" min="0" max="100" key={`p-${task.id}`} defaultValue={task.completionPct ?? 0}
-            onBlur={(e) => onUpdate('completionPct', Number(e.target.value))}
-            className={inputClass} />
+      {/* Planning fields — read-only here. Edit from the project Planning view. */}
+      <div>
+        <p className="text-[10px] text-slate-400 mb-1.5 italic">
+          Planning data — edit from the Project › Planning view
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-[11px] font-semibold text-slate-400 uppercase">Est. Hours</label>
+            <div className={readOnlyClass}>{task.budgetHours ?? '—'}</div>
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold text-slate-400 uppercase">Amount</label>
+            <div className={readOnlyClass}>{task.budgetAmount ?? '—'}</div>
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold text-slate-400 uppercase">Due Date</label>
+            <div className={readOnlyClass}>{fmtDate(task.endDate)}</div>
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold text-slate-400 uppercase" htmlFor="td-pct">Completion</label>
+            <input id="td-pct" type="number" min="0" max="100" key={`p-${task.id}`} defaultValue={task.completionPct ?? 0}
+              onBlur={(e) => onUpdate('completionPct', Number(e.target.value))}
+              className={inputClass} />
+          </div>
         </div>
       </div>
 
@@ -394,53 +401,5 @@ function TaskTimeTab({ taskId }: { taskId: number }) {
 }
 
 function TaskDiscussionTab({ taskId }: { taskId: number }) {
-  const [text, setText] = useState('');
-  const queryClient = useQueryClient();
-
-  const { data, isLoading } = useQuery({
-    queryKey: queryKeys.messages.byTask(taskId),
-    queryFn: () => client.get('/messages', { params: { entityType: 'task', entityId: taskId } }).then((r) => r.data),
-  });
-
-  const messages = (data as any)?.data ?? [];
-
-  const sendMessage = useMutation({
-    mutationFn: (content: string) => client.post('/messages', { entityType: 'task', entityId: taskId, content }).then((r) => r.data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: queryKeys.messages.byTask(taskId) }); setText(''); },
-  });
-
-  return (
-    <div className="space-y-3">
-      <div className="flex gap-2">
-        <input type="text" value={text} onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && text.trim()) { sendMessage.mutate(text.trim()); } }}
-          placeholder="Type a message..." className="flex-1 px-2 py-1.5 rounded border border-slate-200 text-[12px] focus:border-blue-400 focus:outline-none" />
-        <button onClick={() => { if (text.trim()) sendMessage.mutate(text.trim()); }}
-          disabled={!text.trim() || sendMessage.isPending}
-          className="rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">Send</button>
-      </div>
-
-      {isLoading ? <p className="text-[11px] text-slate-400 text-center py-4">Loading...</p> : messages.length === 0 ? (
-        <p className="text-[11px] text-slate-400 text-center py-4">No messages yet</p>
-      ) : (
-        <div className="space-y-2">
-          {messages.map((msg: any) => (
-            <div key={msg.id} className="text-[12px]">
-              {msg.type === 'system' ? (
-                <p className="text-[10px] text-slate-400 italic text-center">{msg.content}</p>
-              ) : (
-                <div className="rounded-md bg-slate-50 px-3 py-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-semibold text-slate-700">{msg.author?.firstName ?? 'User'}</span>
-                    <span className="text-[10px] text-slate-400">{msg.createdAt ? formatRelative(msg.createdAt) : ''}</span>
-                  </div>
-                  <p className="text-slate-600 mt-0.5">{msg.content}</p>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  return <MessagePanel entityType="task" entityId={taskId} />;
 }
