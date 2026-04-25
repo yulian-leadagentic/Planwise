@@ -27,6 +27,13 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException('Insufficient permissions');
     }
 
+    // Admin role short-circuit — matches the frontend usePermissions hook so
+    // an Admin user can never lock themselves out of a sub-module by adding a
+    // restrictive explicit entry alongside the parent grant.
+    if (user.role?.name === 'Admin' || user.roleName === 'Admin') {
+      return true;
+    }
+
     const findEntry = (key: string) => {
       const lc = key.toLowerCase();
       return user.roleModules.find((rm: any) => {
