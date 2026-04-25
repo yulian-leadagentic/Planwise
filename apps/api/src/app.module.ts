@@ -41,7 +41,7 @@ import { HealthModule } from './modules/health/health.module';
         // Pretty-print in dev; JSON in prod for log aggregators
         transport: process.env.NODE_ENV === 'production'
           ? undefined
-          : { target: 'pino-pretty', options: { singleLine: true, translateTime: 'HH:MM:ss.l' } },
+          : { target: require.resolve('pino-pretty'), options: { singleLine: true, translateTime: 'HH:MM:ss.l' } },
         // Redact obvious secrets; extend this list as needed
         redact: {
           paths: [

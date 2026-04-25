@@ -28,7 +28,8 @@ RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
 RUN pnpm --filter api deploy --prod /deploy \
     && cp -R apps/api/dist /deploy/dist \
     && cp -R apps/api/prisma /deploy/prisma \
-    && cp apps/api/seed-runner.js /deploy/seed-runner.js
+    && cp apps/api/seed-runner.js /deploy/seed-runner.js \
+    && cd /deploy && node_modules/.bin/prisma generate
 
 # ───────────────────────────────────────────────────────────────────────
 # Stage 2 — runtime (slim, non-root)
