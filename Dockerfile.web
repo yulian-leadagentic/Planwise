@@ -32,12 +32,19 @@ ENV VITE_API_URL=$VITE_API_URL
 RUN echo "Build: $CACHEBUST  API: ${VITE_API_URL:-<same-origin>}" && cd apps/web && /app/node_modules/.bin/vite build
 
 # ───────────────────────────────────────────────────────────────────────
-# Stage 2 — runtime (nginx, non-root)
+# Stage 2 — runtime (nginx)
 # ───────────────────────────────────────────────────────────────────────
 FROM nginx:alpine AS runtime
 
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
-COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
+
+# nginx.conf becomes a TEMPLATE so the official image's
+# /docker-entrypoint.d/20-envsubst-on-templates.sh expands ${PORT} on boot.
+# We restrict substitution to PORT only so nginx's own variables ($uri,
+# $http_upgrade, $api_upstream, etc.) are left literal.
+COPY apps/web/nginx.conf /etc/nginx/templates/default.conf.template
+ENV NGINX_ENVSUBST_FILTER=^PORT$
+ENV PORT=80
 
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
