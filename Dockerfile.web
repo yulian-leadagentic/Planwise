@@ -46,5 +46,12 @@ COPY apps/web/nginx.conf /etc/nginx/templates/default.conf.template
 ENV NGINX_ENVSUBST_FILTER=^PORT$
 ENV PORT=80
 
+# Runtime config: regenerate /config.js from the API_URL env var before
+# nginx starts. The SPA reads window.__APP_CONFIG__.apiUrl at load time so
+# the same image can target any environment without rebuilding the bundle.
+COPY apps/web/runtime-config.sh /docker-entrypoint.d/40-runtime-config.sh
+RUN sed -i 's/\r$//' /docker-entrypoint.d/40-runtime-config.sh \
+ && chmod +x /docker-entrypoint.d/40-runtime-config.sh
+
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

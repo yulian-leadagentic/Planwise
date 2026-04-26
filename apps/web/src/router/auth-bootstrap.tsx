@@ -1,8 +1,7 @@
 import { useEffect } from 'react';
 import axios from 'axios';
 import { useAuthStore } from '@/stores/auth.store';
-
-const API_BASE = (import.meta.env.VITE_API_URL?.trim() ?? '').replace(/\/$/, '');
+import { API_BASE } from '@/lib/runtime-config';
 
 /**
  * On page load / refresh, silently obtain a fresh access token using the
