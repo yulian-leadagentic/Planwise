@@ -1118,8 +1118,3 @@ ALTER TABLE `message_mentions` ADD CONSTRAINT `message_mentions_user_id_fkey` FO
 -- AddForeignKey
 ALTER TABLE `notification_preferences` ADD CONSTRAINT `notification_preferences_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
-npm notice
-npm notice New minor version of npm available! 11.10.1 -> 11.13.0
-npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.13.0
-npm notice To update run: npm install -g npm@11.13.0
-npm notice
