@@ -51,7 +51,11 @@ export class TimeEntriesController {
     @Query('date') date: string,
     @Query('userId') userId?: number,
   ) {
-    return this.timeEntriesService.getDailyBreakdown(userId ?? user.id, date);
+    // Use Number.isFinite — NestJS implicit conversion turns a missing
+    // optional ?userId= query param into NaN (Number(undefined)), and `??`
+    // doesn't catch NaN, so the fallback to user.id was never picked up.
+    const effectiveUserId = Number.isFinite(userId) ? (userId as number) : user.id;
+    return this.timeEntriesService.getDailyBreakdown(effectiveUserId, date);
   }
 
   @Get('weekly')
@@ -63,7 +67,9 @@ export class TimeEntriesController {
     @Query('weekStart') weekStart: string,
     @Query('userId') userId?: number,
   ) {
-    return this.timeEntriesService.getWeeklyGrid(userId ?? user.id, weekStart);
+    // Same NaN-from-implicit-conversion gotcha as getDailyBreakdown above.
+    const effectiveUserId = Number.isFinite(userId) ? (userId as number) : user.id;
+    return this.timeEntriesService.getWeeklyGrid(effectiveUserId, weekStart);
   }
 
   @Get(':id')
