@@ -21,9 +21,18 @@ async function bootstrap() {
   app.use(compression());
   app.use(cookieParser());
 
-  // CORS
+  // CORS — accept a comma-separated list of allowed origins so a single env
+  // var can cover prod + staging + localhost. Falls back to local dev origin.
+  const corsOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: (origin, cb) => {
+      // Allow same-origin / curl / server-to-server (no Origin header)
+      if (!origin) return cb(null, true);
+      cb(null, corsOrigins.includes(origin));
+    },
     credentials: true,
   });
 

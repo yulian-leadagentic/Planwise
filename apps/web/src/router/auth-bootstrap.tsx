@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import axios from 'axios';
 import { useAuthStore } from '@/stores/auth.store';
 
+const API_BASE = (import.meta.env.VITE_API_URL?.trim() ?? '').replace(/\/$/, '');
+
 /**
  * On page load / refresh, silently obtain a fresh access token using the
  * httpOnly refresh cookie. This lets us keep the access token in memory
@@ -20,7 +22,7 @@ export function AuthBootstrap({ children }: { children: React.ReactNode }) {
     let cancelled = false;
 
     axios
-      .post('/api/v1/auth/refresh', null, { withCredentials: true })
+      .post(`${API_BASE}/api/v1/auth/refresh`, null, { withCredentials: true })
       .then((res) => {
         if (cancelled) return;
         const token = res.data?.data?.accessToken ?? res.data?.accessToken;

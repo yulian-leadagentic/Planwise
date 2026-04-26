@@ -25,7 +25,10 @@ export function useNotifications() {
   useEffect(() => {
     if (!isAuthenticated || !token) return;
 
-    const socket = io(window.location.origin, {
+    // Use VITE_API_URL when API is on a different host (e.g. Railway split
+     // services); fall back to the page origin for nginx-proxied dev/prod.
+    const apiOrigin = (import.meta.env.VITE_API_URL?.trim() || window.location.origin).replace(/\/$/, '');
+    const socket = io(apiOrigin, {
       path: '/api/ws',
       auth: { token },
       transports: ['websocket', 'polling'],

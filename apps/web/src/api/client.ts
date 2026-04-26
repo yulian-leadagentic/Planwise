@@ -2,9 +2,17 @@ import axios from 'axios';
 import { useAuthStore } from '@/stores/auth.store';
 import { notify, getErrorCode, getErrorMessage } from '@/lib/notify';
 
+// Resolve API base URL from build-time env. In docker-compose / local dev with
+// nginx proxy this is empty (relative path). On Railway and other split-host
+// deployments, set VITE_API_URL to the API service's public URL, e.g.
+// https://api.planwise.up.railway.app
+const RAW_API = import.meta.env.VITE_API_URL?.trim() ?? '';
+const API_BASE = RAW_API ? RAW_API.replace(/\/$/, '') : '';
+
 const client = axios.create({
-  baseURL: '/api/v1',
+  baseURL: `${API_BASE}/api/v1`,
   headers: { 'Content-Type': 'application/json' },
+  withCredentials: true,
 });
 
 client.interceptors.request.use((config) => {
@@ -54,7 +62,7 @@ client.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        const { data } = await axios.post('/api/v1/auth/refresh', null, {
+        const { data } = await axios.post(`${API_BASE}/api/v1/auth/refresh`, null, {
           withCredentials: true,
         });
         const newToken = data.data.accessToken;

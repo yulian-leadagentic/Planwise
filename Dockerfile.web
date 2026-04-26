@@ -24,7 +24,12 @@ RUN find /app/node_modules -path "*/node_modules/react/package.json" \
     -exec dirname {} \; 2>/dev/null | xargs -r rm -rf 2>/dev/null || true
 
 ARG CACHEBUST=1
-RUN echo "Build: $CACHEBUST" && cd apps/web && /app/node_modules/.bin/vite build
+# VITE_API_URL is baked into the bundle at build time. Leave empty for the
+# nginx-proxied / docker-compose case (calls go to /api on the same origin).
+# On Railway with split services, set this to the API service's public URL.
+ARG VITE_API_URL=""
+ENV VITE_API_URL=$VITE_API_URL
+RUN echo "Build: $CACHEBUST  API: ${VITE_API_URL:-<same-origin>}" && cd apps/web && /app/node_modules/.bin/vite build
 
 # ───────────────────────────────────────────────────────────────────────
 # Stage 2 — runtime (nginx, non-root)
