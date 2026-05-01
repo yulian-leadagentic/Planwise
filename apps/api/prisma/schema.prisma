@@ -15,6 +15,26 @@ enum UserType {
   both
 }
 
+enum PartnerType {
+  person
+  organization
+}
+
+enum PartnerSource {
+  manual
+  import
+  google
+  outlook
+  system
+}
+
+enum RelationshipTarget {
+  project
+  organization
+  department
+  team
+}
+
 enum ProjectStatus {
   draft
   active
@@ -191,6 +211,12 @@ model User {
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
   deletedAt    DateTime? @map("deleted_at")
+
+  // Bridge to the Business Partner record. A User is a BP that also has
+  // login credentials. Most BPs (orgs, external contacts who never log in)
+  // won't have a User row.
+  businessPartnerId Int?              @unique @map("business_partner_id")
+  businessPartner   BusinessPartner?  @relation("UserBusinessPartner", fields: [businessPartnerId], references: [id], onDelete: SetNull)
 
   role Role @relation(fields: [roleId], references: [id])
 
@@ -1216,4 +1242,136 @@ model NotificationPreference {
   @@unique([userId, notificationType])
   @@index([userId])
   @@map("notification_preferences")
+}
+
+// ─── Business Partners ──────────────────────────────────────────────────────
+//
+// SAP-BP-inspired model: every person AND every organization (employee,
+// customer, supplier, consultant, external contact, municipality, partner
+// company, etc.) is a BusinessPartner. A BP can have multiple roles
+// (employee + consultant), and multiple relationships to projects /
+// organizations / etc. with their own context-specific role label.
+//
+// User remains the auth-bearing identity; a User row points to its BP via
+// User.businessPartnerId. BPs without a User row are non-login partners.
+
+model BusinessPartner {
+  id           Int            @id @default(autoincrement())
+  partnerType  PartnerType    @map("partner_type")
+  displayName  String         @map("display_name") @db.VarChar(255)
+  // Person-only (nullable for orgs)
+  firstName    String?        @map("first_name") @db.VarChar(100)
+  lastName     String?        @map("last_name")  @db.VarChar(100)
+  // Org-typically (nullable for persons; persons can also have an
+  // employer relationship — see BusinessPartnerRelationship)
+  companyName  String?        @map("company_name") @db.VarChar(255)
+  taxId        String?        @map("tax_id")       @db.VarChar(50)
+  // Common contact info
+  email        String?        @unique @db.VarChar(255)
+  phone        String?        @db.VarChar(50)
+  mobile       String?        @db.VarChar(50)
+  address      String?        @db.VarChar(500)
+  website      String?        @db.VarChar(255)
+  // Meta
+  status       String         @default("active") @db.VarChar(20)
+  source       PartnerSource  @default(manual)
+  notes        String?        @db.Text
+
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt      @map("updated_at")
+  deletedAt    DateTime?      @map("deleted_at")
+
+  user                  User?                          @relation("UserBusinessPartner")
+  roles                 BusinessPartnerRole[]
+  outgoingRelationships BusinessPartnerRelationship[]  @relation("RelationshipSource")
+
+  @@index([partnerType])
+  @@index([status])
+  @@index([companyName])
+  @@index([deletedAt])
+  @@map("business_partners")
+}
+
+// Lookup table for what KIND of business roles a partner can hold.
+// Predefined seeds: employee, customer, supplier, consultant,
+// external_contact, subcontractor. Admins can add their own; system
+// rows are protected from deletion (UI enforces; isSystem flag).
+model PartnerRoleType {
+  id          Int       @id @default(autoincrement())
+  code        String    @unique @db.VarChar(50)
+  name        String    @db.VarChar(100)
+  description String?   @db.VarChar(500)
+  sortOrder   Int       @default(0) @map("sort_order")
+  isSystem    Boolean   @default(false) @map("is_system")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt      @map("updated_at")
+
+  roles BusinessPartnerRole[]
+
+  @@map("partner_role_types")
+}
+
+// Lookup table for what KIND of relationships a partner can have to a
+// target. Predefined seeds: employee_of, contact_person_for,
+// project_stakeholder, project_manager, operational_manager,
+// consultant_for, supplier_for, subcontractor_for, project_member.
+model PartnerRelationshipType {
+  id                    Int       @id @default(autoincrement())
+  code                  String    @unique @db.VarChar(50)
+  name                  String    @db.VarChar(100)
+  description           String?   @db.VarChar(500)
+  // CSV of RelationshipTarget values this type applies to:
+  // e.g. "project,organization". Empty/NULL = applies to all.
+  applicableTargetTypes String?   @map("applicable_target_types") @db.VarChar(255)
+  sortOrder             Int       @default(0) @map("sort_order")
+  isSystem              Boolean   @default(false) @map("is_system")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt      @map("updated_at")
+
+  relationships BusinessPartnerRelationship[]
+
+  @@map("partner_relationship_types")
+}
+
+model BusinessPartnerRole {
+  id                Int       @id @default(autoincrement())
+  businessPartnerId Int       @map("business_partner_id")
+  roleTypeId        Int       @map("role_type_id")
+  isPrimary         Boolean   @default(false) @map("is_primary")
+  validFrom         DateTime? @map("valid_from")
+  validTo           DateTime? @map("valid_to")
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  partner   BusinessPartner @relation(fields: [businessPartnerId], references: [id], onDelete: Cascade)
+  roleType  PartnerRoleType @relation(fields: [roleTypeId], references: [id])
+
+  @@unique([businessPartnerId, roleTypeId])
+  @@index([businessPartnerId])
+  @@index([roleTypeId])
+  @@map("business_partner_roles")
+}
+
+model BusinessPartnerRelationship {
+  id                 Int                       @id @default(autoincrement())
+  sourcePartnerId    Int                       @map("source_partner_id")
+  targetType         RelationshipTarget        @map("target_type")
+  targetId           Int                       @map("target_id")              // polymorphic — not a hard FK
+  relationshipTypeId Int                       @map("relationship_type_id")
+  roleInContext      String?                   @map("role_in_context") @db.VarChar(255)
+  isPrimary          Boolean                   @default(false) @map("is_primary")
+  validFrom          DateTime?                 @map("valid_from")
+  validTo            DateTime?                 @map("valid_to")
+  status             String                    @default("active") @db.VarChar(20)
+  notes              String?                   @db.Text
+  createdAt          DateTime                  @default(now()) @map("created_at")
+  updatedAt          DateTime                  @updatedAt      @map("updated_at")
+
+  source           BusinessPartner          @relation("RelationshipSource", fields: [sourcePartnerId], references: [id], onDelete: Cascade)
+  relationshipType PartnerRelationshipType  @relation(fields: [relationshipTypeId], references: [id])
+
+  @@unique([sourcePartnerId, targetType, targetId, relationshipTypeId])
+  @@index([sourcePartnerId])
+  @@index([targetType, targetId])
+  @@index([relationshipTypeId])
+  @@map("business_partner_relationships")
 }
