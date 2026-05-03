@@ -21,9 +21,12 @@ interface RoleType {
 
 interface RelationshipType extends RoleType {
   applicableTargetTypes: string | null;
+  applicableSourceType: string | null;
+  requiredSourceRoleCode: string | null;
 }
 
 const TARGET_OPTIONS = ['project', 'organization', 'department', 'team'] as const;
+const SOURCE_OPTIONS = ['person', 'organization'] as const;
 
 export function PartnerTypesPage() {
   const [tab, setTab] = useState<'role-types' | 'relationship-types'>('role-types');
@@ -273,13 +276,26 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
                       <td className="px-4 py-2.5 font-mono text-[12px] text-slate-600">{t.code}</td>
                       <td className="px-4 py-2.5 font-medium text-slate-800">{t.name}</td>
                       <td className="px-4 py-2.5">
-                        {t.applicableTargetTypes ? (
-                          <div className="flex flex-wrap gap-1">
-                            {t.applicableTargetTypes.split(',').map((s) => s.trim()).filter(Boolean).map((tg) => (
-                              <span key={tg} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">{tg}</span>
-                            ))}
-                          </div>
-                        ) : <span className="italic text-slate-400 text-[12px]">any</span>}
+                        <div className="flex flex-wrap items-center gap-1 text-[10px]">
+                          <span className="text-slate-400">From</span>
+                          {t.applicableSourceType ? (
+                            t.applicableSourceType.split(',').map((s) => s.trim()).filter(Boolean).map((src) => (
+                              <span key={src} className="rounded-full bg-blue-50 px-1.5 py-0.5 font-semibold text-blue-700">{src}</span>
+                            ))
+                          ) : <span className="italic text-slate-400">any</span>}
+                          {t.requiredSourceRoleCode && (
+                            <>
+                              <span className="text-slate-400">w/ role</span>
+                              <span className="rounded-full bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-700">{t.requiredSourceRoleCode}</span>
+                            </>
+                          )}
+                          <span className="text-slate-400">→</span>
+                          {t.applicableTargetTypes ? (
+                            t.applicableTargetTypes.split(',').map((s) => s.trim()).filter(Boolean).map((tg) => (
+                              <span key={tg} className="rounded-full bg-violet-50 px-1.5 py-0.5 font-semibold text-violet-700">{tg}</span>
+                            ))
+                          ) : <span className="italic text-slate-400">any</span>}
+                        </div>
                       </td>
                       <td className="px-4 py-2.5 text-center">
                         {t.isSystem ? (
@@ -325,6 +341,8 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
     name: type?.name ?? '',
     description: type?.description ?? '',
     applicableTargetTypes: (type?.applicableTargetTypes ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+    applicableSourceType: (type?.applicableSourceType ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+    requiredSourceRoleCode: type?.requiredSourceRoleCode ?? '',
   });
 
   const toggleTarget = (t: string) => {
@@ -335,6 +353,14 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
         : [...f.applicableTargetTypes, t],
     }));
   };
+  const toggleSource = (s: string) => {
+    setForm((f) => ({
+      ...f,
+      applicableSourceType: f.applicableSourceType.includes(s)
+        ? f.applicableSourceType.filter((x) => x !== s)
+        : [...f.applicableSourceType, s],
+    }));
+  };
 
   const save = useMutation({
     mutationFn: () => {
@@ -342,6 +368,8 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
         name: form.name.trim(),
         description: form.description.trim() || undefined,
         applicableTargetTypes: form.applicableTargetTypes.length > 0 ? form.applicableTargetTypes.join(',') : undefined,
+        applicableSourceType: form.applicableSourceType.length > 0 ? form.applicableSourceType.join(',') : undefined,
+        requiredSourceRoleCode: form.requiredSourceRoleCode.trim() || undefined,
       };
       if (isNew) body.code = form.code.trim().toLowerCase();
       else if (!type?.isSystem) body.code = form.code.trim().toLowerCase();
@@ -371,8 +399,24 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
       <td className="px-4 py-2">
         <input value={form.name} onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} className={inputClass} autoFocus />
       </td>
-      <td className="px-4 py-2">
-        <div className="flex flex-wrap gap-1">
+      <td className="px-4 py-2 space-y-1.5">
+        <div className="flex items-center gap-1 flex-wrap">
+          <span className="text-[10px] font-semibold text-slate-400 uppercase mr-1">From</span>
+          {SOURCE_OPTIONS.map((s) => {
+            const on = form.applicableSourceType.includes(s);
+            return (
+              <button
+                key={s}
+                type="button"
+                onClick={() => toggleSource(s)}
+                className={cn('rounded-full border px-2 py-0.5 text-[11px] font-medium',
+                  on ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-500')}
+              >
+                {s}
+              </button>
+            );
+          })}
+          <span className="text-[10px] text-slate-400 mx-1">→</span>
           {TARGET_OPTIONS.map((t) => {
             const on = form.applicableTargetTypes.includes(t);
             return (
@@ -380,15 +424,22 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
                 key={t}
                 type="button"
                 onClick={() => toggleTarget(t)}
-                className={cn(
-                  'rounded-full border px-2 py-0.5 text-[11px] font-medium',
-                  on ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-500',
-                )}
+                className={cn('rounded-full border px-2 py-0.5 text-[11px] font-medium',
+                  on ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-slate-200 text-slate-500')}
               >
                 {t}
               </button>
             );
           })}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold text-slate-400 uppercase whitespace-nowrap">Required source role (optional)</span>
+          <input
+            value={form.requiredSourceRoleCode}
+            onChange={(e) => setForm(f => ({ ...f, requiredSourceRoleCode: e.target.value }))}
+            placeholder="e.g. customer"
+            className={cn(inputClass, 'font-mono text-[11px] py-1 max-w-[160px]')}
+          />
         </div>
       </td>
       <td />

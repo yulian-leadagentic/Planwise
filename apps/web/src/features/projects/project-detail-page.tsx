@@ -266,18 +266,39 @@ interface ProjectMember {
   createdAt: string;
 }
 
-interface UnifiedTeamRow {
-  kind: 'internal' | 'external';
-  id: number;
+interface ProjectTeamPerson {
+  relationshipId: number;
+  businessPartnerId: number;
   userId: number | null;
-  businessPartnerId: number | null;
   displayName: string;
   firstName: string | null;
   lastName: string | null;
   email: string | null;
+  phone: string | null;
   position: string | null;
-  role: string | null;
-  relationshipType: { id: number; code: string; name: string } | null;
+  roleInContext: string | null;
+}
+
+interface ProjectTeamSupplier {
+  relationshipId: number;
+  organizationId: number;
+  displayName: string;
+  email: string | null;
+  phone: string | null;
+  workers: ProjectTeamPerson[];
+}
+
+interface ProjectTeamData {
+  customer: {
+    relationshipId: number;
+    organizationId: number;
+    displayName: string;
+    email: string | null;
+    phone: string | null;
+  } | null;
+  myTeam: ProjectTeamPerson[];
+  customerContacts: ProjectTeamPerson[];
+  suppliers: ProjectTeamSupplier[];
 }
 
 function TeamTab({
@@ -293,105 +314,193 @@ function TeamTab({
 }) {
   const queryClient = useQueryClient();
   const removeMember = useRemoveProjectMember();
-  const [showAddPartner, setShowAddPartner] = useState(false);
+  const [picker, setPicker] = useState<null | 'customer-contact' | 'supplier' | 'supplier-worker'>(null);
+  const [pickerSupplierId, setPickerSupplierId] = useState<number | null>(null);
 
-  // Unified team — internal (login users) + external (BP relationships).
-  const { data: team = [], isLoading } = useQuery<UnifiedTeamRow[]>({
+  const { data: team, isLoading } = useQuery<ProjectTeamData>({
     queryKey: ['project-team', projectId],
-    queryFn: () => client.get(`/projects/${projectId}/team`).then((r) => r.data?.data ?? r.data ?? []),
+    queryFn: () => client.get(`/projects/${projectId}/team`).then((r) => r.data?.data ?? r.data),
   });
 
-  const removeExternal = useMutation({
+  const softEnd = useMutation({
     mutationFn: (relationshipId: number) =>
       client.delete(`/business-partner-relationships/${relationshipId}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
-      notify.success('Partner removed from project', { code: 'PROJECT-TEAM-DELETE-200' });
+      notify.success('Disconnected (soft-ended)', { code: 'PROJECT-TEAM-DELETE-200' });
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to remove partner'),
+    onError: (err: any) => notify.apiError(err, 'Failed to disconnect'),
   });
 
-  const handleRemove = (row: UnifiedTeamRow) => {
-    if (row.kind === 'internal') {
-      // ProjectMember.id passed via the legacy member shape
-      removeMember.mutate(
-        { projectId, memberId: row.id },
-        {
-          onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project-team', projectId] }),
-          onError: () => notify.error('Failed to remove member'),
-        },
-      );
-    } else {
-      if (confirm('Remove this external partner from the project?')) {
-        removeExternal.mutate(row.id);
+  const removeMyTeam = (row: ProjectTeamPerson) => {
+    // Internal employee — disconnect via legacy ProjectMember endpoint;
+    // the write-through soft-ends the participates_in_project row.
+    if (row.userId) {
+      // Find legacy ProjectMember.id for this user (members from props)
+      const m = members.find((mm) => mm.userId === row.userId);
+      if (m) {
+        removeMember.mutate(
+          { projectId, memberId: m.id },
+          {
+            onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project-team', projectId] }),
+            onError: () => notify.error('Failed to remove member'),
+          },
+        );
+        return;
       }
     }
+    // Fallback: soft-end the relationship directly.
+    softEnd.mutate(row.relationshipId);
   };
 
-  const internal = team.filter((t) => t.kind === 'internal');
-  const external = team.filter((t) => t.kind === 'external');
+  if (isLoading || !team) {
+    return <p className="py-8 text-center text-sm text-slate-400">Loading team...</p>;
+  }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-700">Team</h2>
-          <p className="text-[11px] text-slate-400 mt-0.5">
-            Internal members (have logins) + external partners (clients, consultants, supplier reps). Manage profiles in <a href="/partners" className="text-blue-600 hover:underline">Partners</a>.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowAddPartner(true)}
-            className="flex items-center gap-1.5 rounded-md bg-white border border-slate-200 hover:border-slate-400 px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors"
-          >
-            <UserPlus className="h-3.5 w-3.5" />
-            Add Partner
-          </button>
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-sm font-semibold text-slate-700">Project Team</h2>
+        <p className="text-[11px] text-slate-400 mt-0.5">
+          Connections between this project and your business partners. Disconnects are <strong>soft-ended</strong> (history preserved).
+        </p>
+      </div>
+
+      {/* Customer */}
+      <Section
+        label="Customer"
+        count={team.customer ? 1 : 0}
+        accent="indigo"
+      >
+        {team.customer ? (
+          <OrgRow
+            displayName={team.customer.displayName}
+            email={team.customer.email}
+            phone={team.customer.phone}
+            bpId={team.customer.organizationId}
+            // The customer is locked — changing it is a separate operation.
+            // No remove button.
+          />
+        ) : (
+          <p className="text-[12px] text-amber-600 italic">No customer set on this project (data inconsistency — contact admin).</p>
+        )}
+      </Section>
+
+      {/* My Team */}
+      <Section
+        label="My Team"
+        count={team.myTeam.length}
+        accent="blue"
+        action={(
           <button
             onClick={() => onToggleAddMember(true)}
             className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
           >
             <UserPlus className="h-3.5 w-3.5" />
-            Add Member
+            Add Team Member
           </button>
-        </div>
-      </div>
+        )}
+      >
+        {team.myTeam.length === 0 ? (
+          <p className="text-[12px] text-slate-400 italic">No internal members yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {team.myTeam.map((row) => (
+              <PersonRow key={row.relationshipId} row={row} onRemove={() => removeMyTeam(row)} accent="blue" />
+            ))}
+          </div>
+        )}
+      </Section>
 
-      {isLoading ? (
-        <p className="py-8 text-center text-sm text-slate-400">Loading...</p>
-      ) : team.length === 0 ? (
-        <p className="py-8 text-center text-sm text-slate-400">
-          No team yet. Add internal members or external partners.
-        </p>
-      ) : (
-        <div className="space-y-4">
-          {/* Internal */}
-          {internal.length > 0 && (
-            <div>
-              <p className="text-[11px] font-semibold text-slate-400 uppercase mb-1.5">Internal Members ({internal.length})</p>
-              <div className="space-y-2">
-                {internal.map((row) => (
-                  <TeamRow key={`int-${row.id}`} row={row} onRemove={() => handleRemove(row)} />
-                ))}
+      {/* Customer Contacts */}
+      <Section
+        label={team.customer ? `${team.customer.displayName} Contacts` : 'Customer Contacts'}
+        count={team.customerContacts.length}
+        accent="violet"
+        action={(
+          <button
+            onClick={() => setPicker('customer-contact')}
+            disabled={!team.customer}
+            title={!team.customer ? 'No customer on project' : undefined}
+            className="flex items-center gap-1.5 rounded-md bg-white border border-slate-200 hover:border-slate-400 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors"
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Add Customer Contact
+          </button>
+        )}
+      >
+        {team.customerContacts.length === 0 ? (
+          <p className="text-[12px] text-slate-400 italic">No customer contacts on this project yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {team.customerContacts.map((row) => (
+              <PersonRow key={row.relationshipId} row={row} onRemove={() => softEnd.mutate(row.relationshipId)} accent="violet" />
+            ))}
+          </div>
+        )}
+      </Section>
+
+      {/* Suppliers */}
+      <Section
+        label="Suppliers"
+        count={team.suppliers.length}
+        accent="emerald"
+        action={(
+          <button
+            onClick={() => setPicker('supplier')}
+            className="flex items-center gap-1.5 rounded-md bg-white border border-slate-200 hover:border-slate-400 px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors"
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Add Supplier
+          </button>
+        )}
+      >
+        {team.suppliers.length === 0 ? (
+          <p className="text-[12px] text-slate-400 italic">No suppliers on this project yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {team.suppliers.map((sup) => (
+              <div key={sup.relationshipId} className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <a href={`/partners?focus_bp=${sup.organizationId}`} className="text-sm font-semibold text-slate-900 hover:underline truncate block">
+                      {sup.displayName}
+                    </a>
+                    {(sup.email || sup.phone) && (
+                      <p className="text-[11px] text-slate-500">{sup.email}{sup.email && sup.phone ? ' · ' : ''}{sup.phone}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => { setPickerSupplierId(sup.organizationId); setPicker('supplier-worker'); }}
+                    className="flex items-center gap-1 rounded-md bg-white border border-slate-200 hover:border-slate-400 px-2 py-1 text-[11px] font-semibold text-slate-700"
+                  >
+                    <UserPlus className="h-3 w-3" />
+                    Add Worker
+                  </button>
+                  <button
+                    onClick={() => { if (confirm(`Disconnect ${sup.displayName} from this project? Their workers will also need to be removed separately.`)) softEnd.mutate(sup.relationshipId); }}
+                    className="rounded p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50"
+                    title="End supplier on project"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                {sup.workers.length > 0 ? (
+                  <div className="space-y-1.5 ml-3 border-l-2 border-emerald-200 pl-3">
+                    {sup.workers.map((w) => (
+                      <PersonRow key={w.relationshipId} row={w} onRemove={() => softEnd.mutate(w.relationshipId)} accent="emerald" compact />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-400 italic ml-3">No workers from this supplier on the project yet.</p>
+                )}
               </div>
-            </div>
-          )}
+            ))}
+          </div>
+        )}
+      </Section>
 
-          {/* External */}
-          {external.length > 0 && (
-            <div>
-              <p className="text-[11px] font-semibold text-slate-400 uppercase mb-1.5">External Partners ({external.length})</p>
-              <div className="space-y-2">
-                {external.map((row) => (
-                  <TeamRow key={`ext-${row.id}`} row={row} onRemove={() => handleRemove(row)} />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
+      {/* Add Member (internal) modal */}
       {showAddMember && (
         <AddMemberDialog
           projectId={projectId}
@@ -400,13 +509,113 @@ function TeamTab({
         />
       )}
 
-      {showAddPartner && (
-        <AddProjectPartnerDialog
+      {/* Picker for the 3 BP-driven add flows */}
+      {picker && (
+        <ProjectBpPicker
+          mode={picker}
           projectId={projectId}
-          existingBpIds={team.map((t) => t.businessPartnerId).filter((x): x is number => x != null)}
-          onClose={() => setShowAddPartner(false)}
+          customerOrgId={team.customer?.organizationId ?? null}
+          supplierOrgId={pickerSupplierId}
+          existingBpIds={[
+            ...team.myTeam.map((p) => p.businessPartnerId),
+            ...team.customerContacts.map((p) => p.businessPartnerId),
+            ...team.suppliers.flatMap((s) => [s.organizationId, ...s.workers.map((w) => w.businessPartnerId)]),
+          ]}
+          onClose={() => { setPicker(null); setPickerSupplierId(null); }}
         />
       )}
+    </div>
+  );
+}
+
+/* ─── Section + small subcomponents ───────────────────────────────────────── */
+
+const ACCENTS = {
+  indigo:  { border: 'border-indigo-200',  badge: 'bg-indigo-100 text-indigo-700' },
+  blue:    { border: 'border-blue-200',    badge: 'bg-blue-100 text-blue-700' },
+  violet:  { border: 'border-violet-200',  badge: 'bg-violet-100 text-violet-700' },
+  emerald: { border: 'border-emerald-200', badge: 'bg-emerald-100 text-emerald-700' },
+} as const;
+
+function Section({
+  label, count, accent, action, children,
+}: {
+  label: string;
+  count: number;
+  accent: keyof typeof ACCENTS;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+          {label}
+          <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-bold', ACCENTS[accent].badge)}>{count}</span>
+        </p>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function OrgRow({ displayName, email, phone, bpId }: {
+  displayName: string; email: string | null; phone: string | null; bpId: number;
+}) {
+  return (
+    <div className="rounded-lg border border-indigo-200 bg-white p-3 flex items-center gap-3">
+      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-indigo-700">
+        <Users className="h-4 w-4" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <a href={`/partners?focus_bp=${bpId}`} className="text-sm font-semibold text-slate-900 hover:underline truncate block">{displayName}</a>
+        {(email || phone) && (
+          <p className="text-[11px] text-slate-500">{email}{email && phone ? ' · ' : ''}{phone}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PersonRow({ row, onRemove, accent, compact = false }: {
+  row: ProjectTeamPerson;
+  onRemove: () => void;
+  accent: keyof typeof ACCENTS;
+  compact?: boolean;
+}) {
+  const profileLink = `/partners?focus_bp=${row.businessPartnerId}`;
+  return (
+    <div className={cn(
+      'flex items-center gap-3 rounded-lg border bg-white',
+      ACCENTS[accent].border,
+      compact ? 'p-2' : 'p-3',
+    )}>
+      <div className={cn(
+        'flex items-center justify-center rounded-full text-[10px] font-semibold shrink-0',
+        ACCENTS[accent].badge,
+        compact ? 'h-7 w-7' : 'h-8 w-8',
+      )}>
+        {getInitials(row.firstName ?? '', row.lastName ?? '') || row.displayName.slice(0, 2).toUpperCase()}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className={cn('font-medium text-slate-900 truncate', compact ? 'text-[13px]' : 'text-sm')}>
+          {row.displayName}
+        </p>
+        <p className="text-[11px] text-slate-500 truncate">
+          {[row.roleInContext, row.email].filter(Boolean).join(' · ') || row.position || '—'}
+        </p>
+      </div>
+      <a href={profileLink} className="text-[11px] text-blue-600 hover:underline shrink-0" title="Open partner profile">
+        Profile →
+      </a>
+      <button
+        onClick={onRemove}
+        className="rounded p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50"
+        title="End relationship"
+      >
+        <X className="h-4 w-4" />
+      </button>
     </div>
   );
 }
@@ -459,21 +668,38 @@ function TeamRow({ row, onRemove }: { row: UnifiedTeamRow; onRemove: () => void 
   );
 }
 
-/* ─── Add External Partner Dialog ──────────────────────────────────────────── */
+/* ─── Project BP Picker ────────────────────────────────────────────────────
+   One reusable picker driving three structured add-flows on the Team tab:
+     - 'customer-contact'  → adds a worker_of-the-customer to the project
+                              (creates participates_in_project)
+     - 'supplier'          → adds a supplier organization to the project
+                              (creates supplier_of_project)
+     - 'supplier-worker'   → adds a worker_of-this-supplier to the project
+                              (creates participates_in_project)
+   Validation rules in the backend prevent mismatches; the picker pre-filters
+   client-side so users only see candidates that the rules would accept.
+*/
 
-function AddProjectPartnerDialog({
+type PickerMode = 'customer-contact' | 'supplier' | 'supplier-worker';
+
+function ProjectBpPicker({
+  mode,
   projectId,
+  customerOrgId,
+  supplierOrgId,
   existingBpIds,
   onClose,
 }: {
+  mode: PickerMode;
   projectId: number;
+  customerOrgId: number | null;
+  supplierOrgId: number | null;
   existingBpIds: number[];
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [selectedBpId, setSelectedBpId] = useState<number | null>(null);
-  const [relationshipTypeId, setRelationshipTypeId] = useState<number | null>(null);
   const [roleInContext, setRoleInContext] = useState('');
 
   useEffect(() => {
@@ -482,31 +708,74 @@ function AddProjectPartnerDialog({
     return () => { document.body.style.overflow = original; };
   }, []);
 
-  // BP picker — search persons + organizations across all of /business-partners
+  const config = {
+    'customer-contact': {
+      title: 'Add Customer Contact',
+      blurb: 'Pick a person who works at the customer organization. Only people whose Worker_of points to the customer of this project are listed.',
+      partnerType: 'person' as const,
+      relationshipCode: 'participates_in_project',
+      filterEmployerOrgId: customerOrgId,
+      showRoleInContext: true,
+    },
+    'supplier': {
+      title: 'Add Supplier to Project',
+      blurb: 'Pick an organization with the "supplier" role to add as a supplier on this project.',
+      partnerType: 'organization' as const,
+      relationshipCode: 'supplier_of_project',
+      filterRoleCode: 'supplier',
+      showRoleInContext: false,
+    },
+    'supplier-worker': {
+      title: 'Add Supplier Worker',
+      blurb: 'Pick a person who works at this supplier. Only Workers_of this supplier are listed.',
+      partnerType: 'person' as const,
+      relationshipCode: 'participates_in_project',
+      filterEmployerOrgId: supplierOrgId,
+      showRoleInContext: true,
+    },
+  }[mode];
+
+  // Search the BP space with the right type filter.
   const { data: bps = [] } = useQuery<any[]>({
-    queryKey: ['bp-picker', search],
-    queryFn: () =>
-      client
-        .get('/business-partners', { params: { search: search || undefined, perPage: 50 } })
-        .then((r) => {
-          const d = r.data?.data ?? r.data;
-          return Array.isArray(d) ? d : (d?.data ?? []);
-        }),
+    queryKey: ['bp-picker', mode, search, customerOrgId, supplierOrgId],
+    queryFn: () => client.get('/business-partners', {
+      params: {
+        partnerType: config.partnerType,
+        roleType: (config as any).filterRoleCode,
+        search: search || undefined,
+        perPage: 100,
+      },
+    }).then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : (d?.data ?? []);
+    }),
   });
 
-  const filtered = bps.filter((bp: any) => !existingBpIds.includes(bp.id));
+  // Fetch worker_of relationships for the candidates so we can filter
+  // persons to those actually employed by the right org.
+  const filterEmployerOrgId = (config as any).filterEmployerOrgId as number | null | undefined;
+  const filtered = bps.filter((bp: any) => {
+    if (existingBpIds.includes(bp.id)) return false;
+    if (config.partnerType === 'person' && filterEmployerOrgId) {
+      const employers = (bp.outgoingRelationships ?? [])
+        .filter((r: any) =>
+          r.relationshipType?.code === 'worker_of' &&
+          r.targetType === 'organization' &&
+          (!r.validTo || new Date(r.validTo) > new Date()),
+        )
+        .map((r: any) => r.targetId);
+      return employers.includes(filterEmployerOrgId);
+    }
+    return true;
+  });
 
-  // Relationship types applicable to projects (excluding project_member which is for login users only).
+  // Resolve the relationship type id by code at submit time.
   const { data: allRelTypes = [] } = useQuery<any[]>({
     queryKey: ['partner-relationship-types'],
     staleTime: 10 * 60 * 1000,
     queryFn: () => client.get('/admin/partner-types/relationship-types').then((r) => r.data?.data ?? r.data ?? []),
   });
-  const relTypes = allRelTypes.filter((rt) => {
-    if (rt.code === 'project_member') return false;
-    const apply = rt.applicableTargetTypes?.split(',').map((s: string) => s.trim()) ?? [];
-    return apply.length === 0 || apply.includes('project');
-  });
+  const relType = allRelTypes.find((rt: any) => rt.code === config.relationshipCode);
 
   const create = useMutation({
     mutationFn: () =>
@@ -514,114 +783,111 @@ function AddProjectPartnerDialog({
         sourcePartnerId: selectedBpId,
         targetType: 'project',
         targetId: projectId,
-        relationshipTypeId,
+        relationshipTypeId: relType?.id,
         roleInContext: roleInContext.trim() || undefined,
       }).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
-      notify.success('Partner added to project', { code: 'PROJECT-TEAM-200' });
+      notify.success('Added to project', { code: 'PROJECT-TEAM-200' });
       onClose();
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to add partner'),
+    onError: (err: any) => notify.apiError(err, 'Failed to add'),
   });
 
   const handleSubmit = () => {
-    if (!selectedBpId || !relationshipTypeId) {
-      notify.warning('Pick a partner and a relationship type', { code: 'PROJECT-TEAM-400' });
+    if (!selectedBpId || !relType) {
+      notify.warning('Pick a candidate first', { code: 'PROJECT-TEAM-400' });
       return;
     }
     create.mutate();
   };
 
+  const blockedReason =
+    mode === 'customer-contact' && !customerOrgId
+      ? 'No customer is set on this project — set the customer first.'
+      : mode === 'supplier-worker' && !supplierOrgId
+      ? 'Pick a supplier from the project first, then add its workers.'
+      : null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-[560px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <h2 className="text-base font-bold text-slate-900">Add External Partner</h2>
+          <h2 className="text-base font-bold text-slate-900">{config.title}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
             <X className="h-4 w-4" />
           </button>
         </div>
         <div className="p-5 space-y-4">
-          <p className="text-[12px] text-slate-500">
-            Link an existing Business Partner — typically a contact at a customer or supplier — to this project. Won't create a login account.
-            Need someone who isn't in the system? <a href="/partners?tab=contacts" className="text-blue-600 hover:underline">Add them in Partners → Contacts</a> first.
-          </p>
+          <p className="text-[12px] text-slate-500">{config.blurb}</p>
 
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Search Business Partner</label>
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Name, email, company..."
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none"
-              autoFocus
-            />
-            <div className="mt-2 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white">
-              {filtered.length === 0 ? (
-                <p className="px-3 py-3 text-[12px] text-slate-400 text-center italic">
-                  {search ? 'No matches' : 'Start typing to search...'}
-                </p>
-              ) : filtered.slice(0, 30).map((bp: any) => (
-                <button
-                  key={bp.id}
-                  type="button"
-                  onClick={() => setSelectedBpId(bp.id)}
-                  className={cn(
-                    'w-full text-left px-3 py-2 text-sm border-b border-slate-100 last:border-0 hover:bg-blue-50',
-                    selectedBpId === bp.id && 'bg-blue-50',
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className={cn(
-                      'rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase',
-                      bp.partnerType === 'person' ? 'bg-blue-100 text-blue-700' : 'bg-violet-100 text-violet-700',
-                    )}>
-                      {bp.partnerType === 'person' ? 'Person' : 'Org'}
-                    </span>
-                    <span className="font-medium text-slate-800">{bp.displayName}</span>
-                    {bp.companyName && bp.partnerType === 'person' && (
-                      <span className="text-[11px] text-slate-400">at {bp.companyName}</span>
-                    )}
-                  </div>
-                  {bp.email && <p className="text-[11px] text-slate-400 ml-12">{bp.email}</p>}
-                </button>
-              ))}
+          {blockedReason ? (
+            <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-[12px] text-amber-700">
+              {blockedReason}
             </div>
-          </div>
+          ) : (
+            <>
+              <div>
+                <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Search</label>
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={config.partnerType === 'organization' ? 'Company name, email...' : 'Name, email...'}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none"
+                  autoFocus
+                />
+                <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                  {filtered.length === 0 ? (
+                    <p className="px-3 py-3 text-[12px] text-slate-400 text-center italic">
+                      {search ? 'No matches.' : (
+                        config.partnerType === 'organization'
+                          ? 'No suppliers available. Add one in Partners → Organizations.'
+                          : (filterEmployerOrgId
+                              ? 'No people Worker_of this organization. Add a contact in Partners → Contacts and set their employer.'
+                              : 'Type to search.')
+                      )}
+                    </p>
+                  ) : filtered.slice(0, 50).map((bp: any) => (
+                    <button
+                      key={bp.id}
+                      type="button"
+                      onClick={() => setSelectedBpId(bp.id)}
+                      className={cn(
+                        'w-full text-left px-3 py-2 text-sm border-b border-slate-100 last:border-0 hover:bg-blue-50',
+                        selectedBpId === bp.id && 'bg-blue-50',
+                      )}
+                    >
+                      <p className="font-medium text-slate-800">{bp.displayName}</p>
+                      {bp.email && <p className="text-[11px] text-slate-400">{bp.email}</p>}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Relationship Type *</label>
-            <select
-              value={relationshipTypeId ?? ''}
-              onChange={(e) => setRelationshipTypeId(Number(e.target.value) || null)}
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none"
-            >
-              <option value="">Select...</option>
-              {relTypes.map((rt: any) => <option key={rt.id} value={rt.id}>{rt.name}</option>)}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Role in Context (optional)</label>
-            <input
-              type="text"
-              value={roleInContext}
-              onChange={(e) => setRoleInContext(e.target.value)}
-              placeholder='e.g. "Client Operations Manager"'
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none"
-            />
-          </div>
+              {config.showRoleInContext && (
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Role on this project (optional)</label>
+                  <input
+                    type="text"
+                    value={roleInContext}
+                    onChange={(e) => setRoleInContext(e.target.value)}
+                    placeholder='e.g. "Client Operations Manager", "BIM Manager", "Site Lead"'
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              )}
+            </>
+          )}
 
           <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
             <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
             <button
               onClick={handleSubmit}
-              disabled={create.isPending || !selectedBpId || !relationshipTypeId}
+              disabled={create.isPending || !selectedBpId || !!blockedReason}
               className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
             >
-              {create.isPending ? 'Adding...' : 'Add to Team'}
+              {create.isPending ? 'Adding...' : 'Add to Project'}
             </button>
           </div>
         </div>

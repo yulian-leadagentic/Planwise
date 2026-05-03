@@ -15,7 +15,25 @@ export class ProjectsService {
   ) {}
 
   async create(userId: number, dto: CreateProjectDto) {
-    const { memberIds, leaderId, ...rest } = dto;
+    const { memberIds, leaderId, customerOrgId, ...rest } = dto;
+
+    // Validate the customer organization up-front so we don't leave a
+    // dangling project if the relationship rules reject it.
+    const customerOrg = await this.prisma.businessPartner.findFirst({
+      where: { id: customerOrgId, partnerType: 'organization', deletedAt: null },
+      include: { roles: { include: { roleType: true } } },
+    });
+    if (!customerOrg) {
+      throw new BadRequestException(
+        `Customer organization (BP id=${customerOrgId}) not found. Pick an existing organization or use the "Internal" org for internal projects.`,
+      );
+    }
+    const hasCustomerRole = customerOrg.roles.some((r) => r.roleType.code === 'customer');
+    if (!hasCustomerRole) {
+      throw new BadRequestException(
+        `Organization "${customerOrg.displayName}" does not hold the "customer" role. Add it from /partners → Organizations before using this org as a project customer.`,
+      );
+    }
 
     const project = await this.prisma.project.create({
       data: {
@@ -31,6 +49,16 @@ export class ProjectsService {
         leader: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
       },
     });
+
+    // Wire the customer_of_project relationship.
+    try {
+      await this.bpRelationships.setProjectCustomer(project.id, customerOrgId);
+    } catch (err) {
+      // Roll back the project to keep things consistent — a project without
+      // a customer breaks our invariant.
+      await this.prisma.project.delete({ where: { id: project.id } }).catch(() => undefined);
+      throw err;
+    }
 
     // Auto-add leader as a member with role "Project Leader"
     if (dto.leaderId) {
@@ -270,40 +298,61 @@ export class ProjectsService {
   }
 
   /**
-   * Unified project team view: returns BOTH internal members (login users
-   * via project_members) AND external partners (BP relationships pointing
-   * at this project with relationship_type != project_member).
+   * Structured project team view, categorised by the relationship model:
    *
-   * Each row has a `kind` discriminator the frontend uses to render and
-   * dispatch remove actions correctly.
+   *   - customer:           the single org with customer_of_project active
+   *   - myTeam:             persons with participates_in_project who have
+   *                          a User row (= internal employee of OUR co)
+   *   - customerContacts:   persons with participates_in_project who are
+   *                          worker_of the project's customer org
+   *   - suppliers:          orgs with supplier_of_project, each with the
+   *                          subset of myTeam-style participants who are
+   *                          worker_of THAT supplier
+   *
+   * All data comes from the relationships table; no project columns added.
+   * "Active" = validFrom <= now < validTo (BUT050-style time-bounded).
    */
   async getTeam(projectId: number) {
     await this.findOne(projectId);
+    const now = new Date();
 
-    const [members, relationships] = await Promise.all([
-      this.prisma.projectMember.findMany({
-        where: { projectId },
-        include: {
-          user: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              avatarUrl: true,
-              position: true,
-              businessPartnerId: true,
-            },
-          },
+    // Load the four kinds of relationships in parallel.
+    const [customerRel, supplierRels, participantRels] = await Promise.all([
+      // customer_of_project — at most one active row.
+      this.prisma.businessPartnerRelationship.findFirst({
+        where: {
+          targetType: 'project',
+          targetId: projectId,
+          relationshipType: { code: 'customer_of_project' },
+          validFrom: { lte: now },
+          validTo: { gt: now },
         },
-        orderBy: { id: 'asc' },
+        include: {
+          source: { select: { id: true, displayName: true, companyName: true, email: true, phone: true } },
+        },
       }),
+      // supplier_of_project — one row per supplier on the project.
       this.prisma.businessPartnerRelationship.findMany({
         where: {
           targetType: 'project',
           targetId: projectId,
-          status: 'active',
-          relationshipType: { code: { not: 'project_member' } },
+          relationshipType: { code: 'supplier_of_project' },
+          validFrom: { lte: now },
+          validTo: { gt: now },
+        },
+        include: {
+          source: { select: { id: true, displayName: true, companyName: true, email: true, phone: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      // participates_in_project — every person on the project.
+      this.prisma.businessPartnerRelationship.findMany({
+        where: {
+          targetType: 'project',
+          targetId: projectId,
+          relationshipType: { code: 'participates_in_project' },
+          validFrom: { lte: now },
+          validTo: { gt: now },
         },
         include: {
           source: {
@@ -315,48 +364,98 @@ export class ProjectsService {
               lastName: true,
               email: true,
               phone: true,
-              user: { select: { id: true } },
+              user: { select: { id: true, isActive: true, position: true } },
+              outgoingRelationships: {
+                where: {
+                  targetType: 'organization',
+                  relationshipType: { code: 'worker_of' },
+                  validFrom: { lte: now },
+                  validTo: { gt: now },
+                },
+                select: { targetId: true },
+              },
             },
           },
-          relationshipType: { select: { id: true, code: true, name: true } },
         },
         orderBy: { createdAt: 'asc' },
       }),
     ]);
 
-    const internal = members.map((m) => ({
-      kind: 'internal' as const,
-      id: m.id,                 // ProjectMember.id (used for remove)
-      userId: m.user?.id ?? m.userId,
-      businessPartnerId: m.user?.businessPartnerId ?? null,
-      displayName: `${m.user?.firstName ?? ''} ${m.user?.lastName ?? ''}`.trim(),
-      firstName: m.user?.firstName ?? null,
-      lastName: m.user?.lastName ?? null,
-      email: m.user?.email ?? null,
-      avatarUrl: m.user?.avatarUrl ?? null,
-      position: m.user?.position ?? null,
-      role: m.role,
-      relationshipType: null as null | { id: number; code: string; name: string },
-      createdAt: m.createdAt,
-    }));
+    const customerOrgId = customerRel?.source.id ?? null;
+    const supplierOrgIds = new Set(supplierRels.map((r) => r.source.id));
 
-    const external = relationships.map((r) => ({
-      kind: 'external' as const,
-      id: r.id,                 // BusinessPartnerRelationship.id
-      userId: r.source.user?.id ?? null,
-      businessPartnerId: r.source.id,
-      displayName: r.source.displayName,
-      firstName: r.source.firstName,
-      lastName: r.source.lastName,
-      email: r.source.email,
-      avatarUrl: null as string | null,
-      position: null as string | null,
-      role: r.roleInContext,
-      relationshipType: r.relationshipType,
-      createdAt: r.createdAt,
-    }));
+    // Categorize participants.
+    const myTeam: any[] = [];
+    const customerContacts: any[] = [];
+    const supplierWorkersByOrg = new Map<number, any[]>();
 
-    return [...internal, ...external];
+    for (const r of participantRels) {
+      const employerOrgIds = new Set(r.source.outgoingRelationships.map((w) => w.targetId));
+      const row = {
+        relationshipId: r.id,
+        businessPartnerId: r.source.id,
+        userId: r.source.user?.id ?? null,
+        displayName: r.source.displayName,
+        firstName: r.source.firstName,
+        lastName: r.source.lastName,
+        email: r.source.email,
+        phone: r.source.phone,
+        position: r.source.user?.position ?? null,
+        roleInContext: r.roleInContext,
+        validFrom: r.validFrom,
+        validTo: r.validTo,
+      };
+
+      // Internal employee (has a User row) → My Team
+      if (r.source.user?.id) {
+        myTeam.push(row);
+        continue;
+      }
+
+      // Customer contact?
+      if (customerOrgId != null && employerOrgIds.has(customerOrgId)) {
+        customerContacts.push(row);
+        continue;
+      }
+
+      // Supplier worker?
+      let placed = false;
+      for (const empId of employerOrgIds) {
+        if (supplierOrgIds.has(empId)) {
+          if (!supplierWorkersByOrg.has(empId)) supplierWorkersByOrg.set(empId, []);
+          supplierWorkersByOrg.get(empId)!.push(row);
+          placed = true;
+          break;
+        }
+      }
+      if (placed) continue;
+
+      // Falls outside our 3 categories (e.g. someone with no employer or
+      // an employer that's neither customer nor supplier of this project).
+      // Surface them in a generic "Other Participants" bucket so they're
+      // visible. Frontend can show or hide as needed.
+      customerContacts.push({ ...row, _uncategorized: true });
+    }
+
+    return {
+      customer: customerRel ? {
+        relationshipId: customerRel.id,
+        organizationId: customerRel.source.id,
+        displayName: customerRel.source.displayName,
+        email: customerRel.source.email,
+        phone: customerRel.source.phone,
+      } : null,
+      myTeam,
+      customerContacts,
+      suppliers: supplierRels.map((s) => ({
+        relationshipId: s.id,
+        organizationId: s.source.id,
+        displayName: s.source.displayName,
+        email: s.source.email,
+        phone: s.source.phone,
+        workers: supplierWorkersByOrg.get(s.source.id) ?? [],
+      })),
+    };
   }
 
   async removeMember(projectId: number, userId: number) {

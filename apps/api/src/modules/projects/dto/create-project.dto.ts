@@ -63,4 +63,16 @@ export class CreateProjectDto {
   @IsInt({ each: true })
   @Type(() => Number)
   memberIds?: number[];
+
+  /**
+   * Required: the BusinessPartner id of the customer organization this
+   * project belongs to. Must be an organization holding the "customer"
+   * role. Use the seeded "Internal" org (partner_type=organization,
+   * company_name=Internal) for internal projects with no external
+   * customer.
+   */
+  @ApiProperty({ description: 'Customer organization BusinessPartner id (required)' })
+  @IsInt()
+  @Type(() => Number)
+  customerOrgId: number;
 }

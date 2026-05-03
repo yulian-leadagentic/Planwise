@@ -16,6 +16,7 @@ const projectSchema = z.object({
   description: z.string().optional(),
   projectTypeId: z.coerce.number().min(1, 'Please select a project type'),
   departmentId: z.preprocess((v) => (v === '' || v === 0 || v === '0' ? undefined : Number(v)), z.number().optional()),
+  customerOrgId: z.coerce.number().min(1, 'Please pick a customer organization'),
   status: z.string().default('draft'),
   budget: z.coerce.number().optional(),
   startDate: z.string().optional(),
@@ -53,6 +54,17 @@ export function ProjectFormPage() {
     queryFn: () => client.get('/admin/config/departments').then((r) => {
       const d = r.data?.data ?? r.data;
       return Array.isArray(d) ? d : [];
+    }),
+  });
+
+  // Customer organizations — orgs with the "customer" role. The seeded
+  // "Internal" org is included for projects with no external customer.
+  const { data: customers = [] } = useQuery<any[]>({
+    queryKey: ['customer-orgs'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/business-partners?partnerType=organization&roleType=customer&perPage=200').then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : (d?.data ?? []);
     }),
   });
   const createProject = useCreateProject();
@@ -94,6 +106,19 @@ export function ProjectFormPage() {
     defaultValues: { status: 'draft' },
   });
 
+  // For edit-mode: look up the project's current customer (relationship table).
+  const { data: existingCustomerRel } = useQuery<any>({
+    queryKey: ['project-customer', projectId],
+    enabled: isEdit && !!projectId,
+    queryFn: () => client.get('/business-partner-relationships', {
+      params: { targetType: 'project', targetId: projectId, relationshipTypeCode: 'customer_of_project', activeOnly: true },
+    }).then((r) => {
+      const list = r.data?.data ?? r.data;
+      const arr = Array.isArray(list) ? list : (list?.data ?? []);
+      return arr[0] ?? null;
+    }),
+  });
+
   useEffect(() => {
     if (project && isEdit) {
       reset({
@@ -102,6 +127,7 @@ export function ProjectFormPage() {
         description: project.description ?? '',
         projectTypeId: project.projectTypeId,
         departmentId: (project as any).departmentId ?? undefined,
+        customerOrgId: existingCustomerRel?.sourcePartnerId ?? existingCustomerRel?.source?.id ?? undefined,
         status: project.status,
         budget: project.budget ?? undefined,
         startDate: project.startDate ?? '',
@@ -115,7 +141,7 @@ export function ProjectFormPage() {
         setMemberIds(ids);
       }
     }
-  }, [project, isEdit, reset]);
+  }, [project, isEdit, reset, existingCustomerRel]);
 
   const filteredMemberUsers = useMemo(() => {
     if (!users) return [];
@@ -133,6 +159,9 @@ export function ProjectFormPage() {
     const payload: any = { ...data, memberIds };
 
     if (isEdit) {
+      // Customer is locked in edit mode (separate operation handles reassignment).
+      // Strip it so the API doesn't get an unexpected key on its UpdateProjectDto.
+      delete payload.customerOrgId;
       updateProject.mutate(
         { id: projectId, ...payload },
         { onSuccess: () => navigate(`/projects/${projectId}`) },
@@ -281,6 +310,34 @@ export function ProjectFormPage() {
                       <option key={d.id} value={d.id}>{d.name}</option>
                     ))}
                   </select>
+                </div>
+
+                {/* Customer (required at create; locked in edit mode) */}
+                <div>
+                  <label className={labelClass}>
+                    Customer <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    {...register('customerOrgId')}
+                    disabled={isEdit}
+                    className={`${errors.customerOrgId ? inputErrorClass : inputClass} ${isEdit ? 'bg-slate-50 cursor-not-allowed' : ''}`}
+                  >
+                    <option value="">Select customer organization</option>
+                    {customers.map((c: any) => (
+                      <option key={c.id} value={c.id}>
+                        {c.displayName}
+                        {c.companyName === 'Internal' ? ' (internal projects)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {errors.customerOrgId && (
+                    <p className="mt-1 text-[12px] text-red-500">{errors.customerOrgId.message}</p>
+                  )}
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    {isEdit
+                      ? 'Customer is locked after project creation. Contact an admin to reassign.'
+                      : <>Need a new customer? Add it from <a href="/partners?tab=organizations" className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">Partners → Organizations</a> first.</>}
+                  </p>
                 </div>
 
                 {/* Status */}

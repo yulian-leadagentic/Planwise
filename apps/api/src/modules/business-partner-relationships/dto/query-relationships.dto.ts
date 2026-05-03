@@ -1,6 +1,6 @@
-import { IsOptional, IsEnum, IsInt, IsString } from 'class-validator';
+import { IsOptional, IsEnum, IsInt, IsString, IsBoolean } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { RelationshipTarget } from '@prisma/client';
 
 export class QueryRelationshipsDto {
@@ -30,4 +30,11 @@ export class QueryRelationshipsDto {
   @IsOptional()
   @IsString()
   status?: string;
+
+  /** Default true — only return rows where now() is between validFrom and validTo. Set ?activeOnly=false to include history. */
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => value === undefined ? undefined : !(value === false || value === 'false' || value === '0'))
+  activeOnly?: boolean;
 }

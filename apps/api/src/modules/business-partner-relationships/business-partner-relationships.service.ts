@@ -16,19 +16,24 @@ const include = {
   relationshipType: true,
 } as const;
 
+const FAR_FUTURE = new Date('9999-12-31T00:00:00.000Z');
+
+function activeWhere(now = new Date()): Prisma.BusinessPartnerRelationshipWhereInput {
+  return { validFrom: { lte: now }, validTo: { gt: now } };
+}
+
 @Injectable()
 export class BusinessPartnerRelationshipsService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(q: QueryRelationshipsDto) {
+  async findAll(q: QueryRelationshipsDto & { activeOnly?: boolean } = {} as any) {
     const where: Prisma.BusinessPartnerRelationshipWhereInput = {};
     if (q.sourcePartnerId) where.sourcePartnerId = q.sourcePartnerId;
     if (q.targetType) where.targetType = q.targetType;
     if (q.targetId) where.targetId = q.targetId;
     if (q.status) where.status = q.status;
-    if (q.relationshipTypeCode) {
-      where.relationshipType = { code: q.relationshipTypeCode };
-    }
+    if (q.relationshipTypeCode) where.relationshipType = { code: q.relationshipTypeCode };
+    if (q.activeOnly !== false) Object.assign(where, activeWhere());
 
     return this.prisma.businessPartnerRelationship.findMany({
       where,
@@ -46,33 +51,76 @@ export class BusinessPartnerRelationshipsService {
     return r;
   }
 
+  /**
+   * Create a relationship after fully validating it against the rules
+   * carried in PartnerRelationshipType. The rules are data-driven so an
+   * admin can define new types in the UI without code changes.
+   */
   async create(dto: CreateRelationshipDto) {
-    // Validate source partner
+    // 1. Source partner must exist and not be soft-deleted.
     const source = await this.prisma.businessPartner.findFirst({
       where: { id: dto.sourcePartnerId, deletedAt: null },
+      include: { roles: { include: { roleType: true } } },
     });
     if (!source) throw new NotFoundException('Source partner not found');
 
-    // Validate relationship type and applicability
+    // 2. Relationship type must exist.
     const relType = await this.prisma.partnerRelationshipType.findUnique({
       where: { id: dto.relationshipTypeId },
     });
     if (!relType) throw new NotFoundException('Relationship type not found');
 
-    if (relType.applicableTargetTypes) {
-      const allowed = relType.applicableTargetTypes
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
-      if (allowed.length > 0 && !allowed.includes(dto.targetType)) {
+    // 3. Source partner_type must satisfy applicableSourceType (CSV).
+    if (relType.applicableSourceType) {
+      const allowedSources = relType.applicableSourceType
+        .split(',').map((s) => s.trim()).filter(Boolean);
+      if (allowedSources.length > 0 && !allowedSources.includes(source.partnerType)) {
         throw new BadRequestException(
-          `Relationship type "${relType.code}" cannot be applied to target_type=${dto.targetType}. Allowed: ${allowed.join(', ')}.`,
+          `Relationship "${relType.code}" requires source partner_type ∈ {${allowedSources.join(', ')}}; got "${source.partnerType}".`,
         );
       }
     }
 
-    // Validate target exists in its respective table
+    // 4. Target type must satisfy applicableTargetTypes (CSV).
+    if (relType.applicableTargetTypes) {
+      const allowedTargets = relType.applicableTargetTypes
+        .split(',').map((s) => s.trim()).filter(Boolean);
+      if (allowedTargets.length > 0 && !allowedTargets.includes(dto.targetType)) {
+        throw new BadRequestException(
+          `Relationship "${relType.code}" cannot point at target_type=${dto.targetType}. Allowed: {${allowedTargets.join(', ')}}.`,
+        );
+      }
+    }
+
+    // 5. Source must hold the required role, if specified.
+    if (relType.requiredSourceRoleCode) {
+      const codes = source.roles.map((r) => r.roleType.code);
+      if (!codes.includes(relType.requiredSourceRoleCode)) {
+        throw new BadRequestException(
+          `Relationship "${relType.code}" requires the source to hold role "${relType.requiredSourceRoleCode}". This partner holds: {${codes.join(', ') || 'none'}}.`,
+        );
+      }
+    }
+
+    // 6. Target row must exist (when we can verify it).
     await this.assertTargetExists(dto.targetType, dto.targetId);
+
+    // 7. customer_of_project: enforce uniqueness — at most one ACTIVE per project.
+    if (relType.code === 'customer_of_project' && dto.targetType === 'project') {
+      const existing = await this.prisma.businessPartnerRelationship.findFirst({
+        where: {
+          relationshipTypeId: relType.id,
+          targetType: 'project',
+          targetId: dto.targetId,
+          ...activeWhere(),
+        },
+      });
+      if (existing) {
+        throw new ConflictException(
+          `Project ${dto.targetId} already has an active customer (relationship id=${existing.id}). End the existing one first.`,
+        );
+      }
+    }
 
     try {
       return await this.prisma.businessPartnerRelationship.create({
@@ -83,8 +131,8 @@ export class BusinessPartnerRelationshipsService {
           relationshipTypeId: dto.relationshipTypeId,
           roleInContext: dto.roleInContext ?? null,
           isPrimary: dto.isPrimary ?? false,
-          validFrom: dto.validFrom ? new Date(dto.validFrom) : null,
-          validTo: dto.validTo ? new Date(dto.validTo) : null,
+          validFrom: dto.validFrom ? new Date(dto.validFrom) : new Date(),
+          validTo: dto.validTo ? new Date(dto.validTo) : FAR_FUTURE,
           notes: dto.notes ?? null,
         },
         include,
@@ -106,8 +154,8 @@ export class BusinessPartnerRelationshipsService {
       data: {
         roleInContext: dto.roleInContext,
         isPrimary: dto.isPrimary,
-        validFrom: dto.validFrom !== undefined ? (dto.validFrom ? new Date(dto.validFrom) : null) : undefined,
-        validTo: dto.validTo !== undefined ? (dto.validTo ? new Date(dto.validTo) : null) : undefined,
+        validFrom: dto.validFrom ? new Date(dto.validFrom) : undefined,
+        validTo: dto.validTo ? new Date(dto.validTo) : undefined,
         status: dto.status,
         notes: dto.notes,
       },
@@ -115,25 +163,35 @@ export class BusinessPartnerRelationshipsService {
     });
   }
 
+  /**
+   * Soft "disconnect": set valid_to = now() instead of physical delete.
+   * History is preserved for audit / SAP-style time travel.
+   */
   async remove(id: number) {
     await this.findOne(id);
-    await this.prisma.businessPartnerRelationship.delete({ where: { id } });
-    return { message: 'Relationship removed' };
+    await this.prisma.businessPartnerRelationship.update({
+      where: { id },
+      data: { validTo: new Date() },
+    });
+    return { message: 'Relationship ended (soft-disconnected)' };
   }
 
-  // Convenience: list relationships for a target (e.g. all BPs on project 42).
+  /** List active relationships pointing at a specific target. */
   async findForTarget(targetType: RelationshipTarget, targetId: number) {
     return this.prisma.businessPartnerRelationship.findMany({
-      where: { targetType, targetId, status: 'active' },
+      where: { targetType, targetId, status: 'active', ...activeWhere() },
       include,
       orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
     });
   }
 
+  // ───────────────────────────────────────────────────────────────────────
+  // Helpers used by other modules to write through legacy <-> new model.
+  // ───────────────────────────────────────────────────────────────────────
+
   /**
-   * Used by other modules (e.g. ProjectsService when adding a project_member)
-   * to keep the legacy ProjectMember table and the new relationship table
-   * in sync.
+   * Mirror a (User joining a project) write into the new relationship
+   * table as `participates_in_project` (replaces old project_member type).
    */
   async upsertProjectMemberRelationship(args: {
     userId: number;
@@ -144,13 +202,10 @@ export class BusinessPartnerRelationshipsService {
       where: { id: args.userId },
       select: { businessPartnerId: true },
     });
-    if (!user?.businessPartnerId) {
-      // No BP linked yet (unusual but possible — backfill missed it). No-op.
-      return null;
-    }
+    if (!user?.businessPartnerId) return null;
 
     const relType = await this.prisma.partnerRelationshipType.findUnique({
-      where: { code: 'project_member' },
+      where: { code: 'participates_in_project' },
     });
     if (!relType) return null;
 
@@ -166,6 +221,7 @@ export class BusinessPartnerRelationshipsService {
       update: {
         roleInContext: args.roleInContext ?? undefined,
         status: 'active',
+        validTo: FAR_FUTURE, // re-open if previously soft-ended
       },
       create: {
         sourcePartnerId: user.businessPartnerId,
@@ -177,7 +233,6 @@ export class BusinessPartnerRelationshipsService {
     });
   }
 
-  /** Inverse of upsertProjectMemberRelationship — called when a member is removed. */
   async removeProjectMemberRelationship(args: { userId: number; projectId: number }) {
     const user = await this.prisma.user.findUnique({
       where: { id: args.userId },
@@ -186,19 +241,45 @@ export class BusinessPartnerRelationshipsService {
     if (!user?.businessPartnerId) return null;
 
     const relType = await this.prisma.partnerRelationshipType.findUnique({
-      where: { code: 'project_member' },
+      where: { code: 'participates_in_project' },
     });
     if (!relType) return null;
 
-    await this.prisma.businessPartnerRelationship.deleteMany({
+    // Soft-end any active row matching this user/project.
+    await this.prisma.businessPartnerRelationship.updateMany({
       where: {
         sourcePartnerId: user.businessPartnerId,
         targetType: 'project',
         targetId: args.projectId,
         relationshipTypeId: relType.id,
+        ...activeWhere(),
       },
+      data: { validTo: new Date() },
     });
     return null;
+  }
+
+  /**
+   * Set the customer for a project (creates the customer_of_project row).
+   * Used by ProjectsService.create. Validates that the org holds the
+   * "customer" role — same rule as a manual create call would.
+   */
+  async setProjectCustomer(projectId: number, customerOrgId: number) {
+    const relType = await this.prisma.partnerRelationshipType.findUnique({
+      where: { code: 'customer_of_project' },
+    });
+    if (!relType) {
+      throw new BadRequestException(
+        'customer_of_project relationship type missing — schema seed is broken.',
+      );
+    }
+    return this.create({
+      sourcePartnerId: customerOrgId,
+      targetType: 'project',
+      targetId: projectId,
+      relationshipTypeId: relType.id,
+      isPrimary: true,
+    } as CreateRelationshipDto);
   }
 
   // ───────────────────────────────────────────────────────────────────────
@@ -220,7 +301,6 @@ export class BusinessPartnerRelationshipsService {
         exists = await this.prisma.department.findUnique({ where: { id } });
         break;
       case 'team':
-        // No team table yet — treat as opaque target_id, accept it.
         return;
       default:
         return;

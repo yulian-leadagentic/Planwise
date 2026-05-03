@@ -25,6 +25,8 @@ interface UpsertTypeDto {
   name: string;
   description?: string;
   applicableTargetTypes?: string;   // CSV — only used by relationship types
+  applicableSourceType?: string;    // CSV — only used by relationship types: "person" | "organization" | "person,organization"
+  requiredSourceRoleCode?: string;  // only used by relationship types
   sortOrder?: number;
 }
 
@@ -127,6 +129,8 @@ export class PartnerTypesController {
         name: body.name.trim(),
         description: body.description?.trim() || null,
         applicableTargetTypes: body.applicableTargetTypes?.trim() || null,
+        applicableSourceType: body.applicableSourceType?.trim() || null,
+        requiredSourceRoleCode: body.requiredSourceRoleCode?.trim() || null,
         sortOrder: body.sortOrder ?? 0,
         isSystem: false,
       },
@@ -144,6 +148,8 @@ export class PartnerTypesController {
       name: body.name?.trim(),
       description: body.description?.trim() ?? null,
       applicableTargetTypes: body.applicableTargetTypes?.trim() ?? null,
+      applicableSourceType: body.applicableSourceType?.trim() ?? null,
+      requiredSourceRoleCode: body.requiredSourceRoleCode?.trim() ?? null,
       sortOrder: body.sortOrder,
     };
     if (!existing.isSystem && body.code) {
