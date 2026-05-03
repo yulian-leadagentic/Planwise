@@ -86,9 +86,16 @@ export class ProjectsController {
 
   @Get(':id/members')
   @RequirePermissions({ module: 'projects', action: 'read' })
-  @ApiOperation({ summary: 'List project members' })
+  @ApiOperation({ summary: 'List project members (login users only)' })
   getMembers(@Param('id', ParseIntPipe) projectId: number) {
     return this.projectsService.getMembers(projectId);
+  }
+
+  @Get(':id/team')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'Unified project team — internal members + external partners' })
+  getTeam(@Param('id', ParseIntPipe) projectId: number) {
+    return this.projectsService.getTeam(projectId);
   }
 
   @Delete(':id/members/:userId')

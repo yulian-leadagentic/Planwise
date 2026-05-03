@@ -66,6 +66,8 @@ export class AuditInterceptor implements NestInterceptor {
 
   private getCategory(url: string): any {
     if (url.includes('/auth')) return 'auth';
+    if (url.includes('/business-partner')) return 'partner';
+    if (url.includes('/admin/partner-types')) return 'partner';
     if (url.includes('/projects')) return 'project';
     if (url.includes('/tasks')) return 'task';
     if (url.includes('/time') || url.includes('/clock')) return 'time';

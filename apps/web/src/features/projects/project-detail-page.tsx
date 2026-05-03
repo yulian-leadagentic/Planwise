@@ -1,7 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Settings, Plus, UserPlus, X, Pencil, Users, MessageSquare } from 'lucide-react';
-import { useState, useMemo, lazy, Suspense } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState, useMemo, useEffect, lazy, Suspense } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ProjectDiscussion } from '@/features/messaging/project-discussion';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
 import { WorkloadPanel } from './workload-panel';
@@ -266,6 +266,20 @@ interface ProjectMember {
   createdAt: string;
 }
 
+interface UnifiedTeamRow {
+  kind: 'internal' | 'external';
+  id: number;
+  userId: number | null;
+  businessPartnerId: number | null;
+  displayName: string;
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+  position: string | null;
+  role: string | null;
+  relationshipType: { id: number; code: string; name: string } | null;
+}
+
 function TeamTab({
   projectId,
   members,
@@ -277,66 +291,107 @@ function TeamTab({
   showAddMember: boolean;
   onToggleAddMember: (v: boolean) => void;
 }) {
+  const queryClient = useQueryClient();
   const removeMember = useRemoveProjectMember();
+  const [showAddPartner, setShowAddPartner] = useState(false);
 
-  const handleRemove = (memberId: number) => {
-    removeMember.mutate(
-      { projectId, memberId },
-      {
-        onError: () => notify.error('Failed to remove member'),
-      },
-    );
+  // Unified team — internal (login users) + external (BP relationships).
+  const { data: team = [], isLoading } = useQuery<UnifiedTeamRow[]>({
+    queryKey: ['project-team', projectId],
+    queryFn: () => client.get(`/projects/${projectId}/team`).then((r) => r.data?.data ?? r.data ?? []),
+  });
+
+  const removeExternal = useMutation({
+    mutationFn: (relationshipId: number) =>
+      client.delete(`/business-partner-relationships/${relationshipId}`).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
+      notify.success('Partner removed from project', { code: 'PROJECT-TEAM-DELETE-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to remove partner'),
+  });
+
+  const handleRemove = (row: UnifiedTeamRow) => {
+    if (row.kind === 'internal') {
+      // ProjectMember.id passed via the legacy member shape
+      removeMember.mutate(
+        { projectId, memberId: row.id },
+        {
+          onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project-team', projectId] }),
+          onError: () => notify.error('Failed to remove member'),
+        },
+      );
+    } else {
+      if (confirm('Remove this external partner from the project?')) {
+        removeExternal.mutate(row.id);
+      }
+    }
   };
+
+  const internal = team.filter((t) => t.kind === 'internal');
+  const external = team.filter((t) => t.kind === 'external');
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-700">Team Members</h2>
-        <button
-          onClick={() => onToggleAddMember(true)}
-          className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
-        >
-          <UserPlus className="h-3.5 w-3.5" />
-          Add Member
-        </button>
+        <div>
+          <h2 className="text-sm font-semibold text-slate-700">Team</h2>
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            Internal members (have logins) + external partners (clients, consultants, supplier reps). Manage profiles in <a href="/partners" className="text-blue-600 hover:underline">Partners</a>.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowAddPartner(true)}
+            className="flex items-center gap-1.5 rounded-md bg-white border border-slate-200 hover:border-slate-400 px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors"
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Add Partner
+          </button>
+          <button
+            onClick={() => onToggleAddMember(true)}
+            className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Add Member
+          </button>
+        </div>
       </div>
 
-      {members.length === 0 ? (
+      {isLoading ? (
+        <p className="py-8 text-center text-sm text-slate-400">Loading...</p>
+      ) : team.length === 0 ? (
         <p className="py-8 text-center text-sm text-slate-400">
-          No members yet. Add team members to this project.
+          No team yet. Add internal members or external partners.
         </p>
       ) : (
-        <div className="space-y-2">
-          {members.map((member) => (
-            <div
-              key={member.id}
-              className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-3"
-            >
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-semibold text-indigo-600">
-                {getInitials(member.user?.firstName ?? '', member.user?.lastName ?? '')}
+        <div className="space-y-4">
+          {/* Internal */}
+          {internal.length > 0 && (
+            <div>
+              <p className="text-[11px] font-semibold text-slate-400 uppercase mb-1.5">Internal Members ({internal.length})</p>
+              <div className="space-y-2">
+                {internal.map((row) => (
+                  <TeamRow key={`int-${row.id}`} row={row} onRemove={() => handleRemove(row)} />
+                ))}
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-900 truncate">
-                  {member.user?.firstName} {member.user?.lastName}
-                </p>
-                {member.role && (
-                  <p className="text-xs text-slate-400">{member.role}</p>
-                )}
-              </div>
-              <button
-                onClick={() => handleRemove(member.id)}
-                className="rounded p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors"
-                aria-label="Remove member"
-                title="Remove member"
-              >
-                <X className="h-4 w-4" />
-              </button>
             </div>
-          ))}
+          )}
+
+          {/* External */}
+          {external.length > 0 && (
+            <div>
+              <p className="text-[11px] font-semibold text-slate-400 uppercase mb-1.5">External Partners ({external.length})</p>
+              <div className="space-y-2">
+                {external.map((row) => (
+                  <TeamRow key={`ext-${row.id}`} row={row} onRemove={() => handleRemove(row)} />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Add Member Dialog */}
       {showAddMember && (
         <AddMemberDialog
           projectId={projectId}
@@ -344,6 +399,233 @@ function TeamTab({
           onClose={() => onToggleAddMember(false)}
         />
       )}
+
+      {showAddPartner && (
+        <AddProjectPartnerDialog
+          projectId={projectId}
+          existingBpIds={team.map((t) => t.businessPartnerId).filter((x): x is number => x != null)}
+          onClose={() => setShowAddPartner(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ─── Team Row ─────────────────────────────────────────────────────────────── */
+
+function TeamRow({ row, onRemove }: { row: UnifiedTeamRow; onRemove: () => void }) {
+  const isExternal = row.kind === 'external';
+  const profileLink = row.businessPartnerId
+    ? `/partners?focus_bp=${row.businessPartnerId}`
+    : (row.userId ? `/partners?focus=${row.userId}` : null);
+
+  return (
+    <div className={cn(
+      'flex items-center gap-3 rounded-lg border bg-white p-3',
+      isExternal ? 'border-violet-200' : 'border-slate-200',
+    )}>
+      <div className={cn(
+        'flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-semibold shrink-0',
+        isExternal ? 'bg-violet-100 text-violet-600' : 'bg-indigo-100 text-indigo-600',
+      )}>
+        {getInitials(row.firstName ?? '', row.lastName ?? '') || row.displayName.slice(0, 2).toUpperCase()}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-sm font-medium text-slate-900 truncate">{row.displayName}</p>
+          {isExternal && row.relationshipType && (
+            <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">
+              {row.relationshipType.name}
+            </span>
+          )}
+        </div>
+        {row.role && <p className="text-xs text-slate-500">{row.role}</p>}
+        {row.email && <p className="text-[11px] text-slate-400">{row.email}</p>}
+      </div>
+      {profileLink && (
+        <a href={profileLink} className="text-[11px] text-blue-600 hover:underline shrink-0" title="Open partner profile">
+          Profile →
+        </a>
+      )}
+      <button
+        onClick={onRemove}
+        className="rounded p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors"
+        aria-label="Remove from team"
+        title={isExternal ? 'Remove partner' : 'Remove member'}
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+/* ─── Add External Partner Dialog ──────────────────────────────────────────── */
+
+function AddProjectPartnerDialog({
+  projectId,
+  existingBpIds,
+  onClose,
+}: {
+  projectId: number;
+  existingBpIds: number[];
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const [selectedBpId, setSelectedBpId] = useState<number | null>(null);
+  const [relationshipTypeId, setRelationshipTypeId] = useState<number | null>(null);
+  const [roleInContext, setRoleInContext] = useState('');
+
+  useEffect(() => {
+    const original = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = original; };
+  }, []);
+
+  // BP picker — search persons + organizations across all of /business-partners
+  const { data: bps = [] } = useQuery<any[]>({
+    queryKey: ['bp-picker', search],
+    queryFn: () =>
+      client
+        .get('/business-partners', { params: { search: search || undefined, perPage: 50 } })
+        .then((r) => {
+          const d = r.data?.data ?? r.data;
+          return Array.isArray(d) ? d : (d?.data ?? []);
+        }),
+  });
+
+  const filtered = bps.filter((bp: any) => !existingBpIds.includes(bp.id));
+
+  // Relationship types applicable to projects (excluding project_member which is for login users only).
+  const { data: allRelTypes = [] } = useQuery<any[]>({
+    queryKey: ['partner-relationship-types'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () => client.get('/admin/partner-types/relationship-types').then((r) => r.data?.data ?? r.data ?? []),
+  });
+  const relTypes = allRelTypes.filter((rt) => {
+    if (rt.code === 'project_member') return false;
+    const apply = rt.applicableTargetTypes?.split(',').map((s: string) => s.trim()) ?? [];
+    return apply.length === 0 || apply.includes('project');
+  });
+
+  const create = useMutation({
+    mutationFn: () =>
+      client.post('/business-partner-relationships', {
+        sourcePartnerId: selectedBpId,
+        targetType: 'project',
+        targetId: projectId,
+        relationshipTypeId,
+        roleInContext: roleInContext.trim() || undefined,
+      }).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
+      notify.success('Partner added to project', { code: 'PROJECT-TEAM-200' });
+      onClose();
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to add partner'),
+  });
+
+  const handleSubmit = () => {
+    if (!selectedBpId || !relationshipTypeId) {
+      notify.warning('Pick a partner and a relationship type', { code: 'PROJECT-TEAM-400' });
+      return;
+    }
+    create.mutate();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-[560px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <h2 className="text-base font-bold text-slate-900">Add External Partner</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-[12px] text-slate-500">
+            Link an existing Business Partner — typically a contact at a customer or supplier — to this project. Won't create a login account.
+            Need someone who isn't in the system? <a href="/partners?tab=contacts" className="text-blue-600 hover:underline">Add them in Partners → Contacts</a> first.
+          </p>
+
+          <div>
+            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Search Business Partner</label>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Name, email, company..."
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none"
+              autoFocus
+            />
+            <div className="mt-2 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+              {filtered.length === 0 ? (
+                <p className="px-3 py-3 text-[12px] text-slate-400 text-center italic">
+                  {search ? 'No matches' : 'Start typing to search...'}
+                </p>
+              ) : filtered.slice(0, 30).map((bp: any) => (
+                <button
+                  key={bp.id}
+                  type="button"
+                  onClick={() => setSelectedBpId(bp.id)}
+                  className={cn(
+                    'w-full text-left px-3 py-2 text-sm border-b border-slate-100 last:border-0 hover:bg-blue-50',
+                    selectedBpId === bp.id && 'bg-blue-50',
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={cn(
+                      'rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase',
+                      bp.partnerType === 'person' ? 'bg-blue-100 text-blue-700' : 'bg-violet-100 text-violet-700',
+                    )}>
+                      {bp.partnerType === 'person' ? 'Person' : 'Org'}
+                    </span>
+                    <span className="font-medium text-slate-800">{bp.displayName}</span>
+                    {bp.companyName && bp.partnerType === 'person' && (
+                      <span className="text-[11px] text-slate-400">at {bp.companyName}</span>
+                    )}
+                  </div>
+                  {bp.email && <p className="text-[11px] text-slate-400 ml-12">{bp.email}</p>}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Relationship Type *</label>
+            <select
+              value={relationshipTypeId ?? ''}
+              onChange={(e) => setRelationshipTypeId(Number(e.target.value) || null)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none"
+            >
+              <option value="">Select...</option>
+              {relTypes.map((rt: any) => <option key={rt.id} value={rt.id}>{rt.name}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Role in Context (optional)</label>
+            <input
+              type="text"
+              value={roleInContext}
+              onChange={(e) => setRoleInContext(e.target.value)}
+              placeholder='e.g. "Client Operations Manager"'
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
+            <button
+              onClick={handleSubmit}
+              disabled={create.isPending || !selectedBpId || !relationshipTypeId}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
+            >
+              {create.isPending ? 'Adding...' : 'Add to Team'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

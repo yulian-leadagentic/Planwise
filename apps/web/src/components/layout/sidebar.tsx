@@ -16,6 +16,7 @@ const NAV_MODULE_MAP: Record<string, string> = {
   '/inbox': 'tasks',
   '/time': 'time',
   '/contracts': 'contracts',
+  '/partners': 'partners',
   '/reports': 'reports',
   '/templates': 'templates',
   '/admin': 'admin',

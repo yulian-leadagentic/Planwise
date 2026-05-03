@@ -29,14 +29,14 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post()
-  @RequirePermissions({ module: 'people', action: 'write' })
+  @RequirePermissions({ module: 'partners', action: 'write' })
   @ApiOperation({ summary: 'Create a new user' })
   create(@Body() dto: CreateUserDto) {
     return this.usersService.create(dto);
   }
 
   @Get()
-  @RequirePermissions({ module: 'people', action: 'read' })
+  @RequirePermissions({ module: 'partners', action: 'read' })
   @ApiPaginated()
   @ApiOperation({ summary: 'List people with filters' })
   findAll(@Query() query: QueryUsersDto) {
@@ -44,21 +44,21 @@ export class UsersController {
   }
 
   @Get(':id')
-  @RequirePermissions({ module: 'people', action: 'read' })
+  @RequirePermissions({ module: 'partners', action: 'read' })
   @ApiOperation({ summary: 'Get user by ID' })
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.usersService.findOne(id);
   }
 
   @Patch(':id')
-  @RequirePermissions({ module: 'people', action: 'write' })
+  @RequirePermissions({ module: 'partners', action: 'write' })
   @ApiOperation({ summary: 'Update a user' })
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
     return this.usersService.update(id, dto);
   }
 
   @Delete(':id')
-  @RequirePermissions({ module: 'people', action: 'delete' })
+  @RequirePermissions({ module: 'partners', action: 'delete' })
   @ApiOperation({ summary: 'Soft delete a user' })
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.usersService.remove(id);

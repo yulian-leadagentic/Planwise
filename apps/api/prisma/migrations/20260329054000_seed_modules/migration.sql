@@ -9,7 +9,7 @@ INSERT IGNORE INTO `modules` (`name`, `route`, `icon`, `sort_order`, `parent_id`
   ('Time',       '/time',       'Clock',           3, NULL, NOW(), NOW()),
   ('Projects',   '/projects',   'FolderKanban',    4, NULL, NOW(), NOW()),
   ('Contracts',  '/contracts',  'FileText',        5, NULL, NOW(), NOW()),
-  ('People',     '/people',     'Users',           6, NULL, NOW(), NOW()),
+  ('Partners',   '/partners',   'Briefcase',       6, NULL, NOW(), NOW()),
   ('Reports',    '/reports',    'BarChart3',       7, NULL, NOW(), NOW()),
   ('Templates',  '/templates',  'Copy',            8, NULL, NOW(), NOW()),
   ('Admin',      '/admin',      'Settings',        9, NULL, NOW(), NOW());

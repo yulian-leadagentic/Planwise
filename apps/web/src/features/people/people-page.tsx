@@ -206,7 +206,7 @@ export function PeoplePage() {
   });
 
   const isPartners = peopleTab === 'partners';
-  const canEditPeople = isAdmin || can('people', 'write');
+  const canEditPeople = isAdmin || can('partners', 'write');
   const columns = useMemo(
     () => getColumns(
       isPartners,

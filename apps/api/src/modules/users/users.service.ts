@@ -19,10 +19,86 @@ export class UsersService {
 
     const hashedPassword = await bcrypt.hash(dto.password, 12);
 
+    // Pull out fields that don't belong on User itself (or we want to handle
+    // separately) so the rest can be spread into the User.create.
+    const { employerOrgId, ...userData } = dto;
+
+    // 1) Create or link a BusinessPartner record. Every login user is also a BP.
+    const existingBp = await this.prisma.businessPartner.findFirst({
+      where: { email: dto.email, deletedAt: null },
+    });
+
+    let businessPartnerId: number;
+    if (existingBp) {
+      // BP already exists with this email — link to it.
+      businessPartnerId = existingBp.id;
+    } else {
+      const bp = await this.prisma.businessPartner.create({
+        data: {
+          partnerType: 'person',
+          displayName: `${dto.firstName} ${dto.lastName}`.trim() || dto.email,
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          email: dto.email,
+          phone: dto.phone ?? null,
+          source: 'manual',
+        },
+      });
+      businessPartnerId = bp.id;
+    }
+
+    // 2) Add the 'employee' role on the BP if user is an employee or both.
+    if (dto.userType === 'employee' || dto.userType === 'both') {
+      const employeeRole = await this.prisma.partnerRoleType.findUnique({
+        where: { code: 'employee' },
+      });
+      if (employeeRole) {
+        await this.prisma.businessPartnerRole.upsert({
+          where: { businessPartnerId_roleTypeId: { businessPartnerId, roleTypeId: employeeRole.id } },
+          create: { businessPartnerId, roleTypeId: employeeRole.id, isPrimary: true },
+          update: {},
+        });
+      }
+    }
+
+    // 3) Wire the employee_of relationship to the chosen organization.
+    if (employerOrgId) {
+      const employerOrg = await this.prisma.businessPartner.findFirst({
+        where: { id: employerOrgId, partnerType: 'organization', deletedAt: null },
+      });
+      const employeeOfType = await this.prisma.partnerRelationshipType.findUnique({
+        where: { code: 'employee_of' },
+      });
+      if (employerOrg && employeeOfType) {
+        await this.prisma.businessPartnerRelationship.upsert({
+          where: {
+            sourcePartnerId_targetType_targetId_relationshipTypeId: {
+              sourcePartnerId: businessPartnerId,
+              targetType: 'organization',
+              targetId: employerOrg.id,
+              relationshipTypeId: employeeOfType.id,
+            },
+          },
+          create: {
+            sourcePartnerId: businessPartnerId,
+            targetType: 'organization',
+            targetId: employerOrg.id,
+            relationshipTypeId: employeeOfType.id,
+            isPrimary: true,
+          },
+          update: { status: 'active' },
+        });
+      }
+    }
+
+    // 4) Create the User row, linking to the BP.
     const user = await this.prisma.user.create({
       data: {
-        ...dto,
+        ...userData,
         password: hashedPassword,
+        businessPartnerId,
+        employmentDate: dto.employmentDate ? new Date(dto.employmentDate) : undefined,
+        employmentEndDate: dto.employmentEndDate ? new Date(dto.employmentEndDate) : undefined,
       },
       select: {
         id: true,
@@ -37,6 +113,7 @@ export class UsersService {
         roleId: true,
         isActive: true,
         createdAt: true,
+        businessPartnerId: true,
         role: true,
       },
     });

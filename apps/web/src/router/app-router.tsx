@@ -23,6 +23,8 @@ const ProjectDetailPage = lazy(() => import('@/features/projects/project-detail-
 const ProjectFormPage = lazy(() => import('@/features/projects/project-form-page').then(m => ({ default: m.ProjectFormPage })));
 const ContractsPage = lazy(() => import('@/features/contracts/contracts-page').then(m => ({ default: m.ContractsPage })));
 const PeoplePage = lazy(() => import('@/features/people/people-page').then(m => ({ default: m.PeoplePage })));
+const PartnersPage = lazy(() => import('@/features/partners/partners-page').then(m => ({ default: m.PartnersPage })));
+const PartnerTypesPage = lazy(() => import('@/features/admin/partner-types-page').then(m => ({ default: m.PartnerTypesPage })));
 const ReportsPage = lazy(() => import('@/features/reports/reports-page').then(m => ({ default: m.ReportsPage })));
 const TimesheetReportPage = lazy(() => import('@/features/reports/timesheet-report-page').then(m => ({ default: m.TimesheetReportPage })));
 const AttendanceReportPage = lazy(() => import('@/features/reports/attendance-report-page').then(m => ({ default: m.AttendanceReportPage })));
@@ -110,6 +112,7 @@ export function AppRouter() {
 
         {/* People */}
         <Route path="people" element={<L><PeoplePage /></L>} />
+        <Route path="partners" element={<L><PartnersPage /></L>} />
 
         {/* Reports */}
         <Route path="reports" element={<L><ReportsPage /></L>} />
@@ -139,6 +142,7 @@ export function AppRouter() {
         <Route path="admin/calendar" element={<L><CalendarDaysPage /></L>} />
         <Route path="admin/notification-settings" element={<L><NotificationSettingsPage /></L>} />
         <Route path="admin/clock-dashboard" element={<L><ClockDashboardPage /></L>} />
+        <Route path="admin/partner-types" element={<L><PartnerTypesPage /></L>} />
       </Route>
 
       {/* Catch-all */}

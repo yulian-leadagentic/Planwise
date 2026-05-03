@@ -4,20 +4,20 @@ import {
   Activity,
   Clock,
   Calendar,
-  Users,
   Bell,
+  Tags,
 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { usePermissions } from '@/hooks/use-permissions';
 
 const adminCards = [
   {
-    title: 'People Management',
-    description: 'Create users, assign roles, activate / deactivate accounts',
-    icon: Users,
-    href: '/people',
-    module: 'people',
-    color: 'bg-violet-100 text-violet-700',
+    title: 'Partner Types',
+    description: 'Manage role types and relationship types used by Business Partners',
+    icon: Tags,
+    href: '/admin/partner-types',
+    module: 'admin/partner-types',
+    color: 'bg-pink-100 text-pink-700',
   },
   {
     title: 'Roles & Permissions',

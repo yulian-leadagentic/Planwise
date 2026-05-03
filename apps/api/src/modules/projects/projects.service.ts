@@ -5,10 +5,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { QueryProjectsDto } from './dto/query-projects.dto';
+import { BusinessPartnerRelationshipsService } from '../business-partner-relationships/business-partner-relationships.service';
 
 @Injectable()
 export class ProjectsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private bpRelationships: BusinessPartnerRelationshipsService,
+  ) {}
 
   async create(userId: number, dto: CreateProjectDto) {
     const { memberIds, leaderId, ...rest } = dto;
@@ -35,6 +39,13 @@ export class ProjectsService {
         create: { projectId: project.id, userId: dto.leaderId, role: 'Project Leader' },
         update: { role: 'Project Leader' },
       });
+      try {
+        await this.bpRelationships.upsertProjectMemberRelationship({
+          userId: dto.leaderId,
+          projectId: project.id,
+          roleInContext: 'Project Leader',
+        });
+      } catch { /* best-effort write-through */ }
     }
 
     // Create ProjectMember records for each member ID
@@ -47,6 +58,15 @@ export class ProjectsService {
           data: memberData,
           skipDuplicates: true,
         });
+        for (const m of memberData) {
+          try {
+            await this.bpRelationships.upsertProjectMemberRelationship({
+              userId: m.userId,
+              projectId: project.id,
+              roleInContext: null,
+            });
+          } catch { /* best-effort */ }
+        }
       }
     }
 
@@ -217,12 +237,27 @@ export class ProjectsService {
       throw new ConflictException('User is already a member of this project');
     }
 
-    return this.prisma.projectMember.create({
+    const member = await this.prisma.projectMember.create({
       data: { projectId, userId, role },
       include: {
         user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
       },
     });
+
+    // Mirror to the new Business Partner relationships table.
+    // Best-effort — a failure here shouldn't block the legacy write that the
+    // rest of the app still reads from.
+    try {
+      await this.bpRelationships.upsertProjectMemberRelationship({
+        userId,
+        projectId,
+        roleInContext: role ?? null,
+      });
+    } catch {
+      // swallow — see comment above
+    }
+
+    return member;
   }
 
   async getMembers(projectId: number) {
@@ -234,10 +269,105 @@ export class ProjectsService {
     });
   }
 
+  /**
+   * Unified project team view: returns BOTH internal members (login users
+   * via project_members) AND external partners (BP relationships pointing
+   * at this project with relationship_type != project_member).
+   *
+   * Each row has a `kind` discriminator the frontend uses to render and
+   * dispatch remove actions correctly.
+   */
+  async getTeam(projectId: number) {
+    await this.findOne(projectId);
+
+    const [members, relationships] = await Promise.all([
+      this.prisma.projectMember.findMany({
+        where: { projectId },
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              avatarUrl: true,
+              position: true,
+              businessPartnerId: true,
+            },
+          },
+        },
+        orderBy: { id: 'asc' },
+      }),
+      this.prisma.businessPartnerRelationship.findMany({
+        where: {
+          targetType: 'project',
+          targetId: projectId,
+          status: 'active',
+          relationshipType: { code: { not: 'project_member' } },
+        },
+        include: {
+          source: {
+            select: {
+              id: true,
+              partnerType: true,
+              displayName: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              user: { select: { id: true } },
+            },
+          },
+          relationshipType: { select: { id: true, code: true, name: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
+    const internal = members.map((m) => ({
+      kind: 'internal' as const,
+      id: m.id,                 // ProjectMember.id (used for remove)
+      userId: m.user?.id ?? m.userId,
+      businessPartnerId: m.user?.businessPartnerId ?? null,
+      displayName: `${m.user?.firstName ?? ''} ${m.user?.lastName ?? ''}`.trim(),
+      firstName: m.user?.firstName ?? null,
+      lastName: m.user?.lastName ?? null,
+      email: m.user?.email ?? null,
+      avatarUrl: m.user?.avatarUrl ?? null,
+      position: m.user?.position ?? null,
+      role: m.role,
+      relationshipType: null as null | { id: number; code: string; name: string },
+      createdAt: m.createdAt,
+    }));
+
+    const external = relationships.map((r) => ({
+      kind: 'external' as const,
+      id: r.id,                 // BusinessPartnerRelationship.id
+      userId: r.source.user?.id ?? null,
+      businessPartnerId: r.source.id,
+      displayName: r.source.displayName,
+      firstName: r.source.firstName,
+      lastName: r.source.lastName,
+      email: r.source.email,
+      avatarUrl: null as string | null,
+      position: null as string | null,
+      role: r.roleInContext,
+      relationshipType: r.relationshipType,
+      createdAt: r.createdAt,
+    }));
+
+    return [...internal, ...external];
+  }
+
   async removeMember(projectId: number, userId: number) {
     await this.prisma.projectMember.delete({
       where: { projectId_userId: { projectId, userId } },
     });
+    try {
+      await this.bpRelationships.removeProjectMemberRelationship({ userId, projectId });
+    } catch {
+      // best-effort write-through
+    }
     return { message: 'Member removed' };
   }
 

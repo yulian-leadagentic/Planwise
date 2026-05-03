@@ -23,6 +23,10 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
   '/admin/calendar': 'admin/calendar',
   '/admin/notification-settings': 'admin/notification-settings',
   '/admin/clock-dashboard': 'admin/clock-dashboard',
+  '/admin/partner-types': 'admin/partner-types',
+
+  // Business Partners (uses the existing 'people' permission)
+  '/partners': 'people',
 
   // Top-level modules
   '/admin': 'admin',
@@ -36,7 +40,8 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
   '/time': 'time',
   '/inbox': 'tasks',
   '/messages': 'tasks',
-  '/people': 'people',
+  '/people': 'partners',
+  '/partners': 'partners',
   '/operations': 'operations',
 };
 

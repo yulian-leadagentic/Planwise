@@ -19,6 +19,9 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { FilesModule } from './modules/files/files.module';
 import { ProjectFilesModule } from './modules/project-files/project-files.module';
+import { BusinessPartnersModule } from './modules/business-partners/business-partners.module';
+import { BusinessPartnerRelationshipsModule } from './modules/business-partner-relationships/business-partner-relationships.module';
+import { PartnerTypesModule } from './modules/partner-types/partner-types.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { ZonesModule } from './modules/zones/zones.module';
 import { PlanningModule } from './modules/planning/planning.module';
@@ -83,6 +86,9 @@ import { HealthModule } from './modules/health/health.module';
     NotificationsModule,
     FilesModule,
     ProjectFilesModule,
+    BusinessPartnersModule,
+    BusinessPartnerRelationshipsModule,
+    PartnerTypesModule,
     AdminModule,
     ZonesModule,
     PlanningModule,

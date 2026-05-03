@@ -127,6 +127,7 @@ enum ActivityCategory {
   user
   system
   admin
+  partner
 }
 
 enum ActivitySeverity {
