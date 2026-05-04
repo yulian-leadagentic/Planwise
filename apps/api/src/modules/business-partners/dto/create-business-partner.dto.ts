@@ -71,6 +71,30 @@ export class CreateBusinessPartnerDto {
   @MaxLength(255)
   website?: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  linkedinUrl?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  facebookUrl?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  twitterUrl?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  instagramUrl?: string;
+
   @ApiPropertyOptional({ enum: PartnerSource })
   @IsOptional()
   @IsEnum(PartnerSource)

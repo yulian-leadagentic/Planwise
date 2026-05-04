@@ -38,7 +38,10 @@ export function TaskDiscussion({ taskId }: TaskDiscussionProps) {
     );
   };
 
-  const topLevelComments = (comments ?? []).filter((c) => !c.parentId);
+  // Defensive: tasksApi.getComments now unwraps the envelope, but if the
+  // shape regresses we want to fail soft rather than blank-screen the page.
+  const commentList: TaskComment[] = Array.isArray(comments) ? comments : [];
+  const topLevelComments = commentList.filter((c) => !c.parentId);
 
   return (
     <div className="rounded-lg border border-border p-4">

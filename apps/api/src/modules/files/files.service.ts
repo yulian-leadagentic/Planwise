@@ -32,6 +32,22 @@ const ALLOWED_MIME_TYPES = new Set([
 
 const MAX_FILENAME_LEN = 200;
 
+/**
+ * Multer (busboy under the hood) decodes the `filename` field of a multipart
+ * upload as latin-1 by default, which mojibake-mangles non-ASCII names like
+ * Hebrew/Russian/Chinese. Browsers actually send UTF-8 bytes, so we re-encode
+ * latin-1 → UTF-8 to recover the real filename.
+ *
+ * If the bytes are already valid UTF-8 (rare — only some old IE versions did
+ * this differently) the round-trip happens to be a no-op for ASCII and only
+ * misbehaves for already-correct multi-byte sequences. In practice every
+ * mainstream browser shipped UTF-8 multipart filenames for years.
+ */
+function decodeMultipartFilename(name: string): string {
+  if (!name) return '';
+  return Buffer.from(name, 'latin1').toString('utf8');
+}
+
 function safeFolder(folder?: string): string | undefined {
   if (!folder) return undefined;
   // Reject anything containing path separators or null bytes
@@ -75,7 +91,10 @@ export class FilesService {
 
     await fs.mkdir(targetDir, { recursive: true });
 
-    const ext = path.extname(file.originalname).toLowerCase();
+    // Recover the real (UTF-8) filename — Multer decodes the multipart
+    // filename as latin-1, which scrambles Hebrew/Cyrillic/Asian names.
+    const decodedOriginalName = decodeMultipartFilename(file.originalname);
+    const ext = path.extname(decodedOriginalName).toLowerCase();
     const filename = `${uuidv4()}${ext}`;
     const filepath = path.join(targetDir, filename);
 
@@ -98,7 +117,7 @@ export class FilesService {
     }
 
     const url = `/${safe ? safe + '/' : ''}${filename}`;
-    const originalName = file.originalname.slice(0, MAX_FILENAME_LEN).replace(/[\r\n\0]/g, '');
+    const originalName = decodedOriginalName.slice(0, MAX_FILENAME_LEN).replace(/[\r\n\0]/g, '');
 
     return { url, originalName };
   }

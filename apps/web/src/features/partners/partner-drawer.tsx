@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { X, User as UserIcon, Building2, Pencil, Trash2, Plus, Save, ChevronRight, Briefcase, FolderKanban } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { X, User as UserIcon, Building2, Pencil, Trash2, Plus, Save, ChevronRight, Briefcase, FolderKanban, Linkedin, Facebook, Twitter, Instagram } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
@@ -44,6 +44,10 @@ interface BusinessPartnerFull {
   mobile: string | null;
   address: string | null;
   website: string | null;
+  linkedinUrl: string | null;
+  facebookUrl: string | null;
+  twitterUrl: string | null;
+  instagramUrl: string | null;
   status: string;
   source: string;
   notes: string | null;
@@ -140,6 +144,34 @@ export function PartnerDrawer({
 function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerFull; canWrite: boolean; canDelete: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
+
+  // Active worker_of relationship (persons only) — defines the contact's employer.
+  const employerRel = useMemo(
+    () => bp.outgoingRelationships.find(
+      (r) => r.relationshipType.code === 'worker_of'
+        && r.targetType === 'organization'
+        && r.status === 'active',
+    ),
+    [bp.outgoingRelationships],
+  );
+
+  // Fetch organizations for the employer dropdown (persons only, in edit mode).
+  const { data: orgs = [] } = useQuery<any[]>({
+    queryKey: ['organizations-list'],
+    enabled: editing && bp.partnerType === 'person',
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/business-partners?partnerType=organization&perPage=200').then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : (d?.data ?? []);
+    }),
+  });
+
+  const employerOrg = useMemo(
+    () => orgs.find((o) => o.id === employerRel?.targetId)
+      ?? (employerRel ? { id: employerRel.targetId, displayName: bp.companyName ?? 'Unknown' } : null),
+    [orgs, employerRel, bp.companyName],
+  );
+
   const [form, setForm] = useState({
     firstName: bp.firstName ?? '',
     lastName: bp.lastName ?? '',
@@ -149,26 +181,70 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
     phone: bp.phone ?? '',
     mobile: bp.mobile ?? '',
     website: bp.website ?? '',
+    linkedinUrl: bp.linkedinUrl ?? '',
+    facebookUrl: bp.facebookUrl ?? '',
+    twitterUrl: bp.twitterUrl ?? '',
+    instagramUrl: bp.instagramUrl ?? '',
     address: bp.address ?? '',
     notes: bp.notes ?? '',
     status: bp.status,
+    // Persons-only — id of org chosen from the employer dropdown.
+    employerOrgId: employerRel?.targetId ?? null,
   });
 
+  // Re-sync employerOrgId when relationships load.
+  useEffect(() => {
+    setForm((f) => ({ ...f, employerOrgId: employerRel?.targetId ?? null }));
+  }, [employerRel?.targetId]);
+
   const update = useMutation({
-    mutationFn: () =>
-      client.patch(`/business-partners/${bp.id}`, {
+    mutationFn: async () => {
+      // 1. Update plain BP fields.
+      await client.patch(`/business-partners/${bp.id}`, {
         firstName: bp.partnerType === 'person' ? form.firstName.trim() || null : undefined,
         lastName: bp.partnerType === 'person' ? form.lastName.trim() || null : undefined,
-        companyName: form.companyName.trim() || null,
+        companyName: bp.partnerType === 'organization' ? form.companyName.trim() || null : undefined,
         taxId: form.taxId.trim() || null,
         email: form.email.trim() || null,
         phone: form.phone.trim() || null,
         mobile: form.mobile.trim() || null,
         website: form.website.trim() || null,
+        linkedinUrl: form.linkedinUrl.trim() || null,
+        facebookUrl: form.facebookUrl.trim() || null,
+        twitterUrl: form.twitterUrl.trim() || null,
+        instagramUrl: form.instagramUrl.trim() || null,
         address: form.address.trim() || null,
         notes: form.notes.trim() || null,
         status: form.status,
-      }).then((r) => r.data),
+      });
+
+      // 2. For persons, sync the worker_of relationship to the chosen employer.
+      if (bp.partnerType === 'person') {
+        const newEmployerId = form.employerOrgId;
+        const oldEmployerId = employerRel?.targetId ?? null;
+        if (newEmployerId !== oldEmployerId) {
+          // End the old worker_of (soft-delete) if it existed.
+          if (employerRel) {
+            await client.delete(`/business-partner-relationships/${employerRel.id}`).catch(() => undefined);
+          }
+          // Create the new one if employer is set.
+          if (newEmployerId) {
+            const relTypes = await client.get('/admin/partner-types/relationship-types')
+              .then((r) => r.data?.data ?? r.data ?? []);
+            const workerOf = (Array.isArray(relTypes) ? relTypes : []).find((rt: any) => rt.code === 'worker_of');
+            if (workerOf) {
+              await client.post('/business-partner-relationships', {
+                sourcePartnerId: bp.id,
+                targetType: 'organization',
+                targetId: newEmployerId,
+                relationshipTypeId: workerOf.id,
+                isPrimary: true,
+              }).catch(() => undefined);
+            }
+          }
+        }
+      }
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });
       notify.success('Partner updated', { code: 'BP-UPDATE-200' });
@@ -220,7 +296,18 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
               <Field label="Last Name" value={bp.lastName} />
             </>
           )}
-          <Field label={bp.partnerType === 'organization' ? 'Company Name' : 'Employer'} value={bp.companyName} />
+          {bp.partnerType === 'organization' ? (
+            <Field label="Company Name" value={bp.companyName} />
+          ) : (
+            <Field
+              label="Employer"
+              value={employerRel ? (employerOrg?.displayName ?? bp.companyName ?? `#${employerRel.targetId}`) : null}
+              render={() => employerRel
+                ? <span className="text-slate-700">{employerOrg?.displayName ?? bp.companyName ?? `#${employerRel.targetId}`}{employerRel.roleInContext ? <span className="text-slate-400"> · {employerRel.roleInContext}</span> : null}</span>
+                : <span className="italic text-slate-400">—</span>
+              }
+            />
+          )}
           {bp.partnerType === 'organization' && <Field label="Tax ID" value={bp.taxId} />}
           <Field label="Email" value={bp.email} />
           <Field label="Phone" value={bp.phone} />
@@ -236,6 +323,35 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
           )} />
           <Field label="Source" value={bp.source} />
         </div>
+
+        {/* Social / online presence — only show when at least one is set */}
+        {(bp.linkedinUrl || bp.facebookUrl || bp.twitterUrl || bp.instagramUrl) && (
+          <div>
+            <label className="text-[11px] font-semibold text-slate-400 uppercase">Online presence</label>
+            <div className="mt-1.5 flex items-center gap-2">
+              {bp.linkedinUrl && (
+                <a href={bp.linkedinUrl} target="_blank" rel="noopener noreferrer" title={bp.linkedinUrl} className="rounded-md p-1.5 hover:bg-slate-100">
+                  <Linkedin className="h-4 w-4 text-[#0a66c2]" />
+                </a>
+              )}
+              {bp.facebookUrl && (
+                <a href={bp.facebookUrl} target="_blank" rel="noopener noreferrer" title={bp.facebookUrl} className="rounded-md p-1.5 hover:bg-slate-100">
+                  <Facebook className="h-4 w-4 text-[#1877f2]" />
+                </a>
+              )}
+              {bp.twitterUrl && (
+                <a href={bp.twitterUrl} target="_blank" rel="noopener noreferrer" title={bp.twitterUrl} className="rounded-md p-1.5 hover:bg-slate-100">
+                  <Twitter className="h-4 w-4 text-[#1da1f2]" />
+                </a>
+              )}
+              {bp.instagramUrl && (
+                <a href={bp.instagramUrl} target="_blank" rel="noopener noreferrer" title={bp.instagramUrl} className="rounded-md p-1.5 hover:bg-slate-100">
+                  <Instagram className="h-4 w-4 text-[#e4405f]" />
+                </a>
+              )}
+            </div>
+          </div>
+        )}
 
         {bp.notes && (
           <div>
@@ -272,14 +388,36 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
           </div>
         </div>
       )}
-      <div>
-        <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">{bp.partnerType === 'organization' ? 'Company Name' : 'Employer'}</label>
-        <input value={form.companyName} onChange={(e) => setForm(f => ({ ...f, companyName: e.target.value }))} className={inputClass} />
-      </div>
-      {bp.partnerType === 'organization' && (
+      {bp.partnerType === 'organization' ? (
+        <>
+          <div>
+            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Company Name</label>
+            <input value={form.companyName} onChange={(e) => setForm(f => ({ ...f, companyName: e.target.value }))} className={inputClass} />
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Tax ID</label>
+            <input value={form.taxId} onChange={(e) => setForm(f => ({ ...f, taxId: e.target.value }))} className={inputClass} />
+          </div>
+        </>
+      ) : (
         <div>
-          <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Tax ID</label>
-          <input value={form.taxId} onChange={(e) => setForm(f => ({ ...f, taxId: e.target.value }))} className={inputClass} />
+          <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Employer (organization)</label>
+          <select
+            value={form.employerOrgId ?? ''}
+            onChange={(e) => setForm(f => ({ ...f, employerOrgId: e.target.value ? Number(e.target.value) : null }))}
+            className={inputClass}
+          >
+            <option value="">— No employer —</option>
+            {employerOrg && !orgs.some((o) => o.id === employerOrg.id) && (
+              <option value={employerOrg.id}>{employerOrg.displayName}</option>
+            )}
+            {orgs.map((o) => (
+              <option key={o.id} value={o.id}>{o.displayName}</option>
+            ))}
+          </select>
+          <p className="text-[11px] text-slate-400 mt-1">
+            Saving will sync the <code>worker_of</code> relationship to this organization.
+          </p>
         </div>
       )}
       <div>
@@ -298,7 +436,13 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
       </div>
       <div>
         <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Website</label>
-        <input value={form.website} onChange={(e) => setForm(f => ({ ...f, website: e.target.value }))} className={inputClass} />
+        <input value={form.website} onChange={(e) => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://..." className={inputClass} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <SocialEditField icon={<Linkedin className="h-3.5 w-3.5 text-[#0a66c2]" />} label="LinkedIn"   value={form.linkedinUrl}  onChange={(v) => setForm(f => ({ ...f, linkedinUrl: v }))}  />
+        <SocialEditField icon={<Facebook className="h-3.5 w-3.5 text-[#1877f2]" />} label="Facebook"   value={form.facebookUrl}  onChange={(v) => setForm(f => ({ ...f, facebookUrl: v }))}  />
+        <SocialEditField icon={<Twitter  className="h-3.5 w-3.5 text-[#1da1f2]" />} label="Twitter / X" value={form.twitterUrl}   onChange={(v) => setForm(f => ({ ...f, twitterUrl: v }))}   />
+        <SocialEditField icon={<Instagram className="h-3.5 w-3.5 text-[#e4405f]" />} label="Instagram"  value={form.instagramUrl} onChange={(v) => setForm(f => ({ ...f, instagramUrl: v }))} />
       </div>
       <div>
         <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Address</label>
@@ -661,6 +805,23 @@ function AddRelationshipModal({ partnerId, onClose }: { partnerId: number; onClo
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+function SocialEditField({ icon, label, value, onChange }: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div>
+      <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 flex items-center gap-1.5">
+        {icon}
+        {label}
+      </label>
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder="https://..." className={inputClass} />
     </div>
   );
 }

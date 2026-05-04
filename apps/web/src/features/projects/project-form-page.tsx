@@ -8,6 +8,7 @@ import { useQuery } from '@tanstack/react-query';
 import client from '@/api/client';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { useProject, useCreateProject, useUpdateProject, useProjectTypes } from '@/hooks/use-projects';
+import { usePermissions } from '@/hooks/use-permissions';
 import { notify } from '@/lib/notify';
 
 const projectSchema = z.object({
@@ -45,6 +46,12 @@ export function ProjectFormPage() {
   const navigate = useNavigate();
   const isEdit = !!id;
   const projectId = Number(id);
+
+  const { isAdmin } = usePermissions();
+  // Only admins can change the customer of an existing project. For non-admins
+  // the field stays locked (as before) — there are downstream invariants (BP
+  // relationships, billing) we don't want random PMs reshuffling.
+  const canChangeCustomer = !isEdit || isAdmin;
 
   const { data: project, isLoading: projectLoading } = useProject(isEdit ? projectId : 0);
   const { data: projectTypes } = useProjectTypes();
@@ -95,6 +102,11 @@ export function ProjectFormPage() {
       }),
   });
 
+  // Default end date is "open-ended" — projects without a known finish date
+  // get 9999-12-31, matching how SAP-style time-bounded relationships use a
+  // far-future sentinel. Users can pick a real date if they have one.
+  const DEFAULT_OPEN_END_DATE = '9999-12-31';
+
   const {
     register,
     handleSubmit,
@@ -103,7 +115,7 @@ export function ProjectFormPage() {
     formState: { errors },
   } = useForm<ProjectFormData>({
     resolver: zodResolver(projectSchema),
-    defaultValues: { status: 'draft' },
+    defaultValues: { status: 'draft', endDate: DEFAULT_OPEN_END_DATE },
   });
 
   // For edit-mode: look up the project's current customer (relationship table).
@@ -121,6 +133,8 @@ export function ProjectFormPage() {
 
   useEffect(() => {
     if (project && isEdit) {
+      // Slice ISO timestamps to YYYY-MM-DD so <input type="date"> accepts them.
+      const toDateInput = (v: string | null | undefined) => (v ? v.slice(0, 10) : '');
       reset({
         name: project.name,
         number: project.number ?? '',
@@ -130,8 +144,10 @@ export function ProjectFormPage() {
         customerOrgId: existingCustomerRel?.sourcePartnerId ?? existingCustomerRel?.source?.id ?? undefined,
         status: project.status,
         budget: project.budget ?? undefined,
-        startDate: project.startDate ?? '',
-        endDate: project.endDate ?? '',
+        startDate: toDateInput(project.startDate),
+        // For pre-existing projects with no end date, fall back to the
+        // far-future sentinel so the field is never empty.
+        endDate: toDateInput(project.endDate) || DEFAULT_OPEN_END_DATE,
         leaderId: (project as any).leaderId ?? undefined,
       });
       if ((project as any).members) {
@@ -159,12 +175,56 @@ export function ProjectFormPage() {
     const payload: any = { ...data, memberIds };
 
     if (isEdit) {
-      // Customer is locked in edit mode (separate operation handles reassignment).
-      // Strip it so the API doesn't get an unexpected key on its UpdateProjectDto.
+      // customerOrgId isn't a column on Project — it's expressed as a
+      // customer_of_project BP relationship. Strip it from the project PATCH;
+      // when the admin actually changed it, swap the relationship below.
+      const newCustomerOrgId = payload.customerOrgId;
       delete payload.customerOrgId;
+
+      const oldCustomerOrgId = existingCustomerRel?.sourcePartnerId
+        ?? existingCustomerRel?.source?.id
+        ?? null;
+      const customerChanged =
+        canChangeCustomer && newCustomerOrgId && newCustomerOrgId !== oldCustomerOrgId;
+
+      const swapCustomerIfNeeded = async () => {
+        if (!customerChanged) return;
+        // 1. End the current customer_of_project rel (soft-disconnect, preserves history).
+        if (existingCustomerRel?.id) {
+          await client.delete(`/business-partner-relationships/${existingCustomerRel.id}`)
+            .catch(() => undefined);
+        }
+        // 2. Look up the relationship type id and create a new active rel.
+        const relTypes = await client.get('/admin/partner-types/relationship-types')
+          .then((r) => r.data?.data ?? r.data ?? []);
+        const customerOfProject = (Array.isArray(relTypes) ? relTypes : []).find(
+          (rt: any) => rt.code === 'customer_of_project',
+        );
+        if (!customerOfProject) {
+          throw new Error('customer_of_project relationship type missing');
+        }
+        await client.post('/business-partner-relationships', {
+          sourcePartnerId: newCustomerOrgId,
+          targetType: 'project',
+          targetId: projectId,
+          relationshipTypeId: customerOfProject.id,
+          isPrimary: true,
+        });
+      };
+
       updateProject.mutate(
         { id: projectId, ...payload },
-        { onSuccess: () => navigate(`/projects/${projectId}`) },
+        {
+          onSuccess: async () => {
+            try {
+              await swapCustomerIfNeeded();
+              if (customerChanged) notify.success('Customer reassigned', { code: 'PRJ-CUSTOMER-200' });
+            } catch (err: any) {
+              notify.apiError(err, 'Project saved, but customer reassignment failed');
+            }
+            navigate(`/projects/${projectId}`);
+          },
+        },
       );
     } else {
       createProject.mutate(payload, {
@@ -319,8 +379,8 @@ export function ProjectFormPage() {
                   </label>
                   <select
                     {...register('customerOrgId')}
-                    disabled={isEdit}
-                    className={`${errors.customerOrgId ? inputErrorClass : inputClass} ${isEdit ? 'bg-slate-50 cursor-not-allowed' : ''}`}
+                    disabled={!canChangeCustomer}
+                    className={`${errors.customerOrgId ? inputErrorClass : inputClass} ${!canChangeCustomer ? 'bg-slate-50 cursor-not-allowed' : ''}`}
                   >
                     <option value="">Select customer organization</option>
                     {customers.map((c: any) => (
@@ -334,9 +394,13 @@ export function ProjectFormPage() {
                     <p className="mt-1 text-[12px] text-red-500">{errors.customerOrgId.message}</p>
                   )}
                   <p className="mt-1 text-[11px] text-slate-400">
-                    {isEdit
-                      ? 'Customer is locked after project creation. Contact an admin to reassign.'
-                      : <>Need a new customer? Add it from <a href="/partners?tab=organizations" className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">Partners → Organizations</a> first.</>}
+                    {!isEdit ? (
+                      <>Need a new customer? Add it from <a href="/partners?tab=organizations" className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">Partners → Organizations</a> first.</>
+                    ) : isAdmin ? (
+                      'Saving will end the previous customer-of-project relationship and start a new one (history is preserved).'
+                    ) : (
+                      'Customer is locked after project creation — only an admin can reassign it.'
+                    )}
                   </p>
                 </div>
 
@@ -389,6 +453,9 @@ export function ProjectFormPage() {
                 <div>
                   <label className={labelClass}>End Date</label>
                   <input {...register('endDate')} type="date" className={inputClass} />
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Defaults to <code>9999-12-31</code> (open-ended) — set a real date when the project has a known finish.
+                  </p>
                 </div>
               </div>
             </div>

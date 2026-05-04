@@ -134,6 +134,19 @@ describe('FilesService', () => {
       );
       expect(result.originalName).not.toMatch(/[\r\n\0]/);
     });
+
+    it('recovers Hebrew filenames mojibake-encoded by Multer (latin-1 -> UTF-8)', async () => {
+      // Simulate what Multer hands us: the bytes of a UTF-8 string, but
+      // already decoded as latin-1. Browsers send "שלום.pdf" as UTF-8 bytes;
+      // Multer treats them as latin-1, producing a garbled JS string.
+      const realName = 'שלום.pdf';
+      const mojibake = Buffer.from(realName, 'utf8').toString('latin1');
+      const result = await service.uploadFile(
+        fakeFile({ originalname: mojibake, mimetype: 'application/pdf' }),
+        'attachments',
+      );
+      expect(result.originalName).toBe(realName);
+    });
   });
 
   it('throws when no file provided', async () => {

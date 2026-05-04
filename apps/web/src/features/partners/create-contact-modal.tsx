@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { X, User as UserIcon, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, User as UserIcon, AlertCircle, Linkedin, Facebook, Twitter, Instagram } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
@@ -7,7 +7,6 @@ import { notify } from '@/lib/notify';
 
 const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
 
-interface RoleType { id: number; code: string; name: string }
 interface RelationshipType { id: number; code: string; name: string }
 interface Organization { id: number; displayName: string; companyName: string | null }
 
@@ -26,8 +25,12 @@ export function CreateContactModal({
     email: '',
     phone: '',
     mobile: '',
+    website: '',
+    linkedinUrl: '',
+    facebookUrl: '',
+    twitterUrl: '',
+    instagramUrl: '',
     notes: '',
-    roleCode: 'external_contact' as string,
     roleInContext: '',
   });
 
@@ -46,29 +49,16 @@ export function CreateContactModal({
     }),
   });
 
-  const { data: roleTypes = [] } = useQuery<RoleType[]>({
-    queryKey: ['partner-role-types'],
-    staleTime: 10 * 60 * 1000,
-    queryFn: () => client.get('/admin/partner-types/role-types').then((r) => r.data?.data ?? r.data ?? []),
-  });
-
   const { data: relTypes = [] } = useQuery<RelationshipType[]>({
     queryKey: ['partner-relationship-types'],
     staleTime: 10 * 60 * 1000,
     queryFn: () => client.get('/admin/partner-types/relationship-types').then((r) => r.data?.data ?? r.data ?? []),
   });
 
-  // Contact roles = anything except 'employee' (employees use Add Employee flow)
-  const contactRoles = useMemo(
-    () => roleTypes.filter((rt) => rt.code !== 'employee'),
-    [roleTypes],
-  );
-
   const create = useMutation({
     mutationFn: async () => {
-      const roleType = roleTypes.find((rt) => rt.code === form.roleCode);
-
-      // 1) Create the person BP with the chosen role
+      // 1) Create the person BP — no general role assigned. Their context
+      //    is defined entirely by their worker_of relationship.
       const created: any = await client.post('/business-partners', {
         partnerType: 'person',
         firstName: form.firstName.trim() || undefined,
@@ -76,22 +66,27 @@ export function CreateContactModal({
         email: form.email.trim() || undefined,
         phone: form.phone.trim() || undefined,
         mobile: form.mobile.trim() || undefined,
+        website: form.website.trim() || undefined,
+        linkedinUrl: form.linkedinUrl.trim() || undefined,
+        facebookUrl: form.facebookUrl.trim() || undefined,
+        twitterUrl: form.twitterUrl.trim() || undefined,
+        instagramUrl: form.instagramUrl.trim() || undefined,
         notes: form.notes.trim() || undefined,
-        initialRoleTypeIds: roleType ? [roleType.id] : undefined,
       }).then((r) => r.data?.data ?? r.data);
 
-      // 2) Wire the employee_of relationship to the chosen organization
+      // 2) Wire the worker_of relationship to the chosen organization,
+      //    so the contact is correctly classified throughout the system.
       if (form.employerOrgId) {
-        const employeeOf = relTypes.find((rt) => rt.code === 'employee_of');
-        if (employeeOf) {
+        const workerOf = relTypes.find((rt) => rt.code === 'worker_of');
+        if (workerOf) {
           await client.post('/business-partner-relationships', {
             sourcePartnerId: created.id,
             targetType: 'organization',
             targetId: Number(form.employerOrgId),
-            relationshipTypeId: employeeOf.id,
+            relationshipTypeId: workerOf.id,
             roleInContext: form.roleInContext.trim() || undefined,
             isPrimary: true,
-          }).catch(() => undefined); // best-effort
+          }).catch(() => undefined);
         }
       }
 
@@ -116,8 +111,8 @@ export function CreateContactModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[520px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+      <div className="bg-white rounded-2xl shadow-2xl w-[560px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 sticky top-0 bg-white z-10">
           <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
             <UserIcon className="h-4 w-4 text-blue-600" />
             Add Contact
@@ -127,9 +122,9 @@ export function CreateContactModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+        <form onSubmit={handleSubmit} className="p-5 space-y-5">
           <p className="text-[12px] text-slate-500">
-            An external person — typically someone working at one of your organizations (a customer's project lead, a supplier rep, an external consultant).
+            A person who works at one of your customer or supplier organizations. The classification (customer-side vs supplier-side) is derived from the employer you pick — you don't tag it manually.
           </p>
 
           {orgs.length === 0 && (
@@ -139,6 +134,7 @@ export function CreateContactModal({
             </div>
           )}
 
+          {/* Identity */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">First Name *</label>
@@ -150,6 +146,7 @@ export function CreateContactModal({
             </div>
           </div>
 
+          {/* Employer + role-in-context */}
           <div>
             <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Employer (organization)</label>
             <select value={form.employerOrgId} onChange={(e) => setForm(f => ({ ...f, employerOrgId: e.target.value }))} className={inputClass}>
@@ -158,51 +155,61 @@ export function CreateContactModal({
                 <option key={o.id} value={o.id}>{o.displayName}</option>
               ))}
             </select>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Creates a <code>worker_of</code> relationship — the contact's "context" is defined here.
+            </p>
           </div>
-
           {form.employerOrgId && (
             <div>
               <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Role at the organization (optional)</label>
               <input
                 value={form.roleInContext}
                 onChange={(e) => setForm(f => ({ ...f, roleInContext: e.target.value }))}
-                placeholder='e.g. "Operations Manager"'
+                placeholder='e.g. "Operations Manager", "Buyer"'
                 className={inputClass}
               />
-              <p className="text-[11px] text-slate-400 mt-1">
-                Stored as the role-in-context on the employee_of relationship.
-              </p>
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2">
+          {/* Contact details */}
+          <div className="space-y-3">
+            <h3 className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Contact details</h3>
+            <div>
               <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Email</label>
               <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} className={inputClass} />
             </div>
-            <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Phone</label>
-              <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className={inputClass} />
-            </div>
-            <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Mobile</label>
-              <input value={form.mobile} onChange={(e) => setForm(f => ({ ...f, mobile: e.target.value }))} className={inputClass} />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Phone</label>
+                <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className={inputClass} />
+              </div>
+              <div>
+                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Mobile</label>
+                <input value={form.mobile} onChange={(e) => setForm(f => ({ ...f, mobile: e.target.value }))} className={inputClass} />
+              </div>
             </div>
           </div>
 
-          <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Type of contact</label>
-            <select value={form.roleCode} onChange={(e) => setForm(f => ({ ...f, roleCode: e.target.value }))} className={inputClass}>
-              {contactRoles.map((rt) => <option key={rt.id} value={rt.code}>{rt.name}</option>)}
-            </select>
+          {/* Online presence */}
+          <div className="space-y-3">
+            <h3 className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Online presence</h3>
+            <SocialField icon={<Linkedin className="h-4 w-4 text-[#0a66c2]" />} label="LinkedIn"  value={form.linkedinUrl}  onChange={(v) => setForm(f => ({ ...f, linkedinUrl: v }))}  placeholder="https://linkedin.com/in/..." />
+            <SocialField icon={<Facebook className="h-4 w-4 text-[#1877f2]" />} label="Facebook"  value={form.facebookUrl}  onChange={(v) => setForm(f => ({ ...f, facebookUrl: v }))}  placeholder="https://facebook.com/..." />
+            <SocialField icon={<Twitter  className="h-4 w-4 text-[#1da1f2]" />} label="Twitter / X" value={form.twitterUrl}   onChange={(v) => setForm(f => ({ ...f, twitterUrl: v }))}   placeholder="https://x.com/..." />
+            <SocialField icon={<Instagram className="h-4 w-4 text-[#e4405f]" />} label="Instagram" value={form.instagramUrl} onChange={(v) => setForm(f => ({ ...f, instagramUrl: v }))} placeholder="https://instagram.com/..." />
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Website</label>
+              <input value={form.website} onChange={(e) => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://example.com" className={inputClass} />
+            </div>
           </div>
 
+          {/* Notes */}
           <div>
             <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Notes</label>
             <textarea value={form.notes} onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))} rows={3} className={cn(inputClass, 'resize-none')} />
           </div>
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 sticky bottom-0 bg-white">
             <button type="button" onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
             <button type="submit" disabled={create.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
               {create.isPending ? 'Creating...' : 'Create Contact'}
@@ -210,6 +217,24 @@ export function CreateContactModal({
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+function SocialField({ icon, label, value, onChange, placeholder }: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+}) {
+  return (
+    <div>
+      <label className="text-[13px] font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
+        {icon}
+        {label}
+      </label>
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={inputClass} />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { Clock, User as UserIcon, GripVertical, CalendarClock, ListChecks, Colum
 import { DndContext, DragOverlay, closestCorners, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, useDraggable, useDroppable } from '@dnd-kit/core';
 import { PageHeader } from '@/components/shared/page-header';
 import { TaskDrawer } from './task-drawer';
+import { TimeEntryForm } from '@/features/time/time-entry-form';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { tasksApi } from '@/api/tasks.api';
@@ -506,8 +507,6 @@ export function MyTasksKanbanPage() {
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
   const [timeLogTask, setTimeLogTask] = useState<{ id: number; name: string; targetStatus: string } | null>(null);
-  const [timeLogHours, setTimeLogHours] = useState('');
-  const [timeLogNote, setTimeLogNote] = useState('');
 
   // Filters
   const [filterProjectId, setFilterProjectId] = useState<number | null>(null);
@@ -628,27 +627,6 @@ export function MyTasksKanbanPage() {
     await moveTask(taskId, targetCol.id);
   };
 
-  const handleTimeLogAndComplete = async () => {
-    if (!timeLogTask || !timeLogHours || Number(timeLogHours) <= 0) return;
-    try {
-      // Log time first
-      await timeApi.createEntry({
-        taskId: timeLogTask.id,
-        date: new Date().toISOString().split('T')[0],
-        minutes: Math.round(Number(timeLogHours) * 60),
-        note: timeLogNote.trim() || undefined,
-      });
-      // Then move to completed
-      await moveTask(timeLogTask.id, timeLogTask.targetStatus);
-      queryClient.invalidateQueries({ queryKey: queryKeys.time.all });
-      setTimeLogTask(null);
-      setTimeLogHours('');
-      setTimeLogNote('');
-    } catch (err: any) {
-      notify.apiError(err, 'Failed to complete task');
-    }
-  };
-
   const draggedTask = activeDragId ? tasks.find((t: any) => `task-${t.id}` === activeDragId) : null;
 
   return (
@@ -752,6 +730,8 @@ export function MyTasksKanbanPage() {
       )}
 
       {/* Time Log Required for Done — Modal */}
+      {/* Reuses the same <TimeEntryForm> as the task card, so users get
+          the same date + start/end-time fields everywhere they log hours. */}
       {timeLogTask && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="w-full max-w-sm rounded-[14px] bg-white shadow-2xl border border-slate-200 p-5">
@@ -759,30 +739,26 @@ export function MyTasksKanbanPage() {
             <p className="text-[12px] text-slate-500 mb-4">
               Please log hours worked on "<strong>{timeLogTask.name}</strong>" before marking as Done.
             </p>
-            <div className="space-y-3">
-              <div>
-                <label className="text-[11px] font-semibold text-slate-600 mb-1 block">Hours worked *</label>
-                <input type="number" step="0.25" min="0.25" value={timeLogHours} onChange={(e) => setTimeLogHours(e.target.value)}
-                  placeholder="e.g. 4.5" autoFocus
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
-              </div>
-              <div>
-                <label className="text-[11px] font-semibold text-slate-600 mb-1 block">Note (optional)</label>
-                <input type="text" value={timeLogNote} onChange={(e) => setTimeLogNote(e.target.value)}
-                  placeholder="What was done..."
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
-              </div>
-              <div className="flex justify-end gap-2 pt-1">
-                <button onClick={() => { setTimeLogTask(null); setTimeLogHours(''); setTimeLogNote(''); }}
-                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50">
-                  Cancel
-                </button>
-                <button onClick={handleTimeLogAndComplete}
-                  disabled={!timeLogHours || Number(timeLogHours) <= 0}
-                  className="rounded-lg bg-emerald-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
-                  Log & Complete
-                </button>
-              </div>
+            <TimeEntryForm
+              taskId={timeLogTask.id}
+              variant="full"
+              onLogged={async () => {
+                try {
+                  await moveTask(timeLogTask.id, timeLogTask.targetStatus);
+                } catch (err: any) {
+                  notify.apiError(err, 'Time logged, but moving task to Done failed');
+                } finally {
+                  setTimeLogTask(null);
+                }
+              }}
+            />
+            <div className="mt-3 flex justify-end">
+              <button
+                onClick={() => setTimeLogTask(null)}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>

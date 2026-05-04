@@ -91,8 +91,14 @@ export const tasksApi = {
     client.post('/tasks/reorder', { items }).then((r) => r.data),
 
   // Comments
+  // Unwrap the API envelope (`{ data, meta }`) so callers always receive a
+  // plain array. Without this, `comments.filter` crashes in task-discussion
+  // because `r.data` is the envelope, not the array.
   getComments: (taskId: number) =>
-    client.get(`/tasks/${taskId}/comments`).then((r) => r.data),
+    client.get(`/tasks/${taskId}/comments`).then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : (d?.data ?? []);
+    }),
 
   addComment: (taskId: number, payload: { content: string; parentId?: number }) =>
     client.post(`/tasks/${taskId}/comments`, payload).then((r) => r.data),

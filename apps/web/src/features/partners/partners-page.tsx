@@ -205,7 +205,7 @@ export function PartnersPage() {
       ) : tab === 'organizations' ? (
         <OrganizationsList partners={partners} onSelect={setSelectedId} />
       ) : (
-        <ContactsList partners={partners} onSelect={setSelectedId} />
+        <ContactsListLoader partners={partners} onSelect={setSelectedId} />
       )}
 
       {showAdd && tab === 'organizations' && (
@@ -275,7 +275,39 @@ function OrganizationsList({ partners, onSelect }: { partners: BusinessPartner[]
   );
 }
 
-function ContactsList({ partners, onSelect }: { partners: BusinessPartner[]; onSelect: (id: number) => void }) {
+function ContactsListLoader({ partners, onSelect }: { partners: BusinessPartner[]; onSelect: (id: number) => void }) {
+  // Pull the org list once so we can resolve worker_of -> employer display name.
+  // Cached for 5 minutes; opening a contact drawer reuses the same data.
+  const { data: orgsData } = useQuery({
+    queryKey: ['business-partners', 'organizations', 'all'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () =>
+      client
+        .get('/business-partners', { params: { partnerType: 'organization', perPage: 500 } })
+        .then((r) => r.data?.data ?? r.data),
+  });
+  const orgs: { id: number; displayName: string }[] = useMemo(() => {
+    const raw = orgsData?.data ?? orgsData ?? [];
+    return Array.isArray(raw) ? raw : [];
+  }, [orgsData]);
+  const orgNameById = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const o of orgs) m.set(o.id, o.displayName);
+    return m;
+  }, [orgs]);
+
+  return <ContactsList partners={partners} onSelect={onSelect} orgNameById={orgNameById} />;
+}
+
+function ContactsList({
+  partners,
+  onSelect,
+  orgNameById,
+}: {
+  partners: BusinessPartner[];
+  onSelect: (id: number) => void;
+  orgNameById: Map<number, string>;
+}) {
   return (
     <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
       <table className="w-full text-sm">
@@ -290,21 +322,32 @@ function ContactsList({ partners, onSelect }: { partners: BusinessPartner[]; onS
           </tr>
         </thead>
         <tbody>
-          {partners.map((bp) => (
-            <tr key={bp.id} onClick={() => onSelect(bp.id)} className="border-t border-slate-100 hover:bg-blue-50/30 cursor-pointer">
-              <td className="px-4 py-2.5">
-                <div className="flex items-center gap-3">
-                  <UserAvatar firstName={bp.firstName ?? ''} lastName={bp.lastName ?? ''} avatarUrl={null} size="sm" />
-                  <p className="font-medium text-slate-800 truncate">{bp.displayName}</p>
-                </div>
-              </td>
-              <td className="px-4 py-2.5 text-slate-600 text-[12px]">{bp.companyName || '—'}</td>
-              <td className="px-4 py-2.5"><RoleChips roles={bp.roles} /></td>
-              <td className="px-4 py-2.5 text-slate-600 text-[12px]">{bp.email || '—'}</td>
-              <td className="px-4 py-2.5 text-slate-600 text-[12px]">{bp.phone || bp.mobile || '—'}</td>
-              <td className="px-4 py-2.5 text-center"><StatusBadge status={bp.status} /></td>
-            </tr>
-          ))}
+          {partners.map((bp) => {
+            // Employer is whichever org the contact has an active worker_of relationship with.
+            // Fallback to the legacy companyName field for older rows that pre-date worker_of.
+            const workerOf = bp.outgoingRelationships?.find(
+              (r) => r.relationshipType?.code === 'worker_of' && r.targetType === 'organization',
+            );
+            const employerName = workerOf
+              ? (orgNameById.get(workerOf.targetId) ?? `Organization #${workerOf.targetId}`)
+              : (bp.companyName ?? null);
+
+            return (
+              <tr key={bp.id} onClick={() => onSelect(bp.id)} className="border-t border-slate-100 hover:bg-blue-50/30 cursor-pointer">
+                <td className="px-4 py-2.5">
+                  <div className="flex items-center gap-3">
+                    <UserAvatar firstName={bp.firstName ?? ''} lastName={bp.lastName ?? ''} avatarUrl={null} size="sm" />
+                    <p className="font-medium text-slate-800 truncate">{bp.displayName}</p>
+                  </div>
+                </td>
+                <td className="px-4 py-2.5 text-slate-600 text-[12px]">{employerName || '—'}</td>
+                <td className="px-4 py-2.5"><RoleChips roles={bp.roles} /></td>
+                <td className="px-4 py-2.5 text-slate-600 text-[12px]">{bp.email || '—'}</td>
+                <td className="px-4 py-2.5 text-slate-600 text-[12px]">{bp.phone || bp.mobile || '—'}</td>
+                <td className="px-4 py-2.5 text-center"><StatusBadge status={bp.status} /></td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

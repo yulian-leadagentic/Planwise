@@ -172,12 +172,13 @@ function CatalogPickerModal({
                       className={`border-b border-border last:border-0 cursor-pointer ${isSelected ? 'bg-brand-50' : 'hover:bg-muted/30'} ${alreadyExists ? 'opacity-50' : ''}`}
                       onClick={() => !alreadyExists && toggleTask(task.id)}
                     >
-                      <td className="px-3 py-2">
+                      {/* Checkbox cell — stop click bubbling so the row's onClick doesn't double-toggle. */}
+                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={isSelected}
                           disabled={alreadyExists}
-                          onChange={() => toggleTask(task.id)}
+                          onChange={() => !alreadyExists && toggleTask(task.id)}
                           className="h-4 w-4 rounded border-gray-300"
                         />
                       </td>

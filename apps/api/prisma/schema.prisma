@@ -972,6 +972,9 @@ model Task {
   status        TaskStatus   @default(not_started)
   priority      TaskPriority @default(medium)
   completionPct Int          @default(0) @map("completion_pct")
+  // Estimated start date — forecast set during planning, separate from
+  // startDate (which is the *actual* date work began).
+  estimatedStartDate DateTime? @map("estimated_start_date") @db.Date
   startDate     DateTime?    @map("start_date") @db.Date
   endDate       DateTime?    @map("end_date") @db.Date
   sortOrder     Int          @default(0) @map("sort_order")
@@ -1150,6 +1153,12 @@ model TemplateZone {
   code                   String?  @db.VarChar(50)
   isTypical              Boolean  @default(false) @map("is_typical")
   typicalCount           Int      @default(1) @map("typical_count")
+  // Instance count — at apply time, instantiate this template-zone N times
+  // (each becoming a separate, individually-renameable zone in the project).
+  // Distinct from `typicalCount`, which marks a single zone in the project
+  // as "typical" so the PM can later explode it manually. Default 1 = current
+  // single-instance behaviour.
+  instanceCount          Int      @default(1) @map("instance_count")
   sortOrder              Int      @default(0) @map("sort_order")
   linkedTaskTemplateId   Int?     @map("linked_task_template_id")
   referencedTemplateId   Int?     @map("referenced_template_id")
@@ -1273,6 +1282,10 @@ model BusinessPartner {
   mobile       String?        @db.VarChar(50)
   address      String?        @db.VarChar(500)
   website      String?        @db.VarChar(255)
+  linkedinUrl  String?        @map("linkedin_url")  @db.VarChar(500)
+  facebookUrl  String?        @map("facebook_url")  @db.VarChar(500)
+  twitterUrl   String?        @map("twitter_url")   @db.VarChar(500)
+  instagramUrl String?        @map("instagram_url") @db.VarChar(500)
   // Meta
   status       String         @default("active") @db.VarChar(20)
   source       PartnerSource  @default(manual)

@@ -23,6 +23,22 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
+/**
+ * Build an RFC 5987-compliant Content-Disposition header. Browsers fall back
+ * to the ASCII `filename` if they can't read `filename*`; modern browsers
+ * use `filename*` and decode UTF-8 percent-escapes back to the real chars.
+ */
+function contentDispositionAttachment(name: string): string {
+  // ASCII fallback — strip non-ASCII so the legacy header is always valid,
+  // and quote-escape anything that would break the quoted-string syntax.
+  const asciiFallback = name
+    .replace(/[^\x20-\x7E]/g, '_')
+    .replace(/["\\]/g, '_') || 'download';
+  // RFC 5987: filename*=UTF-8''<percent-encoded>
+  const utf8Encoded = encodeURIComponent(name);
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
+}
+
 @ApiTags('Project Files')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -92,7 +108,9 @@ export class ProjectFilesController {
     const { path, file } = await this.service.resolveUploadPath(projectId, fileId);
     res.set({
       'Content-Type': file.mimeType || 'application/octet-stream',
-      'Content-Disposition': `attachment; filename="${encodeURIComponent(file.name)}"`,
+      // RFC 5987: send both an ASCII fallback and a UTF-8 filename* so
+      // browsers preserve Hebrew / Cyrillic / Asian characters on download.
+      'Content-Disposition': contentDispositionAttachment(file.name),
     });
     return new StreamableFile(fs.createReadStream(path));
   }
