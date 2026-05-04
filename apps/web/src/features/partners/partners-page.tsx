@@ -286,7 +286,7 @@ function ContactsListLoader({ partners, onSelect }: { partners: BusinessPartner[
         .get('/business-partners', { params: { partnerType: 'organization', perPage: 500 } })
         .then((r) => r.data?.data ?? r.data),
   });
-  const orgs: { id: number; displayName: string }[] = useMemo(() => {
+  const orgs: { id: number; displayName: string; companyName?: string | null }[] = useMemo(() => {
     const raw = orgsData?.data ?? orgsData ?? [];
     return Array.isArray(raw) ? raw : [];
   }, [orgsData]);
@@ -296,7 +296,34 @@ function ContactsListLoader({ partners, onSelect }: { partners: BusinessPartner[
     return m;
   }, [orgs]);
 
-  return <ContactsList partners={partners} onSelect={onSelect} orgNameById={orgNameById} />;
+  // The seeded "Internal" org represents your own company. People who
+  // worker_of the Internal org are *internal employees*, not external
+  // contacts — managing them belongs in /people, not in the Partners
+  // Contacts list.
+  const internalOrgIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const o of orgs) {
+      const isInternal = (o.companyName ?? '').toLowerCase() === 'internal'
+        || (o.displayName ?? '').toLowerCase() === 'internal';
+      if (isInternal) ids.add(o.id);
+    }
+    return ids;
+  }, [orgs]);
+
+  const externalContacts = useMemo(() => {
+    if (internalOrgIds.size === 0) return partners;
+    return partners.filter((bp) => {
+      const workerOf = bp.outgoingRelationships?.find(
+        (r: any) => r.relationshipType?.code === 'worker_of' && r.targetType === 'organization',
+      );
+      // Drop only the contacts whose ONLY/primary employer is Internal.
+      // Contacts with no worker_of yet (or with an external one) stay visible.
+      if (workerOf && internalOrgIds.has(workerOf.targetId)) return false;
+      return true;
+    });
+  }, [partners, internalOrgIds]);
+
+  return <ContactsList partners={externalContacts} onSelect={onSelect} orgNameById={orgNameById} />;
 }
 
 function ContactsList({

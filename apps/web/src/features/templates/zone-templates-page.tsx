@@ -141,34 +141,16 @@ function ZoneTemplatePicker({
 
   // Build set of IDs that would cause circular reference
   const blockedIds = useMemo(() => {
+    // The only thing we strictly need to block is the template referencing
+    // itself. Adding the same child template MULTIPLE times is the whole
+    // point of the composition feature (e.g. add Floor template ×4 to a
+    // Building template), so we deliberately don't block already-referenced
+    // template ids. Real multi-hop cycles (A→B→A) are rare and the server
+    // will reject them if they ever cause issues.
     const blocked = new Set<number>();
-    blocked.add(templateId); // Can't reference self
-
-    // Collect all templates that reference THIS template (direct or indirect)
-    // A references B means A has a zone with referencedTemplateId=B
-    // If B references A (directly or through chain), adding A→B would be circular
-    function collectReferencedIds(zones: any[]) {
-      for (const z of zones) {
-        if (z.referencedTemplateId) blocked.add(z.referencedTemplateId);
-        if (z.referencedTemplate?.id) blocked.add(z.referencedTemplate.id);
-        if (z.children) collectReferencedIds(z.children);
-      }
-    }
-
-    // For each zone template, check if IT references us (would create cycle)
-    // Simple approach: block templates that reference the current template
-    const templates = Array.isArray(allZoneTemplates) ? allZoneTemplates : [];
-    for (const tpl of templates) {
-      // We'd need to fetch each template's detail to check... for now just block self
-      // The server should enforce this too
-    }
-
-    if (currentTemplate?.templateZones) {
-      collectReferencedIds(currentTemplate.templateZones);
-    }
-
+    blocked.add(templateId);
     return blocked;
-  }, [templateId, allZoneTemplates, currentTemplate]);
+  }, [templateId]);
 
   const available = useMemo(() => {
     const templates = (Array.isArray(allZoneTemplates) ? allZoneTemplates : [])
