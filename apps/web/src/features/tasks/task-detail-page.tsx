@@ -556,6 +556,15 @@ export function TaskDetailPage() {
               />
             </SidebarRow>
 
+            {/* Planning forecast — when the task is *expected* to begin. */}
+            <SidebarRow label="Est. Start">
+              <EditableDate
+                value={(task as any).estimatedStartDate}
+                onSave={(v) => patch({ estimatedStartDate: v })}
+              />
+            </SidebarRow>
+
+            {/* Actual start — when work physically began. */}
             <SidebarRow label="Start">
               <EditableDate
                 value={task.startDate}

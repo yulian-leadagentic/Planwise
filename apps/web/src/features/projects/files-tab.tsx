@@ -1,8 +1,28 @@
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  FileText, Link as LinkIcon, Upload, Trash2, Download, Copy, Check, Plus, ExternalLink, X,
+  FileText, Link as LinkIcon, Upload, Trash2, Download, Copy, Check, Plus, ExternalLink, X, HardDrive,
 } from 'lucide-react';
+
+// Recognise common cloud-storage URLs so we can show a friendlier icon /
+// label instead of a generic "Link" pill. Pure heuristics — host-only.
+type LinkProvider = 'google-drive' | 'dropbox' | 'onedrive' | 'sharepoint' | 'generic';
+function detectLinkProvider(url: string): LinkProvider {
+  if (!url) return 'generic';
+  const u = url.toLowerCase();
+  if (u.includes('drive.google.com') || u.includes('docs.google.com') || u.includes('sheets.google.com') || u.includes('slides.google.com')) return 'google-drive';
+  if (u.includes('dropbox.com')) return 'dropbox';
+  if (u.includes('1drv.ms') || u.includes('onedrive.live.com')) return 'onedrive';
+  if (u.includes('sharepoint.com')) return 'sharepoint';
+  return 'generic';
+}
+const PROVIDER_LABEL: Record<LinkProvider, string> = {
+  'google-drive': 'Google Drive',
+  'dropbox': 'Dropbox',
+  'onedrive': 'OneDrive',
+  'sharepoint': 'SharePoint',
+  'generic': 'Link',
+};
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -160,15 +180,22 @@ export function FilesTab({ projectId }: { projectId: number }) {
               </tr>
             </thead>
             <tbody>
-              {files.map((f) => (
+              {files.map((f) => {
+                const provider: LinkProvider = f.kind === 'link' ? detectLinkProvider(f.url) : 'generic';
+                const isCloudLink = provider !== 'generic';
+                return (
                 <tr key={f.id} className="border-t border-slate-100 hover:bg-slate-50/40">
                   <td className="px-4 py-3">
                     <div className="flex items-start gap-3">
                       <div className={cn(
                         'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                        f.kind === 'upload' ? 'bg-blue-50 text-blue-600' : 'bg-violet-50 text-violet-600',
+                        f.kind === 'upload' ? 'bg-blue-50 text-blue-600'
+                          : provider === 'google-drive' ? 'bg-yellow-50 text-yellow-700'
+                          : 'bg-violet-50 text-violet-600',
                       )}>
-                        {f.kind === 'upload' ? <FileText className="h-4 w-4" /> : <LinkIcon className="h-4 w-4" />}
+                        {f.kind === 'upload' ? <FileText className="h-4 w-4" /> :
+                          isCloudLink ? <HardDrive className="h-4 w-4" /> :
+                          <LinkIcon className="h-4 w-4" />}
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="font-medium text-slate-800 truncate">{f.name}</p>
@@ -189,9 +216,11 @@ export function FilesTab({ projectId }: { projectId: number }) {
                   <td className="px-4 py-3">
                     <span className={cn(
                       'rounded-full px-2 py-0.5 text-[11px] font-semibold',
-                      f.kind === 'upload' ? 'bg-blue-50 text-blue-700' : 'bg-violet-50 text-violet-700',
+                      f.kind === 'upload' ? 'bg-blue-50 text-blue-700'
+                        : provider === 'google-drive' ? 'bg-yellow-50 text-yellow-700'
+                        : 'bg-violet-50 text-violet-700',
                     )}>
-                      {f.kind === 'upload' ? 'Upload' : 'Link'}
+                      {f.kind === 'upload' ? 'Upload' : PROVIDER_LABEL[provider]}
                     </span>
                   </td>
                   <td className="px-4 py-3">
@@ -252,7 +281,8 @@ export function FilesTab({ projectId }: { projectId: number }) {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -314,7 +344,11 @@ function AddLinkModal({ projectId, onClose }: { projectId: number; onClose: () =
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <p className="text-[12px] text-slate-500">
-            Reference a file on a shared drive or network location. Examples: <span className="font-mono">\\server\share\file.docx</span>, <span className="font-mono">https://example.com/doc.pdf</span>, <span className="font-mono">file:///C:/Path/file.pdf</span>
+            Reference a file on a shared drive, network location, or cloud service. Examples:
+            <span className="font-mono"> \\server\share\file.docx</span>,
+            <span className="font-mono"> https://drive.google.com/file/d/...</span>,
+            <span className="font-mono"> https://example.com/doc.pdf</span>,
+            <span className="font-mono"> file:///C:/Path/file.pdf</span>
           </p>
           <div>
             <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Display Name *</label>
@@ -331,9 +365,18 @@ function AddLinkModal({ projectId, onClose }: { projectId: number; onClose: () =
             <input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="\\server\share\plans\site-v2.dwg"
+              placeholder="https://drive.google.com/file/d/...   or   \\server\share\file.docx"
               className={cn(inputClass, 'font-mono text-[12px]')}
             />
+            {url.trim() && (() => {
+              const provider = detectLinkProvider(url.trim());
+              if (provider === 'generic') return null;
+              return (
+                <p className="mt-1 text-[11px] text-slate-500 flex items-center gap-1">
+                  <HardDrive className="h-3 w-3" /> Detected as <span className="font-semibold">{PROVIDER_LABEL[provider]}</span>
+                </p>
+              );
+            })()}
           </div>
           <div>
             <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Notes (optional)</label>

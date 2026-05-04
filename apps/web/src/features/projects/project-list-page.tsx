@@ -26,10 +26,25 @@ export function ProjectListPage() {
   const debouncedSearch = useDebounce(projectSearch, 300);
   const [chatProjectId, setChatProjectId] = useState<number | null>(null);
   const [chatProjectName, setChatProjectName] = useState('');
+  // "Filter by team member" — empty = no filter.
+  const [memberFilter, setMemberFilter] = useState<number | null>(null);
+
+  // Pull active users for the member dropdown (cached).
+  const { data: activeUsers = [] } = useQuery({
+    queryKey: ['users', 'active'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () =>
+      client.get('/users?isActive=true').then((r) => {
+        const d = r.data?.data ?? r.data;
+        const list = Array.isArray(d) ? d : d?.data ?? [];
+        return list as Array<{ id: number; firstName: string; lastName: string }>;
+      }),
+  });
 
   const { data, isLoading } = useProjects({
     search: debouncedSearch || undefined,
     status: projectStatus.length ? projectStatus[0] : undefined,
+    memberId: memberFilter ?? undefined,
     perPage: 100,
   });
 
@@ -84,6 +99,27 @@ export function ProjectListPage() {
           <option value="completed">Completed</option>
           <option value="cancelled">Cancelled</option>
         </select>
+        {/* Filter by team member — matches projects where the user is leader OR an active member. */}
+        <select
+          value={memberFilter ?? ''}
+          onChange={(e) => setMemberFilter(e.target.value ? Number(e.target.value) : null)}
+          className="rounded-lg border border-slate-200 px-3 py-2 text-sm max-w-[200px]"
+          title="Filter by team member"
+        >
+          <option value="">All Team Members</option>
+          {activeUsers.map((u) => (
+            <option key={u.id} value={u.id}>{u.firstName} {u.lastName}</option>
+          ))}
+        </select>
+        {memberFilter !== null && (
+          <button
+            type="button"
+            onClick={() => setMemberFilter(null)}
+            className="text-[12px] text-slate-500 hover:text-slate-700 underline"
+          >
+            Clear
+          </button>
+        )}
       </div>
 
       {/* Project Table */}

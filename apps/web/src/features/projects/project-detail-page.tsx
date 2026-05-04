@@ -4,7 +4,6 @@ import { useState, useMemo, useEffect, lazy, Suspense } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ProjectDiscussion } from '@/features/messaging/project-discussion';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
-import { WorkloadPanel } from './workload-panel';
 import { ActivityFeed } from './activity-feed';
 import { FilesTab } from './files-tab';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
@@ -18,7 +17,7 @@ import { notify } from '@/lib/notify';
 import client from '@/api/client';
 import { formatDate } from '@/lib/date-utils';
 
-type Tab = 'planning' | 'kanban' | 'workload' | 'team' | 'files' | 'discussion' | 'activity';
+type Tab = 'planning' | 'kanban' | 'team' | 'files' | 'discussion' | 'activity';
 
 interface User {
   id: number;
@@ -67,10 +66,12 @@ export function ProjectDetailPage() {
   const endLabel = formatShortDate(project.endDate);
   const timeline = startLabel && endLabel ? `${startLabel} \u2014 ${endLabel}` : startLabel || endLabel || null;
 
+  // Per-project Workload was removed in favour of the global Operations
+  // dashboard (/operations), which shows workload across all projects in one
+  // place. Per-project workload was redundant with the operations view.
   const tabs: { key: Tab; label: string }[] = [
     { key: 'planning', label: 'Planning' },
     { key: 'kanban', label: 'Kanban' },
-    { key: 'workload', label: 'Workload' },
     { key: 'team', label: 'Team' },
     { key: 'files', label: 'Files' },
     { key: 'discussion', label: 'Discussion' },
@@ -211,7 +212,6 @@ export function ProjectDetailPage() {
       <div className="px-5 py-6">
         {tab === 'planning' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading planning...</div>}><PlanningTab projectId={projectId} /></Suspense>}
         {tab === 'kanban' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading board...</div>}><KanbanBoard projectId={projectId} /></Suspense>}
-        {tab === 'workload' && <WorkloadPanel projectId={projectId} />}
         {tab === 'files' && <FilesTab projectId={projectId} />}
         {tab === 'activity' && <ActivityFeed projectId={projectId} />}
         {tab === 'discussion' && (

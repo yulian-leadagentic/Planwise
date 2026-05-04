@@ -5,6 +5,8 @@ export interface ProjectQuery extends PaginationQuery {
   status?: string;
   search?: string;
   isArchived?: boolean;
+  /** Filter to projects where this user is leader OR active member. */
+  memberId?: number;
 }
 
 export interface CreateProjectPayload {

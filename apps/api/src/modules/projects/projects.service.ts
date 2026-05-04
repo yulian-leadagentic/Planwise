@@ -123,6 +123,20 @@ export class ProjectsService {
       where.isArchived = query.isArchived;
     }
 
+    // Member filter — match projects where the user is either the leader
+    // OR an active member of the team. Combines with any existing AND/OR.
+    if (query.memberId) {
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+        {
+          OR: [
+            { leaderId: query.memberId },
+            { members: { some: { userId: query.memberId } } },
+          ],
+        },
+      ];
+    }
+
     const [data, total] = await Promise.all([
       this.prisma.project.findMany({
         where,

@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, IsNumber, MaxLength, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, IsNumber, IsDateString, MaxLength, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateTaskDto {
@@ -47,4 +47,10 @@ export class CreateTaskDto {
   @IsOptional()
   @IsString()
   priority?: string;
+
+  /** Planning forecast — when work is *expected* to begin. */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  estimatedStartDate?: string;
 }

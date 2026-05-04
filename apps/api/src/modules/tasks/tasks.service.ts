@@ -49,6 +49,8 @@ export class TasksService {
         budgetAmount: dto.budgetAmount,
         phaseId: dto.phaseId,
         priority: dto.priority as any,
+        // Planning forecast — distinct from `startDate` (actual start).
+        estimatedStartDate: dto.estimatedStartDate ? new Date(dto.estimatedStartDate) : null,
         createdBy: userId,
       },
       include: {
@@ -223,7 +225,12 @@ export class TasksService {
   async update(id: number, dto: UpdateTaskDto, userId?: number) {
     const existing = await this.findOne(id);
 
-    const { startDate, endDate, ...rest } = dto;
+    // Pull date fields out so we can either set them, clear them, or leave
+    // them untouched depending on whether the caller sent each key.
+    // (Empty string / null → null; missing → leave alone.)
+    const { startDate, endDate, estimatedStartDate, ...rest } = dto;
+    const dateOrNull = (v: string | null | undefined) =>
+      v === undefined ? undefined : (v ? new Date(v) : null);
 
     const updated = await this.prisma.task.update({
       where: { id },
@@ -231,8 +238,9 @@ export class TasksService {
         ...rest,
         status: dto.status as any,
         priority: dto.priority as any,
-        startDate: startDate ? new Date(startDate) : undefined,
-        endDate: endDate ? new Date(endDate) : undefined,
+        estimatedStartDate: dateOrNull(estimatedStartDate as any),
+        startDate: dateOrNull(startDate as any),
+        endDate: dateOrNull(endDate as any),
       },
       include: {
         zone: true,

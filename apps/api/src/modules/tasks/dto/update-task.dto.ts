@@ -17,6 +17,13 @@ export class UpdateTaskDto extends PartialType(CreateTaskDto) {
   @Max(100)
   completionPct?: number;
 
+  /** Planning forecast — when work is *expected* to begin. */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  estimatedStartDate?: string;
+
+  /** Actual start — when work physically began. */
   @ApiPropertyOptional()
   @IsOptional()
   @IsDateString()

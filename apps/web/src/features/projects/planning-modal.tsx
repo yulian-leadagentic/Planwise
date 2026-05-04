@@ -91,7 +91,17 @@ function FeasibilityBadge({ projectId }: { projectId: number }) {
 
 // ─── Status Badge Dropdown (clickable badge that opens status picker) ─────────
 
-function StatusBadgeDropdown({ taskId, currentStatus, projectId }: { taskId: number; currentStatus: string; projectId: number }) {
+function StatusBadgeDropdown({
+  taskId,
+  currentStatus,
+  projectId,
+  selectedTaskIds,
+}: {
+  taskId: number;
+  currentStatus: string;
+  projectId: number;
+  selectedTaskIds?: Set<number>;
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
@@ -114,11 +124,31 @@ function StatusBadgeDropdown({ taskId, currentStatus, projectId }: { taskId: num
 
   const current = allStatuses.find((s) => s.value === currentStatus) ?? allStatuses[0];
 
+  // Spreadsheet-style multi-edit: if this row is part of a multi-selection,
+  // changing status propagates across all selected rows.
+  const isBulk = !!(selectedTaskIds && selectedTaskIds.has(taskId) && selectedTaskIds.size > 1);
+  const targetIds = isBulk ? Array.from(selectedTaskIds!) : [taskId];
+
   const handleChange = async (status: string) => {
     setOpen(false);
-    if (status === currentStatus) return;
+    if (!isBulk && status === currentStatus) return;
     try {
-      await tasksApi.update(taskId, { status });
+      if (isBulk) {
+        const results = await Promise.allSettled(
+          targetIds.map((id) => tasksApi.update(id, { status })),
+        );
+        const ok = results.filter((r) => r.status === 'fulfilled').length;
+        const fail = results.length - ok;
+        if (ok > 0 && fail === 0) {
+          notify.success(`Status set on ${ok} task${ok !== 1 ? 's' : ''}`, { code: 'TASK-BULK-STATUS-200' });
+        } else if (ok > 0 && fail > 0) {
+          notify.warning(`Updated ${ok}, ${fail} failed`, { code: 'TASK-BULK-STATUS-207' });
+        } else {
+          notify.error('Bulk status change failed', { code: 'TASK-BULK-STATUS-500' });
+        }
+      } else {
+        await tasksApi.update(taskId, { status });
+      }
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['feasibility', projectId] });
@@ -520,7 +550,7 @@ const statusMap: Record<string, { bg: string; text: string; label: string }> = {
 };
 
 // Column grid template shared between headers and data rows
-const TASK_GRID = 'grid grid-cols-[16px_16px_80px_1fr_96px_80px_56px_64px_96px_96px_96px_84px] gap-x-2 items-center';
+const TASK_GRID = 'grid grid-cols-[16px_16px_80px_1fr_96px_80px_56px_64px_96px_96px_96px_96px_84px] gap-x-2 items-center';
 
 function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onToggleTask, onUpdate, onDeleteTask }: {
   task: any; idx: number; projectId: number; members: any[];
@@ -535,20 +565,48 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
   const serviceColor = task.serviceType?.color || '#3B82F6';
   const queryClient = useQueryClient();
 
+  // Spreadsheet-style multi-edit: if this row is part of a multi-selection,
+  // an inline edit propagates to ALL selected rows. If only one row is
+  // selected (or none), it behaves like a normal single-task edit.
   const saveField = async (field: string, value: string) => {
     const payload: any = {};
     if (field === 'budgetHours') payload.budgetHours = value ? Number(value) : null;
     else if (field === 'budgetAmount') payload.budgetAmount = value ? Number(value) : null;
-    else if (field === 'endDate') payload.endDate = value || undefined;
+    else if (field === 'estimatedStartDate') payload.estimatedStartDate = value || null;
+    else if (field === 'startDate') payload.startDate = value || null;
+    else if (field === 'endDate') payload.endDate = value || null;
     else return;
+
+    const isBulk = !!(selectedTaskIds && selectedTaskIds.has(task.id) && selectedTaskIds.size > 1);
+    const targetIds = isBulk ? Array.from(selectedTaskIds!) : [task.id];
+
     try {
-      await tasksApi.update(task.id, payload);
+      if (isBulk) {
+        const results = await Promise.allSettled(
+          targetIds.map((id) => tasksApi.update(id, payload)),
+        );
+        const ok = results.filter((r) => r.status === 'fulfilled').length;
+        const fail = results.length - ok;
+        if (ok > 0 && fail === 0) {
+          notify.success(`Updated ${ok} task${ok !== 1 ? 's' : ''}`, { code: 'TASK-BULK-UPDATE-200' });
+        } else if (ok > 0 && fail > 0) {
+          notify.warning(`Updated ${ok}, ${fail} failed`, { code: 'TASK-BULK-UPDATE-207' });
+        } else {
+          notify.error('Bulk update failed', { code: 'TASK-BULK-UPDATE-500' });
+        }
+      } else {
+        await tasksApi.update(task.id, payload);
+      }
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
     } catch (err: any) {
       notify.apiError(err, 'Failed to update task');
     }
   };
 
+  // Estimated start (planning forecast) and Due date are exposed in the
+  // grid. Actual `startDate` lives on the task drawer / detail page —
+  // it's not part of the planning view.
+  const estStartDate = task.estimatedStartDate ? task.estimatedStartDate.split('T')[0] : '';
   const dueDate = task.endDate ? task.endDate.split('T')[0] : '';
   const isOverdue = dueDate && new Date(dueDate) < new Date() && task.status !== 'completed' && task.status !== 'cancelled';
 
@@ -573,8 +631,8 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
         <GripVertical className="w-3.5 h-3.5" />
       </button>
       <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
-      <span className="font-mono text-[11px] font-medium text-slate-500 truncate">{task.code || '-'}</span>
-      <span className="font-medium text-slate-900 min-w-0 truncate">
+      <span className="font-mono text-[11px] font-medium text-slate-500 truncate" title={task.code || ''}>{task.code || '-'}</span>
+      <span className="font-medium text-slate-900 min-w-0 truncate" title={task.name}>
         {task.name}
         {task.dependencies?.length > 0 && (
           <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] text-amber-600" title={`Depends on: ${task.dependencies.map((d: any) => d.dependsOn?.name || d.dependsOn?.code).join(', ')}`}>
@@ -582,10 +640,44 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           </span>
         )}
       </span>
-      <span className="truncate">{serviceName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full" style={{ backgroundColor: `${serviceColor}15`, color: serviceColor }}>{serviceName}</span> : <span className="text-slate-300 text-[11px]">-</span>}</span>
-      <span className="text-[11px] text-slate-500 truncate">{task.phase?.name || <span className="text-slate-300">-</span>}</span>
-      <InlineEditCell value={task.budgetHours} suffix="h" width="w-14" onSave={(v) => saveField('budgetHours', v)} />
+      <span className="truncate" title={serviceName ?? ''}>{serviceName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full" style={{ backgroundColor: `${serviceColor}15`, color: serviceColor }}>{serviceName}</span> : <span className="text-slate-300 text-[11px]">-</span>}</span>
+      <span className="text-[11px] text-slate-500 truncate" title={task.phase?.name ?? ''}>{task.phase?.name || <span className="text-slate-300">-</span>}</span>
+      {/* Budget hours + logged-hours summary (employee-reported time on this task).
+          Logged = sum of all TimeEntry.minutes where taskId matches; aggregated
+          server-side in planning.service. We surface it inline so PMs can see
+          progress vs estimate at a glance — no cost calc, just the totals. */}
+      <span className="flex flex-col items-end leading-tight">
+        <InlineEditCell value={task.budgetHours} suffix="h" width="w-14" onSave={(v) => saveField('budgetHours', v)} />
+        {Number(task.loggedMinutes ?? 0) > 0 && (
+          <span
+            className={cn(
+              'text-[9px] tabular-nums -mt-0.5 px-1',
+              Number(task.loggedMinutes) / 60 > Number(task.budgetHours ?? 0) && Number(task.budgetHours ?? 0) > 0
+                ? 'text-red-500'
+                : 'text-slate-400',
+            )}
+            title={`Logged hours reported by team members on this task`}
+          >
+            {(Number(task.loggedMinutes) / 60).toFixed(1)}h logged
+          </span>
+        )}
+      </span>
       <InlineEditCell value={task.budgetAmount} prefix="₪" width="w-16" onSave={(v) => saveField('budgetAmount', v)} />
+      {/* Estimated start date — planning forecast (distinct from actual
+          startDate, which is set when work begins and lives in the drawer). */}
+      <span>
+        <input
+          type="date"
+          value={estStartDate}
+          onChange={(e) => saveField('estimatedStartDate', e.target.value)}
+          className={cn(
+            'w-full px-1 py-0.5 rounded border text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400',
+            'border-slate-200 text-slate-600 bg-transparent',
+            !estStartDate && 'text-slate-300',
+          )}
+          title="Estimated (planned) start date"
+        />
+      </span>
       <span>
         <input
           type="date"
@@ -599,9 +691,9 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
         />
       </span>
       <span className="flex items-center">
-        <AssigneePicker task={task} members={members} projectId={projectId} onUpdate={onUpdate} />
+        <AssigneePicker task={task} members={members} projectId={projectId} onUpdate={onUpdate} selectedTaskIds={selectedTaskIds} />
       </span>
-      <StatusBadgeDropdown taskId={task.id} currentStatus={task.status} projectId={projectId} />
+      <StatusBadgeDropdown taskId={task.id} currentStatus={task.status} projectId={projectId} selectedTaskIds={selectedTaskIds} />
       <div className="flex items-center gap-0.5">
         <TaskAttachmentButton taskId={task.id} projectId={projectId} />
         <TaskDiscussionButton taskId={task.id} taskName={task.name} />
@@ -867,14 +959,16 @@ function BulkActionBar({
 }) {
   const [assignOpen, setAssignOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
+  const [priorityOpen, setPriorityOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
   const queryClient = useQueryClient();
   const assignRef = useRef<HTMLDivElement>(null);
   const statusRef = useRef<HTMLDivElement>(null);
+  const priorityRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!assignOpen && !statusOpen) return;
+    if (!assignOpen && !statusOpen && !priorityOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (assignOpen && assignRef.current && !assignRef.current.contains(e.target as Node)) {
         setAssignOpen(false);
@@ -882,10 +976,13 @@ function BulkActionBar({
       if (statusOpen && statusRef.current && !statusRef.current.contains(e.target as Node)) {
         setStatusOpen(false);
       }
+      if (priorityOpen && priorityRef.current && !priorityRef.current.contains(e.target as Node)) {
+        setPriorityOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [assignOpen, statusOpen]);
+  }, [assignOpen, statusOpen, priorityOpen]);
 
   const filteredMembers = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -965,6 +1062,58 @@ function BulkActionBar({
     onClear();
   };
 
+  // Set priority on every selected task. Same parallel-update + summary
+  // pattern as handleBulkStatus.
+  const handleBulkPriority = async (priority: string) => {
+    if (busy || selectedTaskIds.size === 0) return;
+    setBusy(true);
+    const taskIds = Array.from(selectedTaskIds);
+    const results = await Promise.allSettled(
+      taskIds.map((taskId) => tasksApi.update(taskId, { priority })),
+    );
+    const succeeded = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.length - succeeded;
+
+    queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+    setBusy(false);
+    setPriorityOpen(false);
+
+    if (succeeded > 0 && failed === 0) {
+      notify.success(`Set priority on ${succeeded} task${succeeded !== 1 ? 's' : ''}`, { code: 'TASK-UPDATE-200' });
+    } else if (succeeded > 0 && failed > 0) {
+      notify.warning(`Updated ${succeeded}, ${failed} failed`, { code: 'TASK-UPDATE-207' });
+    } else {
+      notify.error(`Could not set priority`, { code: 'TASK-UPDATE-500' });
+    }
+    onClear();
+  };
+
+  // Delete every selected task. Confirms first because this is destructive
+  // and not undoable from the planning view.
+  const handleBulkDelete = async () => {
+    if (busy || selectedTaskIds.size === 0) return;
+    if (!confirm(`Delete ${selectedTaskIds.size} task${selectedTaskIds.size !== 1 ? 's' : ''}? This cannot be undone.`)) {
+      return;
+    }
+    setBusy(true);
+    const taskIds = Array.from(selectedTaskIds);
+    const results = await Promise.allSettled(taskIds.map((id) => tasksApi.delete(id)));
+    const succeeded = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.length - succeeded;
+
+    queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+    setBusy(false);
+
+    if (succeeded > 0 && failed === 0) {
+      notify.success(`Deleted ${succeeded} task${succeeded !== 1 ? 's' : ''}`, { code: 'TASK-DELETE-200' });
+    } else if (succeeded > 0 && failed > 0) {
+      notify.warning(`Deleted ${succeeded}, ${failed} failed`, { code: 'TASK-DELETE-207' });
+    } else {
+      notify.error(`Could not delete`, { code: 'TASK-DELETE-500' });
+    }
+    onClear();
+  };
+
   if (selectedCount === 0) return null;
 
   const statusOptions = [
@@ -976,6 +1125,13 @@ function BulkActionBar({
     { value: 'cancelled', label: 'Cancelled', dot: 'bg-red-500' },
   ];
 
+  const priorityOptions = [
+    { value: 'low',      label: 'Low',      dot: 'bg-slate-400' },
+    { value: 'medium',   label: 'Medium',   dot: 'bg-blue-500' },
+    { value: 'high',     label: 'High',     dot: 'bg-amber-500' },
+    { value: 'critical', label: 'Critical', dot: 'bg-red-500' },
+  ];
+
   return (
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40">
       <div className="flex items-center gap-3 rounded-[14px] border border-slate-200 bg-white px-4 py-3 shadow-2xl">
@@ -985,6 +1141,11 @@ function BulkActionBar({
           </span>
           <span className="text-sm font-semibold text-slate-700">
             task{selectedCount !== 1 ? 's' : ''} selected
+            {selectedCount > 1 && (
+              <span className="ml-2 text-[11px] font-normal text-slate-500">
+                — edits to any selected row apply to all
+              </span>
+            )}
           </span>
         </div>
 
@@ -1076,6 +1237,47 @@ function BulkActionBar({
           )}
         </div>
 
+        {/* Priority dropdown — same shape as Status. */}
+        <div className="relative" ref={priorityRef}>
+          <button
+            type="button"
+            onClick={() => { setPriorityOpen(!priorityOpen); setAssignOpen(false); setStatusOpen(false); }}
+            disabled={busy}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[13px] font-semibold px-3 py-1.5 disabled:opacity-50"
+          >
+            Set Priority
+            <ChevronDown className="h-3 w-3" />
+          </button>
+          {priorityOpen && (
+            <div className="absolute bottom-full left-0 mb-2 w-44 rounded-lg border border-slate-200 bg-white shadow-xl py-1">
+              {priorityOptions.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => handleBulkPriority(opt.value)}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <span className={cn('w-2 h-2 rounded-full', opt.dot)} />
+                  <span className="text-slate-700">{opt.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Delete — destructive, confirms first. */}
+        <button
+          type="button"
+          onClick={handleBulkDelete}
+          disabled={busy}
+          title="Delete all selected tasks"
+          className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white hover:border-red-400 hover:bg-red-50 text-red-600 text-[13px] font-semibold px-3 py-1.5 disabled:opacity-50"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Delete
+        </button>
+
         <div className="h-5 w-px bg-slate-200" />
 
         <button
@@ -1098,11 +1300,13 @@ function AssigneePicker({
   members,
   projectId,
   onUpdate,
+  selectedTaskIds,
 }: {
   task: any;
   members: any[];
   projectId: number;
   onUpdate: () => void;
+  selectedTaskIds?: Set<number>;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1113,6 +1317,11 @@ function AssigneePicker({
   const assignedUserIds = new Set(
     assignees.map((a: any) => a.user?.id ?? a.userId).filter((id: any) => typeof id === 'number'),
   );
+
+  // Spreadsheet-style multi-edit: if this row is part of a multi-selection,
+  // assign/unassign propagates across all selected rows.
+  const isBulk = !!(selectedTaskIds && selectedTaskIds.has(task.id) && selectedTaskIds.size > 1);
+  const targetIds = isBulk ? Array.from(selectedTaskIds!) : [task.id];
 
   useEffect(() => {
     if (!open) return;
@@ -1125,11 +1334,39 @@ function AssigneePicker({
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
 
+  const summarize = (results: PromiseSettledResult<unknown>[], verb: string) => {
+    const ok = results.filter((r) => r.status === 'fulfilled').length;
+    // 409 = already assigned / already removed — count as "skipped", not failed.
+    const skipped = results.filter(
+      (r) => r.status === 'rejected' && (r as PromiseRejectedResult).reason?.response?.status === 409,
+    ).length;
+    const fail = results.length - ok - skipped;
+    if (ok > 0 && fail === 0 && skipped === 0) {
+      notify.success(`${verb} ${ok} task${ok !== 1 ? 's' : ''}`, { code: 'TASK-BULK-ASSIGN-200' });
+    } else if (ok > 0 && skipped > 0 && fail === 0) {
+      notify.success(`${verb} ${ok}, ${skipped} unchanged`, { code: 'TASK-BULK-ASSIGN-200' });
+    } else if (ok > 0 && fail > 0) {
+      notify.warning(`${verb} ${ok}, ${fail} failed`, { code: 'TASK-BULK-ASSIGN-207' });
+    } else if (ok === 0 && skipped > 0 && fail === 0) {
+      notify.info('No change — already in that state');
+    } else if (fail > 0) {
+      notify.error(`${verb}: all failed`, { code: 'TASK-BULK-ASSIGN-500' });
+    }
+  };
+
   const addOne = async (userId: number) => {
-    if (assignedUserIds.has(userId) || busy) return;
+    if (busy) return;
+    if (!isBulk && assignedUserIds.has(userId)) return;
     setBusy(true);
     try {
-      await tasksApi.addAssignee(task.id, { userId });
+      if (isBulk) {
+        const results = await Promise.allSettled(
+          targetIds.map((id) => tasksApi.addAssignee(id, { userId })),
+        );
+        summarize(results, 'Assigned to');
+      } else {
+        await tasksApi.addAssignee(task.id, { userId });
+      }
       invalidate();
       onUpdate();
     } catch (err: any) {
@@ -1143,7 +1380,14 @@ function AssigneePicker({
     if (busy) return;
     setBusy(true);
     try {
-      await tasksApi.removeAssignee(task.id, userId);
+      if (isBulk) {
+        const results = await Promise.allSettled(
+          targetIds.map((id) => tasksApi.removeAssignee(id, userId)),
+        );
+        summarize(results, 'Unassigned from');
+      } else {
+        await tasksApi.removeAssignee(task.id, userId);
+      }
       invalidate();
       onUpdate();
     } catch (err: any) {
@@ -1405,14 +1649,23 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
 
   const hours = tasks.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
   const amount = tasks.reduce((s: number, t: any) => s + Number(t.budgetAmount || 0), 0);
+  const loggedHours = Math.round(tasks.reduce((s: number, t: any) => s + Number(t.loggedMinutes || 0), 0) / 60 * 10) / 10;
 
   return (
     <div className="border-b border-slate-100 last:border-0">
       <div className="flex items-center gap-2.5 px-5 py-2.5 bg-[#FAFBFC] cursor-pointer" onClick={() => setCollapsed(!collapsed)}>
         {collapsed ? <ChevronRight className="w-3 h-3 text-slate-400" /> : <ChevronDown className="w-3 h-3 text-slate-400" />}
-        <span className="text-[13px] font-semibold text-slate-900">{zone.name}</span>
+        <span className="text-[13px] font-semibold text-slate-900 truncate" title={zone.name}>{zone.name}</span>
         <span className="rounded-[5px] bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-400">{zone.zoneType}</span>
-        <span className="ml-auto text-[11px] font-medium text-slate-400">{tasks.length} tasks · {hours}h · ₪{amount.toLocaleString()}</span>
+        <span className="ml-auto text-[11px] font-medium text-slate-400">
+          {tasks.length} tasks · {hours}h budget
+          {loggedHours > 0 && (
+            <span className={cn('ml-1', loggedHours > hours && hours > 0 ? 'text-red-500' : 'text-blue-500')}>
+              · {loggedHours}h logged
+            </span>
+          )}
+          <span> · ₪{amount.toLocaleString()}</span>
+        </span>
         <div className="relative" onClick={(e) => e.stopPropagation()}>
           <button onClick={() => setShowTaskMenu(!showTaskMenu)} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
             <Plus className="w-3 h-3" /> Add Task
@@ -1532,9 +1785,37 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
 }
 
 
+// ─── Sortable wrapper for top-level zones ─────────────────────────────────────
+// Tasks already have their own SortableContext for drag-reorder; we add a
+// parallel SortableContext for the top-level zone list so users can drag
+// whole zones up/down. We use string-prefixed ids ("z-<id>") to avoid id
+// collisions with task drags (which use bare numeric ids).
+
+function SortableTopZone({ zone, ...rest }: any) {
+  const sortableId = `z-${zone.id}`;
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: sortableId });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  return (
+    <div ref={setNodeRef} style={style}>
+      <HierarchicalZoneGroup
+        zone={zone}
+        {...rest}
+        depth={0}
+        // Pass drag listeners + attributes so HierarchicalZoneGroup can
+        // attach them to its existing GripVertical handle.
+        zoneDragHandleProps={{ ...attributes, ...listeners }}
+      />
+    </div>
+  );
+}
+
 // ─── Hierarchical Zone Group — flat tree style with colored borders ──────────
 
-function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth, selectedTaskIds, onToggleTask, onToggleMany }: any) {
+function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth, selectedTaskIds, onToggleTask, onToggleMany, zoneDragHandleProps }: any) {
   const [collapsed, setCollapsed] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddZone, setShowAddZone] = useState(false);
@@ -1569,6 +1850,9 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
   const allZoneTasks = allTasks.filter((t: any) => allZoneIds.has(t.zoneId));
   const totalHours = allZoneTasks.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
   const totalAmount = allZoneTasks.reduce((s: number, t: any) => s + Number(t.budgetAmount || 0), 0);
+  // Sum of all employee-reported time on tasks in this zone (and its sub-zones).
+  const totalLoggedMinutes = allZoneTasks.reduce((s: number, t: any) => s + Number(t.loggedMinutes || 0), 0);
+  const totalLoggedHours = Math.round(totalLoggedMinutes / 60 * 10) / 10;
   const hasChildren = zone.children?.length > 0;
 
   // Zone type colors from design system
@@ -1589,7 +1873,21 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
       {/* Zone row — full width with colored left border */}
       <div className={cn('flex items-center gap-2.5 py-3 px-4 border-l-[3px] cursor-pointer hover:bg-slate-50/80 group transition-colors duration-100', zc.border, depth === 0 ? 'bg-slate-50/60' : 'border-b border-slate-100')}
         onClick={() => setCollapsed(!collapsed)}>
-        <GripVertical className="w-3.5 h-3.5 text-slate-300 hover:text-slate-500 cursor-grab shrink-0 touch-none" onClick={(e) => e.stopPropagation()} />
+        {/* Drag handle — only top-level zones (depth=0) are reorderable for now;
+            sub-zones inherit position from their parent.zoneDragHandleProps comes
+            from the SortableTopZone wrapper. */}
+        <button
+          type="button"
+          {...(zoneDragHandleProps ?? {})}
+          onClick={(e) => e.stopPropagation()}
+          title={zoneDragHandleProps ? 'Drag to reorder zone' : undefined}
+          className={cn(
+            'shrink-0 touch-none flex items-center justify-center',
+            zoneDragHandleProps ? 'cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500' : 'text-slate-200 cursor-default',
+          )}
+        >
+          <GripVertical className="w-3.5 h-3.5" />
+        </button>
         {collapsed ? <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
         <input
           type="checkbox"
@@ -1607,7 +1905,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           title={`Select all ${allZoneTasks.length} tasks in this zone`}
         />
         <span className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide shrink-0', zc.bg, zc.text)}>{zone.zoneType}</span>
-        <span className={cn('font-semibold', depth === 0 ? 'text-[15px] text-slate-900' : 'text-[13px] text-slate-800')}>{zone.name}</span>
+        <span className={cn('font-semibold truncate', depth === 0 ? 'text-[15px] text-slate-900' : 'text-[13px] text-slate-800')} title={zone.name}>{zone.name}</span>
         {hasChildren && <span className="text-[11px] text-slate-400">({zone.children.length} sub-zones)</span>}
         <div className="ml-auto flex items-center gap-3 shrink-0">
           {/* Mini progress bar */}
@@ -1624,7 +1922,15 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               </div>
             );
           })()}
-          <span className="text-[11px] font-medium text-slate-400">{allZoneTasks.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span>
+          <span className="text-[11px] font-medium text-slate-400">
+            {allZoneTasks.length} tasks · {totalHours}h budget
+            {totalLoggedHours > 0 && (
+              <span className={cn('ml-1', totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-blue-500')}>
+                · {totalLoggedHours}h logged
+              </span>
+            )}
+            <span> · ₪{totalAmount.toLocaleString()}</span>
+          </span>
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
@@ -1707,6 +2013,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <span>Service</span>
               <span className="text-right">Est. Hours</span>
               <span className="text-right">Amount</span>
+              <span>Est. Start</span>
               <span>Due Date</span>
               <span>Assignees</span>
               <span>Status</span>
@@ -1786,6 +2093,13 @@ function PlanningView({ projectId }: { projectId: number }) {
   const [sortCol, setSortCol] = useState('');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
+  // Task filters — empty = no filter. Date filters compare against task.startDate / task.endDate
+  // (stored ISO strings; we compare YYYY-MM-DD prefix).
+  const [filterStatus, setFilterStatus] = useState<string>('');
+  const [filterStartFrom, setFilterStartFrom] = useState<string>('');
+  const [filterStartTo, setFilterStartTo] = useState<string>('');
+  const [filterDueFrom, setFilterDueFrom] = useState<string>('');
+  const [filterDueTo, setFilterDueTo] = useState<string>('');
 
   // ─── Undo Stack ─────────────────────────────────────────────────────────────
   const undoStackRef = useRef<{ label: string; fn: () => Promise<void> }[]>([]);
@@ -1905,16 +2219,38 @@ function PlanningView({ projectId }: { projectId: number }) {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor),
   );
-  const [activeDragId, setActiveDragId] = useState<number | null>(null);
+  // Active drag id is a number for tasks, or a string like "z-<id>" for zones.
+  const [activeDragId, setActiveDragId] = useState<number | string | null>(null);
 
   const handleGlobalDragStart = (event: DragStartEvent) => {
-    setActiveDragId(Number(event.active.id));
+    const id = event.active.id;
+    setActiveDragId(typeof id === 'string' ? id : Number(id));
   };
 
   const handleGlobalDragEnd = async (event: DragEndEvent) => {
     setActiveDragId(null);
     const { active, over } = event;
     if (!over || active.id === over.id) return;
+
+    // Zone reorder: prefixed ids of the form "z-<id>" come from SortableTopZone.
+    if (typeof active.id === 'string' && active.id.startsWith('z-')) {
+      if (typeof over.id !== 'string' || !over.id.startsWith('z-')) return;
+      const fromZoneId = Number(active.id.slice(2));
+      const toZoneId = Number(over.id.slice(2));
+      const topLevel = zones.filter((z: any) => !z.parentId);
+      const oldIndex = topLevel.findIndex((z: any) => z.id === fromZoneId);
+      const newIndex = topLevel.findIndex((z: any) => z.id === toZoneId);
+      if (oldIndex === -1 || newIndex === -1) return;
+      const reordered = arrayMove(topLevel, oldIndex, newIndex);
+      const items = reordered.map((z: any, i: number) => ({ id: z.id, sortOrder: i }));
+      try {
+        await zonesApi.reorder(items);
+        invalidate();
+      } catch (err: any) {
+        notify.apiError(err, 'Failed to reorder zones');
+      }
+      return;
+    }
 
     const activeId = Number(active.id);
     const overId = Number(over.id);
@@ -1979,10 +2315,39 @@ function PlanningView({ projectId }: { projectId: number }) {
 
   // Filter
   const filtered = useMemo(() => {
-    if (!search.trim()) return tasks;
-    const q = search.toLowerCase();
-    return tasks.filter((t: any) => t.code?.toLowerCase().includes(q) || t.name?.toLowerCase().includes(q) || t.zone?.name?.toLowerCase().includes(q) || t.serviceType?.name?.toLowerCase().includes(q));
-  }, [tasks, search]);
+    const q = search.trim().toLowerCase();
+    return tasks.filter((t: any) => {
+      // Free-text search (code / name / zone / service)
+      if (q) {
+        const hit =
+          t.code?.toLowerCase().includes(q) ||
+          t.name?.toLowerCase().includes(q) ||
+          t.zone?.name?.toLowerCase().includes(q) ||
+          t.serviceType?.name?.toLowerCase().includes(q);
+        if (!hit) return false;
+      }
+      // Status (must be exact enum match if set)
+      if (filterStatus && t.status !== filterStatus) return false;
+      // Estimated-start range — uses the planning field, NOT actual startDate.
+      const ts = t.estimatedStartDate ? String(t.estimatedStartDate).slice(0, 10) : '';
+      if (filterStartFrom && (!ts || ts < filterStartFrom)) return false;
+      if (filterStartTo && (!ts || ts > filterStartTo)) return false;
+      // Due-date range
+      const td = t.endDate ? String(t.endDate).slice(0, 10) : '';
+      if (filterDueFrom && (!td || td < filterDueFrom)) return false;
+      if (filterDueTo && (!td || td > filterDueTo)) return false;
+      return true;
+    });
+  }, [tasks, search, filterStatus, filterStartFrom, filterStartTo, filterDueFrom, filterDueTo]);
+
+  const hasTaskFilter = !!(filterStatus || filterStartFrom || filterStartTo || filterDueFrom || filterDueTo);
+  const clearTaskFilters = () => {
+    setFilterStatus('');
+    setFilterStartFrom('');
+    setFilterStartTo('');
+    setFilterDueFrom('');
+    setFilterDueTo('');
+  };
 
   // Sort
   const sorted = useMemo(() => {
@@ -2097,6 +2462,48 @@ function PlanningView({ projectId }: { projectId: number }) {
         </div>
       )}
 
+      {/* Task filters — Status + Estimated Start range + Due Date range */}
+      {!showTemplatePicker && !showManualZone && (
+        <div className="flex flex-wrap items-center gap-2 -mt-2">
+          <span className="text-[11px] font-semibold text-slate-400">Filter by:</span>
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="px-2.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none"
+            title="Status"
+          >
+            <option value="">All statuses</option>
+            <option value="not_started">Not started</option>
+            <option value="in_progress">In progress</option>
+            <option value="in_review">In review</option>
+            <option value="completed">Completed</option>
+            <option value="on_hold">On hold</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+          <div className="flex items-center gap-1 text-[11px] text-slate-500">
+            <span>Est. start:</span>
+            <input type="date" value={filterStartFrom} onChange={(e) => setFilterStartFrom(e.target.value)} className="px-1.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700" />
+            <span className="text-slate-400">→</span>
+            <input type="date" value={filterStartTo} onChange={(e) => setFilterStartTo(e.target.value)} className="px-1.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700" />
+          </div>
+          <div className="flex items-center gap-1 text-[11px] text-slate-500">
+            <span>Due:</span>
+            <input type="date" value={filterDueFrom} onChange={(e) => setFilterDueFrom(e.target.value)} className="px-1.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700" />
+            <span className="text-slate-400">→</span>
+            <input type="date" value={filterDueTo} onChange={(e) => setFilterDueTo(e.target.value)} className="px-1.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700" />
+          </div>
+          {hasTaskFilter && (
+            <button
+              type="button"
+              onClick={clearTaskFilters}
+              className="text-[12px] text-slate-500 hover:text-slate-700 underline"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Task table — full width */}
       {sorted.length > 0 || flatZones.length > 0 ? (
         <div>
@@ -2119,13 +2526,22 @@ function PlanningView({ projectId }: { projectId: number }) {
           >
             <SortableContext items={allTaskIds} strategy={verticalListSortingStrategy}>
               {groupBy === 'zone' ? (
-                zones.map((z: any) => (
-                  <HierarchicalZoneGroup key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
-                    onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
-                    onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
-                    thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={0}
-                    selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
-                ))
+                /* Zone-grouped view: top-level zones get a parallel SortableContext
+                   so they can be drag-reordered (independent of the inner task
+                   sortable list). Sub-zones are *not* draggable for now —
+                   reordering the tree across depths needs more design. */
+                <SortableContext
+                  items={zones.filter((z: any) => !z.parentId).map((z: any) => `z-${z.id}`)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  {zones.map((z: any) => (
+                    <SortableTopZone key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
+                      onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
+                      onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
+                      thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
+                      selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
+                  ))}
+                </SortableContext>
               ) : (
                 groups.map((g: any) => (
                   <ZoneGroup key={g.key} zone={{ id: 0, name: g.key, zoneType: groupBy }} tasks={g.tasks} members={members} projectId={projectId}
@@ -2135,12 +2551,14 @@ function PlanningView({ projectId }: { projectId: number }) {
                 ))
               )}
             </SortableContext>
-            {activeDragId && (
+            {activeDragId != null && (
               <DragOverlay>
                 <div className="flex items-center gap-3 py-2 px-4 bg-white border border-blue-300 shadow-xl rounded-lg text-[13px] opacity-90">
                   <GripVertical className="w-3.5 h-3.5 text-blue-500" />
                   <span className="font-medium text-slate-900">
-                    {tasks.find((t: any) => t.id === activeDragId)?.name || 'Task'}
+                    {typeof activeDragId === 'string' && activeDragId.startsWith('z-')
+                      ? (zones.find((z: any) => z.id === Number((activeDragId as string).slice(2)))?.name || 'Zone')
+                      : (tasks.find((t: any) => t.id === activeDragId)?.name || 'Task')}
                   </span>
                 </div>
               </DragOverlay>

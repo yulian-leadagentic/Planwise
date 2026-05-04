@@ -27,4 +27,15 @@ export class QueryProjectsDto extends PaginationQueryDto {
   @Type(() => Boolean)
   @IsBoolean()
   isArchived?: boolean;
+
+  /**
+   * Filter to projects where the given user is either the leader OR an
+   * active member. Used by the Projects list "Team member" filter — and
+   * by the per-person workload tools that ask "what's on this person?".
+   */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  memberId?: number;
 }
