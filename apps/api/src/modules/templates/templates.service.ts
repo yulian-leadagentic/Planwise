@@ -194,6 +194,9 @@ export class TemplatesService {
         code: body.code || null,
         isTypical: body.isTypical || false,
         typicalCount: body.typicalCount || 1,
+        // Composition multiplicity — clamp to >=1 so a malformed body can't
+        // mean "0 instances" (which would silently drop the zone at apply).
+        instanceCount: Math.max(1, Number(body.instanceCount) || 1),
         sortOrder: body.sortOrder ?? (maxOrder._max.sortOrder ?? 0) + 1,
         linkedTaskTemplateId: body.linkedTaskTemplateId || null,
         referencedTemplateId: body.referencedTemplateId || null,
@@ -206,6 +209,11 @@ export class TemplatesService {
   }
 
   async updateZone(zoneId: number, body: any) {
+    // Only set instanceCount if the caller explicitly sent it; otherwise
+    // leave whatever's in the DB. Clamp to >=1 to avoid 0 / negative values.
+    const instanceCount = body.instanceCount === undefined
+      ? undefined
+      : Math.max(1, Number(body.instanceCount) || 1);
     return this.prisma.templateZone.update({
       where: { id: zoneId },
       data: {
@@ -214,6 +222,7 @@ export class TemplatesService {
         zoneType: body.zoneType,
         isTypical: body.isTypical,
         typicalCount: body.typicalCount,
+        instanceCount,
         sortOrder: body.sortOrder,
         linkedTaskTemplateId: body.linkedTaskTemplateId,
         referencedTemplateId: body.referencedTemplateId,

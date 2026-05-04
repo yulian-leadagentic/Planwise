@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Trash2, Layers, ChevronRight, ChevronDown, Link, X, Search, BookOpen, Copy, CheckSquare } from 'lucide-react';
@@ -37,6 +37,75 @@ function ZoneTypeBadge({ zoneType }: { zoneType: string }) {
     >
       {display.label}
     </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Instance Count Stepper
+// ---------------------------------------------------------------------------
+// "× N" badge that lets the template author set how many times this zone
+// should be instantiated when the template is applied to a project. Default
+// (and minimum) is 1, max is intentionally generous (50) — bigger than that
+// is almost certainly a mistake.
+
+function InstanceCountStepper({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(Math.max(1, Math.floor(value || 1))));
+
+  // Re-sync draft when the saved value changes (e.g. another tab updated).
+  useEffect(() => { setDraft(String(Math.max(1, Math.floor(value || 1)))); }, [value]);
+
+  const commit = () => {
+    const n = Math.max(1, Math.min(50, Math.floor(Number(draft) || 1)));
+    setEditing(false);
+    if (n !== value) onChange(n);
+    setDraft(String(n));
+  };
+
+  if (editing) {
+    return (
+      <input
+        type="number"
+        min={1}
+        max={50}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') { setDraft(String(value)); setEditing(false); }
+        }}
+        autoFocus
+        className="w-12 rounded border border-blue-400 px-1 py-0.5 text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-300"
+      />
+    );
+  }
+
+  // Hide entirely when value is 1 — the default case shouldn't add visual noise.
+  // Instead show a subtle "× 1" only on hover via a button-shaped target so the
+  // author still has a way to *increase* it.
+  if (value <= 1) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="rounded border border-dashed border-slate-300 px-1.5 py-0.5 text-[10px] text-slate-400 hover:border-blue-400 hover:text-blue-600"
+        title="Set instance count — when > 1, this zone is created N times when the template is applied"
+      >
+        × 1
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      className="inline-flex items-center gap-1 rounded-full border border-blue-300 bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 hover:border-blue-500"
+      title={`Will instantiate ${value} times when the template is applied to a project. Click to change.`}
+    >
+      × {value}
+    </button>
   );
 }
 
@@ -480,12 +549,13 @@ function ZoneCatalogPickerModal({
                       className={`border-b border-border last:border-0 cursor-pointer ${isSelected ? 'bg-brand-50' : 'hover:bg-muted/30'} ${alreadyExists ? 'opacity-50' : ''}`}
                       onClick={() => !alreadyExists && toggleTask(task.id)}
                     >
-                      <td className="px-3 py-2">
+                      {/* Checkbox cell — stop click bubbling so the row's onClick doesn't double-toggle. */}
+                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={isSelected}
                           disabled={alreadyExists}
-                          onChange={() => toggleTask(task.id)}
+                          onChange={() => !alreadyExists && toggleTask(task.id)}
                           className="h-4 w-4 rounded border-gray-300"
                         />
                       </td>
@@ -970,6 +1040,14 @@ function ZoneTreeNode({
             Typical{zone.typicalCount ? ` x${zone.typicalCount}` : ''}
           </span>
         )}
+
+        {/* Instance count — composition multiplicity. When > 1, the apply
+            flow instantiates this template-zone N times (each renameable in
+            the project planning view). Click to edit. */}
+        <InstanceCountStepper
+          value={zone.instanceCount ?? 1}
+          onChange={(n) => updateMutation.mutate({ instanceCount: n })}
+        />
 
         {/* [+ Add Zone] button — sub-zones only contain other zones */}
         <button

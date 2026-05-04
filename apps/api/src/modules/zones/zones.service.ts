@@ -423,13 +423,33 @@ export class ZonesService {
       const catalog = await this.loadCatalogMap(tx);
       const createdZones: any[] = [];
 
+      // ─── Composition multiplicity ──────────────────────────────────────
+      // If a template-zone has instanceCount > 1, instantiate it that many
+      // times. Each instance is a separate, individually-renameable zone in
+      // the project, with the same children/tasks underneath. Default 1 keeps
+      // legacy templates' behaviour unchanged.
       const createZoneRecursive = async (tz: any, parentId: number | null, parentPath: string, depth: number) => {
+        const rawCount = Number(tz.instanceCount);
+        const instanceCount = Number.isFinite(rawCount) && rawCount > 1 ? Math.floor(rawCount) : 1;
+        if (instanceCount === 1) {
+          await createSingleZone(tz, tz.name, parentId, parentPath, depth);
+          return;
+        }
+        for (let i = 0; i < instanceCount; i++) {
+          // Default naming: "<Template name> <N>". The user can rename each
+          // instance afterwards via the inline edit in the planning view.
+          const instanceName = `${tz.name} ${i + 1}`;
+          await createSingleZone(tz, instanceName, parentId, parentPath, depth);
+        }
+      };
+
+      const createSingleZone = async (tz: any, instanceName: string, parentId: number | null, parentPath: string, depth: number) => {
         const zone = await tx.zone.create({
           data: {
             projectId,
             parentId,
             zoneType: tz.zoneType || 'zone',
-            name: tz.name,
+            name: instanceName,
             code: tz.code,
             isTypical: tz.isTypical || false,
             typicalCount: tz.typicalCount || 1,
