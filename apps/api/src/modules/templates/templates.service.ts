@@ -9,7 +9,7 @@ export class TemplatesService {
     const where: any = { deletedAt: null };
     if (type) where.type = type;
 
-    return this.prisma.template.findMany({
+    const templates = await this.prisma.template.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       include: {
@@ -17,7 +17,33 @@ export class TemplatesService {
         phase: true,
         _count: { select: { templateTasks: true, templateZones: true } },
         templateTasks: { select: { id: true, description: true }, take: 100 },
+        // Pull only `instanceCount` so we can compute the effective expanded
+        // zone count below. The full templateZones tree is loaded by findOne;
+        // here we just need the multipliers per row.
+        templateZones: { select: { instanceCount: true } },
       },
+    });
+
+    // Effective zone count = SUM(instanceCount) across template zones, NOT just
+    // the row count Prisma's `_count.templateZones` returns. A "Floor ×3" entry
+    // contributes 3 to the displayed total because it'll spawn 3 zones at apply
+    // time. We override `_count.templateZones` so the existing UI just works.
+    return templates.map((t: any) => {
+      const expandedZones = (t.templateZones ?? []).reduce(
+        (sum: number, z: any) => sum + Math.max(1, Number(z.instanceCount) || 1),
+        0,
+      );
+      return {
+        ...t,
+        _count: {
+          ...t._count,
+          templateZones: expandedZones,
+          // Keep the raw row count too in case any caller wants it.
+          templateZoneRows: t._count?.templateZones ?? 0,
+        },
+        // Strip the bare list — callers already use _count for display.
+        templateZones: undefined,
+      };
     });
   }
 

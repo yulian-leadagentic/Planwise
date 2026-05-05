@@ -1151,135 +1151,6 @@ function BulkActionBar({
 
         <div className="h-5 w-px bg-slate-200" />
 
-        {/* Assign dropdown */}
-        <div className="relative" ref={assignRef}>
-          <button
-            type="button"
-            onClick={() => { setAssignOpen(!assignOpen); setStatusOpen(false); }}
-            disabled={busy}
-            className="flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 disabled:opacity-50"
-          >
-            <UserPlus className="h-3.5 w-3.5" />
-            Assign
-          </button>
-          {assignOpen && (
-            <div className="absolute bottom-full left-0 mb-2 w-64 rounded-lg border border-slate-200 bg-white shadow-xl">
-              <div className="border-b border-slate-100 px-3 py-2">
-                <div className="relative">
-                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                  <input
-                    type="text"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search members..."
-                    className="w-full rounded-md border border-slate-200 bg-slate-50 pl-7 pr-2 py-1.5 text-xs text-slate-700 focus:border-blue-400 focus:outline-none"
-                    autoFocus
-                  />
-                </div>
-              </div>
-              <div className="max-h-56 overflow-y-auto py-1">
-                {filteredMembers.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-slate-400">
-                    {members.length === 0 ? 'No project members' : 'No match'}
-                  </p>
-                ) : (
-                  filteredMembers.map((m: any) => {
-                    const u = m.user ?? m;
-                    const uid = u.id;
-                    const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || 'Unknown';
-                    return (
-                      <button
-                        key={uid}
-                        type="button"
-                        disabled={busy}
-                        onClick={() => handleBulkAssign(uid)}
-                        className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-slate-50 disabled:opacity-50"
-                      >
-                        <span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-semibold flex items-center justify-center shrink-0">
-                          {(u.firstName?.[0] ?? '') + (u.lastName?.[0] ?? '')}
-                        </span>
-                        <span className="truncate text-slate-700">{name}</span>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Status dropdown */}
-        <div className="relative" ref={statusRef}>
-          <button
-            type="button"
-            onClick={() => { setStatusOpen(!statusOpen); setAssignOpen(false); }}
-            disabled={busy}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[13px] font-semibold px-3 py-1.5 disabled:opacity-50"
-          >
-            Set Status
-            <ChevronDown className="h-3 w-3" />
-          </button>
-          {statusOpen && (
-            <div className="absolute bottom-full left-0 mb-2 w-48 rounded-lg border border-slate-200 bg-white shadow-xl py-1">
-              {statusOptions.map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => handleBulkStatus(opt.value)}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-slate-50 disabled:opacity-50"
-                >
-                  <span className={cn('w-2 h-2 rounded-full', opt.dot)} />
-                  <span className="text-slate-700">{opt.label}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Priority dropdown — same shape as Status. */}
-        <div className="relative" ref={priorityRef}>
-          <button
-            type="button"
-            onClick={() => { setPriorityOpen(!priorityOpen); setAssignOpen(false); setStatusOpen(false); }}
-            disabled={busy}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[13px] font-semibold px-3 py-1.5 disabled:opacity-50"
-          >
-            Set Priority
-            <ChevronDown className="h-3 w-3" />
-          </button>
-          {priorityOpen && (
-            <div className="absolute bottom-full left-0 mb-2 w-44 rounded-lg border border-slate-200 bg-white shadow-xl py-1">
-              {priorityOptions.map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => handleBulkPriority(opt.value)}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-slate-50 disabled:opacity-50"
-                >
-                  <span className={cn('w-2 h-2 rounded-full', opt.dot)} />
-                  <span className="text-slate-700">{opt.label}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Delete — destructive, confirms first. */}
-        <button
-          type="button"
-          onClick={handleBulkDelete}
-          disabled={busy}
-          title="Delete all selected tasks"
-          className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white hover:border-red-400 hover:bg-red-50 text-red-600 text-[13px] font-semibold px-3 py-1.5 disabled:opacity-50"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-          Delete
-        </button>
-
-        <div className="h-5 w-px bg-slate-200" />
-
         <button
           type="button"
           onClick={onClear}
@@ -1292,6 +1163,7 @@ function BulkActionBar({
     </div>
   );
 }
+
 
 // ─── Assignee Picker — multi-select, add/remove assignees on a task ──────────
 
@@ -2253,15 +2125,23 @@ function PlanningView({ projectId }: { projectId: number }) {
     }
 
     const activeId = Number(active.id);
-    const overId = Number(over.id);
+    // `over.id` can be either a task id (numeric) or a zone id (string "z-N")
+    // when the user drops on a zone row instead of another task.
+    const overIsZone = typeof over.id === 'string' && (over.id as string).startsWith('z-');
+    const overId = overIsZone ? Number((over.id as string).slice(2)) : Number(over.id);
 
     // Find source task and target task
     const activeTask = tasks.find((t: any) => t.id === activeId);
-    const overTask = tasks.find((t: any) => t.id === overId);
+    const overTask = !overIsZone ? tasks.find((t: any) => t.id === overId) : undefined;
     if (!activeTask) return;
 
-    // Determine the target zone — if we're dropping on another task, use its zone
-    const targetZoneId = overTask ? overTask.zoneId : activeTask.zoneId;
+    // Determine the target zone:
+    //  - dropped on another task → use that task's zone
+    //  - dropped on a zone row    → use that zone directly
+    //  - else (no match)          → keep in the source's own zone
+    const targetZoneId = overTask
+      ? overTask.zoneId
+      : (overIsZone ? overId : activeTask.zoneId);
     const sameZone = activeTask.zoneId === targetZoneId;
 
     // Get the tasks in the target zone (for reordering)
@@ -2524,33 +2404,35 @@ function PlanningView({ projectId }: { projectId: number }) {
             onDragStart={handleGlobalDragStart}
             onDragEnd={handleGlobalDragEnd}
           >
-            <SortableContext items={allTaskIds} strategy={verticalListSortingStrategy}>
-              {groupBy === 'zone' ? (
-                /* Zone-grouped view: top-level zones get a parallel SortableContext
-                   so they can be drag-reordered (independent of the inner task
-                   sortable list). Sub-zones are *not* draggable for now —
-                   reordering the tree across depths needs more design. */
-                <SortableContext
-                  items={zones.filter((z: any) => !z.parentId).map((z: any) => `z-${z.id}`)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  {zones.map((z: any) => (
-                    <SortableTopZone key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
-                      onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
-                      onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
-                      thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
-                      selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
-                  ))}
-                </SortableContext>
-              ) : (
-                groups.map((g: any) => (
-                  <ZoneGroup key={g.key} zone={{ id: 0, name: g.key, zoneType: groupBy }} tasks={g.tasks} members={members} projectId={projectId}
+            {/* Two PARALLEL SortableContexts inside one DndContext:
+                  - tasks (numeric ids)         — managed per-zone inside SortableTaskList
+                  - zones (string "z-<id>")      — top-level zones in the zone-grouped view
+                Each useSortable() resolves to the closest matching context.
+                We previously also wrapped everything in a TASK SortableContext
+                with allTaskIds — that interfered with zone resolution because
+                its DOM children were zone elements, so we removed it. Cross-zone
+                task drag still works through dnd-kit's collision detection. */}
+            {groupBy === 'zone' ? (
+              <SortableContext
+                items={zones.filter((z: any) => !z.parentId).map((z: any) => `z-${z.id}`)}
+                strategy={verticalListSortingStrategy}
+              >
+                {zones.map((z: any) => (
+                  <SortableTopZone key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
                     onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
-                    onDeleteZone={() => {}} thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
+                    onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
+                    thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
                     selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
-                ))
-              )}
-            </SortableContext>
+                ))}
+              </SortableContext>
+            ) : (
+              groups.map((g: any) => (
+                <ZoneGroup key={g.key} zone={{ id: 0, name: g.key, zoneType: groupBy }} tasks={g.tasks} members={members} projectId={projectId}
+                  onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
+                  onDeleteZone={() => {}} thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
+                  selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
+              ))
+            )}
             {activeDragId != null && (
               <DragOverlay>
                 <div className="flex items-center gap-3 py-2 px-4 bg-white border border-blue-300 shadow-xl rounded-lg text-[13px] opacity-90">

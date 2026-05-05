@@ -1511,7 +1511,14 @@ function EditorView({
     }
   }
 
-  const totalItems = zones.length + rootTasks.length;
+  // Effective zone count = sum of instanceCount across child zones, NOT just
+  // the row count. A "Floor ×3" entry counts as 3 zones because it'll spawn
+  // 3 zones at apply time. Mirrors the API's findAll override.
+  const expandedZoneCount = zones.reduce(
+    (sum: number, z: any) => sum + Math.max(1, Number(z.instanceCount) || 1),
+    0,
+  );
+  const totalItems = expandedZoneCount + rootTasks.length;
 
   return (
     <div className="space-y-6">

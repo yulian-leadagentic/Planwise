@@ -13,15 +13,22 @@ interface Organization { id: number; displayName: string; companyName: string | 
 export function CreateContactModal({
   onClose,
   onCreated,
+  /**
+   * If provided, the Employer dropdown is pre-selected to this org id.
+   * Used by callers like the project Team picker which want to open
+   * "create a new contact for THIS customer".
+   */
+  preselectEmployerOrgId,
 }: {
   onClose: () => void;
   onCreated: (id: number) => void;
+  preselectEmployerOrgId?: number;
 }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',
-    employerOrgId: '' as string,
+    employerOrgId: preselectEmployerOrgId ? String(preselectEmployerOrgId) : '' as string,
     email: '',
     phone: '',
     mobile: '',

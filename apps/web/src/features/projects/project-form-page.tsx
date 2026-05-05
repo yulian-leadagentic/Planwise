@@ -634,7 +634,31 @@ export function ProjectFormPage() {
                     placeholder="https://drive.google.com/drive/folders/...   or   \\server\share\..."
                     className={`${inputClass} font-mono text-[12px] flex-1`}
                   />
+                  {/* Native file picker — same caveat as the Add File Link form:
+                      browsers strip the full path for security, so we only get
+                      the file name. Useful as a "fill in the file name and add
+                      your share prefix manually" shortcut. */}
+                  <label className="rounded-lg border border-slate-200 bg-white hover:border-slate-400 text-slate-700 text-[12px] font-semibold px-3 py-2 cursor-pointer flex items-center justify-center gap-1.5 shrink-0">
+                    Browse…
+                    <input
+                      type="file"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setQuickLinkUrl(file.name);
+                        if (!quickLinkName.trim()) {
+                          setQuickLinkName(file.name.replace(/\.[^.]+$/, ''));
+                        }
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
                 </div>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Browsers can't read the full file path for security — paste a network share or URL,
+                  or use <strong>Browse…</strong> to grab the file name and prepend the prefix manually.
+                </p>
                 {quickLinkUrl.trim() && (() => {
                   const label = detectProviderLabel(quickLinkUrl.trim());
                   if (label === 'External link') return null;

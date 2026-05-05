@@ -6,6 +6,7 @@ import { ProjectDiscussion } from '@/features/messaging/project-discussion';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
 import { ActivityFeed } from './activity-feed';
 import { FilesTab } from './files-tab';
+import { CreateContactModal } from '@/features/partners/create-contact-modal';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 
 // Lazy-load DnD-heavy components
@@ -701,12 +702,11 @@ function ProjectBpPicker({
   const [search, setSearch] = useState('');
   const [selectedBpId, setSelectedBpId] = useState<number | null>(null);
   const [roleInContext, setRoleInContext] = useState('');
-
-  useEffect(() => {
-    const original = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = original; };
-  }, []);
+  // When set, we surface the CreateContactModal pinned to a specific
+  // employer org so users can add a brand-new contact without leaving
+  // this picker. Currently only used for the customer-contact mode and
+  // supplier-worker mode.
+  const [createForOrgId, setCreateForOrgId] = useState<number | null>(null);
 
   const config = {
     'customer-contact': {
@@ -828,7 +828,22 @@ function ProjectBpPicker({
           ) : (
             <>
               <div>
-                <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Search</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-semibold text-slate-400 uppercase">Search</label>
+                  {/* Inline-create path. Only shown when the picker is scoped
+                      to a specific employer org (customer-contact /
+                      supplier-worker). Skips the trip to Partners → Contacts
+                      and pre-pins the customer/supplier as the employer. */}
+                  {filterEmployerOrgId && (
+                    <button
+                      type="button"
+                      onClick={() => setCreateForOrgId(filterEmployerOrgId)}
+                      className="flex items-center gap-1 rounded-md border border-slate-200 hover:border-blue-400 hover:text-blue-600 text-slate-600 text-[11px] font-semibold px-2 py-0.5"
+                    >
+                      <Plus className="h-3 w-3" /> New contact
+                    </button>
+                  )}
+                </div>
                 <input
                   type="text"
                   value={search}
@@ -839,15 +854,15 @@ function ProjectBpPicker({
                 />
                 <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white">
                   {filtered.length === 0 ? (
-                    <p className="px-3 py-3 text-[12px] text-slate-400 text-center italic">
+                    <div className="px-3 py-3 text-[12px] text-slate-400 text-center italic">
                       {search ? 'No matches.' : (
                         config.partnerType === 'organization'
                           ? 'No suppliers available. Add one in Partners → Organizations.'
                           : (filterEmployerOrgId
-                              ? 'No people Worker_of this organization. Add a contact in Partners → Contacts and set their employer.'
+                              ? 'No people work for this organization yet — click "New contact" above to add one.'
                               : 'Type to search.')
                       )}
-                    </p>
+                    </div>
                   ) : filtered.slice(0, 50).map((bp: any) => (
                     <button
                       key={bp.id}
@@ -892,6 +907,21 @@ function ProjectBpPicker({
           </div>
         </div>
       </div>
+
+      {/* In-line "create new contact pinned to this customer/supplier" modal.
+          When the user finishes creating, we invalidate the BP query and
+          auto-select the new BP so they can hit "Add to Project" in one go. */}
+      {createForOrgId != null && (
+        <CreateContactModal
+          preselectEmployerOrgId={createForOrgId}
+          onClose={() => setCreateForOrgId(null)}
+          onCreated={(newBpId) => {
+            setCreateForOrgId(null);
+            setSelectedBpId(newBpId);
+            queryClient.invalidateQueries({ queryKey: ['bp-picker'] });
+          }}
+        />
+      )}
     </div>
   );
 }
