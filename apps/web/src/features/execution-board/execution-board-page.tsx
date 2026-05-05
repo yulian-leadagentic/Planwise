@@ -82,6 +82,15 @@ interface FlatRow {
   name: string;
   depth: number;
   hasChildren: boolean;
+  /**
+   * True for zone rows that have no parent ZONE above them (i.e. they sit
+   * directly under a project, not under another zone). Used to decide whether
+   * to render the progress bar — only top-level zones do, sub-zones get just
+   * the % + health badge. We can't infer this from `depth` alone because
+   * `depth=0` is the project row in multi-project view (zones start at depth=1
+   * there) but the top zone in single-project view (depth=0).
+   */
+  isTopLevelZone?: boolean;
   projectId?: number;
   zoneType?: string;
   number?: string | null;
@@ -472,7 +481,7 @@ export function ExecutionBoardPage() {
     const result: FlatRow[] = [];
     const showProjects = !projectId && data.projects.length > 0;
 
-    function walkZones(nodes: ZoneNode[], baseDepth: number, projectIdCtx: number) {
+    function walkZones(nodes: ZoneNode[], baseDepth: number, projectIdCtx: number, isTopLevel: boolean) {
       for (const z of nodes) {
         const hasChildren = z.children?.length > 0;
         const key = `zone-${z.id}`;
@@ -483,11 +492,12 @@ export function ExecutionBoardPage() {
           name: z.name,
           depth: baseDepth,
           hasChildren,
+          isTopLevelZone: isTopLevel,
           projectId: projectIdCtx,
           zoneType: z.zoneType,
         });
         if (hasChildren && expandedIds.has(key)) {
-          walkZones(z.children, baseDepth + 1, projectIdCtx);
+          walkZones(z.children, baseDepth + 1, projectIdCtx, /* isTopLevel */ false);
         }
       }
     }
@@ -506,10 +516,10 @@ export function ExecutionBoardPage() {
           hasChildren: zoneTree.length > 0,
         });
         if (expandedIds.has(pKey)) {
-          walkZones(zoneTree, 1, project.id);
+          walkZones(zoneTree, 1, project.id, /* isTopLevel */ true);
         }
       } else {
-        walkZones(zoneTree, 0, project.id);
+        walkZones(zoneTree, 0, project.id, /* isTopLevel */ true);
       }
     }
 
@@ -667,51 +677,43 @@ export function ExecutionBoardPage() {
                   const zc = ZONE_COLORS[row.zoneType ?? ''] ?? ZONE_COLORS.zone;
                   const zoneExpanded = expandedZones.has(row.id);
 
+                  // One unified chevron now: a single click on the row toggles
+                  // BOTH sub-zone visibility (tree) AND task-card expansion. The
+                  // two used to live as separate chevrons, but users found the
+                  // double-icon confusing.
+                  const expandFully = () => {
+                    toggleZoneExpand(row.id);
+                    if (row.hasChildren) toggleExpand(row.key);
+                  };
+                  // Whether the row currently shows ANY expanded state — drives
+                  // the chevron rotation.
+                  const anyExpanded = zoneExpanded || (row.hasChildren && expandedIds.has(row.key));
+
                   return (
                     <tr
                       key={row.key}
-                      className="border-t border-slate-100 hover:bg-slate-50/40"
+                      className="group border-t border-slate-100 hover:bg-blue-50/50 transition-colors"
                     >
-                      {/* Whole cell is a click target for the task-expand toggle —
-                          users were missing the small chevron and want the full
-                          row to react. The tree-expand chevron still has its own
-                          handler with stopPropagation to keep the two actions
-                          (sub-zone visibility vs task visibility) independent. */}
                       <td
                         className={cn(
-                          'sticky left-0 z-10 bg-white px-4 py-2 border-r border-slate-200 border-l-[3px] cursor-pointer hover:bg-slate-50/60 transition-colors',
+                          // sticky-left cell defaults to bg-white so it stays opaque
+                          // when scrolled; group-hover paints it the same blue as the
+                          // rest of the row so the whole line lights up together.
+                          'sticky left-0 z-10 bg-white group-hover:bg-blue-100/70 px-4 py-2 border-r border-slate-200 border-l-[3px] cursor-pointer transition-colors',
                           zc.border,
                         )}
-                        onClick={() => toggleZoneExpand(row.id)}
-                        aria-label={zoneExpanded ? 'Collapse tasks for this zone' : 'Expand tasks for this zone'}
+                        onClick={expandFully}
+                        aria-label={anyExpanded ? 'Collapse this zone' : 'Expand this zone'}
                       >
                         <div
                           className="flex items-center gap-1.5"
                           style={{ paddingLeft: `${row.depth * 20}px` }}
                         >
-                          {/* Tree chevron: parent zones toggle child visibility */}
-                          {row.hasChildren ? (
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); toggleExpand(row.key); }}
-                              className="shrink-0 p-0.5 rounded hover:bg-slate-200"
-                              aria-label={expandedIds.has(row.key) ? 'Collapse sub-zones' : 'Expand sub-zones'}
-                            >
-                              <ChevronRight
-                                className={cn(
-                                  'h-3.5 w-3.5 text-slate-400 transition-transform duration-150',
-                                  expandedIds.has(row.key) && 'rotate-90',
-                                )}
-                              />
-                            </button>
-                          ) : (
-                            <span className="w-4.5" />
-                          )}
-                          {/* Task expand chevron — visual only, the whole cell handles the click. */}
+                          {/* Single combined chevron — rotates when either state is expanded. */}
                           <ChevronRight
                             className={cn(
-                              'h-3 w-3 shrink-0 transition-transform duration-150',
-                              zoneExpanded ? 'rotate-90 text-blue-500' : 'text-slate-300',
+                              'h-3.5 w-3.5 shrink-0 transition-transform duration-150',
+                              anyExpanded ? 'rotate-90 text-blue-600' : 'text-slate-400',
                             )}
                           />
                           <span
@@ -746,7 +748,7 @@ export function ExecutionBoardPage() {
                                   isAggregate={isParent}
                                   expanded={zoneExpanded}
                                   onToggle={() => toggleZoneExpand(row.id)}
-                                  showBar={row.depth === 0}
+                                  showBar={!!row.isTopLevelZone}
                                 />
                                 {zoneExpanded && directTasks.map((task) => (
                                   <TaskCard
@@ -776,7 +778,7 @@ export function ExecutionBoardPage() {
                                   isAggregate={isParent}
                                   expanded={zoneExpanded}
                                   onToggle={() => toggleZoneExpand(row.id)}
-                                  showBar={row.depth === 0}
+                                  showBar={!!row.isTopLevelZone}
                                 />
                                 {zoneExpanded && directTasks.map((task) => (
                                   <TaskCard

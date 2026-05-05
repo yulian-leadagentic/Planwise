@@ -102,6 +102,23 @@ export class BusinessPartnerRelationshipsService {
       }
     }
 
+    // 5b. Target BP must hold the required role, if specified. Only meaningful
+    // when the target is itself a BP (targetType === 'organization' here —
+    // 'project'/'department'/'team' targets aren't BPs and so never have roles).
+    if ((relType as any).requiredTargetRoleCode && dto.targetType === 'organization') {
+      const targetBp = await this.prisma.businessPartner.findFirst({
+        where: { id: dto.targetId, deletedAt: null },
+        include: { roles: { include: { roleType: true } } },
+      });
+      const targetCodes = (targetBp?.roles ?? []).map((r: any) => r.roleType.code);
+      const required = (relType as any).requiredTargetRoleCode as string;
+      if (!targetCodes.includes(required)) {
+        throw new BadRequestException(
+          `Relationship "${relType.code}" requires the target organization to hold role "${required}". This organization holds: {${targetCodes.join(', ') || 'none'}}.`,
+        );
+      }
+    }
+
     // 6. Target row must exist (when we can verify it).
     await this.assertTargetExists(dto.targetType, dto.targetId);
 

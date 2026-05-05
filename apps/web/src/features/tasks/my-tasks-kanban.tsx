@@ -4,7 +4,6 @@ import { Clock, User as UserIcon, GripVertical, CalendarClock, ListChecks, Colum
 import { DndContext, DragOverlay, closestCorners, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, useDraggable, useDroppable } from '@dnd-kit/core';
 import { PageHeader } from '@/components/shared/page-header';
 import { TaskDrawer } from './task-drawer';
-import { TimeEntryForm } from '@/features/time/time-entry-form';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { tasksApi } from '@/api/tasks.api';
@@ -506,7 +505,6 @@ export function MyTasksKanbanPage() {
   const [activeTab, setActiveTab] = useState<TabMode>('kanban');
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
-  const [timeLogTask, setTimeLogTask] = useState<{ id: number; name: string; targetStatus: string } | null>(null);
 
   // Filters
   const [filterProjectId, setFilterProjectId] = useState<number | null>(null);
@@ -618,12 +616,10 @@ export function MyTasksKanbanPage() {
     const task = tasks.find((t: any) => t.id === taskId);
     if (!task || task.status === targetCol.id) return;
 
-    // If moving to "completed", require time log first
-    if (targetCol.id === 'completed') {
-      setTimeLogTask({ id: taskId, name: task.name, targetStatus: 'completed' });
-      return;
-    }
-
+    // Drag to any column (including Done) moves the task immediately.
+    // Logging time is decoupled — users can log it separately on the task
+    // card or detail view if/when they want to. We deliberately don't
+    // force a hours-log modal on drop here.
     await moveTask(taskId, targetCol.id);
   };
 
@@ -729,40 +725,6 @@ export function MyTasksKanbanPage() {
         <TaskDrawer taskId={drawerTaskId} onClose={() => setDrawerTaskId(null)} />
       )}
 
-      {/* Time Log Required for Done — Modal */}
-      {/* Reuses the same <TimeEntryForm> as the task card, so users get
-          the same date + start/end-time fields everywhere they log hours. */}
-      {timeLogTask && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-sm rounded-[14px] bg-white shadow-2xl border border-slate-200 p-5">
-            <h3 className="text-sm font-bold text-slate-900 mb-1">Log Time to Complete</h3>
-            <p className="text-[12px] text-slate-500 mb-4">
-              Please log hours worked on "<strong>{timeLogTask.name}</strong>" before marking as Done.
-            </p>
-            <TimeEntryForm
-              taskId={timeLogTask.id}
-              variant="full"
-              onLogged={async () => {
-                try {
-                  await moveTask(timeLogTask.id, timeLogTask.targetStatus);
-                } catch (err: any) {
-                  notify.apiError(err, 'Time logged, but moving task to Done failed');
-                } finally {
-                  setTimeLogTask(null);
-                }
-              }}
-            />
-            <div className="mt-3 flex justify-end">
-              <button
-                onClick={() => setTimeLogTask(null)}
-                className="rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

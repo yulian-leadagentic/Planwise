@@ -1356,6 +1356,12 @@ model PartnerRelationshipType {
   // If set, the source BP must hold this PartnerRoleType.code on its roles.
   // E.g. customer_of_project → "customer" so only customer orgs qualify.
   requiredSourceRoleCode String?  @map("required_source_role_code") @db.VarChar(50)
+  // If set, when the target is a Business Partner (targetType=organization),
+  // the target BP must hold this PartnerRoleType.code on its roles. Lets
+  // admins express constraints like "an external_contact relates ONLY to a
+  // customer org" — set requiredSourceRoleCode='external_contact' and
+  // requiredTargetRoleCode='customer'. NULL = no target-role constraint.
+  requiredTargetRoleCode String?  @map("required_target_role_code") @db.VarChar(50)
   sortOrder             Int       @default(0) @map("sort_order")
   isSystem              Boolean   @default(false) @map("is_system")
   createdAt             DateTime  @default(now()) @map("created_at")

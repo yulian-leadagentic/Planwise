@@ -25,6 +25,8 @@ interface RelationshipType extends RoleType {
   applicableTargetTypes: string | null;
   applicableSourceType: string | null;
   requiredSourceRoleCode: string | null;
+  /** Target BP (when targetType=organization) must hold this role code. */
+  requiredTargetRoleCode: string | null;
 }
 
 const TARGET_OPTIONS = ['project', 'organization', 'department', 'team'] as const;
@@ -329,6 +331,12 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
                               <span key={tg} className="rounded-full bg-violet-50 px-1.5 py-0.5 font-semibold text-violet-700">{tg}</span>
                             ))
                           ) : <span className="italic text-slate-400">any</span>}
+                          {t.requiredTargetRoleCode && (
+                            <>
+                              <span className="text-slate-400">w/ role</span>
+                              <span className="rounded-full bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-700">{t.requiredTargetRoleCode}</span>
+                            </>
+                          )}
                         </div>
                       </td>
                       <td className="px-4 py-2.5 text-center">
@@ -377,6 +385,7 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
     applicableTargetTypes: (type?.applicableTargetTypes ?? '').split(',').map((s) => s.trim()).filter(Boolean),
     applicableSourceType: (type?.applicableSourceType ?? '').split(',').map((s) => s.trim()).filter(Boolean),
     requiredSourceRoleCode: type?.requiredSourceRoleCode ?? '',
+    requiredTargetRoleCode: type?.requiredTargetRoleCode ?? '',
   });
 
   const toggleTarget = (t: string) => {
@@ -404,6 +413,7 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
         applicableTargetTypes: form.applicableTargetTypes.length > 0 ? form.applicableTargetTypes.join(',') : undefined,
         applicableSourceType: form.applicableSourceType.length > 0 ? form.applicableSourceType.join(',') : undefined,
         requiredSourceRoleCode: form.requiredSourceRoleCode.trim() || undefined,
+        requiredTargetRoleCode: form.requiredTargetRoleCode.trim() || undefined,
       };
       if (isNew) body.code = form.code.trim().toLowerCase();
       else if (!type?.isSystem) body.code = form.code.trim().toLowerCase();
@@ -466,11 +476,23 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
             );
           })}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[10px] font-semibold text-slate-400 uppercase whitespace-nowrap">Required source role (optional)</span>
           <input
             value={form.requiredSourceRoleCode}
             onChange={(e) => setForm(f => ({ ...f, requiredSourceRoleCode: e.target.value }))}
+            placeholder="e.g. external_contact"
+            className={cn(inputClass, 'font-mono text-[11px] py-1 max-w-[160px]')}
+          />
+        </div>
+        {/* New constraint: target BP must hold this role. Only kicks in when
+            the target is an organization. Combined with the source-role rule
+            above, admins can express e.g. external_contact → customer. */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] font-semibold text-slate-400 uppercase whitespace-nowrap">Required target role (optional)</span>
+          <input
+            value={form.requiredTargetRoleCode}
+            onChange={(e) => setForm(f => ({ ...f, requiredTargetRoleCode: e.target.value }))}
             placeholder="e.g. customer"
             className={cn(inputClass, 'font-mono text-[11px] py-1 max-w-[160px]')}
           />

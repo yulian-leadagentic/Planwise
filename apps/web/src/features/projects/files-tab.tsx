@@ -362,12 +362,50 @@ function AddLinkModal({ projectId, onClose }: { projectId: number; onClose: () =
           </div>
           <div>
             <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Path / URL *</label>
-            <input
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://drive.google.com/file/d/...   or   \\server\share\file.docx"
-              className={cn(inputClass, 'font-mono text-[12px]')}
-            />
+            <div className="flex items-stretch gap-2">
+              <input
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://drive.google.com/file/d/...   or   \\server\share\file.docx"
+                className={cn(inputClass, 'font-mono text-[12px] flex-1')}
+              />
+              {/* Native file picker — browsers strip the full path for security
+                  reasons (we get only the file name). The button is a UX
+                  shortcut: it auto-fills the file name as a starting point,
+                  with a hint to prepend the share / folder prefix. */}
+              <label
+                className="rounded-lg border border-slate-200 bg-white hover:border-slate-400 text-slate-700 text-[12px] font-semibold px-3 py-2 cursor-pointer flex items-center gap-1.5 shrink-0"
+                title="Browser security limits us to the file's name — append your share/folder prefix manually."
+              >
+                <HardDrive className="h-3.5 w-3.5" />
+                Browse…
+                <input
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    // Browsers expose only the file name (not the full path)
+                    // for security. Pre-fill it so the user has a starting
+                    // point and just needs to add the directory prefix.
+                    setUrl(file.name);
+                    // If the display name is empty, also prefill it from the
+                    // file name (without extension) — saves one more keystroke.
+                    if (!name.trim()) {
+                      const base = file.name.replace(/\.[^.]+$/, '');
+                      setName(base);
+                    }
+                    // Reset the input so picking the same file again still fires.
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            </div>
+            <p className="mt-1 text-[11px] text-slate-400">
+              Browsers can't read the full file path for security — paste the network share or URL,
+              or use <strong>Browse…</strong> to grab the file name and prepend the prefix manually
+              (e.g. <span className="font-mono">\\server\share\</span>).
+            </p>
             {url.trim() && (() => {
               const provider = detectLinkProvider(url.trim());
               if (provider === 'generic') return null;
