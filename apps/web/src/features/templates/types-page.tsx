@@ -3,6 +3,7 @@ import { ArrowLeft, Check, Plus, Search, Trash2, X } from 'lucide-react';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { ColorPalettePicker } from '@/components/shared/color-palette-picker';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 
@@ -52,6 +53,12 @@ const TABS: { key: TabKey; label: string }[] = [
 // ---------------------------------------------------------------------------
 // Inline color input component
 // ---------------------------------------------------------------------------
+/**
+ * Inline colour picker used in the editing row of every Types & Categories
+ * tab (Zone Types, Project Categories, Departments, Professions). Wraps the
+ * shared <ColorPalettePicker> so the same curated palette is offered
+ * everywhere — no more raw-hex-only fields.
+ */
 function ColorInput({
   value,
   onChange,
@@ -60,19 +67,7 @@ function ColorInput({
   onChange: (v: string) => void;
 }) {
   return (
-    <div className="flex items-center gap-1.5">
-      <span
-        className="w-4 h-4 rounded-full border border-slate-200 shrink-0"
-        style={{ backgroundColor: value || '#6B7280' }}
-      />
-      <input
-        type="text"
-        value={value || ''}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="#hex"
-        className="w-20 px-2 py-1 rounded border border-slate-200 text-xs font-mono focus:border-blue-500 focus:outline-none"
-      />
-    </div>
+    <ColorPalettePicker value={value || '#6B7280'} onChange={onChange} />
   );
 }
 
