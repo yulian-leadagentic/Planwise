@@ -105,4 +105,16 @@ export class CreateUserDto {
   @IsInt()
   @Type(() => Number)
   employerOrgId?: number;
+
+  /**
+   * Link the new login to an *existing* Business Partner (person) instead
+   * of creating a fresh BP. Used when a contact has already been captured
+   * under Partners → Contacts and we just want to give them access to the
+   * app. Skips the email-match auto-link path.
+   */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  businessPartnerId?: number;
 }

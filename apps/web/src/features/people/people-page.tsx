@@ -137,7 +137,21 @@ function getColumns(
   return cols;
 }
 
-const emptyPerson = { email: '', password: '', firstName: '', lastName: '', phone: '', roleId: '', userType: 'employee' as string, position: '', department: '', companyName: '' };
+// `businessPartnerId === ''` means "create a fresh BP" (default); a number
+// means link this login to that existing person BP and skip BP creation.
+const emptyPerson = {
+  email: '',
+  password: '',
+  firstName: '',
+  lastName: '',
+  phone: '',
+  roleId: '',
+  userType: 'employee' as string,
+  position: '',
+  department: '',
+  companyName: '',
+  businessPartnerId: '' as number | '',
+};
 
 export function PeoplePage() {
   const queryClient = useQueryClient();
@@ -163,6 +177,24 @@ export function PeoplePage() {
     queryFn: () => client.get('/admin/config/professions').then((r) => { const d = r.data?.data ?? r.data; return Array.isArray(d) ? d : []; }),
   });
 
+  // All person-type BPs that don't yet have a User account — these are the
+  // candidates the create form can link a fresh login to. Loaded only when
+  // the modal is open. Cached for the session.
+  const { data: linkableBps = [] } = useQuery<any[]>({
+    queryKey: ['business-partners', 'persons-without-user'],
+    enabled: showCreate,
+    staleTime: 60 * 1000,
+    queryFn: () =>
+      client
+        .get('/business-partners', { params: { partnerType: 'person', perPage: 500 } })
+        .then((r) => {
+          const raw = r.data?.data ?? r.data;
+          const list = Array.isArray(raw) ? raw : (raw?.data ?? []);
+          // Hide BPs that already have a login user attached.
+          return list.filter((bp: any) => !bp.user);
+        }),
+  });
+
   const createUser = useMutation({
     mutationFn: (data: any) => client.post('/users', data).then((r) => r.data),
     onSuccess: () => {
@@ -180,11 +212,40 @@ export function PeoplePage() {
       notify.warning('Please fill all required fields', { code: 'USER-CREATE-400' });
       return;
     }
-    createUser.mutate({
+    const payload: any = {
       ...form,
       roleId: Number(form.roleId),
       userType: peopleTab === 'partners' ? 'partner' : 'employee',
-    });
+    };
+    // Only send businessPartnerId when the user explicitly picked one.
+    // Empty string would otherwise be sent as the literal "" — server-side
+    // validation would reject it as a non-int.
+    if (form.businessPartnerId === '' || form.businessPartnerId == null) {
+      delete payload.businessPartnerId;
+    } else {
+      payload.businessPartnerId = Number(form.businessPartnerId);
+    }
+    createUser.mutate(payload);
+  };
+
+  /** Prefill identity fields from the picked BP so the user doesn't retype them. */
+  const handleLinkExistingBp = (idStr: string) => {
+    if (!idStr) {
+      setForm((f) => ({ ...f, businessPartnerId: '' }));
+      return;
+    }
+    const id = Number(idStr);
+    const bp = linkableBps.find((b: any) => b.id === id);
+    if (!bp) return;
+    setForm((f) => ({
+      ...f,
+      businessPartnerId: id,
+      firstName: bp.firstName ?? f.firstName,
+      lastName: bp.lastName ?? f.lastName,
+      email: bp.email ?? f.email,
+      phone: bp.phone ?? bp.mobile ?? f.phone,
+      companyName: bp.companyName ?? f.companyName,
+    }));
   };
   const debouncedSearch = useDebounce(peopleSearch, 300);
   const { can, isAdmin } = usePermissions();
@@ -326,6 +387,33 @@ export function PeoplePage() {
               </button>
             </div>
             <form onSubmit={handleCreateSubmit} className="p-5 space-y-4">
+              {/* Optional: link this login to an existing person BP. When a
+                  partner is picked, the identity fields below are prefilled
+                  so the user doesn't retype anything. Defaults to "Create
+                  new" — same behaviour as before. Only person BPs that
+                  don't already have a user account are shown. */}
+              <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                <label className="text-[12px] font-semibold text-slate-700 mb-1 block">Link to existing partner</label>
+                <select
+                  value={form.businessPartnerId === '' ? '' : String(form.businessPartnerId)}
+                  onChange={(e) => handleLinkExistingBp(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="">— Create a new partner record —</option>
+                  {linkableBps.map((bp: any) => (
+                    <option key={bp.id} value={bp.id}>
+                      {bp.displayName}
+                      {bp.email ? ` · ${bp.email}` : ''}
+                      {bp.companyName ? ` · ${bp.companyName}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Pick someone already in <strong>Partners → Contacts</strong> to give them
+                  app access without duplicating the contact record.
+                </p>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">First Name *</label>

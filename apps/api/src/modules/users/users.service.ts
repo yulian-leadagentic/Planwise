@@ -21,30 +21,51 @@ export class UsersService {
 
     // Pull out fields that don't belong on User itself (or we want to handle
     // separately) so the rest can be spread into the User.create.
-    const { employerOrgId, ...userData } = dto;
+    const { employerOrgId, businessPartnerId: explicitBpId, ...userData } = dto;
 
-    // 1) Create or link a BusinessPartner record. Every login user is also a BP.
-    const existingBp = await this.prisma.businessPartner.findFirst({
-      where: { email: dto.email, deletedAt: null },
-    });
-
+    // 1) Pick the BusinessPartner this login will reference. Three paths:
+    //    a. Caller picked an explicit BP → use it (must be partner_type=person
+    //       and not soft-deleted, and not already linked to another User).
+    //    b. A BP with the same email already exists → link to it.
+    //    c. Otherwise, create a fresh BP from the user's name/email/phone.
     let businessPartnerId: number;
-    if (existingBp) {
-      // BP already exists with this email — link to it.
-      businessPartnerId = existingBp.id;
-    } else {
-      const bp = await this.prisma.businessPartner.create({
-        data: {
-          partnerType: 'person',
-          displayName: `${dto.firstName} ${dto.lastName}`.trim() || dto.email,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          email: dto.email,
-          phone: dto.phone ?? null,
-          source: 'manual',
-        },
+    if (explicitBpId) {
+      const explicit = await this.prisma.businessPartner.findFirst({
+        where: { id: explicitBpId, deletedAt: null },
+        include: { user: { select: { id: true } } },
       });
-      businessPartnerId = bp.id;
+      if (!explicit) {
+        throw new NotFoundException(`Business partner ${explicitBpId} not found`);
+      }
+      if (explicit.partnerType !== 'person') {
+        throw new ConflictException('Only person partners can be linked to a login user');
+      }
+      if (explicit.user) {
+        throw new ConflictException(
+          `Business partner ${explicitBpId} is already linked to user ${explicit.user.id}`,
+        );
+      }
+      businessPartnerId = explicit.id;
+    } else {
+      const existingBp = await this.prisma.businessPartner.findFirst({
+        where: { email: dto.email, deletedAt: null },
+      });
+      if (existingBp) {
+        businessPartnerId = existingBp.id;
+      } else {
+        const bp = await this.prisma.businessPartner.create({
+          data: {
+            partnerType: 'person',
+            displayName: `${dto.firstName} ${dto.lastName}`.trim() || dto.email,
+            firstName: dto.firstName,
+            lastName: dto.lastName,
+            email: dto.email,
+            phone: dto.phone ?? null,
+            source: 'manual',
+          },
+        });
+        businessPartnerId = bp.id;
+      }
     }
 
     // 2) Add the 'employee' role on the BP if user is an employee or both.
