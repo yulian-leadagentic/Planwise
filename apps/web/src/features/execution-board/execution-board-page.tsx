@@ -152,7 +152,19 @@ function HealthBadge({ agg, size = 'sm' }: { agg: { critical: number; warning: n
   );
 }
 
-function CellSummary({ tasks, healths, isAggregate, expanded, onToggle }: { tasks: Task[]; healths: TaskHealth[]; isAggregate: boolean; expanded: boolean; onToggle: () => void }) {
+function CellSummary({
+  tasks,
+  healths,
+  isAggregate,
+  expanded,
+  onToggle,
+  /**
+   * Whether to render the visual progress bar. Only the top-level zones in
+   * the execution board do — sub-zones show just `% + health` so the eye
+   * isn't pulled away from the parent zone's overall progress.
+   */
+  showBar = true,
+}: { tasks: Task[]; healths: TaskHealth[]; isAggregate: boolean; expanded: boolean; onToggle: () => void; showBar?: boolean }) {
   if (tasks.length === 0) return null;
 
   // Completion = sum of estimated hours for COMPLETED tasks / sum of all
@@ -197,9 +209,15 @@ function CellSummary({ tasks, healths, isAggregate, expanded, onToggle }: { task
             expanded && 'rotate-90',
           )}
         />
-        <div className="flex-1 h-[4px] bg-slate-200 rounded-full overflow-hidden">
-          <div className={cn('h-full rounded-full', color)} style={{ width: `${Math.min(pct, 100)}%` }} />
-        </div>
+        {showBar ? (
+          <div className="flex-1 h-[4px] bg-slate-200 rounded-full overflow-hidden">
+            <div className={cn('h-full rounded-full', color)} style={{ width: `${Math.min(pct, 100)}%` }} />
+          </div>
+        ) : (
+          // Sub-zones: spacer keeps the % + health badge pushed right, in
+          // visual line with their parent's bar — but no bar of their own.
+          <div className="flex-1" />
+        )}
         <span className={cn('text-[10px] font-bold tabular-nums shrink-0', textColor)}>{pct}%</span>
         <HealthBadge agg={agg} />
       </div>
@@ -533,6 +551,22 @@ export function ExecutionBoardPage() {
           ))}
         </select>
 
+        {/* Collapse / Expand all — only meaningful when there's at least one
+            zone open. We collapse both the tree-expand state (sub-zone visibility)
+            and the per-zone task expand. Expand-all is bounded to the visible
+            top-level zones only — recursively expanding deep trees explodes the UI. */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => { setExpandedZones(new Set()); setExpandedIds(new Set()); }}
+            disabled={expandedZones.size === 0 && expandedIds.size === 0}
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:border-slate-400 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Collapse every zone / sub-zone"
+          >
+            Collapse All
+          </button>
+        </div>
+
         {/* Legend */}
         <div className="ml-auto flex items-center gap-3 text-[11px] text-slate-500">
           <span className="flex items-center gap-1"><AlertCircle className="h-3 w-3 text-red-600" />Overdue / critical</span>
@@ -638,7 +672,19 @@ export function ExecutionBoardPage() {
                       key={row.key}
                       className="border-t border-slate-100 hover:bg-slate-50/40"
                     >
-                      <td className={cn('sticky left-0 z-10 bg-white px-4 py-2 border-r border-slate-200 border-l-[3px]', zc.border)}>
+                      {/* Whole cell is a click target for the task-expand toggle —
+                          users were missing the small chevron and want the full
+                          row to react. The tree-expand chevron still has its own
+                          handler with stopPropagation to keep the two actions
+                          (sub-zone visibility vs task visibility) independent. */}
+                      <td
+                        className={cn(
+                          'sticky left-0 z-10 bg-white px-4 py-2 border-r border-slate-200 border-l-[3px] cursor-pointer hover:bg-slate-50/60 transition-colors',
+                          zc.border,
+                        )}
+                        onClick={() => toggleZoneExpand(row.id)}
+                        aria-label={zoneExpanded ? 'Collapse tasks for this zone' : 'Expand tasks for this zone'}
+                      >
                         <div
                           className="flex items-center gap-1.5"
                           style={{ paddingLeft: `${row.depth * 20}px` }}
@@ -647,8 +693,8 @@ export function ExecutionBoardPage() {
                           {row.hasChildren ? (
                             <button
                               type="button"
-                              onClick={() => toggleExpand(row.key)}
-                              className="shrink-0 p-0.5 rounded hover:bg-slate-100"
+                              onClick={(e) => { e.stopPropagation(); toggleExpand(row.key); }}
+                              className="shrink-0 p-0.5 rounded hover:bg-slate-200"
                               aria-label={expandedIds.has(row.key) ? 'Collapse sub-zones' : 'Expand sub-zones'}
                             >
                               <ChevronRight
@@ -661,26 +707,18 @@ export function ExecutionBoardPage() {
                           ) : (
                             <span className="w-4.5" />
                           )}
-                          {/* Task expand chevron: toggles task cards for this zone */}
-                          <button
-                            type="button"
-                            onClick={() => toggleZoneExpand(row.id)}
-                            className="shrink-0 p-0.5 rounded hover:bg-slate-100"
-                            aria-label={zoneExpanded ? 'Collapse tasks' : 'Expand tasks'}
-                          >
-                            <ChevronRight
-                              className={cn(
-                                'h-3 w-3 transition-transform duration-150',
-                                zoneExpanded ? 'rotate-90 text-blue-500' : 'text-slate-300',
-                              )}
-                            />
-                          </button>
+                          {/* Task expand chevron — visual only, the whole cell handles the click. */}
+                          <ChevronRight
+                            className={cn(
+                              'h-3 w-3 shrink-0 transition-transform duration-150',
+                              zoneExpanded ? 'rotate-90 text-blue-500' : 'text-slate-300',
+                            )}
+                          />
                           <span
                             className={cn(
-                              'truncate text-[13px] cursor-pointer',
+                              'truncate text-[13px]',
                               row.hasChildren ? 'font-semibold text-slate-700' : 'text-slate-600',
                             )}
-                            onClick={() => toggleZoneExpand(row.id)}
                           >
                             {row.name}
                           </span>
@@ -708,6 +746,7 @@ export function ExecutionBoardPage() {
                                   isAggregate={isParent}
                                   expanded={zoneExpanded}
                                   onToggle={() => toggleZoneExpand(row.id)}
+                                  showBar={row.depth === 0}
                                 />
                                 {zoneExpanded && directTasks.map((task) => (
                                   <TaskCard
@@ -737,6 +776,7 @@ export function ExecutionBoardPage() {
                                   isAggregate={isParent}
                                   expanded={zoneExpanded}
                                   onToggle={() => toggleZoneExpand(row.id)}
+                                  showBar={row.depth === 0}
                                 />
                                 {zoneExpanded && directTasks.map((task) => (
                                   <TaskCard

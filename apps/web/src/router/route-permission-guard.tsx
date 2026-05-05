@@ -41,6 +41,7 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
   '/inbox': 'tasks',
   '/messages': 'tasks',
   '/people': 'partners',
+  '/admin/employees': 'partners',
   '/partners': 'partners',
   '/operations': 'operations',
 };

@@ -1315,6 +1315,13 @@ model PartnerRoleType {
   code        String    @unique @db.VarChar(50)
   name        String    @db.VarChar(100)
   description String?   @db.VarChar(500)
+  // Category — coarse grouping label (e.g. "cst" for customer, "sup" for
+  // supplier, "mun" for municipality, "int" for internal). Multiple role
+  // codes can share a category (e.g. "smb_customer" and "enterprise_customer"
+  // both with category="cst"). Used for grouping in the UI today; future
+  // work can let relationship rules constrain by category instead of an
+  // exact role code.
+  category    String?   @db.VarChar(20)
   sortOrder   Int       @default(0) @map("sort_order")
   isSystem    Boolean   @default(false) @map("is_system")
   createdAt   DateTime  @default(now()) @map("created_at")
@@ -1322,6 +1329,7 @@ model PartnerRoleType {
 
   roles BusinessPartnerRole[]
 
+  @@index([category])
   @@map("partner_role_types")
 }
 

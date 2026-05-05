@@ -110,7 +110,9 @@ export function AppRouter() {
         {/* Contracts */}
         <Route path="contracts" element={<L><ContractsPage /></L>} />
 
-        {/* People */}
+        {/* Employees (internal staff with login accounts) — lives under /admin
+            now. /people is kept as an alias for backwards-compat / bookmarks. */}
+        <Route path="admin/employees" element={<L><PeoplePage /></L>} />
         <Route path="people" element={<L><PeoplePage /></L>} />
         <Route path="partners" element={<L><PartnersPage /></L>} />
 

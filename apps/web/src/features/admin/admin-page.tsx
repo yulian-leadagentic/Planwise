@@ -6,11 +6,20 @@ import {
   Calendar,
   Bell,
   Tags,
+  Users,
 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { usePermissions } from '@/hooks/use-permissions';
 
 const adminCards = [
+  {
+    title: 'Employees',
+    description: 'Internal staff with login accounts — edit details, reset passwords, manage access',
+    icon: Users,
+    href: '/admin/employees',
+    module: 'partners',
+    color: 'bg-emerald-100 text-emerald-700',
+  },
   {
     title: 'Partner Types',
     description: 'Manage role types and relationship types used by Business Partners',

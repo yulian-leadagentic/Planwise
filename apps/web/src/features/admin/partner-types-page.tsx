@@ -15,6 +15,8 @@ interface RoleType {
   code: string;
   name: string;
   description: string | null;
+  /** Coarse grouping (e.g. "cst" for customer, "sup" for supplier). Optional. */
+  category: string | null;
   sortOrder: number;
   isSystem: boolean;
 }
@@ -106,8 +108,9 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
               <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
                 <th className="px-4 py-2 text-left font-semibold w-32">Code</th>
                 <th className="px-4 py-2 text-left font-semibold w-48">Name</th>
+                <th className="px-4 py-2 text-left font-semibold w-24">Category</th>
                 <th className="px-4 py-2 text-left font-semibold">Description</th>
-                <th className="px-4 py-2 text-center font-semibold w-20">Type</th>
+                <th className="px-4 py-2 text-center font-semibold w-20">Origin</th>
                 <th className="px-4 py-2 text-right font-semibold w-32"></th>
               </tr>
             </thead>
@@ -122,6 +125,13 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
                     <tr key={t.id} className="border-t border-slate-100">
                       <td className="px-4 py-2.5 font-mono text-[12px] text-slate-600">{t.code}</td>
                       <td className="px-4 py-2.5 font-medium text-slate-800">{t.name}</td>
+                      <td className="px-4 py-2.5">
+                        {t.category ? (
+                          <span className="inline-flex rounded-md bg-violet-50 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-violet-700">
+                            {t.category}
+                          </span>
+                        ) : <span className="italic text-slate-400 text-[11px]">—</span>}
+                      </td>
                       <td className="px-4 py-2.5 text-slate-600 text-[12px]">{t.description || <span className="italic text-slate-400">—</span>}</td>
                       <td className="px-4 py-2.5 text-center">
                         {t.isSystem ? (
@@ -166,11 +176,17 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
     code: type?.code ?? '',
     name: type?.name ?? '',
     description: type?.description ?? '',
+    category: type?.category ?? '',
   });
 
   const save = useMutation({
     mutationFn: () => {
-      const body: any = { name: form.name.trim(), description: form.description.trim() || undefined };
+      const body: any = {
+        name: form.name.trim(),
+        description: form.description.trim() || undefined,
+        // Always send category (empty string clears it server-side).
+        category: form.category.trim().toLowerCase(),
+      };
       if (isNew) body.code = form.code.trim().toLowerCase();
       else if (!type?.isSystem) body.code = form.code.trim().toLowerCase();
       return isNew
@@ -198,6 +214,24 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
       </td>
       <td className="px-4 py-2">
         <input value={form.name} onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} className={inputClass} autoFocus />
+      </td>
+      <td className="px-4 py-2">
+        {/* Category — short code that groups related role types.
+            Datalist offers the established codes so spelling stays consistent. */}
+        <input
+          list="partner-role-category-suggestions"
+          value={form.category}
+          onChange={(e) => setForm(f => ({ ...f, category: e.target.value }))}
+          placeholder="e.g. cst"
+          className={cn(inputClass, 'font-mono text-[12px]')}
+        />
+        <datalist id="partner-role-category-suggestions">
+          <option value="cst" />
+          <option value="sup" />
+          <option value="mun" />
+          <option value="int" />
+          <option value="ext" />
+        </datalist>
       </td>
       <td className="px-4 py-2" colSpan={2}>
         <input value={form.description} onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))} className={inputClass} />

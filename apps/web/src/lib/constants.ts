@@ -3,7 +3,6 @@ import {
   Clock,
   FolderKanban,
   FileText,
-  Users,
   Briefcase,
   BarChart3,
   Layers,
@@ -55,10 +54,9 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Time', href: '/time', icon: Clock },
   { label: 'Contracts', href: '/contracts', icon: FileText },
   { label: 'Partners', href: '/partners', icon: Briefcase },
-  // People = your internal staff (login accounts + roles + departments).
-  // The page lives at /people; we hide it from the sidebar earlier and
-  // restored it next to Partners since users couldn't find it.
-  { label: 'People', href: '/people', icon: Users },
+  // Internal staff used to live here as "People". Moved into the Admin
+  // landing page as the "Employees" card — that's a more natural home
+  // since it manages login accounts + role assignments.
   { label: 'Reports', href: '/reports', icon: BarChart3 },
   { label: 'Templates', href: '/templates', icon: Layers },
   { label: 'Admin', href: '/admin', icon: Settings },

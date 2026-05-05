@@ -24,6 +24,9 @@ interface UpsertTypeDto {
   code?: string;                    // required for create, optional for update (system rows can't change code)
   name: string;
   description?: string;
+  // Coarse grouping label, role types only (e.g. "cst", "sup"). Empty
+  // string clears the category; undefined leaves the existing value.
+  category?: string;
   applicableTargetTypes?: string;   // CSV — only used by relationship types
   applicableSourceType?: string;    // CSV — only used by relationship types: "person" | "organization" | "person,organization"
   requiredSourceRoleCode?: string;  // only used by relationship types
@@ -60,6 +63,8 @@ export class PartnerTypesController {
         code: body.code.trim().toLowerCase(),
         name: body.name.trim(),
         description: body.description?.trim() || null,
+        // Coarse grouping label (e.g. "cst", "sup"). Optional — null = no group.
+        category: body.category?.trim().toLowerCase() || null,
         sortOrder: body.sortOrder ?? 0,
         isSystem: false,
       },
@@ -78,6 +83,12 @@ export class PartnerTypesController {
       description: body.description?.trim() ?? null,
       sortOrder: body.sortOrder,
     };
+    // category is editable on every row including system ones — admins can
+    // re-group the seeded roles. Empty string = clear the category.
+    if (body.category !== undefined) {
+      const c = body.category?.trim().toLowerCase();
+      data.category = c || null;
+    }
     // System rows can't change their stable code
     if (!existing.isSystem && body.code) {
       data.code = body.code.trim().toLowerCase();

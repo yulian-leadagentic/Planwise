@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { ColorPalettePicker } from '@/components/shared/color-palette-picker';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 
@@ -81,10 +82,7 @@ export function ZoneTypesPage() {
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Color</label>
-              <div className="flex items-center gap-2">
-                <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="h-9 w-12 rounded border border-input cursor-pointer" />
-                <input value={color} onChange={(e) => setColor(e.target.value)} className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-              </div>
+              <ColorPalettePicker value={color} onChange={setColor} />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Icon</label>

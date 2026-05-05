@@ -236,8 +236,8 @@ export function PeoplePage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="People"
-        description="Manage employees and partners"
+        title="Employees"
+        description="Internal staff with login accounts — manage details, roles and access"
         actions={
           <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-[13px] font-semibold text-white">
             <Plus className="h-4 w-4" />

@@ -91,6 +91,11 @@ export function ProjectFormPage() {
   const [memberSearch, setMemberSearch] = useState('');
   const [memberDropdownOpen, setMemberDropdownOpen] = useState(false);
   const [showTeamTemplatePicker, setShowTeamTemplatePicker] = useState(false);
+  // Optional quick link — Google Drive / network share / etc. Saved as a
+  // ProjectFile of kind=link after the project is created/updated, so it's
+  // visible in the existing Files tab.
+  const [quickLinkUrl, setQuickLinkUrl] = useState('');
+  const [quickLinkName, setQuickLinkName] = useState('');
 
   // Fetch team templates for the picker
   const { data: teamTemplates = [] } = useQuery<any[]>({
@@ -171,6 +176,31 @@ export function ProjectFormPage() {
 
   if (isEdit && projectLoading) return <PageSkeleton />;
 
+  // Helper: detect cloud-storage providers in a URL so we can give a sensible
+  // default display name (mirrors the heuristic in files-tab.tsx).
+  const detectProviderLabel = (url: string): string => {
+    const u = url.toLowerCase();
+    if (u.includes('drive.google.com') || u.includes('docs.google.com')) return 'Google Drive';
+    if (u.includes('dropbox.com')) return 'Dropbox';
+    if (u.includes('1drv.ms') || u.includes('onedrive.live.com')) return 'OneDrive';
+    if (u.includes('sharepoint.com')) return 'SharePoint';
+    return 'External link';
+  };
+
+  // After the project is saved, persist the optional quick-link as a
+  // ProjectFile of kind=link. Best-effort: a failure surfaces a toast but
+  // doesn't roll back the project save.
+  const persistQuickLinkIfNeeded = async (savedProjectId: number) => {
+    const url = quickLinkUrl.trim();
+    if (!url) return;
+    const name = quickLinkName.trim() || detectProviderLabel(url);
+    try {
+      await client.post(`/projects/${savedProjectId}/files/link`, { name, url });
+    } catch (err: any) {
+      notify.apiError(err, 'Project saved, but link could not be added');
+    }
+  };
+
   const onSubmit = (data: ProjectFormData) => {
     const payload: any = { ...data, memberIds };
 
@@ -222,13 +252,17 @@ export function ProjectFormPage() {
             } catch (err: any) {
               notify.apiError(err, 'Project saved, but customer reassignment failed');
             }
+            await persistQuickLinkIfNeeded(projectId);
             navigate(`/projects/${projectId}`);
           },
         },
       );
     } else {
       createProject.mutate(payload, {
-        onSuccess: (created: any) => navigate(`/projects/${created.id}`),
+        onSuccess: async (created: any) => {
+          await persistQuickLinkIfNeeded(created.id);
+          navigate(`/projects/${created.id}`);
+        },
       });
     }
   };
@@ -575,6 +609,41 @@ export function ProjectFormPage() {
                   placeholder="Add a project description..."
                   className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none resize-none"
                 />
+              </div>
+
+              {/* Optional quick link — Google Drive folder / network share / etc.
+                  Saved as a ProjectFile of kind=link, visible in the Files tab. */}
+              <div className="mt-5">
+                <label className={labelClass}>Quick link (optional)</label>
+                <p className="text-[12px] text-slate-500 mb-2">
+                  Attach a Google Drive folder, network share, or external URL so the team has it on day one.
+                  More links can be added from the Files tab later.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    value={quickLinkName}
+                    onChange={(e) => setQuickLinkName(e.target.value)}
+                    placeholder="Display name (e.g. Drive folder)"
+                    className={`${inputClass} sm:max-w-xs`}
+                  />
+                  <input
+                    type="text"
+                    value={quickLinkUrl}
+                    onChange={(e) => setQuickLinkUrl(e.target.value)}
+                    placeholder="https://drive.google.com/drive/folders/...   or   \\server\share\..."
+                    className={`${inputClass} font-mono text-[12px] flex-1`}
+                  />
+                </div>
+                {quickLinkUrl.trim() && (() => {
+                  const label = detectProviderLabel(quickLinkUrl.trim());
+                  if (label === 'External link') return null;
+                  return (
+                    <p className="mt-1.5 text-[11px] text-slate-500">
+                      Detected as <span className="font-semibold">{label}</span>
+                    </p>
+                  );
+                })()}
               </div>
             </div>
 
