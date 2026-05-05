@@ -914,6 +914,7 @@ function ProjectBpPicker({
       {createForOrgId != null && (
         <CreateContactModal
           preselectEmployerOrgId={createForOrgId}
+          lockEmployer    /* this flow is 'create a contact FOR this customer/supplier' */
           onClose={() => setCreateForOrgId(null)}
           onCreated={(newBpId) => {
             setCreateForOrgId(null);

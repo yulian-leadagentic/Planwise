@@ -19,10 +19,19 @@ export function CreateContactModal({
    * "create a new contact for THIS customer".
    */
   preselectEmployerOrgId,
+  /**
+   * If true and an employer is preselected, the dropdown is *locked* to
+   * that org and the user can't change it. Used by the project Team
+   * customer-contact picker — at that step we're explicitly creating a
+   * contact for the project's customer, so changing the employer would
+   * defeat the purpose.
+   */
+  lockEmployer,
 }: {
   onClose: () => void;
   onCreated: (id: number) => void;
   preselectEmployerOrgId?: number;
+  lockEmployer?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState({
@@ -156,12 +165,26 @@ export function CreateContactModal({
           {/* Employer + role-in-context */}
           <div>
             <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Employer (organization)</label>
-            <select value={form.employerOrgId} onChange={(e) => setForm(f => ({ ...f, employerOrgId: e.target.value }))} className={inputClass}>
-              <option value="">— None / unaffiliated —</option>
-              {orgs.map((o) => (
-                <option key={o.id} value={o.id}>{o.displayName}</option>
-              ))}
-            </select>
+            {lockEmployer && form.employerOrgId ? (
+              // When the caller passes lockEmployer, we render the chosen org
+              // as static text + a hidden value. The user is in a flow that
+              // explicitly says "add a contact for THIS customer/supplier" —
+              // letting them switch the employer would defeat the point.
+              <div className={`${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed flex items-center justify-between`}>
+                <span className="font-medium">
+                  {orgs.find((o) => String(o.id) === String(form.employerOrgId))?.displayName
+                    ?? `Organization #${form.employerOrgId}`}
+                </span>
+                <span className="text-[10px] uppercase tracking-wider text-slate-400">Locked</span>
+              </div>
+            ) : (
+              <select value={form.employerOrgId} onChange={(e) => setForm(f => ({ ...f, employerOrgId: e.target.value }))} className={inputClass}>
+                <option value="">— None / unaffiliated —</option>
+                {orgs.map((o) => (
+                  <option key={o.id} value={o.id}>{o.displayName}</option>
+                ))}
+              </select>
+            )}
             <p className="text-[11px] text-slate-400 mt-1">
               Creates a <code>worker_of</code> relationship — the contact's "context" is defined here.
             </p>

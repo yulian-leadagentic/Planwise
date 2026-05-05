@@ -9,6 +9,9 @@ export class TemplatesService {
     const where: any = { deletedAt: null };
     if (type) where.type = type;
 
+    // Load templates + the per-template-zone fields we need to recursively
+    // count tasks across the full composition graph (referencedTemplateId,
+    // linkedTaskTemplateId, inline task counts, multiplicity).
     const templates = await this.prisma.template.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -17,31 +20,70 @@ export class TemplatesService {
         phase: true,
         _count: { select: { templateTasks: true, templateZones: true } },
         templateTasks: { select: { id: true, description: true }, take: 100 },
-        // Pull only `instanceCount` so we can compute the effective expanded
-        // zone count below. The full templateZones tree is loaded by findOne;
-        // here we just need the multipliers per row.
-        templateZones: { select: { instanceCount: true } },
+        templateZones: {
+          select: {
+            instanceCount: true,
+            referencedTemplateId: true,
+            linkedTaskTemplateId: true,
+            _count: { select: { templateZoneTasks: true } },
+          },
+        },
       },
     });
 
-    // Effective zone count = SUM(instanceCount) across template zones, NOT just
-    // the row count Prisma's `_count.templateZones` returns. A "Floor ×3" entry
-    // contributes 3 to the displayed total because it'll spawn 3 zones at apply
-    // time. We override `_count.templateZones` so the existing UI just works.
+    // Build an id → template lookup for the recursive rollup below.
+    const byId = new Map<number, any>(templates.map((t: any) => [t.id, t]));
+
+    // Effective zone count = SUM(instanceCount) across template zones (a
+    // "Floor ×3" composition contributes 3, not 1).
+    // Effective task count = recursive rollup: root tasks + for each zone,
+    // (inline templateZoneTasks + linkedTaskTemplate's tasks + referencedTemplate's
+    // total tasks) × instanceCount. memoised per template; cycle-guarded.
+    const taskTotalCache = new Map<number, number>();
+    const visiting = new Set<number>();
+
+    const computeTotalTasks = (id: number): number => {
+      if (taskTotalCache.has(id)) return taskTotalCache.get(id)!;
+      if (visiting.has(id)) return 0; // cycle — bail out
+      const t = byId.get(id);
+      if (!t) return 0;
+      visiting.add(id);
+      let total = t._count?.templateTasks ?? 0;
+      for (const z of (t.templateZones ?? [])) {
+        const mult = Math.max(1, Number(z.instanceCount) || 1);
+        let zoneTasks = z._count?.templateZoneTasks ?? 0;
+        if (z.linkedTaskTemplateId) {
+          const linked = byId.get(z.linkedTaskTemplateId);
+          zoneTasks += linked?._count?.templateTasks ?? 0;
+        }
+        if (z.referencedTemplateId) {
+          zoneTasks += computeTotalTasks(z.referencedTemplateId);
+        }
+        total += zoneTasks * mult;
+      }
+      visiting.delete(id);
+      taskTotalCache.set(id, total);
+      return total;
+    };
+
     return templates.map((t: any) => {
       const expandedZones = (t.templateZones ?? []).reduce(
         (sum: number, z: any) => sum + Math.max(1, Number(z.instanceCount) || 1),
         0,
       );
+      const effectiveTasks = computeTotalTasks(t.id);
       return {
         ...t,
         _count: {
           ...t._count,
           templateZones: expandedZones,
-          // Keep the raw row count too in case any caller wants it.
           templateZoneRows: t._count?.templateZones ?? 0,
+          // Direct-only count preserved for any caller that needs it.
+          templateRootTasks: t._count?.templateTasks ?? 0,
+          // Override `templateTasks` with the rolled-up effective count so
+          // existing UI ("X tasks" labels) shows the realistic total.
+          templateTasks: effectiveTasks,
         },
-        // Strip the bare list — callers already use _count for display.
         templateZones: undefined,
       };
     });

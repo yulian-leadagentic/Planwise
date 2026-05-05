@@ -278,12 +278,36 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-[12px] text-slate-500">Relationship verbs between a partner and a target (project, organization, etc.).</p>
+        <div className="flex-1 max-w-3xl">
+          <p className="text-[12px] text-slate-500 mb-1">Relationship verbs between a partner and a target (project, organization, etc.).</p>
+        </div>
         {canWrite && editingId === null && (
           <button onClick={() => setEditingId('new')} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1">
             <Plus className="h-3 w-3" /> Add Relationship Type
           </button>
         )}
+      </div>
+
+      {/* Explainer block — relationship-types is the most abstract screen
+          in the Admin area; without context most users don't know what to
+          do here. Spell out the four levers + a worked example. */}
+      <div className="rounded-lg border border-slate-200 bg-blue-50/40 p-3 text-[12px] text-slate-700 space-y-2">
+        <p className="font-semibold text-slate-800">What does each row do?</p>
+        <p>
+          A relationship type defines <strong>which kinds of partners can connect to which kinds of targets</strong>,
+          and <em>under what conditions</em>. The system uses these rules to validate every new BP relationship.
+        </p>
+        <ul className="list-disc pl-5 space-y-0.5">
+          <li><strong>From</strong> — the source partner type (<code>person</code> or <code>organization</code>).</li>
+          <li><strong>→ Target</strong> — what the source can point to (<code>project</code>, <code>organization</code>, <code>department</code>, <code>team</code>).</li>
+          <li><strong>Required source role (optional)</strong> — the source must hold this role code (e.g. <code>customer</code>).</li>
+          <li><strong>Required target role (optional)</strong> — when target is an organization, the target org must hold this role code.</li>
+        </ul>
+        <p className="text-slate-600">
+          <strong>Example</strong> — to express <em>"an external_contact can be a contact-of a customer org"</em>:
+          create a row <code>contact_of_customer</code>, From&nbsp;<code>person</code>&nbsp;→&nbsp;<code>organization</code>,
+          required source role <code>external_contact</code>, required target role <code>customer</code>.
+        </p>
       </div>
 
       {isLoading ? (

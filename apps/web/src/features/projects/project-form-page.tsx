@@ -204,6 +204,13 @@ export function ProjectFormPage() {
   const onSubmit = (data: ProjectFormData) => {
     const payload: any = { ...data, memberIds };
 
+    // Empty date strings would fail the API's @IsDateString() validator
+    // and surface as cryptic "startDate must be a valid ISO 8601 date
+    // string" errors. Drop them so @IsOptional skips the field entirely.
+    if (!payload.startDate) delete payload.startDate;
+    if (!payload.endDate) delete payload.endDate;
+    if (!payload.budget && payload.budget !== 0) delete payload.budget;
+
     if (isEdit) {
       // customerOrgId isn't a column on Project — it's expressed as a
       // customer_of_project BP relationship. Strip it from the project PATCH;
@@ -612,53 +619,32 @@ export function ProjectFormPage() {
               </div>
 
               {/* Optional quick link — Google Drive folder / network share / etc.
-                  Saved as a ProjectFile of kind=link, visible in the Files tab. */}
+                  Stored as a ProjectFile of kind=link so it shows up in the
+                  project's Files tab. The Browse-button experiment turned out
+                  to be confusing (browsers strip the full path), so this is
+                  now a clean two-field row plus auto-detected provider hint. */}
               <div className="mt-5">
                 <label className={labelClass}>Quick link (optional)</label>
                 <p className="text-[12px] text-slate-500 mb-2">
-                  Attach a Google Drive folder, network share, or external URL so the team has it on day one.
-                  More links can be added from the Files tab later.
+                  Paste a Google Drive folder, network share, or external URL so the team has it from day one.
+                  More links can be added later from the Files tab.
                 </p>
-                <div className="flex flex-col sm:flex-row gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-[1fr_2fr] gap-2">
                   <input
                     type="text"
                     value={quickLinkName}
                     onChange={(e) => setQuickLinkName(e.target.value)}
                     placeholder="Display name (e.g. Drive folder)"
-                    className={`${inputClass} sm:max-w-xs`}
+                    className={inputClass}
                   />
                   <input
                     type="text"
                     value={quickLinkUrl}
                     onChange={(e) => setQuickLinkUrl(e.target.value)}
                     placeholder="https://drive.google.com/drive/folders/...   or   \\server\share\..."
-                    className={`${inputClass} font-mono text-[12px] flex-1`}
+                    className={`${inputClass} font-mono text-[12px]`}
                   />
-                  {/* Native file picker — same caveat as the Add File Link form:
-                      browsers strip the full path for security, so we only get
-                      the file name. Useful as a "fill in the file name and add
-                      your share prefix manually" shortcut. */}
-                  <label className="rounded-lg border border-slate-200 bg-white hover:border-slate-400 text-slate-700 text-[12px] font-semibold px-3 py-2 cursor-pointer flex items-center justify-center gap-1.5 shrink-0">
-                    Browse…
-                    <input
-                      type="file"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        setQuickLinkUrl(file.name);
-                        if (!quickLinkName.trim()) {
-                          setQuickLinkName(file.name.replace(/\.[^.]+$/, ''));
-                        }
-                        e.target.value = '';
-                      }}
-                    />
-                  </label>
                 </div>
-                <p className="mt-1 text-[11px] text-slate-400">
-                  Browsers can't read the full file path for security — paste a network share or URL,
-                  or use <strong>Browse…</strong> to grab the file name and prepend the prefix manually.
-                </p>
                 {quickLinkUrl.trim() && (() => {
                   const label = detectProviderLabel(quickLinkUrl.trim());
                   if (label === 'External link') return null;

@@ -2404,35 +2404,42 @@ function PlanningView({ projectId }: { projectId: number }) {
             onDragStart={handleGlobalDragStart}
             onDragEnd={handleGlobalDragEnd}
           >
-            {/* Two PARALLEL SortableContexts inside one DndContext:
-                  - tasks (numeric ids)         — managed per-zone inside SortableTaskList
-                  - zones (string "z-<id>")      — top-level zones in the zone-grouped view
-                Each useSortable() resolves to the closest matching context.
-                We previously also wrapped everything in a TASK SortableContext
-                with allTaskIds — that interfered with zone resolution because
-                its DOM children were zone elements, so we removed it. Cross-zone
-                task drag still works through dnd-kit's collision detection. */}
-            {groupBy === 'zone' ? (
-              <SortableContext
-                items={zones.filter((z: any) => !z.parentId).map((z: any) => `z-${z.id}`)}
-                strategy={verticalListSortingStrategy}
-              >
-                {zones.map((z: any) => (
-                  <SortableTopZone key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
+            {/* Three SortableContexts cooperate inside this DndContext:
+                  1. OUTER: all task ids — needed so dnd-kit's collision
+                     detection sees every task across every zone (otherwise
+                     cross-zone task drag silently fails because the source
+                     task's id isn't in the destination zone's items array).
+                  2. MIDDLE: top-level zone string ids ("z-<n>") for the
+                     drag-reorder-zones feature.
+                  3. INNER (per-zone, inside SortableTaskList): that zone's
+                     task ids — what useSortable() actually resolves to for
+                     each task row.
+                Each useSortable resolves to the *closest* matching context.
+                A previous attempt to drop the OUTER one broke cross-zone
+                task drag; restoring it. */}
+            <SortableContext items={allTaskIds} strategy={verticalListSortingStrategy}>
+              {groupBy === 'zone' ? (
+                <SortableContext
+                  items={zones.filter((z: any) => !z.parentId).map((z: any) => `z-${z.id}`)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  {zones.map((z: any) => (
+                    <SortableTopZone key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
+                      onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
+                      onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
+                      thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
+                      selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
+                  ))}
+                </SortableContext>
+              ) : (
+                groups.map((g: any) => (
+                  <ZoneGroup key={g.key} zone={{ id: 0, name: g.key, zoneType: groupBy }} tasks={g.tasks} members={members} projectId={projectId}
                     onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
-                    onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
-                    thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
+                    onDeleteZone={() => {}} thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
                     selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
-                ))}
-              </SortableContext>
-            ) : (
-              groups.map((g: any) => (
-                <ZoneGroup key={g.key} zone={{ id: 0, name: g.key, zoneType: groupBy }} tasks={g.tasks} members={members} projectId={projectId}
-                  onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
-                  onDeleteZone={() => {}} thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
-                  selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
-              ))
-            )}
+                ))
+              )}
+            </SortableContext>
             {activeDragId != null && (
               <DragOverlay>
                 <div className="flex items-center gap-3 py-2 px-4 bg-white border border-blue-300 shadow-xl rounded-lg text-[13px] opacity-90">
