@@ -17,6 +17,13 @@ import client from '@/api/client';
 interface TaskDrawerProps {
   taskId: number | null;
   onClose: () => void;
+  /**
+   * Hide the "Time" tab and entry form. Used by surfaces aimed at managers
+   * (e.g. the project Kanban) where the user is meant to coordinate work
+   * — change status, assign people, edit details — but NOT log hours on
+   * behalf of the team. When true the drawer opens on the Details tab.
+   */
+  hideTimeTab?: boolean;
 }
 
 const STATUS_OPTIONS = ['not_started', 'in_progress', 'in_review', 'completed', 'on_hold', 'cancelled'];
@@ -33,9 +40,14 @@ const priorityColors: Record<string, string> = {
   high: 'bg-amber-100 text-amber-700', critical: 'bg-red-100 text-red-700',
 };
 
-export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
+export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerProps) {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<'time' | 'details' | 'files' | 'discussion'>('time');
+  // Default to "details" when the Time tab is hidden, since "time" wouldn't
+  // be a valid choice. Otherwise keep the previous default ("time") so the
+  // worker-facing flow lands on the time-entry form as it always has.
+  const [tab, setTab] = useState<'time' | 'details' | 'files' | 'discussion'>(
+    hideTimeTab ? 'details' : 'time',
+  );
   const drawerRef = useRef<HTMLDivElement>(null);
 
   const { data: task, isLoading } = useQuery({
@@ -118,14 +130,16 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
             {/* Health banner */}
             <TaskHealthBanner task={task} />
 
-            {/* Tabs */}
+            {/* Tabs — Time is hidden when this drawer is opened from a
+                manager-facing surface (e.g. the project Kanban) so logging
+                hours on behalf of the team isn't even an option. */}
             <div className="flex border-b border-slate-200 px-5">
-              {[
-                { key: 'time' as const, label: 'Time', icon: Clock },
+              {([
+                ...(hideTimeTab ? [] : [{ key: 'time' as const, label: 'Time', icon: Clock }]),
                 { key: 'details' as const, label: 'Details' },
                 { key: 'files' as const, label: 'Files', icon: FileText },
                 { key: 'discussion' as const, label: 'Discussion', icon: MessageSquare },
-              ].map((t) => (
+              ]).map((t) => (
                 <button key={t.key} onClick={() => setTab(t.key)}
                   className={cn('border-b-2 px-3 py-2 text-xs font-semibold transition-colors flex items-center gap-1',
                     tab === t.key ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600')}>
@@ -138,7 +152,7 @@ export function TaskDrawer({ taskId, onClose }: TaskDrawerProps) {
             {/* Content */}
             <div className="flex-1 overflow-y-auto px-5 py-4">
               {tab === 'details' && <TaskDetailsTab task={task as any} onUpdate={(f, v) => updateTask.mutate({ field: f, value: v })} />}
-              {tab === 'time' && <TaskTimeTab taskId={taskId!} />}
+              {tab === 'time' && !hideTimeTab && <TaskTimeTab taskId={taskId!} />}
               {tab === 'files' && (task as any).projectId && <FilesTab projectId={(task as any).projectId} />}
               {tab === 'discussion' && <TaskDiscussionTab taskId={taskId!} />}
             </div>
