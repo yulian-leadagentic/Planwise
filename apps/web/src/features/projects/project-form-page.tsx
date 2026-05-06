@@ -618,48 +618,20 @@ export function ProjectFormPage() {
                 />
               </div>
 
-              {/* Optional quick link — Google Drive folder / network share / etc.
-                  Stored as a ProjectFile of kind=link so it shows up in the
-                  project's Files tab. Two clearly labelled stacked fields
-                  (label-on-top) so the layout doesn't squish on narrow widths. */}
-              <div className="mt-5">
-                <label className={labelClass}>Quick link (optional)</label>
-                <p className="text-[12px] text-slate-500 mb-3">
-                  Paste a Google Drive folder, network share, or external URL so the team has it from day one.
-                  More links can be added later from the Files tab.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[11px] font-semibold text-slate-500 uppercase mb-1 block">Display name</label>
-                    <input
-                      type="text"
-                      value={quickLinkName}
-                      onChange={(e) => setQuickLinkName(e.target.value)}
-                      placeholder="e.g. Drive folder"
-                      className={inputClass}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-semibold text-slate-500 uppercase mb-1 block">URL or path</label>
-                    <input
-                      type="text"
-                      value={quickLinkUrl}
-                      onChange={(e) => setQuickLinkUrl(e.target.value)}
-                      placeholder={'https://drive.google.com/drive/folders/...'}
-                      className={`${inputClass} font-mono text-[12px]`}
-                    />
-                  </div>
-                </div>
-                {quickLinkUrl.trim() && (() => {
-                  const label = detectProviderLabel(quickLinkUrl.trim());
-                  if (label === 'External link') return null;
-                  return (
-                    <p className="mt-1.5 text-[11px] text-slate-500">
-                      Detected as <span className="font-semibold">{label}</span>
-                    </p>
-                  );
-                })()}
-              </div>
+              {/* Optional quick link — single full-width URL field, with the
+                  optional "Display name" tucked away as a small expander so it
+                  doesn't dominate the form. Auto-detects the provider and uses
+                  it as the default display name when one isn't typed. Stored
+                  as a ProjectFile of kind=link, visible in the Files tab. */}
+              <QuickLinkBlock
+                url={quickLinkUrl}
+                name={quickLinkName}
+                onChangeUrl={setQuickLinkUrl}
+                onChangeName={setQuickLinkName}
+                detectProviderLabel={detectProviderLabel}
+                inputClass={inputClass}
+                labelClass={labelClass}
+              />
             </div>
 
             {/* Divider */}
@@ -771,6 +743,89 @@ export function ProjectFormPage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ─── Quick Link block ─────────────────────────────────────────────────────────
+   Cleaner than the previous side-by-side fields. The URL is the primary
+   input (full width); the optional Display name is hidden by default and
+   only revealed via a small "Add a custom name…" toggle. When no custom
+   name is set, the saved link's name falls back to the auto-detected
+   provider ("Google Drive") so users don't have to think about it.
+*/
+function QuickLinkBlock({
+  url,
+  name,
+  onChangeUrl,
+  onChangeName,
+  detectProviderLabel,
+  inputClass,
+  labelClass,
+}: {
+  url: string;
+  name: string;
+  onChangeUrl: (v: string) => void;
+  onChangeName: (v: string) => void;
+  detectProviderLabel: (u: string) => string;
+  inputClass: string;
+  labelClass: string;
+}) {
+  const [showName, setShowName] = useState(!!name.trim());
+  const provider = url.trim() ? detectProviderLabel(url.trim()) : null;
+  const isCloud = provider && provider !== 'External link';
+
+  return (
+    <div className="mt-5">
+      <label className={labelClass}>Quick link (optional)</label>
+      <p className="text-[12px] text-slate-500 mb-2">
+        Paste a Google Drive folder, network share, or external URL so the team has it on day one.
+        More links can be added later from the Files tab.
+      </p>
+      <input
+        type="text"
+        value={url}
+        onChange={(e) => onChangeUrl(e.target.value)}
+        placeholder="https://drive.google.com/drive/folders/...   or   \server\share\..."
+        className={`${inputClass} font-mono text-[12px]`}
+      />
+      <div className="mt-1.5 flex items-center justify-between text-[11px]">
+        <span className="text-slate-500">
+          {isCloud
+            ? <>Detected as <span className="font-semibold">{provider}</span> — that'll be the saved name unless you set one below.</>
+            : url.trim()
+              ? 'Will be saved as a "Link" file you can open from the Files tab.'
+              : <>&nbsp;</>}
+        </span>
+        {!showName && (
+          <button
+            type="button"
+            onClick={() => setShowName(true)}
+            className="text-blue-600 hover:text-blue-700 font-semibold"
+          >
+            + Custom display name
+          </button>
+        )}
+      </div>
+      {showName && (
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => onChangeName(e.target.value)}
+            placeholder={isCloud ? `e.g. "${provider} folder"` : 'Display name shown in the Files tab'}
+            className={inputClass}
+          />
+          <button
+            type="button"
+            onClick={() => { onChangeName(''); setShowName(false); }}
+            className="text-[11px] text-slate-500 hover:text-slate-700"
+            title="Hide custom name; default to the provider"
+          >
+            Clear
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -161,12 +161,58 @@ export class TasksService {
       }
     }
 
+    // Zone breadcrumb: walk each task's zone.path ("17/42/108") into a list
+    // of zone names so the card can show "Building > Floor 1 > Unit A".
+    // We pull every referenced zone in one query, build an id→name map, then
+    // split each task's path. The leaf is included.
+    const zoneIdSet = new Set<number>();
+    const zoneById = new Map<number, any>();
+    for (const t of tasks) {
+      if (t.zone?.id) zoneById.set(t.zone.id, t.zone);
+    }
+    // Need .path on every task's zone to walk ancestors. The findMany above
+    // selected only id/name/zoneType — refetch the path for these ids.
+    if (zoneById.size > 0) {
+      const fullZones = await this.prisma.zone.findMany({
+        where: { id: { in: Array.from(zoneById.keys()) } },
+        select: { id: true, path: true },
+      });
+      for (const z of fullZones) {
+        for (const seg of (z.path ?? '').split('/').filter(Boolean)) {
+          const n = Number(seg);
+          if (!Number.isNaN(n)) zoneIdSet.add(n);
+        }
+      }
+    }
+    const zoneNameById = new Map<number, { name: string; zoneType: string }>();
+    if (zoneIdSet.size > 0) {
+      const allReferenced = await this.prisma.zone.findMany({
+        where: { id: { in: Array.from(zoneIdSet) } },
+        select: { id: true, name: true, zoneType: true, path: true },
+      });
+      for (const z of allReferenced) {
+        zoneNameById.set(z.id, { name: z.name, zoneType: z.zoneType });
+        // Stash path back into the per-task zone map for the next pass.
+        if (zoneById.has(z.id)) {
+          zoneById.set(z.id, { ...zoneById.get(z.id), path: z.path });
+        }
+      }
+    }
+
     return tasks.map((t) => {
       const agg = timeByTask.get(t.id);
+      const zonePath = (zoneById.get(t.zone?.id)?.path ?? '') as string;
+      const zoneBreadcrumb = zonePath
+        .split('/')
+        .map((s) => Number(s))
+        .filter((n) => !Number.isNaN(n))
+        .map((id) => zoneNameById.get(id)?.name)
+        .filter((n): n is string => !!n);
       return {
         ...t,
         loggedMinutes: agg?.minutes ?? 0,
         lastActivityDate: agg?.lastDate ?? null,
+        zoneBreadcrumb,
       };
     });
   }

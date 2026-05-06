@@ -149,11 +149,6 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
         ? 'border-amber-300 bg-amber-50/50'
         : 'border-slate-200 bg-white';
 
-  const pctColor =
-    health.computedPct >= 100 ? 'bg-emerald-500' :
-    health.computedPct >= 60 ? 'bg-blue-500' :
-    health.computedPct >= 30 ? 'bg-amber-500' : 'bg-slate-300';
-
   return (
     <div ref={setNodeRef} style={style} {...attributes}
       className={cn(
@@ -164,11 +159,12 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
       )}
       title={health.reasons.length > 0 ? health.reasons.join(' • ') : undefined}
     >
-      {/* Drag handle + project */}
+      {/* Drag handle + project — bumped project name to a more legible size
+          per spec ("project name font should be larger"). */}
       <div {...listeners} className="flex items-center gap-1.5 px-3 pt-2 cursor-grab active:cursor-grabbing">
-        <GripVertical className="h-3 w-3 text-slate-300" />
+        <GripVertical className="h-3.5 w-3.5 text-slate-300" />
         {projectName && (
-          <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 rounded px-1.5 py-0.5 truncate max-w-[140px]">{projectName}</span>
+          <span className="text-[13px] font-bold text-blue-700 truncate max-w-[180px]">{projectName}</span>
         )}
         <div className="ml-auto flex items-center gap-1">
           {health.level === 'critical' && <AlertCircle className="h-3.5 w-3.5 text-red-600" />}
@@ -180,9 +176,20 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
       <div className="px-3 pb-3 pt-1 cursor-pointer space-y-1.5" onClick={() => onOpenDrawer(task.id)}>
         {task.code && <span className="text-[9px] font-mono text-slate-500">{task.code}</span>}
         <p className="text-[13px] font-semibold text-slate-800 leading-tight break-words">{task.name}</p>
-        {zoneName && <p className="text-[10px] text-slate-500 truncate">{zoneName}</p>}
 
-        {/* Kanban stage pill */}
+        {/* Zone breadcrumb — walks the zone tree. Falls back to just the
+            leaf zone name when the breadcrumb hasn't been computed yet
+            (older API responses or transitional state). */}
+        {Array.isArray((task as any).zoneBreadcrumb) && (task as any).zoneBreadcrumb.length > 0 ? (
+          <p className="text-[10px] text-slate-500 truncate" title={(task as any).zoneBreadcrumb.join(' > ')}>
+            {(task as any).zoneBreadcrumb.join(' › ')}
+          </p>
+        ) : zoneName ? (
+          <p className="text-[10px] text-slate-500 truncate">{zoneName}</p>
+        ) : null}
+
+        {/* Kanban stage pill — progress bar removed per spec ("the progress
+            bar on the card is unnecessary"). */}
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider', STATUS_PILL[task.status] ?? STATUS_PILL.not_started)}>
             {STATUS_LABEL[task.status] ?? task.status}
@@ -191,19 +198,13 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
           {task.priority === 'high' && <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-600">High</span>}
         </div>
 
-        {/* Completion bar */}
-        <div className="flex items-center gap-1.5">
-          <div className="flex-1 h-[4px] bg-slate-200 rounded-full overflow-hidden">
-            <div className={cn('h-full rounded-full', pctColor)} style={{ width: `${Math.min(health.computedPct, 100)}%` }} />
-          </div>
-          <span className="text-[10px] font-bold tabular-nums text-slate-700 min-w-[28px] text-right">{health.computedPct}%</span>
-        </div>
-
-        {/* Hours */}
+        {/* Hours — server-side aggregated across ALL users (findMine sums
+            time-entries by taskId, not by userId). */}
         <div className="flex items-center gap-1 text-[10px] text-slate-600">
           <Clock className="h-2.5 w-2.5 shrink-0" />
           <span className="tabular-nums font-medium">
             {health.loggedHours}h {health.estimatedHours > 0 ? `/ ${health.estimatedHours}h est.` : 'logged'}
+            <span className="text-slate-400 ml-1">(team total)</span>
           </span>
         </div>
 

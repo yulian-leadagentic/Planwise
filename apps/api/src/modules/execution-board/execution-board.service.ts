@@ -58,7 +58,12 @@ export class ExecutionBoardService {
           projectId: { in: projectIds },
           deletedAt: null,
           isArchived: false,
-          ...(serviceId ? { phaseId: serviceId } : {}),
+          // The "Services" dropdown maps to `serviceTypeId`, NOT `phaseId`.
+          // The matrix columns are grouped by `task.serviceType.name`, so the
+          // filter has to use the same field or the user picks a "service"
+          // and sees an empty board because surviving tasks don't intersect
+          // with the column groupings.
+          ...(serviceId ? { serviceTypeId: serviceId } : {}),
         },
         take: MAX_TASKS + 1,
         include: {
@@ -76,7 +81,20 @@ export class ExecutionBoardService {
         },
         orderBy: [{ zoneId: 'asc' }, { sortOrder: 'asc' }],
       }),
-      this.prisma.phase.findMany({ orderBy: { sortOrder: 'asc' } }),
+      // Service-types that actually appear on at least one task in scope —
+      // empty options just frustrate users (they pick, the board goes blank).
+      this.prisma.serviceType.findMany({
+        where: {
+          tasks: {
+            some: {
+              projectId: { in: projectIds },
+              deletedAt: null,
+              isArchived: false,
+            },
+          },
+        },
+        orderBy: { sortOrder: 'asc' },
+      }),
       this.prisma.template.findMany({
         where: {
           type: 'task_list',
