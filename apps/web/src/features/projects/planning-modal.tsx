@@ -619,7 +619,11 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
   };
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes} className={cn(
+    // setNodeRef on the row's outer div (so dnd-kit can measure / transform
+    // the whole row), but the drag attributes + listeners live on the
+    // grip button below — that's the recommended shape and it makes the
+    // a11y focus land on the actual drag handle.
+    <div ref={setNodeRef} style={style} className={cn(
       TASK_GRID, 'py-1.5 px-4 border-b border-l-[3px] transition-colors text-[13px]',
       zoneBorderColors[zoneType] || 'border-l-slate-300',
       isDragging && 'opacity-40 bg-blue-50 shadow-lg z-10 border-blue-300',
@@ -627,8 +631,18 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       isSelected ? 'bg-blue-50/60 border-slate-200' : idx % 2 === 0 ? 'bg-white border-slate-100' : 'bg-slate-50/50 border-slate-100',
       !isDragging && !isOver && 'hover:bg-blue-50/30',
     )}>
-      <button {...listeners} className="flex items-center justify-center cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 shrink-0 touch-none">
-        <GripVertical className="w-3.5 h-3.5" />
+      {/* Drag handle. The hit area is the full grid cell (not just the icon)
+          so users don't have to nail a 14×14 px target. `type="button"`
+          stops form-submit from accidentally firing. */}
+      <button
+        type="button"
+        aria-label="Drag to reorder task"
+        title="Drag to reorder"
+        {...listeners}
+        {...attributes}
+        className="-ml-2 flex h-7 w-7 items-center justify-center rounded cursor-grab active:cursor-grabbing text-slate-400 hover:text-blue-600 hover:bg-blue-50 shrink-0 touch-none focus:outline-none focus:ring-2 focus:ring-blue-300"
+      >
+        <GripVertical className="w-4 h-4" />
       </button>
       <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
       <span className="font-mono text-[11px] font-medium text-slate-500 truncate" title={task.code || ''}>{task.code || '-'}</span>

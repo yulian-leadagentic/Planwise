@@ -32,7 +32,10 @@ export class PlanningService {
       }
     }
 
-    // Tasks
+    // Tasks. Order by sortOrder FIRST so drag-reorder actually persists in
+    // the planning view (POST /tasks/reorder writes sortOrder; this endpoint
+    // is what the planning UI reads back). createdAt is a stable tie-breaker
+    // for tasks that haven't been reordered yet (sortOrder is still 0).
     const tasks = await this.prisma.task.findMany({
       where: { projectId, deletedAt: null, isArchived: false },
       include: {
@@ -45,7 +48,7 @@ export class PlanningService {
           include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } },
         },
       },
-      orderBy: [{ zoneId: 'asc' }, { serviceTypeId: 'asc' }, { createdAt: 'asc' }],
+      orderBy: [{ zoneId: 'asc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
 
     // Project members
