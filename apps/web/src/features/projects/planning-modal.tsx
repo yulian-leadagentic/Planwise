@@ -1671,9 +1671,39 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
 }
 
 
+// ─── Sortable wrapper for top-level zones ────────────────────────────────────
+// This is a thin shell around HierarchicalZoneGroup that registers the zone
+// with dnd-kit using a string id like "z-12" — kept separate from numeric
+// task ids so the dragEnd handler can dispatch the right path. Only applied
+// to top-level zones; sub-zones inherit position from their parent.
+//
+// Important: we do NOT wrap this in an outer SortableContext that lists task
+// ids. Each task already registers itself globally through its own useSortable,
+// so dnd-kit's collision detection sees every task without that extra layer.
+// The outer SortableContext we DO render only lists zone string ids.
+
+function SortableTopZone(props: any) {
+  const sortableId = `z-${props.zone.id}`;
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: sortableId });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  return (
+    <div ref={setNodeRef} style={style}>
+      <HierarchicalZoneGroup
+        {...props}
+        depth={0}
+        zoneDragHandleProps={{ ...attributes, ...listeners }}
+      />
+    </div>
+  );
+}
+
 // ─── Hierarchical Zone Group — flat tree style with colored borders ──────────
 
-function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth, selectedTaskIds, onToggleTask, onToggleMany }: any) {
+function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth, selectedTaskIds, onToggleTask, onToggleMany, zoneDragHandleProps }: any) {
   const [collapsed, setCollapsed] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddZone, setShowAddZone] = useState(false);
@@ -1731,6 +1761,23 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
       {/* Zone row — full width with colored left border */}
       <div className={cn('flex items-center gap-2.5 py-3 px-4 border-l-[3px] cursor-pointer hover:bg-slate-50/80 group transition-colors duration-100', zc.border, depth === 0 ? 'bg-slate-50/60' : 'border-b border-slate-100')}
         onClick={() => setCollapsed(!collapsed)}>
+        {/* Drag handle — only top-level zones (passed zoneDragHandleProps
+            from the SortableTopZone wrapper). Sub-zones get a placeholder
+            to keep the column alignment. Same UX shape as the task grip. */}
+        {zoneDragHandleProps ? (
+          <button
+            type="button"
+            aria-label="Drag to reorder zone"
+            title="Drag to reorder"
+            {...zoneDragHandleProps}
+            onClick={(e) => e.stopPropagation()}
+            className="-ml-2 flex h-7 w-7 items-center justify-center rounded cursor-grab active:cursor-grabbing text-slate-400 hover:text-blue-600 hover:bg-blue-50 shrink-0 touch-none focus:outline-none focus:ring-2 focus:ring-blue-300"
+          >
+            <GripVertical className="w-4 h-4" />
+          </button>
+        ) : (
+          <span className="w-5 shrink-0" />
+        )}
         {collapsed ? <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
         <input
           type="checkbox"
@@ -2062,16 +2109,38 @@ function PlanningView({ projectId }: { projectId: number }) {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor),
   );
-  const [activeDragId, setActiveDragId] = useState<number | null>(null);
+  // active id is a number for tasks, "z-<id>" string for zones.
+  const [activeDragId, setActiveDragId] = useState<number | string | null>(null);
 
   const handleGlobalDragStart = (event: DragStartEvent) => {
-    setActiveDragId(Number(event.active.id));
+    const id = event.active.id;
+    setActiveDragId(typeof id === 'string' ? id : Number(id));
   };
 
   const handleGlobalDragEnd = async (event: DragEndEvent) => {
     setActiveDragId(null);
     const { active, over } = event;
     if (!over || active.id === over.id) return;
+
+    // Zone reorder: ids of the form "z-<id>" come from SortableTopZone.
+    if (typeof active.id === 'string' && active.id.startsWith('z-')) {
+      if (typeof over.id !== 'string' || !over.id.startsWith('z-')) return;
+      const fromZoneId = Number(active.id.slice(2));
+      const toZoneId = Number(over.id.slice(2));
+      const topLevel = zones.filter((z: any) => !z.parentId);
+      const oldIndex = topLevel.findIndex((z: any) => z.id === fromZoneId);
+      const newIndex = topLevel.findIndex((z: any) => z.id === toZoneId);
+      if (oldIndex === -1 || newIndex === -1) return;
+      const reordered = arrayMove(topLevel, oldIndex, newIndex);
+      const items = reordered.map((z: any, i: number) => ({ id: z.id, sortOrder: i }));
+      try {
+        await zonesApi.reorder(items);
+        invalidate();
+      } catch (err: any) {
+        notify.apiError(err, 'Failed to reorder zones');
+      }
+      return;
+    }
 
     const activeId = Number(active.id);
     const overId = Number(over.id);
@@ -2345,42 +2414,48 @@ function PlanningView({ projectId }: { projectId: number }) {
             onDragStart={handleGlobalDragStart}
             onDragEnd={handleGlobalDragEnd}
           >
-            {/* Original simple structure that always worked for tasks:
-                  <DndContext>
-                    <SortableContext items={allTaskIds}>
-                      <HierarchicalZoneGroup> ...
-                The earlier attempt to add zone-level drag-reorder by wrapping
-                each zone in a SortableTopZone (with its own useSortable on a
-                "z-<id>" id, plus a parallel zone-strings SortableContext)
-                broke task DnD on real data. The drag visual would init but
-                drop never resolved correctly. We're keeping zone-reorder as
-                a separate future feature; for now zones are static and the
-                inner per-zone task SortableContext (in SortableTaskList) is
-                the one that handles reorder + cross-zone moves. */}
-            <SortableContext items={allTaskIds} strategy={verticalListSortingStrategy}>
-              {groupBy === 'zone' ? (
-                zones.map((z: any) => (
-                  <HierarchicalZoneGroup key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
+            {/* Two cooperating sortable surfaces inside this DndContext:
+                  - ZONES: outer SortableContext lists "z-<id>" string ids.
+                    SortableTopZone wraps each top-level HierarchicalZoneGroup
+                    and registers its own useSortable on the same string id,
+                    with the listeners attached to the zone-row drag handle.
+                  - TASKS: each task's useSortable (inside SortableTaskList)
+                    auto-registers globally with dnd-kit using the numeric
+                    task id. We DON'T need an outer task-id SortableContext;
+                    every task is already discoverable for collision detection
+                    through its own useSortable hook. (An earlier attempt at
+                    nesting an outer-task SortableContext caused regressions.)
+                handleGlobalDragEnd switches on the active.id type to dispatch
+                zone-reorder vs task-reorder. */}
+            {groupBy === 'zone' ? (
+              <SortableContext
+                items={zones.filter((z: any) => !z.parentId).map((z: any) => `z-${z.id}`)}
+                strategy={verticalListSortingStrategy}
+              >
+                {zones.map((z: any) => (
+                  <SortableTopZone key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
                     onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
                     onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
-                    thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={0}
+                    thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
                     selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
-                ))
-              ) : (
-                groups.map((g: any) => (
-                  <ZoneGroup key={g.key} zone={{ id: 0, name: g.key, zoneType: groupBy }} tasks={g.tasks} members={members} projectId={projectId}
-                    onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
-                    onDeleteZone={() => {}} thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
-                    selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
-                ))
-              )}
-            </SortableContext>
-            {activeDragId && (
+                ))}
+              </SortableContext>
+            ) : (
+              groups.map((g: any) => (
+                <ZoneGroup key={g.key} zone={{ id: 0, name: g.key, zoneType: groupBy }} tasks={g.tasks} members={members} projectId={projectId}
+                  onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
+                  onDeleteZone={() => {}} thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
+                  selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
+              ))
+            )}
+            {activeDragId != null && (
               <DragOverlay>
                 <div className="flex items-center gap-3 py-2 px-4 bg-white border border-blue-300 shadow-xl rounded-lg text-[13px] opacity-90">
                   <GripVertical className="w-3.5 h-3.5 text-blue-500" />
                   <span className="font-medium text-slate-900">
-                    {tasks.find((t: any) => t.id === activeDragId)?.name || 'Task'}
+                    {typeof activeDragId === 'string' && activeDragId.startsWith('z-')
+                      ? (zones.find((z: any) => z.id === Number((activeDragId as string).slice(2)))?.name || 'Zone')
+                      : (tasks.find((t: any) => t.id === activeDragId)?.name || 'Task')}
                   </span>
                 </div>
               </DragOverlay>

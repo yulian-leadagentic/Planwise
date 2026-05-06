@@ -12,11 +12,16 @@ export class PlanningService {
       select: { id: true, name: true, status: true, budget: true },
     });
 
-    // Zone tree
+    // Zone tree. Order by sortOrder FIRST so drag-reorder persists in the
+    // planning view (POST /zones/reorder writes sortOrder). Within zones
+    // that share a sortOrder (e.g. all default 0) we fall back to createdAt
+    // for a stable order. The tree is built by parentId in a second pass
+    // below, so the flat-query order only affects sibling order at each
+    // level — which is exactly what sortOrder controls.
     const flatZones = await this.prisma.zone.findMany({
       where: { projectId, deletedAt: null },
       include: { zoneServiceTypes: { include: { serviceType: true } } },
-      orderBy: [{ path: 'asc' }, { sortOrder: 'asc' }],
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
     const zoneMap = new Map<number, any>();
     const zoneRoots: any[] = [];
