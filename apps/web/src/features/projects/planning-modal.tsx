@@ -1671,18 +1671,19 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
 }
 
 
-// ─── Sortable wrapper for top-level zones ────────────────────────────────────
-// This is a thin shell around HierarchicalZoneGroup that registers the zone
-// with dnd-kit using a string id like "z-12" — kept separate from numeric
-// task ids so the dragEnd handler can dispatch the right path. Only applied
-// to top-level zones; sub-zones inherit position from their parent.
+// ─── Sortable wrapper for zones at any depth ──────────────────────────────────
+// Thin shell around HierarchicalZoneGroup that registers the zone with dnd-kit
+// using a string id like "z-12" — kept separate from numeric task ids so the
+// dragEnd handler can dispatch the right path. Used at every depth: top-level
+// zones live in an outer SortableContext (in PlanningView), sub-zones live in
+// their parent's SortableContext (rendered inside HierarchicalZoneGroup just
+// before each child group).
 //
-// Important: we do NOT wrap this in an outer SortableContext that lists task
-// ids. Each task already registers itself globally through its own useSortable,
-// so dnd-kit's collision detection sees every task without that extra layer.
-// The outer SortableContext we DO render only lists zone string ids.
+// Important: we DON'T wrap any of this in an outer SortableContext that lists
+// task ids. Each task already registers itself globally through its own
+// useSortable, so dnd-kit's collision detection sees every task without it.
 
-function SortableTopZone(props: any) {
+function SortableZone(props: any) {
   const sortableId = `z-${props.zone.id}`;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: sortableId });
   const style = {
@@ -1694,7 +1695,6 @@ function SortableTopZone(props: any) {
     <div ref={setNodeRef} style={style}>
       <HierarchicalZoneGroup
         {...props}
-        depth={0}
         zoneDragHandleProps={{ ...attributes, ...listeners }}
       />
     </div>
@@ -1921,12 +1921,24 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
             onDeleteTask={onDeleteTask}
           />
 
-          {hasChildren && zone.children.map((child: any) => (
-            <HierarchicalZoneGroup key={child.id} zone={child} allTasks={allTasks} members={members} projectId={projectId}
-              onUpdate={onUpdate} onDeleteTask={onDeleteTask} onDeleteZone={onDeleteZone} onDuplicateZone={onDuplicateZone}
-              thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={depth + 1}
-              selectedTaskIds={selectedTaskIds} onToggleTask={onToggleTask} onToggleMany={onToggleMany} />
-          ))}
+          {hasChildren && (
+            // Sub-zones get their own SortableContext scoped to this parent's
+            // child list. Sortable items are the child string ids ("z-<n>").
+            // dragEnd checks that source + target share a parent before
+            // reordering, so a "Floor 1" can only be moved up/down among
+            // siblings under the same parent for now.
+            <SortableContext
+              items={zone.children.map((c: any) => `z-${c.id}`)}
+              strategy={verticalListSortingStrategy}
+            >
+              {zone.children.map((child: any) => (
+                <SortableZone key={child.id} zone={child} allTasks={allTasks} members={members} projectId={projectId}
+                  onUpdate={onUpdate} onDeleteTask={onDeleteTask} onDeleteZone={onDeleteZone} onDuplicateZone={onDuplicateZone}
+                  thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={depth + 1}
+                  selectedTaskIds={selectedTaskIds} onToggleTask={onToggleTask} onToggleMany={onToggleMany} />
+              ))}
+            </SortableContext>
+          )}
         </>
       )}
 
@@ -2122,16 +2134,39 @@ function PlanningView({ projectId }: { projectId: number }) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    // Zone reorder: ids of the form "z-<id>" come from SortableTopZone.
+    // Zone reorder: ids of the form "z-<id>" come from SortableZone wrappers
+    // at any depth. We only reorder within a single sibling list — moving
+    // a sub-zone to a different parent is a separate (more dangerous) action
+    // and stays disabled here.
     if (typeof active.id === 'string' && active.id.startsWith('z-')) {
       if (typeof over.id !== 'string' || !over.id.startsWith('z-')) return;
       const fromZoneId = Number(active.id.slice(2));
       const toZoneId = Number(over.id.slice(2));
-      const topLevel = zones.filter((z: any) => !z.parentId);
-      const oldIndex = topLevel.findIndex((z: any) => z.id === fromZoneId);
-      const newIndex = topLevel.findIndex((z: any) => z.id === toZoneId);
+
+      // Walk the planning tree once to (a) locate both zones and (b) find
+      // the sibling list each lives in (top-level vs some parent's children).
+      let fromSiblings: any[] | null = null;
+      let toSiblings: any[] | null = null;
+      const visit = (siblings: any[]) => {
+        for (const z of siblings) {
+          if (z.id === fromZoneId) fromSiblings = siblings;
+          if (z.id === toZoneId) toSiblings = siblings;
+          if (z.children?.length) visit(z.children);
+        }
+      };
+      visit(zones);
+
+      if (!fromSiblings || !toSiblings || fromSiblings !== toSiblings) {
+        // Different sibling lists → user is trying to move across parents.
+        // Silently ignore for now; moving a zone across parents is a future
+        // feature and risks breaking task linkages.
+        return;
+      }
+
+      const oldIndex = fromSiblings.findIndex((z: any) => z.id === fromZoneId);
+      const newIndex = fromSiblings.findIndex((z: any) => z.id === toZoneId);
       if (oldIndex === -1 || newIndex === -1) return;
-      const reordered = arrayMove(topLevel, oldIndex, newIndex);
+      const reordered = arrayMove(fromSiblings, oldIndex, newIndex);
       const items = reordered.map((z: any, i: number) => ({ id: z.id, sortOrder: i }));
       try {
         await zonesApi.reorder(items);
@@ -2433,7 +2468,7 @@ function PlanningView({ projectId }: { projectId: number }) {
                 strategy={verticalListSortingStrategy}
               >
                 {zones.map((z: any) => (
-                  <SortableTopZone key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
+                  <SortableZone key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId} depth={0}
                     onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
                     onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
                     thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
