@@ -33,9 +33,23 @@ export function getTaskHealth(task: TaskHealthInput): TaskHealth {
   const estimatedHours = Number(task.budgetHours) || 0;
   const loggedMinutes = Number(task.loggedMinutes) || 0;
   const loggedHours = Math.round((loggedMinutes / 60) * 10) / 10;
-  const computedPct = estimatedHours > 0
-    ? Math.min(100, Math.round((loggedHours / estimatedHours) * 100))
-    : (task.completionPct ?? 0);
+
+  // Completion-rate model:
+  //   • Time reporting contributes up to 80% (logged/budget × 80, capped at 80)
+  //   • Status = in_review pins to 90% (regardless of hours)
+  //   • Status = completed pins to 100% (regardless of hours)
+  // Rationale: a task can't "look done" until it's actually moved to Done.
+  // Even fully reporting hours only gets you to 80%; the last 20% is a
+  // workflow signal (review + sign-off), not a time signal.
+  const timeBasedPct = estimatedHours > 0
+    ? Math.min(80, Math.round((loggedHours / estimatedHours) * 80))
+    : Math.min(80, Math.round(((task.completionPct ?? 0) / 100) * 80));
+
+  let computedPct: number;
+  if (task.status === 'completed') computedPct = 100;
+  else if (task.status === 'cancelled') computedPct = 100;
+  else if (task.status === 'in_review') computedPct = 90;
+  else computedPct = timeBasedPct;
 
   const isDone = DONE_STATUSES.has(task.status);
   const reasons: string[] = [];
@@ -44,7 +58,7 @@ export function getTaskHealth(task: TaskHealthInput): TaskHealth {
   let isStale = false;
 
   if (isDone) {
-    return { level: 'ok', reasons: [], computedPct: isDone ? 100 : computedPct, loggedHours, estimatedHours, isOverdue: false, isStale: false };
+    return { level: 'ok', reasons: [], computedPct, loggedHours, estimatedHours, isOverdue: false, isStale: false };
   }
 
   const dueDate = task.endDate ? new Date(task.endDate.split('T')[0]) : null;

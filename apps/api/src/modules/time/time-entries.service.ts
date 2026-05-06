@@ -45,16 +45,35 @@ export class TimeEntriesService {
   private async syncTaskCompletion(taskId: number) {
     const task = await this.prisma.task.findUnique({
       where: { id: taskId },
-      select: { budgetHours: true },
+      select: { budgetHours: true, status: true },
     });
-    if (!task?.budgetHours || Number(task.budgetHours) === 0) return;
+    if (!task) return;
+
+    // Completion-rate model (must match apps/web/src/lib/task-health.ts):
+    //   • completed / cancelled → 100
+    //   • in_review              → 90
+    //   • everything else        → time-based, capped at 80
+    //                              (logged / budget × 80)
+    // The first two are workflow-driven so we set them regardless of how
+    // many hours have been logged. For the rest we still need the time
+    // sum, but skip the DB query when there's no budget to divide by.
+    if (task.status === 'completed' || task.status === 'cancelled') {
+      await this.prisma.task.update({ where: { id: taskId }, data: { completionPct: 100 } });
+      return;
+    }
+    if (task.status === 'in_review') {
+      await this.prisma.task.update({ where: { id: taskId }, data: { completionPct: 90 } });
+      return;
+    }
+
+    if (!task.budgetHours || Number(task.budgetHours) === 0) return;
 
     const agg = await this.prisma.timeEntry.aggregate({
       where: { taskId, deletedAt: null },
       _sum: { minutes: true },
     });
     const loggedHours = (agg._sum.minutes ?? 0) / 60;
-    const pct = Math.min(100, Math.round((loggedHours / Number(task.budgetHours)) * 100));
+    const pct = Math.min(80, Math.round((loggedHours / Number(task.budgetHours)) * 80));
 
     await this.prisma.task.update({
       where: { id: taskId },

@@ -319,7 +319,44 @@ export class TasksService {
       });
     }
 
+    // Re-sync completionPct whenever status changes. The completion model
+    // uses status as a ceiling (Done=100, In Review=90, otherwise time-
+    // based capped at 80), so a status flip needs to update the persisted
+    // value even when no time entry was logged. This mirrors the formula
+    // in time-entries.service.ts → syncTaskCompletion and the client-side
+    // calculation in apps/web/src/lib/task-health.ts.
+    if (dto.status && dto.status !== (existing as any).status) {
+      await this.recomputeCompletionPct(id);
+    }
+
     return updated;
+  }
+
+  /** Recompute and persist `completionPct` for one task. */
+  private async recomputeCompletionPct(taskId: number) {
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      select: { budgetHours: true, status: true },
+    });
+    if (!task) return;
+
+    let pct: number;
+    if (task.status === 'completed' || task.status === 'cancelled') {
+      pct = 100;
+    } else if (task.status === 'in_review') {
+      pct = 90;
+    } else if (!task.budgetHours || Number(task.budgetHours) === 0) {
+      pct = 0;
+    } else {
+      const agg = await this.prisma.timeEntry.aggregate({
+        where: { taskId, deletedAt: null },
+        _sum: { minutes: true },
+      });
+      const loggedHours = (agg._sum.minutes ?? 0) / 60;
+      pct = Math.min(80, Math.round((loggedHours / Number(task.budgetHours)) * 80));
+    }
+
+    await this.prisma.task.update({ where: { id: taskId }, data: { completionPct: pct } });
   }
 
   async remove(id: number) {
