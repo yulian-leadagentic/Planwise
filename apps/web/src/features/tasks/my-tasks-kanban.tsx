@@ -287,7 +287,7 @@ function DroppableColumn({ column, tasks, onOpenDrawer, onStatusChange }: { colu
 
 // ─── Time Reporting Tab ────────────────────────────────────────────────────
 
-function TimeReportingRow({ task }: { task: any }) {
+function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id: number) => void }) {
   const queryClient = useQueryClient();
   const today = new Date().toISOString().split('T')[0];
   const [date, setDate] = useState(today);
@@ -299,6 +299,17 @@ function TimeReportingRow({ task }: { task: any }) {
 
   const projectName = task.project?.name || task.label?.projectName || '';
   const zoneName = task.zone?.name || task.label?.name || '';
+
+  // Due date in DD MMM format. Overdue is anything with endDate < today
+  // and the task isn't already done — same threshold the kanban uses so
+  // both views agree about "late".
+  const dueLabel = task.endDate
+    ? new Date(task.endDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+    : null;
+  const isOverdue = (() => {
+    if (!task.endDate || task.status === 'completed') return false;
+    return new Date(task.endDate).getTime() < new Date(today).getTime();
+  })();
 
   const startMins = (() => { const [h, m] = start.split(':').map(Number); return h * 60 + m; })();
   const endMins = (() => { const [h, m] = end.split(':').map(Number); return h * 60 + m; })();
@@ -345,14 +356,36 @@ function TimeReportingRow({ task }: { task: any }) {
   return (
     <div className="border-b border-slate-100 last:border-b-0">
       <div className="flex items-center gap-2 px-4 py-2.5 hover:bg-blue-50/30 transition-colors">
-        {/* Task info */}
-        <div className="flex-1 min-w-0">
+        {/* Task info — clickable to open the task sidebar. The form
+            controls below have their own click/change handlers, so clicks
+            inside those don't bubble up to the drawer-open handler. */}
+        <button
+          type="button"
+          onClick={() => onOpenDrawer(task.id)}
+          className="flex-1 min-w-0 text-left cursor-pointer rounded hover:bg-slate-50 -mx-1 px-1 py-0.5"
+          title="Open task details"
+        >
           <div className="flex items-center gap-2">
             {projectName && <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 rounded px-1.5 py-0.5 shrink-0">{projectName}</span>}
             <span className={cn('text-[10px] font-semibold rounded px-1.5 py-0.5 shrink-0', statusColor)}>{statusLabel}</span>
           </div>
           <p className="text-[13px] font-medium text-slate-800 truncate mt-0.5">{task.name}</p>
           {zoneName && <p className="text-[10px] text-slate-500 truncate">{zoneName}</p>}
+        </button>
+
+        {/* Due date column */}
+        <div className="w-[80px] text-center shrink-0">
+          {dueLabel ? (
+            <span className={cn(
+              'inline-flex items-center gap-1 text-[11px] font-medium tabular-nums',
+              isOverdue ? 'text-red-600 font-bold' : 'text-slate-600',
+            )}>
+              <Calendar className="h-3 w-3" />
+              {dueLabel}
+            </span>
+          ) : (
+            <span className="text-[11px] text-slate-300">—</span>
+          )}
         </div>
 
         {/* Date */}
@@ -404,7 +437,7 @@ function TimeReportingRow({ task }: { task: any }) {
   );
 }
 
-function TimeReportingTab({ tasks }: { tasks: any[] }) {
+function TimeReportingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer: (id: number) => void }) {
   const activeTasks = tasks.filter((t) => t.status !== 'completed');
   const completedTasks = tasks.filter((t) => t.status === 'completed');
 
@@ -448,13 +481,14 @@ function TimeReportingTab({ tasks }: { tasks: any[] }) {
               <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-600">{activeTasks.length}</span>
             </div>
             <div className="flex items-center gap-6 text-[10px] font-semibold text-slate-400 uppercase tracking-wider pr-1">
+              <span className="w-[80px] text-center">Due</span>
               <span className="w-[130px] text-center">Date</span>
               <span className="w-[170px] text-center">Start → End</span>
               <span className="w-[52px] text-center">Hours</span>
               <span className="w-[72px]" />
             </div>
           </div>
-          {activeTasks.map((task: any) => <TimeReportingRow key={task.id} task={task} />)}
+          {activeTasks.map((task: any) => <TimeReportingRow key={task.id} task={task} onOpenDrawer={onOpenDrawer} />)}
         </div>
       )}
 
@@ -465,7 +499,7 @@ function TimeReportingTab({ tasks }: { tasks: any[] }) {
             <span className="text-[13px] font-semibold text-slate-500">Completed Tasks</span>
             <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">{completedTasks.length}</span>
           </summary>
-          {completedTasks.map((task: any) => <TimeReportingRow key={task.id} task={task} />)}
+          {completedTasks.map((task: any) => <TimeReportingRow key={task.id} task={task} onOpenDrawer={onOpenDrawer} />)}
         </details>
       )}
 
@@ -629,12 +663,12 @@ export function MyTasksKanbanPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <PageHeader title="My Tasks" description={activeTab === 'time' ? 'Quick time reporting for your tasks' : 'Drag to change status, click card to view details'} />
+        <PageHeader title="My Tasks" description={activeTab === 'time' ? 'List of your tasks with quick time reporting' : 'Drag to change status, click card to view details'} />
         <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5">
           <button onClick={() => setActiveTab('time')}
             className={cn('flex items-center gap-1.5 px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
               activeTab === 'time' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
-            <Clock className="h-3.5 w-3.5" /> Time Report
+            <ListChecks className="h-3.5 w-3.5" /> List view
           </button>
           <button onClick={() => setActiveTab('kanban')}
             className={cn('flex items-center gap-1.5 px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
@@ -692,7 +726,7 @@ export function MyTasksKanbanPage() {
       {isLoading ? (
         <div className="py-12 text-center text-sm text-slate-600">Loading your tasks...</div>
       ) : activeTab === 'time' ? (
-        <TimeReportingTab tasks={tasks} />
+        <TimeReportingTab tasks={tasks} onOpenDrawer={(id) => setDrawerTaskId(id)} />
       ) : tasks.length === 0 ? (
         <div className="py-12 text-center">
           <UserIcon className="mx-auto h-12 w-12 text-slate-300" />
