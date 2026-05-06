@@ -344,16 +344,23 @@ function TaskCard({ task, health, onClick }: { task: Task; health: TaskHealth; o
 
 export function ExecutionBoardPage() {
   const [projectId, setProjectId] = useState<number | null>(null);
-  const [serviceId, setServiceId] = useState<number | null>(null);
+  // Service filter is now a STRING (the service name from getTaskPhaseName)
+  // and applied client-side — see the explanation in execution-board.service.ts.
+  const [serviceFilter, setServiceFilter] = useState<string>('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  // Zone-level collapse: when a zone is collapsed (default), all cells
-  // show only the summary bar. When expanded, task cards are revealed
-  // across ALL deliverable columns for that zone.
   const [expandedZones, setExpandedZones] = useState<Set<number>>(new Set());
   const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
+  // Due-date filters (#3.3). `dueFrom`/`dueTo` accept ISO yyyy-mm-dd
+  // (matches `<input type=date>`). `onlyWithDue` hides tasks that have
+  // no end date at all — useful for cleaning up the "TODO without due"
+  // grey blob from the planning view.
+  const [dueFrom, setDueFrom] = useState<string>('');
+  const [dueTo, setDueTo] = useState<string>('');
+  const [onlyWithDue, setOnlyWithDue] = useState(false);
   const didAutoExpand = useRef(false);
 
-  const { data, isLoading } = useExecutionBoard(projectId, serviceId);
+  // Don't pass serviceId to the server anymore; we filter client-side.
+  const { data, isLoading } = useExecutionBoard(projectId, null);
 
   const toggleZoneExpand = useCallback((zoneId: number) => {
     setExpandedZones((prev) => {
@@ -414,8 +421,45 @@ export function ExecutionBoardPage() {
     return map;
   }, [data]);
 
+  // Apply client-side filters before the matrix is built. Order matters:
+  // service filter narrows by column-name; date filters trim by endDate.
+  const filteredTasks = useMemo(() => {
+    const all = data?.tasks ?? [];
+    return all.filter((t: any) => {
+      if (onlyWithDue && !t.endDate) return false;
+      if (dueFrom || dueTo) {
+        if (!t.endDate) return false;
+        const d = String(t.endDate).slice(0, 10);
+        if (dueFrom && d < dueFrom) return false;
+        if (dueTo && d > dueTo) return false;
+      }
+      if (serviceFilter) {
+        // getTaskPhaseName covers serviceType.name, phase.name, [SERVICE:xxx].
+        const name = getTaskPhaseName(t);
+        if ((name ?? '__none__') !== serviceFilter) return false;
+      }
+      return true;
+    });
+  }, [data?.tasks, serviceFilter, dueFrom, dueTo, onlyWithDue]);
+
+  // Distinct service names actually present in the data — populates the
+  // dropdown so users can only pick something that exists.
+  const availableServices = useMemo(() => {
+    const all = data?.tasks ?? [];
+    const set = new Set<string>();
+    let hasNone = false;
+    for (const t of all) {
+      const n = getTaskPhaseName(t);
+      if (n) set.add(n);
+      else hasNone = true;
+    }
+    const list = Array.from(set).sort();
+    if (hasNone) list.push('__none__');
+    return list;
+  }, [data?.tasks]);
+
   const { phaseColumns, directMatrix, hasNoPhase, phaseToService } = useMemo(() => {
-    const tasks = data?.tasks ?? [];
+    const tasks = filteredTasks;
     const templates = data?.templates ?? [];
     const nameToHasTasks = new Set<string>();
     let _hasNoPhase = false;
@@ -456,7 +500,7 @@ export function ExecutionBoardPage() {
       hasNoPhase: _hasNoPhase,
       phaseToService: nameToService,
     };
-  }, [data?.tasks, data?.templates]);
+  }, [filteredTasks, data?.templates]);
 
   const getAggregatedTasks = useCallback(
     (zoneId: number, phaseName: string): Task[] => {
@@ -576,23 +620,53 @@ export function ExecutionBoardPage() {
           placeholder="All Projects"
           className="w-64"
         />
+        {/* Service dropdown — populated client-side from the service names
+            actually present in the data. Avoids the previous bug where the
+            list was driven from the Phase catalog and most options had no
+            matching tasks. */}
         <select
-          value={serviceId ?? ''}
-          onChange={(e) => setServiceId(e.target.value ? +e.target.value : null)}
+          value={serviceFilter}
+          onChange={(e) => setServiceFilter(e.target.value)}
           className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
+          title="Filter by service / deliverable"
         >
           <option value="">All Services</option>
-          {services.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
+          {availableServices.map((name) => (
+            <option key={name} value={name}>
+              {name === '__none__' ? '— No service —' : name}
             </option>
           ))}
         </select>
 
-        {/* Collapse / Expand all — only meaningful when there's at least one
-            zone open. We collapse both the tree-expand state (sub-zone visibility)
-            and the per-zone task expand. Expand-all is bounded to the visible
-            top-level zones only — recursively expanding deep trees explodes the UI. */}
+        {/* Due-date range + only-with-due toggle (#3.3). */}
+        <div className="flex items-center gap-1.5 text-[12px] text-slate-600">
+          <span className="font-semibold uppercase text-[10px] tracking-wider text-slate-400">Due</span>
+          <input
+            type="date"
+            value={dueFrom}
+            onChange={(e) => setDueFrom(e.target.value)}
+            className="rounded-md border border-input bg-background px-2 py-1.5 text-[12px]"
+            title="Earliest due date"
+          />
+          <span className="text-slate-400">→</span>
+          <input
+            type="date"
+            value={dueTo}
+            onChange={(e) => setDueTo(e.target.value)}
+            className="rounded-md border border-input bg-background px-2 py-1.5 text-[12px]"
+            title="Latest due date"
+          />
+        </div>
+        <label className="flex items-center gap-1.5 text-[12px] text-slate-600 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={onlyWithDue}
+            onChange={(e) => setOnlyWithDue(e.target.checked)}
+            className="rounded border-slate-300"
+          />
+          Only with due date
+        </label>
+
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -603,9 +677,18 @@ export function ExecutionBoardPage() {
           >
             Collapse All
           </button>
+          {(serviceFilter || dueFrom || dueTo || onlyWithDue) && (
+            <button
+              type="button"
+              onClick={() => { setServiceFilter(''); setDueFrom(''); setDueTo(''); setOnlyWithDue(false); }}
+              className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:border-slate-400"
+              title="Clear all filters"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
 
-        {/* Legend */}
         <div className="ml-auto flex items-center gap-3 text-[11px] text-slate-500">
           <span className="flex items-center gap-1"><AlertCircle className="h-3 w-3 text-red-600" />Overdue / critical</span>
           <span className="flex items-center gap-1"><AlertTriangle className="h-3 w-3 text-amber-600" />At risk</span>

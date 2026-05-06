@@ -58,12 +58,13 @@ export class ExecutionBoardService {
           projectId: { in: projectIds },
           deletedAt: null,
           isArchived: false,
-          // The "Services" dropdown maps to `serviceTypeId`, NOT `phaseId`.
-          // The matrix columns are grouped by `task.serviceType.name`, so the
-          // filter has to use the same field or the user picks a "service"
-          // and sees an empty board because surviving tasks don't intersect
-          // with the column groupings.
-          ...(serviceId ? { serviceTypeId: serviceId } : {}),
+          // NOTE: server-side serviceId filter intentionally removed. The
+          // "service" name a task belongs to can come from THREE places —
+          // task.serviceType.name, task.phase.name, or a [SERVICE:xxx]
+          // marker inside task.description (legacy/template flow). Most
+          // existing data uses the description marker, so a FK-based
+          // filter ends up empty. The frontend filters on getTaskPhaseName
+          // (which handles all three) and gets it right by construction.
         },
         take: MAX_TASKS + 1,
         include: {
@@ -81,20 +82,12 @@ export class ExecutionBoardService {
         },
         orderBy: [{ zoneId: 'asc' }, { sortOrder: 'asc' }],
       }),
-      // Service-types that actually appear on at least one task in scope —
-      // empty options just frustrate users (they pick, the board goes blank).
-      this.prisma.serviceType.findMany({
-        where: {
-          tasks: {
-            some: {
-              projectId: { in: projectIds },
-              deletedAt: null,
-              isArchived: false,
-            },
-          },
-        },
-        orderBy: { sortOrder: 'asc' },
-      }),
+      // Services list — kept for backwards compatibility, but the frontend
+      // no longer drives the filter from this. The dropdown is populated
+      // from the unique getTaskPhaseName() values of the actual loaded tasks
+      // (see execution-board-page.tsx). We still return the catalog so any
+      // legacy reader doesn't break.
+      this.prisma.phase.findMany({ orderBy: { sortOrder: 'asc' } }),
       this.prisma.template.findMany({
         where: {
           type: 'task_list',

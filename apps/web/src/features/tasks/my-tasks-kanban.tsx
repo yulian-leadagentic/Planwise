@@ -198,13 +198,13 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
           {task.priority === 'high' && <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-600">High</span>}
         </div>
 
-        {/* Hours — server-side aggregated across ALL users (findMine sums
-            time-entries by taskId, not by userId). */}
+        {/* Hours — YOUR own logged time on this task. The findMine endpoint
+            scopes time-entries by userId so this card shows what *you*
+            reported, not the team's combined hours. */}
         <div className="flex items-center gap-1 text-[10px] text-slate-600">
           <Clock className="h-2.5 w-2.5 shrink-0" />
           <span className="tabular-nums font-medium">
             {health.loggedHours}h {health.estimatedHours > 0 ? `/ ${health.estimatedHours}h est.` : 'logged'}
-            <span className="text-slate-400 ml-1">(team total)</span>
           </span>
         </div>
 

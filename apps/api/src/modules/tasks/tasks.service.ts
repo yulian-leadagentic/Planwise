@@ -148,9 +148,12 @@ export class TasksService {
     if (tasks.length === 0) return tasks;
 
     const taskIds = tasks.map((t) => t.id);
+    // findMine is the personal Kanban — show ONLY THIS USER'S logged hours
+    // per task, not the team total. (The team-total view lives elsewhere,
+    // e.g. on the project planning grid.)
     const timeAgg = await this.prisma.timeEntry.groupBy({
       by: ['taskId'],
-      where: { taskId: { in: taskIds }, deletedAt: null },
+      where: { taskId: { in: taskIds }, userId, deletedAt: null },
       _sum: { minutes: true },
       _max: { date: true },
     });
