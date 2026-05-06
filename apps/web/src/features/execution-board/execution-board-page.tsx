@@ -442,21 +442,34 @@ export function ExecutionBoardPage() {
     });
   }, [data?.tasks, serviceFilter, dueFrom, dueTo, onlyWithDue]);
 
-  // Distinct service names actually present in the data — populates the
-  // dropdown so users can only pick something that exists.
+  // Filter dropdown options = the DELIVERABLE TEMPLATES the admin designed
+  // (data.templates is type='task_list' templates) that actually have at
+  // least one task in scope. Aligned with the visible column headers, plus
+  // any "rogue" service names from tasks that don't match a template.
+  // Computed from UNFILTERED tasks so the option list doesn't shrink as the
+  // user picks.
   const availableServices = useMemo(() => {
-    const all = data?.tasks ?? [];
-    const set = new Set<string>();
+    const allTasks = data?.tasks ?? [];
+    const templates = data?.templates ?? [];
+    const namesWithTasks = new Set<string>();
     let hasNone = false;
-    for (const t of all) {
+    for (const t of allTasks) {
       const n = getTaskPhaseName(t);
-      if (n) set.add(n);
+      if (n) namesWithTasks.add(n);
       else hasNone = true;
     }
-    const list = Array.from(set).sort();
-    if (hasNone) list.push('__none__');
-    return list;
-  }, [data?.tasks]);
+    // Deliverable templates first (in their configured order), then any
+    // task service names that don't match a template ("rogue" services).
+    const ordered: string[] = [];
+    for (const tpl of templates) {
+      if (namesWithTasks.has(tpl.name)) ordered.push(tpl.name);
+    }
+    for (const n of namesWithTasks) {
+      if (!ordered.includes(n)) ordered.push(n);
+    }
+    if (hasNone) ordered.push('__none__');
+    return ordered;
+  }, [data?.tasks, data?.templates]);
 
   const { phaseColumns, directMatrix, hasNoPhase, phaseToService } = useMemo(() => {
     const tasks = filteredTasks;
