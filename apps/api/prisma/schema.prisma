@@ -164,6 +164,25 @@ enum ZoneType {
   floor
 }
 
+// Editable presentation metadata for the ZoneType enum. The enum itself is
+// the source of truth for which values are allowed (zones reference it by
+// value), but admins can customise the displayed label, color, icon, and
+// sort order without a code change. Rows are seeded 1:1 with the enum and
+// the admin UI exposes edit-only — no add, no delete — so it stays in
+// lockstep with the enum at all times.
+model ZoneTypeMeta {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique @db.VarChar(32)
+  label     String   @db.VarChar(64)
+  color     String   @db.VarChar(7)
+  icon      String?  @db.VarChar(32)
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("zone_type_meta")
+}
+
 enum TemplateType {
   task_list   @map("task_list")
   zone

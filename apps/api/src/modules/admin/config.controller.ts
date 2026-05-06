@@ -223,4 +223,34 @@ export class ConfigController {
     await this.prisma.projectRoleTemplate.delete({ where: { id } });
     return { message: 'Project role deleted' };
   }
+
+  // Zone Types — editable presentation metadata for the ZoneType enum.
+  // The enum (site/building/level/floor/wing/section/area/zone) is the
+  // source of truth. Admins can customise label/color/icon/sortOrder but
+  // can NOT add new ones (would break the enum) or delete existing ones
+  // (would orphan zones referencing the value). Hence GET + PATCH only.
+  @Get('zone-types')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'List zone type metadata' })
+  async getZoneTypes() {
+    return this.prisma.zoneTypeMeta.findMany({ orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }] });
+  }
+
+  @Patch('zone-types/:id')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Update zone type metadata (label/color/icon/sortOrder)' })
+  async updateZoneType(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { label?: string; color?: string; icon?: string | null; sortOrder?: number },
+  ) {
+    return this.prisma.zoneTypeMeta.update({
+      where: { id },
+      data: {
+        label: body.label,
+        color: body.color,
+        icon: body.icon === null ? null : body.icon,
+        sortOrder: body.sortOrder,
+      },
+    });
+  }
 }
