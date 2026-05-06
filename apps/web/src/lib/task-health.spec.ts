@@ -35,16 +35,49 @@ describe('getTaskHealth', () => {
     expect(h.reasons.some((r) => r.includes('In Review'))).toBe(true);
   });
 
-  it('computes completion as loggedHours / budgetHours', () => {
+  // ─── Status-ceiling completion model ────────────────────────────────────
+  // Time reporting → up to 80%. Status = in_review → 90. Status = completed
+  // / cancelled → 100. A task can never look "done" until it's actually
+  // moved to Done.
+
+  it('caps time-based completion at 80 for in_progress (5h / 10h → 40)', () => {
     const h = getTaskHealth({ ...base, budgetHours: 10, loggedMinutes: 300 }); // 5h / 10h
-    expect(h.computedPct).toBe(50);
+    expect(h.computedPct).toBe(40); // 50% of 80
     expect(h.loggedHours).toBe(5);
     expect(h.estimatedHours).toBe(10);
   });
 
-  it('falls back to completionPct when no budgetHours', () => {
-    const h = getTaskHealth({ ...base, budgetHours: null, loggedMinutes: 0, completionPct: 75 });
-    expect(h.computedPct).toBe(75);
+  it('caps in_progress completion at 80 even when fully reported', () => {
+    const h = getTaskHealth({ ...base, status: 'in_progress', budgetHours: 10, loggedMinutes: 600, lastActivityDate: new Date().toISOString() });
+    expect(h.computedPct).toBe(80);
+  });
+
+  it('caps in_progress completion at 80 even when over-logged', () => {
+    const h = getTaskHealth({ ...base, status: 'in_progress', budgetHours: 5, loggedMinutes: 600 }); // 10h / 5h
+    expect(h.computedPct).toBe(80);
+  });
+
+  it('pins in_review to 90% regardless of hours', () => {
+    const h0 = getTaskHealth({ ...base, status: 'in_review', budgetHours: 10, loggedMinutes: 0, lastActivityDate: new Date().toISOString() });
+    expect(h0.computedPct).toBe(90);
+
+    const hFull = getTaskHealth({ ...base, status: 'in_review', budgetHours: 10, loggedMinutes: 600, lastActivityDate: new Date().toISOString() });
+    expect(hFull.computedPct).toBe(90);
+  });
+
+  it('pins completed to 100% even with no hours logged', () => {
+    const h = getTaskHealth({ ...base, status: 'completed', budgetHours: 10, loggedMinutes: 0 });
+    expect(h.computedPct).toBe(100);
+  });
+
+  it('pins cancelled to 100%', () => {
+    const h = getTaskHealth({ ...base, status: 'cancelled', budgetHours: 10, loggedMinutes: 120 });
+    expect(h.computedPct).toBe(100);
+  });
+
+  it('falls back to completionPct (scaled to 80%) when no budgetHours', () => {
+    const h = getTaskHealth({ ...base, budgetHours: null, loggedMinutes: 0, completionPct: 100 });
+    expect(h.computedPct).toBe(80); // 100 / 100 * 80
   });
 
   it('warns when over budget', () => {
@@ -67,11 +100,6 @@ describe('getTaskHealth', () => {
     const h = getTaskHealth({ ...base, lastActivityDate: oldDate, loggedMinutes: 60 });
     expect(h.isStale).toBe(true);
     expect(h.reasons.some((r) => r.includes('No activity'))).toBe(true);
-  });
-
-  it('caps computedPct at 100', () => {
-    const h = getTaskHealth({ ...base, budgetHours: 5, loggedMinutes: 600 }); // 10h / 5h
-    expect(h.computedPct).toBe(100);
   });
 });
 
