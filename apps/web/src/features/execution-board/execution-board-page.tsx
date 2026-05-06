@@ -421,32 +421,16 @@ export function ExecutionBoardPage() {
     return map;
   }, [data]);
 
-  // Apply client-side filters before the matrix is built. Order matters:
-  // service filter narrows by column-name; date filters trim by endDate.
-  const filteredTasks = useMemo(() => {
-    const all = data?.tasks ?? [];
-    // serviceNameToDeliverable is needed inside the predicate; the early
-    // ref keeps useMemo's dep list explicit below.
-    return all.filter((t: any) => {
-      if (onlyWithDue && !t.endDate) return false;
-      if (dueFrom || dueTo) {
-        if (!t.endDate) return false;
-        const d = String(t.endDate).slice(0, 10);
-        if (dueFrom && d < dueFrom) return false;
-        if (dueTo && d > dueTo) return false;
-      }
-      if (serviceFilter) {
-        // serviceFilter is a deliverable (phase) name. Map the task's
-        // service-name to its linked deliverable via the templates lookup;
-        // keep only tasks whose deliverable matches.
-        const serviceName = getTaskPhaseName(t);
-        if (!serviceName) return false;
-        const deliverable = serviceNameToDeliverable.get(serviceName);
-        if (deliverable !== serviceFilter) return false;
-      }
-      return true;
-    });
-  }, [data?.tasks, serviceFilter, dueFrom, dueTo, onlyWithDue, serviceNameToDeliverable]);
+  // service-name → deliverable-name lookup, used by the filter to decide
+  // which tasks belong to the picked deliverable. MUST be declared before
+  // filteredTasks since filteredTasks references it (TDZ otherwise).
+  const serviceNameToDeliverable = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const tpl of (data?.templates ?? [])) {
+      if (tpl.phase?.name) m.set(tpl.name, tpl.phase.name);
+    }
+    return m;
+  }, [data?.templates]);
 
   // The dropdown filters by DELIVERABLE — the small pill below each column
   // header (e.g. "ניהול מודל", "BIM תכנון"), not the column header itself.
@@ -478,15 +462,30 @@ export function ExecutionBoardPage() {
     return ordered;
   }, [data?.tasks, data?.templates]);
 
-  // service-name → deliverable-name lookup, used by the filter to decide
-  // which tasks belong to the picked deliverable.
-  const serviceNameToDeliverable = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const tpl of (data?.templates ?? [])) {
-      if (tpl.phase?.name) m.set(tpl.name, tpl.phase.name);
-    }
-    return m;
-  }, [data?.templates]);
+  // Apply client-side filters before the matrix is built. Order matters:
+  // deliverable filter narrows by template-phase; date filters trim by endDate.
+  const filteredTasks = useMemo(() => {
+    const all = data?.tasks ?? [];
+    return all.filter((t: any) => {
+      if (onlyWithDue && !t.endDate) return false;
+      if (dueFrom || dueTo) {
+        if (!t.endDate) return false;
+        const d = String(t.endDate).slice(0, 10);
+        if (dueFrom && d < dueFrom) return false;
+        if (dueTo && d > dueTo) return false;
+      }
+      if (serviceFilter) {
+        // serviceFilter is a deliverable (phase) name. Map the task's
+        // service-name to its linked deliverable via the templates lookup;
+        // keep only tasks whose deliverable matches.
+        const serviceName = getTaskPhaseName(t);
+        if (!serviceName) return false;
+        const deliverable = serviceNameToDeliverable.get(serviceName);
+        if (deliverable !== serviceFilter) return false;
+      }
+      return true;
+    });
+  }, [data?.tasks, serviceFilter, dueFrom, dueTo, onlyWithDue, serviceNameToDeliverable]);
 
   const { phaseColumns, directMatrix, hasNoPhase, phaseToService } = useMemo(() => {
     const tasks = filteredTasks;
