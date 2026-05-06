@@ -550,7 +550,10 @@ const statusMap: Record<string, { bg: string; text: string; label: string }> = {
 };
 
 // Column grid template shared between headers and data rows
-const TASK_GRID = 'grid grid-cols-[16px_16px_80px_1fr_96px_80px_56px_64px_96px_96px_96px_96px_84px] gap-x-2 items-center';
+// Grid template for one task row.
+// Columns: drag · check · code · name · deliverable · service · est-hrs ·
+//          logged-hrs · amount · est-start · due · assignees · status · actions
+const TASK_GRID = 'grid grid-cols-[16px_16px_80px_1fr_96px_80px_56px_64px_64px_96px_96px_96px_96px_84px] gap-x-2 items-center';
 
 function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onToggleTask, onUpdate, onDeleteTask }: {
   task: any; idx: number; projectId: number; members: any[];
@@ -656,26 +659,28 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       </span>
       <span className="truncate" title={serviceName ?? ''}>{serviceName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full" style={{ backgroundColor: `${serviceColor}15`, color: serviceColor }}>{serviceName}</span> : <span className="text-slate-300 text-[11px]">-</span>}</span>
       <span className="text-[11px] text-slate-500 truncate" title={task.phase?.name ?? ''}>{task.phase?.name || <span className="text-slate-300">-</span>}</span>
-      {/* Budget hours + logged-hours summary (employee-reported time on this task).
-          Logged = sum of all TimeEntry.minutes where taskId matches; aggregated
-          server-side in planning.service. We surface it inline so PMs can see
-          progress vs estimate at a glance — no cost calc, just the totals. */}
-      <span className="flex flex-col items-end leading-tight">
-        <InlineEditCell value={task.budgetHours} suffix="h" width="w-14" onSave={(v) => saveField('budgetHours', v)} />
-        {Number(task.loggedMinutes ?? 0) > 0 && (
+      {/* Estimate (budgetHours) — editable. */}
+      <InlineEditCell value={task.budgetHours} suffix="h" width="w-14" onSave={(v) => saveField('budgetHours', v)} />
+      {/* Reported / logged hours — read-only sum of all TimeEntry.minutes
+          for this task across the team. Aggregated server-side in
+          planning.service.ts → loggedMinutes. Red if it has exceeded the
+          budget estimate (budget > 0 and logged > budget). */}
+      {(() => {
+        const loggedHours = Number(task.loggedMinutes ?? 0) / 60;
+        const budget = Number(task.budgetHours ?? 0);
+        const overBudget = budget > 0 && loggedHours > budget;
+        return (
           <span
             className={cn(
-              'text-[9px] tabular-nums -mt-0.5 px-1',
-              Number(task.loggedMinutes) / 60 > Number(task.budgetHours ?? 0) && Number(task.budgetHours ?? 0) > 0
-                ? 'text-red-500'
-                : 'text-slate-400',
+              'text-right text-[11px] font-mono tabular-nums',
+              loggedHours === 0 ? 'text-slate-300' : overBudget ? 'text-red-600 font-semibold' : 'text-slate-700',
             )}
-            title={`Logged hours reported by team members on this task`}
+            title="Total hours reported by team members on this task"
           >
-            {(Number(task.loggedMinutes) / 60).toFixed(1)}h logged
+            {loggedHours > 0 ? `${loggedHours.toFixed(1)}h` : '—'}
           </span>
-        )}
-      </span>
+        );
+      })()}
       <InlineEditCell value={task.budgetAmount} prefix="₪" width="w-16" onSave={(v) => saveField('budgetAmount', v)} />
       {/* Estimated start date — planning forecast (distinct from actual
           startDate, which is set when work begins and lives in the drawer). */}
@@ -1545,11 +1550,9 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
         <span className="rounded-[5px] bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-400">{zone.zoneType}</span>
         <span className="ml-auto text-[11px] font-medium text-slate-400">
           {tasks.length} tasks · {hours}h budget
-          {loggedHours > 0 && (
-            <span className={cn('ml-1', loggedHours > hours && hours > 0 ? 'text-red-500' : 'text-blue-500')}>
-              · {loggedHours}h logged
-            </span>
-          )}
+          <span className={cn('ml-1 font-semibold', loggedHours === 0 ? 'text-slate-400' : loggedHours > hours && hours > 0 ? 'text-red-500' : 'text-blue-500')}>
+            · {loggedHours}h logged
+          </span>
           <span> · ₪{amount.toLocaleString()}</span>
         </span>
         <div className="relative" onClick={(e) => e.stopPropagation()}>
@@ -1606,6 +1609,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                 <th className={cn(thClass, 'w-28')} onClick={() => handleSort('service')}>Deliverable{sortIcon('service')}</th>
                 <th className={cn(thClass, 'w-20')} onClick={() => handleSort('phase')}>Service{sortIcon('phase')}</th>
                 <th className={cn(thClass, 'w-14 text-right')} onClick={() => handleSort('hours')}>Est. Hours{sortIcon('hours')}</th>
+                <th className={cn(thClass, 'w-16 text-right')}>Logged</th>
                 <th className={cn(thClass, 'w-20 text-right')} onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
                 <th className={cn(thClass, 'w-24')}>Due Date</th>
                 <th className={cn(thClass, 'w-28')}>Assignee</th>
@@ -1634,6 +1638,22 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                     <td className="px-3 py-2">{svcName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold" style={{ backgroundColor: `${svcColor}15`, color: svcColor }}>{svcName}</span> : <span className="text-slate-300">-</span>}</td>
                     <td className="px-3 py-2 text-[12px] text-slate-500">{task.phase?.name || '-'}</td>
                     <td className="px-3 py-2 text-right font-mono text-xs font-medium text-slate-700">{task.budgetHours ? `${Number(task.budgetHours)}h` : '-'}</td>
+                    {/* Reported / logged time on this task. Red if it has
+                        exceeded the estimate. Read-only here (logging
+                        happens on the task drawer or My Tasks). */}
+                    {(() => {
+                      const lh = Number(task.loggedMinutes ?? 0) / 60;
+                      const bg = Number(task.budgetHours ?? 0);
+                      const over = bg > 0 && lh > bg;
+                      return (
+                        <td className={cn(
+                          'px-3 py-2 text-right font-mono text-xs',
+                          lh === 0 ? 'text-slate-300' : over ? 'text-red-600 font-bold' : 'text-slate-700 font-medium',
+                        )}>
+                          {lh > 0 ? `${lh.toFixed(1)}h` : '-'}
+                        </td>
+                      );
+                    })()}
                     <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-slate-700">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</td>
                     <td className="px-3 py-2"><input type="date" value={dueDate} className="w-full px-1 py-0.5 rounded border border-slate-200 text-[10px] text-slate-600 bg-transparent focus:outline-none focus:ring-1 focus:ring-blue-400" /></td>
                     <td className="px-3 py-2">
@@ -1814,11 +1834,12 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           })()}
           <span className="text-[11px] font-medium text-slate-400">
             {allZoneTasks.length} tasks · {totalHours}h budget
-            {totalLoggedHours > 0 && (
-              <span className={cn('ml-1', totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-blue-500')}>
-                · {totalLoggedHours}h logged
-              </span>
-            )}
+            {/* Always show the zone's logged-hours total, even when 0, so PMs
+                see at a glance how much of the budget has been consumed.
+                Red when actuals exceed budget. */}
+            <span className={cn('ml-1 font-semibold', totalLoggedHours === 0 ? 'text-slate-400' : totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-blue-500')}>
+              · {totalLoggedHours}h logged
+            </span>
             <span> · ₪{totalAmount.toLocaleString()}</span>
           </span>
         </div>
@@ -1902,6 +1923,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <span>Deliverable</span>
               <span>Service</span>
               <span className="text-right">Est. Hours</span>
+              <span className="text-right">Logged</span>
               <span className="text-right">Amount</span>
               <span>Est. Start</span>
               <span>Due Date</span>
@@ -2002,6 +2024,10 @@ function PlanningView({ projectId }: { projectId: number }) {
   const [filterStartTo, setFilterStartTo] = useState<string>('');
   const [filterDueFrom, setFilterDueFrom] = useState<string>('');
   const [filterDueTo, setFilterDueTo] = useState<string>('');
+  // Has-due-date triage filter. '' = any, 'yes' = only tasks with a due
+  // date set, 'no' = only tasks missing one (handy for catching tasks
+  // that slipped through scheduling).
+  const [filterHasDue, setFilterHasDue] = useState<'' | 'yes' | 'no'>('');
 
   // ─── Undo Stack ─────────────────────────────────────────────────────────────
   const undoStackRef = useRef<{ label: string; fn: () => Promise<void> }[]>([]);
@@ -2261,17 +2287,21 @@ function PlanningView({ projectId }: { projectId: number }) {
       const td = t.endDate ? String(t.endDate).slice(0, 10) : '';
       if (filterDueFrom && (!td || td < filterDueFrom)) return false;
       if (filterDueTo && (!td || td > filterDueTo)) return false;
+      // Has-due-date filter (yes/no/any)
+      if (filterHasDue === 'yes' && !td) return false;
+      if (filterHasDue === 'no' && td) return false;
       return true;
     });
-  }, [tasks, search, filterStatus, filterStartFrom, filterStartTo, filterDueFrom, filterDueTo]);
+  }, [tasks, search, filterStatus, filterStartFrom, filterStartTo, filterDueFrom, filterDueTo, filterHasDue]);
 
-  const hasTaskFilter = !!(filterStatus || filterStartFrom || filterStartTo || filterDueFrom || filterDueTo);
+  const hasTaskFilter = !!(filterStatus || filterStartFrom || filterStartTo || filterDueFrom || filterDueTo || filterHasDue);
   const clearTaskFilters = () => {
     setFilterStatus('');
     setFilterStartFrom('');
     setFilterStartTo('');
     setFilterDueFrom('');
     setFilterDueTo('');
+    setFilterHasDue('');
   };
 
   // Sort
@@ -2417,6 +2447,19 @@ function PlanningView({ projectId }: { projectId: number }) {
             <span className="text-slate-400">→</span>
             <input type="date" value={filterDueTo} onChange={(e) => setFilterDueTo(e.target.value)} className="px-1.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700" />
           </div>
+          <div className="flex items-center gap-1 text-[11px] text-slate-500">
+            <span>Has due date:</span>
+            <select
+              value={filterHasDue}
+              onChange={(e) => setFilterHasDue(e.target.value as '' | 'yes' | 'no')}
+              className="px-2 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none"
+              title="Filter tasks by whether they have a due date"
+            >
+              <option value="">Any</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </div>
           {hasTaskFilter && (
             <button
               type="button"
@@ -2435,7 +2478,9 @@ function PlanningView({ projectId }: { projectId: number }) {
           <div className="flex items-center justify-between py-3 border-b border-slate-200">
             <div>
               <h3 className="text-[15px] font-bold text-slate-900">Project Tasks</h3>
-              <span className="text-[11px] font-medium text-slate-400">{sorted.length} tasks · {totalHours}h budget{totalLoggedHours > 0 ? ` · ${totalLoggedHours}h logged` : ''} · ₪{totalAmount.toLocaleString()}</span>
+              <span className="text-[11px] font-medium text-slate-400">
+                {sorted.length} tasks · {totalHours}h budget · <span className={cn('font-semibold', totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-slate-500')}>{totalLoggedHours}h logged</span> · ₪{totalAmount.toLocaleString()}
+              </span>
             </div>
             {/* Feasibility + Progress */}
             <FeasibilityBadge projectId={projectId} />
