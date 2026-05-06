@@ -11,3 +11,9 @@ coverage/
 .vscode/
 *.swp
 *.swo
+
+# Local Claude Code config — per-developer, never shared
+.claude/
+
+# TypeScript incremental build cache — regenerated on every build
+*.tsbuildinfo
