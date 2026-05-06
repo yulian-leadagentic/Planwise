@@ -620,30 +620,35 @@ export function ProjectFormPage() {
 
               {/* Optional quick link — Google Drive folder / network share / etc.
                   Stored as a ProjectFile of kind=link so it shows up in the
-                  project's Files tab. The Browse-button experiment turned out
-                  to be confusing (browsers strip the full path), so this is
-                  now a clean two-field row plus auto-detected provider hint. */}
+                  project's Files tab. Two clearly labelled stacked fields
+                  (label-on-top) so the layout doesn't squish on narrow widths. */}
               <div className="mt-5">
                 <label className={labelClass}>Quick link (optional)</label>
-                <p className="text-[12px] text-slate-500 mb-2">
+                <p className="text-[12px] text-slate-500 mb-3">
                   Paste a Google Drive folder, network share, or external URL so the team has it from day one.
                   More links can be added later from the Files tab.
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-[1fr_2fr] gap-2">
-                  <input
-                    type="text"
-                    value={quickLinkName}
-                    onChange={(e) => setQuickLinkName(e.target.value)}
-                    placeholder="Display name (e.g. Drive folder)"
-                    className={inputClass}
-                  />
-                  <input
-                    type="text"
-                    value={quickLinkUrl}
-                    onChange={(e) => setQuickLinkUrl(e.target.value)}
-                    placeholder="https://drive.google.com/drive/folders/...   or   \\server\share\..."
-                    className={`${inputClass} font-mono text-[12px]`}
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-500 uppercase mb-1 block">Display name</label>
+                    <input
+                      type="text"
+                      value={quickLinkName}
+                      onChange={(e) => setQuickLinkName(e.target.value)}
+                      placeholder="e.g. Drive folder"
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-500 uppercase mb-1 block">URL or path</label>
+                    <input
+                      type="text"
+                      value={quickLinkUrl}
+                      onChange={(e) => setQuickLinkUrl(e.target.value)}
+                      placeholder={'https://drive.google.com/drive/folders/...'}
+                      className={`${inputClass} font-mono text-[12px]`}
+                    />
+                  </div>
                 </div>
                 {quickLinkUrl.trim() && (() => {
                   const label = detectProviderLabel(quickLinkUrl.trim());

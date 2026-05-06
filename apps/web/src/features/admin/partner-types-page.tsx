@@ -402,6 +402,15 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
 function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; onClose: () => void }) {
   const queryClient = useQueryClient();
   const isNew = !type;
+
+  // Pull the role-type catalog so the source/target role dropdowns show real
+  // codes instead of asking the admin to remember-and-spell. Cached for 10
+  // minutes since these don't change often.
+  const { data: roleTypes = [] } = useQuery<RoleType[]>({
+    queryKey: ['partner-role-types'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () => client.get('/admin/partner-types/role-types').then((r) => r.data?.data ?? r.data ?? []),
+  });
   const [form, setForm] = useState({
     code: type?.code ?? '',
     name: type?.name ?? '',
@@ -502,24 +511,34 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[10px] font-semibold text-slate-400 uppercase whitespace-nowrap">Required source role (optional)</span>
-          <input
+          {/* Picks from the live role-type catalog so admins can't typo a
+              non-existent code. Empty option = no constraint. */}
+          <select
             value={form.requiredSourceRoleCode}
             onChange={(e) => setForm(f => ({ ...f, requiredSourceRoleCode: e.target.value }))}
-            placeholder="e.g. external_contact"
-            className={cn(inputClass, 'font-mono text-[11px] py-1 max-w-[160px]')}
-          />
+            className={cn(inputClass, 'font-mono text-[11px] py-1 max-w-[200px]')}
+          >
+            <option value="">— Any source role —</option>
+            {roleTypes.map((rt) => (
+              <option key={rt.id} value={rt.code}>{rt.code} ({rt.name})</option>
+            ))}
+          </select>
         </div>
-        {/* New constraint: target BP must hold this role. Only kicks in when
-            the target is an organization. Combined with the source-role rule
-            above, admins can express e.g. external_contact → customer. */}
+        {/* Target-role constraint — only kicks in when the target is an
+            organization. Combined with the source-role rule, admins can
+            express things like external_contact → customer org. */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[10px] font-semibold text-slate-400 uppercase whitespace-nowrap">Required target role (optional)</span>
-          <input
+          <select
             value={form.requiredTargetRoleCode}
             onChange={(e) => setForm(f => ({ ...f, requiredTargetRoleCode: e.target.value }))}
-            placeholder="e.g. customer"
-            className={cn(inputClass, 'font-mono text-[11px] py-1 max-w-[160px]')}
-          />
+            className={cn(inputClass, 'font-mono text-[11px] py-1 max-w-[200px]')}
+          >
+            <option value="">— Any target role —</option>
+            {roleTypes.map((rt) => (
+              <option key={rt.id} value={rt.code}>{rt.code} ({rt.name})</option>
+            ))}
+          </select>
         </div>
       </td>
       <td />

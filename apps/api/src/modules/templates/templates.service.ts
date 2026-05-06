@@ -34,36 +34,58 @@ export class TemplatesService {
     // Build an id → template lookup for the recursive rollup below.
     const byId = new Map<number, any>(templates.map((t: any) => [t.id, t]));
 
-    // Effective zone count = SUM(instanceCount) across template zones (a
-    // "Floor ×3" composition contributes 3, not 1).
-    // Effective task count = recursive rollup: root tasks + for each zone,
-    // (inline templateZoneTasks + linkedTaskTemplate's tasks + referencedTemplate's
-    // total tasks) × instanceCount. memoised per template; cycle-guarded.
+    // Direct-services set per template: distinct service codes pulled from
+    // the [SERVICE:xxx] tag in each templateTask description.
+    const directServicesById = new Map<number, Set<string>>();
+    for (const t of templates) {
+      const set = new Set<string>();
+      for (const task of (t.templateTasks ?? [])) {
+        const m = task.description?.match(/^\[SERVICE:(.+)\]$/);
+        if (m) set.add(m[1]);
+      }
+      directServicesById.set(t.id, set);
+    }
+
+    // Recursive rollup: count tasks AND collect distinct services across the
+    // composition graph (root tasks + linkedTaskTemplate + referencedTemplate
+    // children, multiplied by instanceCount where it makes sense for tasks
+    // — services are a UNION so multiplicity doesn't apply). Memoised
+    // per template id; cycle-guarded.
     const taskTotalCache = new Map<number, number>();
+    const serviceSetCache = new Map<number, Set<string>>();
     const visiting = new Set<number>();
 
-    const computeTotalTasks = (id: number): number => {
-      if (taskTotalCache.has(id)) return taskTotalCache.get(id)!;
-      if (visiting.has(id)) return 0; // cycle — bail out
+    const computeRollup = (id: number): { tasks: number; services: Set<string> } => {
+      if (taskTotalCache.has(id) && serviceSetCache.has(id)) {
+        return { tasks: taskTotalCache.get(id)!, services: serviceSetCache.get(id)! };
+      }
+      if (visiting.has(id)) return { tasks: 0, services: new Set() }; // cycle — bail
       const t = byId.get(id);
-      if (!t) return 0;
+      if (!t) return { tasks: 0, services: new Set() };
       visiting.add(id);
-      let total = t._count?.templateTasks ?? 0;
+
+      let tasks = t._count?.templateTasks ?? 0;
+      const services = new Set<string>(directServicesById.get(id) ?? []);
+
       for (const z of (t.templateZones ?? [])) {
         const mult = Math.max(1, Number(z.instanceCount) || 1);
         let zoneTasks = z._count?.templateZoneTasks ?? 0;
         if (z.linkedTaskTemplateId) {
           const linked = byId.get(z.linkedTaskTemplateId);
           zoneTasks += linked?._count?.templateTasks ?? 0;
+          for (const s of (directServicesById.get(z.linkedTaskTemplateId) ?? [])) services.add(s);
         }
         if (z.referencedTemplateId) {
-          zoneTasks += computeTotalTasks(z.referencedTemplateId);
+          const child = computeRollup(z.referencedTemplateId);
+          zoneTasks += child.tasks;
+          for (const s of child.services) services.add(s);
         }
-        total += zoneTasks * mult;
+        tasks += zoneTasks * mult;
       }
       visiting.delete(id);
-      taskTotalCache.set(id, total);
-      return total;
+      taskTotalCache.set(id, tasks);
+      serviceSetCache.set(id, services);
+      return { tasks, services };
     };
 
     return templates.map((t: any) => {
@@ -71,19 +93,23 @@ export class TemplatesService {
         (sum: number, z: any) => sum + Math.max(1, Number(z.instanceCount) || 1),
         0,
       );
-      const effectiveTasks = computeTotalTasks(t.id);
+      const rollup = computeRollup(t.id);
       return {
         ...t,
         _count: {
           ...t._count,
           templateZones: expandedZones,
           templateZoneRows: t._count?.templateZones ?? 0,
-          // Direct-only count preserved for any caller that needs it.
           templateRootTasks: t._count?.templateTasks ?? 0,
-          // Override `templateTasks` with the rolled-up effective count so
-          // existing UI ("X tasks" labels) shows the realistic total.
-          templateTasks: effectiveTasks,
+          templateTasks: rollup.tasks,
         },
+        // Effective service list for the UI to count distinct services
+        // without needing to walk descriptions itself. Replaces the direct
+        // templateTasks list (which the picker only used for service extraction).
+        templateTasks: Array.from(rollup.services).map((name) => ({
+          id: 0,
+          description: `[SERVICE:${name}]`,
+        })),
         templateZones: undefined,
       };
     });
