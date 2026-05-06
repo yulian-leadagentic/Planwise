@@ -1,4 +1,9 @@
-export interface ZoneType {
+// V8 zone-type DB row (presentation metadata for the enum). Renamed from
+// `ZoneType` to `ZoneTypeDef` so it doesn't collide with the enum-derived
+// `ZoneType` string-union exported from ./enums (also re-exported by the
+// package barrel). Consumers that want the enum value use `ZoneType`;
+// consumers that want the row shape use `ZoneTypeDef`.
+export interface ZoneTypeDef {
   id: number;
   name: string;
   color: string;
@@ -23,7 +28,7 @@ export interface Zone {
   typicalCount: number;
   createdAt: string;
   updatedAt: string;
-  zoneType?: ZoneType;
+  zoneType?: ZoneTypeDef;
   children?: Zone[];
   assignmentCount?: number;
 }

@@ -111,3 +111,23 @@ export const SERVICE_TYPE_COLORS: Record<string, string> = {
   FIRE: '#DC2626',
   ACO: '#06B6D4',
 };
+
+// ─── V8 Service / Deliverable / Assignment Enums ───────────────────────────
+// Used by service.types.ts (Service / Deliverable / Assignment models).
+// Kept as string-literal unions so they erase at runtime — no JS overhead.
+
+export const DELIVERABLE_SCOPES = ['project', 'zone'] as const;
+export type DeliverableScope = (typeof DELIVERABLE_SCOPES)[number];
+
+export const ASSIGNMENT_STATUSES = [
+  'not_started',
+  'in_progress',
+  'in_review',
+  'completed',
+  'on_hold',
+  'cancelled',
+] as const;
+export type AssignmentStatus = (typeof ASSIGNMENT_STATUSES)[number];
+
+export const ASSIGNMENT_PRIORITIES = ['low', 'medium', 'high', 'critical'] as const;
+export type AssignmentPriority = (typeof ASSIGNMENT_PRIORITIES)[number];
