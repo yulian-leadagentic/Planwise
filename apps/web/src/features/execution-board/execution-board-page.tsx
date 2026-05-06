@@ -425,6 +425,8 @@ export function ExecutionBoardPage() {
   // service filter narrows by column-name; date filters trim by endDate.
   const filteredTasks = useMemo(() => {
     const all = data?.tasks ?? [];
+    // serviceNameToDeliverable is needed inside the predicate; the early
+    // ref keeps useMemo's dep list explicit below.
     return all.filter((t: any) => {
       if (onlyWithDue && !t.endDate) return false;
       if (dueFrom || dueTo) {
@@ -434,42 +436,57 @@ export function ExecutionBoardPage() {
         if (dueTo && d > dueTo) return false;
       }
       if (serviceFilter) {
-        // getTaskPhaseName covers serviceType.name, phase.name, [SERVICE:xxx].
-        const name = getTaskPhaseName(t);
-        if ((name ?? '__none__') !== serviceFilter) return false;
+        // serviceFilter is a deliverable (phase) name. Map the task's
+        // service-name to its linked deliverable via the templates lookup;
+        // keep only tasks whose deliverable matches.
+        const serviceName = getTaskPhaseName(t);
+        if (!serviceName) return false;
+        const deliverable = serviceNameToDeliverable.get(serviceName);
+        if (deliverable !== serviceFilter) return false;
       }
       return true;
     });
-  }, [data?.tasks, serviceFilter, dueFrom, dueTo, onlyWithDue]);
+  }, [data?.tasks, serviceFilter, dueFrom, dueTo, onlyWithDue, serviceNameToDeliverable]);
 
-  // Filter dropdown options = the DELIVERABLE TEMPLATES the admin designed
-  // (data.templates is type='task_list' templates) that actually have at
-  // least one task in scope. Aligned with the visible column headers, plus
-  // any "rogue" service names from tasks that don't match a template.
-  // Computed from UNFILTERED tasks so the option list doesn't shrink as the
-  // user picks.
+  // The dropdown filters by DELIVERABLE — the small pill below each column
+  // header (e.g. "ניהול מודל", "BIM תכנון"), not the column header itself.
+  // Each template links a service-name → a phase (= deliverable), so we
+  // walk the templates that have tasks and collect their distinct phase
+  // names. Computed from unfiltered tasks so the list doesn't shrink as
+  // the user picks.
   const availableServices = useMemo(() => {
     const allTasks = data?.tasks ?? [];
     const templates = data?.templates ?? [];
-    const namesWithTasks = new Set<string>();
-    let hasNone = false;
+    const serviceNamesWithTasks = new Set<string>();
     for (const t of allTasks) {
       const n = getTaskPhaseName(t);
-      if (n) namesWithTasks.add(n);
-      else hasNone = true;
+      if (n) serviceNamesWithTasks.add(n);
     }
-    // Deliverable templates first (in their configured order), then any
-    // task service names that don't match a template ("rogue" services).
+    // For each template that matches an in-scope service, collect the
+    // template's linked phase (deliverable) name. Preserve the
+    // configuration order so the dropdown follows the column ordering.
     const ordered: string[] = [];
+    const seen = new Set<string>();
     for (const tpl of templates) {
-      if (namesWithTasks.has(tpl.name)) ordered.push(tpl.name);
+      if (!serviceNamesWithTasks.has(tpl.name)) continue;
+      const phaseName = tpl.phase?.name;
+      if (phaseName && !seen.has(phaseName)) {
+        seen.add(phaseName);
+        ordered.push(phaseName);
+      }
     }
-    for (const n of namesWithTasks) {
-      if (!ordered.includes(n)) ordered.push(n);
-    }
-    if (hasNone) ordered.push('__none__');
     return ordered;
   }, [data?.tasks, data?.templates]);
+
+  // service-name → deliverable-name lookup, used by the filter to decide
+  // which tasks belong to the picked deliverable.
+  const serviceNameToDeliverable = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const tpl of (data?.templates ?? [])) {
+      if (tpl.phase?.name) m.set(tpl.name, tpl.phase.name);
+    }
+    return m;
+  }, [data?.templates]);
 
   const { phaseColumns, directMatrix, hasNoPhase, phaseToService } = useMemo(() => {
     const tasks = filteredTasks;
@@ -633,21 +650,19 @@ export function ExecutionBoardPage() {
           placeholder="All Projects"
           className="w-64"
         />
-        {/* Service dropdown — populated client-side from the service names
-            actually present in the data. Avoids the previous bug where the
-            list was driven from the Phase catalog and most options had no
-            matching tasks. */}
+        {/* Deliverable dropdown — lists the distinct deliverable names (the
+            small pill under each column header) that have tasks in scope.
+            Picking one narrows the matrix to columns whose deliverable
+            matches. */}
         <select
           value={serviceFilter}
           onChange={(e) => setServiceFilter(e.target.value)}
           className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
-          title="Filter by service / deliverable"
+          title="Filter by deliverable"
         >
-          <option value="">All Services</option>
+          <option value="">All Deliverables</option>
           {availableServices.map((name) => (
-            <option key={name} value={name}>
-              {name === '__none__' ? '— No service —' : name}
-            </option>
+            <option key={name} value={name}>{name}</option>
           ))}
         </select>
 
