@@ -1657,37 +1657,9 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
 }
 
 
-// ─── Sortable wrapper for top-level zones ─────────────────────────────────────
-// Tasks already have their own SortableContext for drag-reorder; we add a
-// parallel SortableContext for the top-level zone list so users can drag
-// whole zones up/down. We use string-prefixed ids ("z-<id>") to avoid id
-// collisions with task drags (which use bare numeric ids).
-
-function SortableTopZone({ zone, ...rest }: any) {
-  const sortableId = `z-${zone.id}`;
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: sortableId });
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  };
-  return (
-    <div ref={setNodeRef} style={style}>
-      <HierarchicalZoneGroup
-        zone={zone}
-        {...rest}
-        depth={0}
-        // Pass drag listeners + attributes so HierarchicalZoneGroup can
-        // attach them to its existing GripVertical handle.
-        zoneDragHandleProps={{ ...attributes, ...listeners }}
-      />
-    </div>
-  );
-}
-
 // ─── Hierarchical Zone Group — flat tree style with colored borders ──────────
 
-function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth, selectedTaskIds, onToggleTask, onToggleMany, zoneDragHandleProps }: any) {
+function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth, selectedTaskIds, onToggleTask, onToggleMany }: any) {
   const [collapsed, setCollapsed] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddZone, setShowAddZone] = useState(false);
@@ -1745,21 +1717,6 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
       {/* Zone row — full width with colored left border */}
       <div className={cn('flex items-center gap-2.5 py-3 px-4 border-l-[3px] cursor-pointer hover:bg-slate-50/80 group transition-colors duration-100', zc.border, depth === 0 ? 'bg-slate-50/60' : 'border-b border-slate-100')}
         onClick={() => setCollapsed(!collapsed)}>
-        {/* Drag handle — only top-level zones (depth=0) are reorderable for now;
-            sub-zones inherit position from their parent.zoneDragHandleProps comes
-            from the SortableTopZone wrapper. */}
-        <button
-          type="button"
-          {...(zoneDragHandleProps ?? {})}
-          onClick={(e) => e.stopPropagation()}
-          title={zoneDragHandleProps ? 'Drag to reorder zone' : undefined}
-          className={cn(
-            'shrink-0 touch-none flex items-center justify-center',
-            zoneDragHandleProps ? 'cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500' : 'text-slate-200 cursor-default',
-          )}
-        >
-          <GripVertical className="w-3.5 h-3.5" />
-        </button>
         {collapsed ? <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
         <input
           type="checkbox"
@@ -2091,12 +2048,10 @@ function PlanningView({ projectId }: { projectId: number }) {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor),
   );
-  // Active drag id is a number for tasks, or a string like "z-<id>" for zones.
-  const [activeDragId, setActiveDragId] = useState<number | string | null>(null);
+  const [activeDragId, setActiveDragId] = useState<number | null>(null);
 
   const handleGlobalDragStart = (event: DragStartEvent) => {
-    const id = event.active.id;
-    setActiveDragId(typeof id === 'string' ? id : Number(id));
+    setActiveDragId(Number(event.active.id));
   };
 
   const handleGlobalDragEnd = async (event: DragEndEvent) => {
@@ -2104,44 +2059,16 @@ function PlanningView({ projectId }: { projectId: number }) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    // Zone reorder: prefixed ids of the form "z-<id>" come from SortableTopZone.
-    if (typeof active.id === 'string' && active.id.startsWith('z-')) {
-      if (typeof over.id !== 'string' || !over.id.startsWith('z-')) return;
-      const fromZoneId = Number(active.id.slice(2));
-      const toZoneId = Number(over.id.slice(2));
-      const topLevel = zones.filter((z: any) => !z.parentId);
-      const oldIndex = topLevel.findIndex((z: any) => z.id === fromZoneId);
-      const newIndex = topLevel.findIndex((z: any) => z.id === toZoneId);
-      if (oldIndex === -1 || newIndex === -1) return;
-      const reordered = arrayMove(topLevel, oldIndex, newIndex);
-      const items = reordered.map((z: any, i: number) => ({ id: z.id, sortOrder: i }));
-      try {
-        await zonesApi.reorder(items);
-        invalidate();
-      } catch (err: any) {
-        notify.apiError(err, 'Failed to reorder zones');
-      }
-      return;
-    }
-
     const activeId = Number(active.id);
-    // `over.id` can be either a task id (numeric) or a zone id (string "z-N")
-    // when the user drops on a zone row instead of another task.
-    const overIsZone = typeof over.id === 'string' && (over.id as string).startsWith('z-');
-    const overId = overIsZone ? Number((over.id as string).slice(2)) : Number(over.id);
+    const overId = Number(over.id);
 
     // Find source task and target task
     const activeTask = tasks.find((t: any) => t.id === activeId);
-    const overTask = !overIsZone ? tasks.find((t: any) => t.id === overId) : undefined;
+    const overTask = tasks.find((t: any) => t.id === overId);
     if (!activeTask) return;
 
-    // Determine the target zone:
-    //  - dropped on another task → use that task's zone
-    //  - dropped on a zone row    → use that zone directly
-    //  - else (no match)          → keep in the source's own zone
-    const targetZoneId = overTask
-      ? overTask.zoneId
-      : (overIsZone ? overId : activeTask.zoneId);
+    // Determine the target zone — if we're dropping on another task, use its zone
+    const targetZoneId = overTask ? overTask.zoneId : activeTask.zoneId;
     const sameZone = activeTask.zoneId === targetZoneId;
 
     // Get the tasks in the target zone (for reordering)
@@ -2404,33 +2331,27 @@ function PlanningView({ projectId }: { projectId: number }) {
             onDragStart={handleGlobalDragStart}
             onDragEnd={handleGlobalDragEnd}
           >
-            {/* Three SortableContexts cooperate inside this DndContext:
-                  1. OUTER: all task ids — needed so dnd-kit's collision
-                     detection sees every task across every zone (otherwise
-                     cross-zone task drag silently fails because the source
-                     task's id isn't in the destination zone's items array).
-                  2. MIDDLE: top-level zone string ids ("z-<n>") for the
-                     drag-reorder-zones feature.
-                  3. INNER (per-zone, inside SortableTaskList): that zone's
-                     task ids — what useSortable() actually resolves to for
-                     each task row.
-                Each useSortable resolves to the *closest* matching context.
-                A previous attempt to drop the OUTER one broke cross-zone
-                task drag; restoring it. */}
+            {/* Original simple structure that always worked for tasks:
+                  <DndContext>
+                    <SortableContext items={allTaskIds}>
+                      <HierarchicalZoneGroup> ...
+                The earlier attempt to add zone-level drag-reorder by wrapping
+                each zone in a SortableTopZone (with its own useSortable on a
+                "z-<id>" id, plus a parallel zone-strings SortableContext)
+                broke task DnD on real data. The drag visual would init but
+                drop never resolved correctly. We're keeping zone-reorder as
+                a separate future feature; for now zones are static and the
+                inner per-zone task SortableContext (in SortableTaskList) is
+                the one that handles reorder + cross-zone moves. */}
             <SortableContext items={allTaskIds} strategy={verticalListSortingStrategy}>
               {groupBy === 'zone' ? (
-                <SortableContext
-                  items={zones.filter((z: any) => !z.parentId).map((z: any) => `z-${z.id}`)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  {zones.map((z: any) => (
-                    <SortableTopZone key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
-                      onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
-                      onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
-                      thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
-                      selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
-                  ))}
-                </SortableContext>
+                zones.map((z: any) => (
+                  <HierarchicalZoneGroup key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId}
+                    onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
+                    onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
+                    thClass={thClass} handleSort={handleSort} sortIcon={sortIcon} depth={0}
+                    selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
+                ))
               ) : (
                 groups.map((g: any) => (
                   <ZoneGroup key={g.key} zone={{ id: 0, name: g.key, zoneType: groupBy }} tasks={g.tasks} members={members} projectId={projectId}
@@ -2440,14 +2361,12 @@ function PlanningView({ projectId }: { projectId: number }) {
                 ))
               )}
             </SortableContext>
-            {activeDragId != null && (
+            {activeDragId && (
               <DragOverlay>
                 <div className="flex items-center gap-3 py-2 px-4 bg-white border border-blue-300 shadow-xl rounded-lg text-[13px] opacity-90">
                   <GripVertical className="w-3.5 h-3.5 text-blue-500" />
                   <span className="font-medium text-slate-900">
-                    {typeof activeDragId === 'string' && activeDragId.startsWith('z-')
-                      ? (zones.find((z: any) => z.id === Number((activeDragId as string).slice(2)))?.name || 'Zone')
-                      : (tasks.find((t: any) => t.id === activeDragId)?.name || 'Task')}
+                    {tasks.find((t: any) => t.id === activeDragId)?.name || 'Task'}
                   </span>
                 </div>
               </DragOverlay>
