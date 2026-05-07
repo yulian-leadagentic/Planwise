@@ -13,6 +13,8 @@ import { PageSkeleton } from '@/components/shared/loading-skeleton';
 const PlanningTab = lazy(() => import('./planning-modal').then(m => ({ default: m.PlanningTab })));
 const KanbanBoard = lazy(() => import('@/features/tasks/kanban-board').then(m => ({ default: m.KanbanBoard })));
 import { useProject, useProjectMembers, useAddProjectMember, useRemoveProjectMember } from '@/hooks/use-projects';
+import { useAuthStore } from '@/stores/auth.store';
+import { PresenceIndicator } from '@/components/shared/presence-indicator';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import client from '@/api/client';
@@ -57,6 +59,7 @@ export function ProjectDetailPage() {
 
   const { data: project, isLoading } = useProject(projectId);
   const { data: members } = useProjectMembers(projectId);
+  const currentUserId = useAuthStore((s) => s.user?.id);
 
   if (isLoading) return <PageSkeleton />;
   if (!project) return <p className="py-8 text-center text-slate-400">Project not found</p>;
@@ -85,13 +88,17 @@ export function ProjectDetailPage() {
       <div className="bg-white border-b border-slate-200">
         <div className="px-5 pt-5 pb-0">
           {/* Back link */}
-          <button
-            onClick={() => navigate('/projects')}
-            className="mb-3 flex items-center gap-1 text-[13px] text-slate-400 hover:text-slate-600 transition-colors"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            Projects
-          </button>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <button
+              onClick={() => navigate('/projects')}
+              className="flex items-center gap-1 text-[13px] text-slate-400 hover:text-slate-600 transition-colors"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Projects
+            </button>
+            {/* Live presence — shows other users currently on this project. */}
+            <PresenceIndicator projectId={projectId} currentUserId={currentUserId} />
+          </div>
 
           {/* Title row */}
           <div className="flex items-center justify-between">

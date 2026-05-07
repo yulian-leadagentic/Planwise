@@ -32,6 +32,7 @@ import { MessagesModule } from './modules/messages/messages.module';
 import { ExecutionPlanningModule } from './modules/execution-planning/execution-planning.module';
 import { ExecutionBoardModule } from './modules/execution-board/execution-board.module';
 import { HealthModule } from './modules/health/health.module';
+import { PresenceModule } from './modules/presence/presence.module';
 
 @Module({
   imports: [
@@ -99,6 +100,7 @@ import { HealthModule } from './modules/health/health.module';
     ExecutionPlanningModule,
     ExecutionBoardModule,
     HealthModule,
+    PresenceModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
