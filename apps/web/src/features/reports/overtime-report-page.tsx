@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { minutesToDisplay } from '@amec/shared';
+import { formatDate } from '@/lib/date-utils';
 
 export function OvertimeReportPage() {
   const today = new Date();
@@ -63,7 +64,7 @@ export function OvertimeReportPage() {
               {rows.map((row: any, i: number) => (
                 <tr key={i} className="border-b border-border last:border-0 hover:bg-muted/30">
                   <td className="px-4 py-3 font-medium">{row.firstName} {row.lastName}</td>
-                  <td className="px-4 py-3">{new Date(row.date).toLocaleDateString()}</td>
+                  <td className="px-4 py-3">{formatDate(row.date)}</td>
                   <td className="px-4 py-3">{row.clockIn ? new Date(row.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
                   <td className="px-4 py-3">{row.clockOut ? new Date(row.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
                   <td className="px-4 py-3">{minutesToDisplay(row.totalMinutes ?? 0)}</td>

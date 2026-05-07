@@ -190,7 +190,7 @@ function TaskHealthBanner({ task }: { task: any }) {
         <span className="tabular-nums font-semibold text-blue-600">{health.computedPct}% complete</span>
         {task.endDate && (
           <span className="flex items-center gap-1 ml-auto">
-            <Calendar className="h-3 w-3" /> Due {new Date(task.endDate.split('T')[0]).toLocaleDateString()}
+            <Calendar className="h-3 w-3" /> Due {formatDate(task.endDate.split('T')[0])}
           </span>
         )}
       </div>
@@ -219,7 +219,7 @@ function TaskHealthBanner({ task }: { task: any }) {
           <span className="tabular-nums font-semibold">{health.computedPct}% complete</span>
           {task.endDate && (
             <span className="flex items-center gap-1">
-              <Calendar className="h-3 w-3" /> {new Date(task.endDate.split('T')[0]).toLocaleDateString()}
+              <Calendar className="h-3 w-3" /> {formatDate(task.endDate.split('T')[0])}
             </span>
           )}
         </div>
@@ -248,8 +248,11 @@ function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.detail(taskId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.executionBoard.all });
-      setShowPicker(false);
+      // Auto-close the picker after 3s — the new assignee chip animates
+      // in immediately so the user sees the change, but the picker stays
+      // open briefly in case they want to add multiple people in a row.
       setSearch('');
+      window.setTimeout(() => setShowPicker(false), 3000);
     },
     onError: (err: any) => notify.apiError(err, 'Failed to assign'),
   });
@@ -333,7 +336,7 @@ function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any
 function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: string, value: any) => void }) {
   const inputClass = 'mt-1 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none';
   const readOnlyClass = 'mt-1 w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm text-slate-600';
-  const fmtDate = (iso?: string | null) => iso ? new Date(iso).toLocaleDateString() : '—';
+  const fmtDate = (iso?: string | null) => iso ? formatDate(iso) : '—';
 
   return (
     <div className="space-y-4">
@@ -403,7 +406,7 @@ function TaskTimeTab({ taskId }: { taskId: number }) {
       <div className="space-y-1">
         {(entries as any[]).slice(0, 20).map((e: any) => (
           <div key={e.id} className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2 text-[12px]">
-            <span className="text-slate-600">{e.date ? new Date(e.date).toLocaleDateString() : '-'}</span>
+            <span className="text-slate-600">{e.date ? formatDate(e.date) : '-'}</span>
             <span className="font-medium text-slate-700">{e.startTime ?? ''}{e.startTime && e.endTime ? ` – ${e.endTime}` : ''}</span>
             <span className="font-semibold text-slate-700">{Math.round((e.minutes ?? 0) / 60 * 10) / 10}h</span>
             {e.note && <span className="text-slate-600 truncate max-w-[150px]">{e.note}</span>}

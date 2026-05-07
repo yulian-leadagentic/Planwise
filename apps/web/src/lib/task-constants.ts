@@ -48,7 +48,12 @@ export const ZONE_BORDER_COLORS: Record<string, string> = {
   wing: 'border-l-pink-400',
 };
 
+// App-canonical short format: `07-May` (day-Mon, no year). Year-less so
+// it stays compact on cards. For full dates use formatDate from
+// '@/lib/date-utils' which renders `07-May-2026`.
 export function formatShortDate(iso: string): string {
   const d = new Date(iso.split('T')[0]);
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+  // Force en-GB so the day comes first; replace the space with a dash
+  // to match the app-wide DD-MMM-YYYY style ("07-May" not "07 May").
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }).replace(/\s+/g, '-');
 }

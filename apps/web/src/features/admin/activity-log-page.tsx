@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
+import { formatDateTime } from '@/lib/date-utils';
 
 const SEVERITY_STYLES: Record<string, string> = {
   info: 'bg-blue-100 text-blue-700',
@@ -48,7 +49,7 @@ export function ActivityLogPage() {
                 {logs.map((log: any) => (
                   <tr key={log.id} className="border-b border-border last:border-0 hover:bg-muted/30">
                     <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
-                      {new Date(log.createdAt).toLocaleString()}
+                      {formatDateTime(log.createdAt)}
                     </td>
                     <td className="px-4 py-3">
                       {log.user ? `${log.user.firstName} ${log.user.lastName}` : 'System'}

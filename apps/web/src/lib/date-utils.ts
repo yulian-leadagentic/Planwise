@@ -11,14 +11,19 @@ import {
   isSameDay,
 } from 'date-fns';
 
+// All app-wide date display goes through these helpers. Canonical format
+// is `DD-MMM-YYYY` (e.g. 07-May-2026) — dash-separated, three-letter
+// month, four-digit year. Short variants drop the year. Use these
+// instead of `toLocaleDateString` so the format stays consistent across
+// the app.
 export function formatDate(date: string | Date): string {
   const d = typeof date === 'string' ? parseISO(date) : date;
-  return format(d, 'MMM d, yyyy');
+  return format(d, 'dd-MMM-yyyy');
 }
 
 export function formatDateTime(date: string | Date): string {
   const d = typeof date === 'string' ? parseISO(date) : date;
-  return format(d, 'MMM d, yyyy HH:mm');
+  return format(d, 'dd-MMM-yyyy HH:mm');
 }
 
 export function formatTime(date: string | Date): string {
@@ -33,14 +38,15 @@ export function formatRelative(date: string | Date): string {
   return formatDistanceToNow(d, { addSuffix: true });
 }
 
+/** Short display when year is implied (e.g. cards, kanban). `07-May`. */
 export function formatShortDate(date: string | Date): string {
   const d = typeof date === 'string' ? parseISO(date) : date;
-  return format(d, 'MMM d');
+  return format(d, 'dd-MMM');
 }
 
 export function formatDayHeader(date: string | Date): string {
   const d = typeof date === 'string' ? parseISO(date) : date;
-  return format(d, 'EEE, MMM d');
+  return format(d, 'EEE, dd-MMM');
 }
 
 export function getWeekRange(date: Date): { start: Date; end: Date } {

@@ -637,7 +637,7 @@ export function CalendarDaysPage() {
               return (
                 <div key={d.id} className={cn('flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-slate-50', isPast && 'opacity-50')}>
                   <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', style.dot)} />
-                  <span className="text-[13px] font-medium text-slate-700 w-32">{new Date(d.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                  <span className="text-[13px] font-medium text-slate-700 w-32">{new Date(d.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/\s+/g, '-')}</span>
                   <span className="text-[13px] text-slate-800 flex-1">
                     {d.name}
                     {hasWorkingHours && (

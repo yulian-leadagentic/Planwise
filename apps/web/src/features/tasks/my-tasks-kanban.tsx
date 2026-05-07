@@ -57,7 +57,7 @@ function getStartByDate(task: any): string | null {
     const dow = d.getDay();
     if (dow !== 5 && dow !== 6) counted++; // Skip Fri+Sat
   }
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+  return formatShortDate(d);
 }
 
 function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskProjectId?: number | null }) {
@@ -300,12 +300,10 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
   const projectName = task.project?.name || task.label?.projectName || '';
   const zoneName = task.zone?.name || task.label?.name || '';
 
-  // Due date in DD MMM format. Overdue is anything with endDate < today
-  // and the task isn't already done — same threshold the kanban uses so
-  // both views agree about "late".
-  const dueLabel = task.endDate
-    ? new Date(task.endDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
-    : null;
+  // Due date in DD-MMM format (app-canonical). Overdue is anything with
+  // endDate < today and the task isn't already done — same threshold the
+  // kanban uses so both views agree about "late".
+  const dueLabel = task.endDate ? formatShortDate(task.endDate) : null;
   const isOverdue = (() => {
     if (!task.endDate || task.status === 'completed') return false;
     return new Date(task.endDate).getTime() < new Date(today).getTime();

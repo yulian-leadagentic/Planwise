@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import client from '@/api/client';
 import { tasksApi } from '@/api/tasks.api';
+import { formatShortDate } from '@/lib/date-utils';
 import { TaskDrawer } from './task-drawer';
 
 const columns = [
@@ -82,7 +83,7 @@ function KanbanCard({ task, onOpen }: { task: any; onOpen: (id: number) => void 
                 'text-slate-400',
                 new Date(task.endDate) < new Date() && task.status !== 'completed' && 'text-red-500 font-medium',
               )}>
-                {new Date(task.endDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+                {formatShortDate(task.endDate)}
               </span>
             )}
           </div>
