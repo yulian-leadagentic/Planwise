@@ -5,6 +5,7 @@ import { AlertTriangle, ChevronRight, Users, Zap, UserCheck, MessageSquare, Exte
 import { PageHeader } from '@/components/shared/page-header';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
+import { TaskDrawer } from '@/features/tasks/task-drawer';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 
@@ -51,6 +52,10 @@ export function OperationsDashboardPage() {
   const [expandedDepts, setExpandedDepts] = useState<Record<string, boolean>>({});
   const [expandedMembers, setExpandedMembers] = useState<Record<number, boolean>>({});
   const [chat, setChat] = useState<{ type: 'project' | 'task'; id: number; title: string } | null>(null);
+  // Task whose drawer is currently open. Operations is a manager-facing
+  // dashboard, so the drawer opens with hideTimeTab — hours logging
+  // belongs on My Tasks, not here.
+  const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard', 'operations'],
@@ -166,7 +171,7 @@ export function OperationsDashboardPage() {
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-1.5">
                                   <span className="font-mono text-[11px] text-slate-500">{task.code}</span>
-                                  <button onClick={() => navigate(`/tasks/${task.id}`)}
+                                  <button onClick={() => setDrawerTaskId(task.id)}
                                     className="text-[13px] font-semibold text-slate-900 hover:text-blue-600 hover:underline transition-colors">
                                     {task.name}
                                   </button>
@@ -184,7 +189,7 @@ export function OperationsDashboardPage() {
                               )}
                               <span className="text-sm font-bold font-mono text-red-600 min-w-[36px] text-center shrink-0">{task.daysOverdue}d</span>
                               {/* Task actions: navigate + chat */}
-                              <button onClick={(e) => { e.stopPropagation(); navigate(`/tasks/${task.id}`); }}
+                              <button onClick={(e) => { e.stopPropagation(); setDrawerTaskId(task.id); }}
                                 className="w-7 h-7 rounded-md flex items-center justify-center text-slate-300 hover:text-blue-600 hover:bg-blue-50 transition-colors opacity-0 group-hover:opacity-100"
                                 title="Open task">
                                 <ExternalLink className="h-3.5 w-3.5" />
@@ -286,7 +291,7 @@ export function OperationsDashboardPage() {
                                     <div key={task.id} className="flex items-center gap-2 py-1.5 px-4 pl-[76px] border-b border-slate-100 last:border-b-0 text-[12px] group hover:bg-slate-100/60 transition-colors">
                                       <div className={cn('w-[3px] h-6 rounded-sm shrink-0', isOverdue ? 'bg-red-500' : 'bg-slate-200')} />
                                       <span className="font-mono text-[10px] text-slate-400 min-w-[50px]">{task.code}</span>
-                                      <button onClick={() => navigate(`/tasks/${task.id}`)}
+                                      <button onClick={() => setDrawerTaskId(task.id)}
                                         className="flex-1 text-left font-medium text-slate-800 hover:text-blue-600 hover:underline truncate transition-colors">
                                         {task.name}
                                       </button>
@@ -298,7 +303,7 @@ export function OperationsDashboardPage() {
                                         <span className="text-[10px] font-bold text-red-600 bg-red-50 px-1.5 py-0.5 rounded border border-red-100 shrink-0">{task.daysOverdue}d late</span>
                                       )}
                                       {/* Task link + chat */}
-                                      <button onClick={() => navigate(`/tasks/${task.id}`)}
+                                      <button onClick={() => setDrawerTaskId(task.id)}
                                         className="w-6 h-6 rounded-md flex items-center justify-center text-slate-300 hover:text-blue-600 hover:bg-blue-50 transition-colors opacity-0 group-hover:opacity-100 shrink-0"
                                         title="Open task">
                                         <ExternalLink className="h-3 w-3" />
@@ -342,6 +347,12 @@ export function OperationsDashboardPage() {
           entityId={chat.id}
           title={chat.title}
         />
+      )}
+
+      {/* Task Drawer — manager mode (Time tab hidden), opens from the
+          right when a task is clicked anywhere in this dashboard. */}
+      {drawerTaskId && (
+        <TaskDrawer taskId={drawerTaskId} onClose={() => setDrawerTaskId(null)} hideTimeTab />
       )}
     </div>
   );
