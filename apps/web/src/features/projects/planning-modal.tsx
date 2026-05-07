@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle } from 'lucide-react';
 import { notify } from '@/lib/notify';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
@@ -1260,6 +1260,10 @@ function AssigneePicker({
       }
       invalidate();
       onUpdate();
+      // Auto-close the picker 3s after a successful add — gives the user
+      // time to spot the new chip but doesn't leave the dropdown floating
+      // over the grid. Manual close (click-outside / × button) still works.
+      window.setTimeout(() => setOpen(false), 3000);
     } catch (err: any) {
       notify.apiError(err, 'Failed to assign');
     } finally {
@@ -1517,6 +1521,158 @@ function AddZoneManuallyDialog({ projectId, onClose, onCreated }: { projectId: n
         <button onClick={() => createZone.mutate()} disabled={createZone.isPending || !name.trim()} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
           {createZone.isPending ? 'Creating...' : 'Create Zone'}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Add Root Task Dialog (project-root, no zone) ────────────────────────────
+//
+// Same shape as the inline "Add Task" inside a zone, but creates the task
+// with zoneId=null so it lives at the project root. The planning grid
+// renders these in a dedicated "Project Root" section above the zones.
+
+function AddRootTaskDialog({ projectId, onClose, onCreated }: { projectId: number; onClose: () => void; onCreated: () => void }) {
+  const [code, setCode] = useState('');
+  const [name, setName] = useState('');
+  const [budgetHours, setBudgetHours] = useState('');
+  const [budgetAmount, setBudgetAmount] = useState('');
+
+  const createTask = useMutation({
+    mutationFn: () => tasksApi.create({
+      // Send projectId without a zoneId — the API treats this as a
+      // root-level task and stores zone_id=NULL in the DB.
+      projectId,
+      code: code.trim(),
+      name: name.trim(),
+      budgetHours: budgetHours ? Number(budgetHours) : undefined,
+      budgetAmount: budgetAmount ? Number(budgetAmount) : undefined,
+    } as any),
+    onSuccess: () => { notify.success('Task created', { code: 'TASK-CREATE-200' }); onCreated(); onClose(); },
+    onError: (err: any) => notify.apiError(err, 'Failed to create task'),
+  });
+
+  return (
+    <div className="bg-white rounded-[14px] border border-slate-200 p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-[15px] font-bold text-slate-900">Add Task at Project Root</h3>
+        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400"><X className="w-4 h-4" /></button>
+      </div>
+      <p className="text-[12px] text-slate-500">This task will not be tied to any zone. It appears in the Project Root section.</p>
+      <div className="grid grid-cols-[120px_1fr_120px_120px] gap-2">
+        <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code *" autoFocus
+          className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Task name *"
+          className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+        <input value={budgetHours} onChange={(e) => setBudgetHours(e.target.value)} placeholder="Hours" type="number"
+          className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+        <input value={budgetAmount} onChange={(e) => setBudgetAmount(e.target.value)} placeholder="Amount" type="number"
+          className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+      </div>
+      <div className="flex justify-end gap-2">
+        <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+        <button onClick={() => { if (!code.trim() || !name.trim()) { notify.warning('Code and Name required'); return; } createTask.mutate(); }}
+          disabled={createTask.isPending || !code.trim() || !name.trim()}
+          className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
+          {createTask.isPending ? 'Creating...' : 'Create Task'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Add Root Deliverable Dialog (template → tasks at project root) ──────────
+//
+// Picks a deliverable template (template type=task_list) and materializes
+// its tasks at the project root (zoneId=null). Mirrors the "Add Zone from
+// Template" flow but skips the zone-creation step.
+
+function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId: number; onClose: () => void; onApplied: () => void }) {
+  const [search, setSearch] = useState('');
+  const [applying, setApplying] = useState(false);
+
+  const { data: templates = [], isLoading } = useQuery({
+    queryKey: ['templates', 'task_list'],
+    queryFn: () => client.get('/templates?type=task_list').then((r) => r.data?.data ?? r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const list = (Array.isArray(templates) ? templates : [])
+    .filter((t: any) => t.code !== '__TASK_CATALOG__')
+    .filter((t: any) => !search.trim()
+      || t.name?.toLowerCase().includes(search.toLowerCase())
+      || t.code?.toLowerCase().includes(search.toLowerCase()));
+
+  const applyTemplate = async (template: any) => {
+    if (applying) return;
+    setApplying(true);
+    try {
+      // Pull the template's tasks (they're already returned in the list
+      // request via `templateTasks`). For each one create a task at the
+      // project root (no zoneId), inheriting hours/amount and the
+      // template's phase as "deliverable".
+      const tasks: any[] = template.templateTasks ?? [];
+      if (tasks.length === 0) {
+        notify.warning('Template has no tasks');
+        setApplying(false);
+        return;
+      }
+      const results = await Promise.allSettled(
+        tasks.map((t: any) => tasksApi.create({
+          projectId,
+          code: t.code,
+          name: t.name,
+          description: t.description,
+          budgetHours: t.defaultBudgetHours ? Number(t.defaultBudgetHours) : undefined,
+          budgetAmount: t.defaultBudgetAmount ? Number(t.defaultBudgetAmount) : undefined,
+          phaseId: template.phaseId ?? undefined,
+        } as any)),
+      );
+      const ok = results.filter((r) => r.status === 'fulfilled').length;
+      const fail = results.length - ok;
+      if (fail === 0) notify.success(`Created ${ok} task${ok !== 1 ? 's' : ''}`, { code: 'DELIVERABLE-APPLY-200' });
+      else if (ok > 0) notify.warning(`Created ${ok}, ${fail} failed`, { code: 'DELIVERABLE-APPLY-207' });
+      else notify.error('Failed to apply deliverable', { code: 'DELIVERABLE-APPLY-500' });
+      onApplied();
+      onClose();
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to apply deliverable');
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-[14px] border border-slate-200 p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-[15px] font-bold text-slate-900">Add Deliverable at Project Root</h3>
+        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400"><X className="w-4 h-4" /></button>
+      </div>
+      <p className="text-[12px] text-slate-500">Pick a deliverable template; its tasks are added directly to this project (no zone).</p>
+      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search deliverables..."
+        className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+      <div className="max-h-[360px] overflow-y-auto border border-slate-100 rounded-lg">
+        {isLoading ? <p className="py-8 text-center text-sm text-slate-400">Loading...</p>
+          : list.length === 0 ? <p className="py-8 text-center text-sm text-slate-400">No deliverables found</p>
+          : list.map((t: any) => (
+            <button key={t.id} onClick={() => applyTemplate(t)} disabled={applying}
+              className="w-full text-left px-3 py-2.5 border-b border-slate-100 last:border-0 hover:bg-blue-50/40 disabled:opacity-50">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[13px] font-semibold text-slate-800 truncate">{t.name}</p>
+                  <p className="text-[11px] text-slate-500">
+                    {t.phase?.name ? <span className="rounded px-1 py-0.5 bg-violet-50 text-violet-700">{t.phase.name}</span> : null}
+                    <span className="ml-1.5">{t.templateTasks?.length ?? 0} tasks</span>
+                  </p>
+                </div>
+                <Plus className="h-4 w-4 text-blue-500 shrink-0" />
+              </div>
+            </button>
+          ))
+        }
+      </div>
+      <div className="flex justify-end">
+        <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Close</button>
       </div>
     </div>
   );
@@ -2006,12 +2162,122 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
     </div>
   );
 }
+// ─── Project Root Group ──────────────────────────────────────────────────────
+//
+// Renders tasks whose zoneId is null — i.e. tasks that belong directly to
+// the project, not to any zone. Visually styled like a top-level zone
+// header (collapsible, with totals) but without zone-specific affordances
+// (no zone-type pill, no duplicate, no add-sub-zone). Uses the same
+// SortableTaskList as zones so task DnD continues to work — including
+// dragging a root task INTO a zone (setZoneId) once the cross-zone move
+// confirm flow is wired up.
+
+function ProjectRootGroup({
+  projectId, tasks, members, onUpdate, onDeleteTask, selectedTaskIds, onToggleTask, onToggleMany,
+}: {
+  projectId: number; tasks: any[]; members: any[];
+  onUpdate: () => void; onDeleteTask: (id: number) => void;
+  selectedTaskIds: Set<number>; onToggleTask: (id: number) => void;
+  onToggleMany: (ids: number[], checked: boolean) => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  if (tasks.length === 0) return null;
+
+  const totalHours = tasks.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
+  const totalAmount = tasks.reduce((s: number, t: any) => s + Number(t.budgetAmount || 0), 0);
+  const totalLoggedMinutes = tasks.reduce((s: number, t: any) => s + Number(t.loggedMinutes || 0), 0);
+  const totalLoggedHours = Math.round(totalLoggedMinutes / 60 * 10) / 10;
+
+  return (
+    <div className="rounded-[14px] border border-slate-200 bg-white mb-3 shadow-sm">
+      <div className="flex items-center gap-2.5 py-3 px-4 border-l-[3px] border-l-violet-500 bg-violet-50/40 cursor-pointer hover:bg-violet-50/60"
+        onClick={() => setCollapsed(!collapsed)}>
+        <span className="w-5 shrink-0" />
+        {collapsed ? <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+        <input
+          type="checkbox"
+          className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer shrink-0"
+          checked={tasks.length > 0 && tasks.every((t: any) => selectedTaskIds.has(t.id))}
+          ref={(el) => {
+            if (el) {
+              const some = tasks.some((t: any) => selectedTaskIds.has(t.id));
+              const all = tasks.length > 0 && tasks.every((t: any) => selectedTaskIds.has(t.id));
+              el.indeterminate = some && !all;
+            }
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onToggleMany(tasks.map((t: any) => t.id), e.target.checked)}
+          title={`Select all ${tasks.length} root tasks`}
+        />
+        <span className="rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide bg-violet-100 text-violet-700 shrink-0">root</span>
+        <span className="text-[15px] font-semibold text-slate-900">Project Root</span>
+        <span className="text-[11px] text-slate-400">(no zone)</span>
+        <span className="ml-auto text-[11px] font-medium text-slate-400">
+          {tasks.length} tasks · {totalHours}h budget
+          <span className={cn('ml-1 font-semibold', totalLoggedHours === 0 ? 'text-slate-400' : totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-blue-500')}>
+            · {totalLoggedHours}h logged
+          </span>
+          <span> · ₪{totalAmount.toLocaleString()}</span>
+        </span>
+      </div>
+      {!collapsed && (
+        <>
+          <div style={{ marginLeft: 28 }} className={cn(TASK_GRID, 'py-1.5 px-4 bg-slate-50/70 border-b border-l-[3px] border-l-transparent border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider')}>
+            <span /><span />
+            <span>Code</span>
+            <span>Task Name</span>
+            <span>Deliverable</span>
+            <span>Service</span>
+            <span className="text-right">Est. Hours</span>
+            <span className="text-right">Logged</span>
+            <span className="text-right">Amount</span>
+            <span>Est. Start</span>
+            <span>Due Date</span>
+            <span>Assignees</span>
+            <span>Status</span>
+            <span className="w-5 shrink-0" />
+          </div>
+          <SortableTaskList
+            tasks={tasks}
+            zoneId={0 /* sentinel — not used by SortableTaskList for ordering since these have zoneId=null */}
+            projectId={projectId}
+            members={members}
+            selectedTaskIds={selectedTaskIds}
+            onToggleTask={onToggleTask}
+            onUpdate={onUpdate}
+            onDeleteTask={onDeleteTask}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Planning View ──────────────────────────────────────────────────────
 
 function PlanningView({ projectId }: { projectId: number }) {
   const queryClient = useQueryClient();
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showManualZone, setShowManualZone] = useState(false);
+  // Project-root creation: tasks/deliverables that attach directly to
+  // the project (zoneId=null) instead of a spatial zone. Same UX shape
+  // as the zone picker — two flows: from a template, or manual.
+  const [showRootTemplate, setShowRootTemplate] = useState(false);
+  const [showRootTask, setShowRootTask] = useState(false);
+  // Cross-zone DnD confirm: when a task drag ends in a different zone,
+  // we hold the resolved move here and surface a confirm modal so the
+  // user has to approve the change. Closes (= cancel) on click-away
+  // without firing the API.
+  const [pendingZoneMove, setPendingZoneMove] = useState<
+    | null
+    | {
+        taskId: number;
+        taskName: string;
+        fromZoneName: string;
+        toZoneName: string;
+        execute: () => Promise<void>;
+      }
+  >(null);
   const [groupBy, setGroupBy] = useState<'zone' | 'service' | 'phase' | 'none'>('zone');
   const [search, setSearch] = useState('');
   const [sortCol, setSortCol] = useState('');
@@ -2232,32 +2498,45 @@ function PlanningView({ projectId }: { projectId: number }) {
         notify.apiError(err, 'Failed to reorder tasks');
       }
     } else {
-      // Move task to a different zone — insert at the position of the target task
+      // Cross-zone move — show a confirm dialog before mutating. Building
+      // the API payload here so the user can't change anything between
+      // drop and confirm. The execute() closure is stored in state and
+      // run on click of the modal's "Move task".
       const oldZoneId = activeTask.zoneId;
-      // Build new list: insert activeTask into target zone at the position of overTask
       const targetList = [...targetZoneTasks];
       const insertIdx = targetList.findIndex((t: any) => t.id === overId);
       const insertAt = insertIdx >= 0 ? insertIdx : targetList.length;
       targetList.splice(insertAt, 0, activeTask);
-      // Reorder all tasks in target zone + move the active task
       const items = targetList.map((t: any, i: number) => ({
         id: t.id,
         sortOrder: i,
         ...(t.id === activeId ? { zoneId: targetZoneId } : {}),
       }));
-      try {
-        await tasksApi.reorder(items);
-        invalidate();
-        const fromZone = activeTask.zone?.name || '';
-        const toZone = overTask?.zone?.name || '';
-        notify.success(`Moved task to ${toZone || 'new zone'}`, { code: 'TASK-MOVE-200' });
-        // Push undo action
-        pushUndo(`move task back to ${fromZone}`, async () => {
-          await tasksApi.reorder([{ id: activeId, sortOrder: 0, zoneId: oldZoneId }]);
-        });
-      } catch (err: any) {
-        notify.apiError(err, 'Failed to move task');
-      }
+      const fromZoneName = activeTask.zone?.name || (activeTask.zoneId == null ? 'Project Root' : '');
+      // overTask may be undefined if dropped on empty zone droppable; in
+      // that case fall back to the zone-id lookup we already had.
+      const toZoneName = overTask?.zone?.name
+        || zones.find((z: any) => z.id === targetZoneId)?.name
+        || (targetZoneId == null ? 'Project Root' : 'another zone');
+
+      setPendingZoneMove({
+        taskId: activeId,
+        taskName: activeTask.name || `#${activeId}`,
+        fromZoneName,
+        toZoneName,
+        execute: async () => {
+          try {
+            await tasksApi.reorder(items);
+            invalidate();
+            notify.success(`Moved task to ${toZoneName}`, { code: 'TASK-MOVE-200' });
+            pushUndo(`move task back to ${fromZoneName}`, async () => {
+              await tasksApi.reorder([{ id: activeId, sortOrder: 0, zoneId: oldZoneId }]);
+            });
+          } catch (err: any) {
+            notify.apiError(err, 'Failed to move task');
+          }
+        },
+      });
     }
   };
 
@@ -2363,16 +2642,71 @@ function PlanningView({ projectId }: { projectId: number }) {
       {/* Template picker / manual zone dialogs */}
       {showTemplatePicker && <TemplatePickerDialog projectId={projectId} onClose={() => setShowTemplatePicker(false)} onApplied={invalidate} />}
       {showManualZone && <AddZoneManuallyDialog projectId={projectId} onClose={() => setShowManualZone(false)} onCreated={invalidate} />}
+      {/* Project-root deliverable + task dialogs */}
+      {showRootTemplate && <AddRootDeliverableDialog projectId={projectId} onClose={() => setShowRootTemplate(false)} onApplied={invalidate} />}
+      {showRootTask && <AddRootTaskDialog projectId={projectId} onClose={() => setShowRootTask(false)} onCreated={invalidate} />}
+
+      {/* Cross-zone move confirm — modal blocks the UI until the user
+          either approves or cancels. Cancel does nothing (the optimistic
+          DOM never updated, so canceling = the original state stays). */}
+      {pendingZoneMove && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={() => setPendingZoneMove(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[460px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-100 flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-amber-50 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Move task between zones?</h3>
+                <p className="text-[13px] text-slate-500 mt-0.5">This will reassign the task to a different zone.</p>
+              </div>
+            </div>
+            <div className="px-5 py-4 text-[13px] text-slate-700 space-y-1.5">
+              <div><span className="text-slate-400">Task:</span> <span className="font-semibold text-slate-900">{pendingZoneMove.taskName}</span></div>
+              <div><span className="text-slate-400">From:</span> <span className="font-semibold">{pendingZoneMove.fromZoneName || '—'}</span></div>
+              <div><span className="text-slate-400">To:</span> <span className="font-semibold text-blue-700">{pendingZoneMove.toZoneName}</span></div>
+            </div>
+            <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
+              <button
+                onClick={() => setPendingZoneMove(null)}
+                className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  const m = pendingZoneMove;
+                  setPendingZoneMove(null);
+                  await m.execute();
+                }}
+                className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg"
+              >
+                Move task
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Action bar */}
       {!showTemplatePicker && !showManualZone && (
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button onClick={() => setShowTemplatePicker(true)} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5">
               <Plus className="h-3.5 w-3.5" /> Add Zone from Template
             </button>
             <button onClick={() => setShowManualZone(true)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5">
               <Plus className="h-3.5 w-3.5" /> Add Zone Manually
+            </button>
+            {/* Root-level adds — tasks/deliverables that attach to the
+                project itself, not to any zone. Render in a "Project
+                Root" group above the zone tree. */}
+            <span className="mx-1 h-5 w-px bg-slate-200" />
+            <button onClick={() => setShowRootTemplate(true)} className="bg-violet-600 hover:bg-violet-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5">
+              <Plus className="h-3.5 w-3.5" /> Add Deliverable
+            </button>
+            <button onClick={() => setShowRootTask(true)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5">
+              <Plus className="h-3.5 w-3.5" /> Add Task
             </button>
           </div>
           <div className="flex items-center gap-3">
@@ -2508,18 +2842,36 @@ function PlanningView({ projectId }: { projectId: number }) {
                 handleGlobalDragEnd switches on the active.id type to dispatch
                 zone-reorder vs task-reorder. */}
             {groupBy === 'zone' ? (
-              <SortableContext
-                items={zones.filter((z: any) => !z.parentId).map((z: any) => `z-${z.id}`)}
-                strategy={verticalListSortingStrategy}
-              >
-                {zones.map((z: any) => (
-                  <SortableZone key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId} depth={0}
-                    onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
-                    onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
-                    thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
-                    selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
-                ))}
-              </SortableContext>
+              <>
+                {/* Project Root section — tasks with zoneId=null. Rendered
+                    only when there's at least one such task. The section
+                    visually mimics a top-level zone but is read-only as
+                    far as zone DnD is concerned (tasks here can be
+                    reordered or moved into a zone, but the section
+                    itself isn't draggable). */}
+                <ProjectRootGroup
+                  projectId={projectId}
+                  tasks={sorted.filter((t: any) => t.zoneId == null)}
+                  members={members}
+                  onUpdate={invalidate}
+                  onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
+                  selectedTaskIds={selectedTaskIds}
+                  onToggleTask={toggleTask}
+                  onToggleMany={toggleManyTasks}
+                />
+                <SortableContext
+                  items={zones.filter((z: any) => !z.parentId).map((z: any) => `z-${z.id}`)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  {zones.map((z: any) => (
+                    <SortableZone key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId} depth={0}
+                      onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
+                      onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
+                      thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
+                      selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
+                  ))}
+                </SortableContext>
+              </>
             ) : (
               groups.map((g: any) => (
                 <ZoneGroup key={g.key} zone={{ id: 0, name: g.key, zoneType: groupBy }} tasks={g.tasks} members={members} projectId={projectId}
