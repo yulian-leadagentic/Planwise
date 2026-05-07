@@ -40,8 +40,17 @@ export class TasksController {
   @RequirePermissions({ module: 'tasks', action: 'write' })
   @ApiOperation({ summary: 'Create a task' })
   async create(@CurrentUser() user: any, @Body() dto: CreateTaskDto) {
-    // Creating a task requires zone access (which implies project access)
-    await this.access.assertZoneAccess(user.id, dto.zoneId, user.roleId);
+    // Two access paths:
+    //   • zoned task: zone access (which implies project access)
+    //   • root task:  project access directly
+    if (dto.zoneId != null) {
+      await this.access.assertZoneAccess(user.id, dto.zoneId, user.roleId);
+    } else if (dto.projectId != null) {
+      await this.access.assertProjectAccess(user.id, dto.projectId, user.roleId);
+    } else {
+      // The service will throw with a clearer message; bail before doing
+      // a permission check on undefined.
+    }
     return this.tasksService.create(user.id, dto);
   }
 

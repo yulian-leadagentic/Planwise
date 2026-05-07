@@ -15,13 +15,27 @@ export class TasksService {
   ) {}
 
   async create(userId: number, dto: CreateTaskDto) {
-    const zone = await this.prisma.zone.findFirst({ where: { id: dto.zoneId } });
-    if (!zone) {
-      throw new NotFoundException('Zone not found');
+    // Two paths:
+    //   • zoned task: zoneId provided → projectId is inferred from the zone
+    //   • root task:  zoneId omitted  → projectId must be in the DTO
+    let projectId: number;
+    if (dto.zoneId) {
+      const zone = await this.prisma.zone.findFirst({ where: { id: dto.zoneId } });
+      if (!zone) {
+        throw new NotFoundException('Zone not found');
+      }
+      projectId = zone.projectId;
+    } else {
+      if (!dto.projectId) {
+        throw new NotFoundException('projectId is required when zoneId is not provided');
+      }
+      projectId = dto.projectId;
     }
 
-    // If serviceTypeId provided, upsert the ZoneServiceType junction row
-    if (dto.serviceTypeId) {
+    // If serviceTypeId provided AND we have a zone, upsert the
+    // ZoneServiceType junction row. For project-root tasks we skip this
+    // since there's no zone to associate with.
+    if (dto.serviceTypeId && dto.zoneId) {
       await this.prisma.zoneServiceType.upsert({
         where: {
           zoneId_serviceTypeId: {
@@ -39,8 +53,8 @@ export class TasksService {
 
     return this.prisma.task.create({
       data: {
-        zoneId: dto.zoneId,
-        projectId: zone.projectId,
+        zoneId: dto.zoneId ?? null,
+        projectId,
         serviceTypeId: dto.serviceTypeId,
         code: dto.code,
         name: dto.name,
@@ -204,7 +218,13 @@ export class TasksService {
 
     return tasks.map((t) => {
       const agg = timeByTask.get(t.id);
-      const zonePath = (zoneById.get(t.zone?.id)?.path ?? '') as string;
+      // t.zone is optional now (tasks at the project root have zoneId
+      // null and no zone relation). Bail out to an empty breadcrumb in
+      // that case rather than blow up the type with `undefined`.
+      const zoneIdForLookup = t.zone?.id;
+      const zonePath = (zoneIdForLookup != null
+        ? zoneById.get(zoneIdForLookup)?.path ?? ''
+        : '') as string;
       const zoneBreadcrumb = zonePath
         .split('/')
         .map((s) => Number(s))

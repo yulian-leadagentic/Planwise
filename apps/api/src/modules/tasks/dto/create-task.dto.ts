@@ -2,9 +2,19 @@ import { IsInt, IsOptional, IsString, IsNumber, IsDateString, MaxLength, Min } f
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateTaskDto {
-  @ApiProperty()
+  // Optional — tasks without a zoneId attach directly to the project
+  // ("project root"). The planning grid groups these in a Project Root
+  // section above any zoned tasks. If zoneId is omitted, projectId is
+  // required so the service knows which project to attach to.
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsInt()
-  zoneId: number;
+  zoneId?: number | null;
+
+  @ApiPropertyOptional({ description: 'Required when zoneId is omitted (project-root task).' })
+  @IsOptional()
+  @IsInt()
+  projectId?: number;
 
   @ApiPropertyOptional()
   @IsOptional()

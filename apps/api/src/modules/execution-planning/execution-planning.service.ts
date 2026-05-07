@@ -337,12 +337,14 @@ export class ExecutionPlanningService {
       statusCounts[t.status] = (statusCounts[t.status] || 0) + 1;
     }
 
-    // Per-zone progress
+    // Per-zone progress. Project-root tasks (zoneId null, no zone) are
+    // skipped — they aren't part of any zone's rollup.
     const zoneMap = new Map<number, { name: string; totalHours: number; weightedSum: number; count: number }>();
     for (const t of tasks) {
-      if (!t.zone) continue;
-      if (!zoneMap.has(t.zoneId)) zoneMap.set(t.zoneId, { name: t.zone.name, totalHours: 0, weightedSum: 0, count: 0 });
-      const z = zoneMap.get(t.zoneId)!;
+      if (!t.zone || t.zoneId == null) continue;
+      const zid = t.zoneId;
+      if (!zoneMap.has(zid)) zoneMap.set(zid, { name: t.zone.name, totalHours: 0, weightedSum: 0, count: 0 });
+      const z = zoneMap.get(zid)!;
       z.totalHours += Number(t.budgetHours || 0);
       z.weightedSum += t.completionPct * Number(t.budgetHours || 0);
       z.count++;
