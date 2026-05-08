@@ -226,9 +226,11 @@ export class ConfigController {
 
   // Zone Types — editable presentation metadata for the ZoneType enum.
   // The enum (site/building/level/floor/wing/section/area/zone) is the
-  // source of truth. Admins can customise label/color/icon/sortOrder but
-  // can NOT add new ones (would break the enum) or delete existing ones
-  // (would orphan zones referencing the value). Hence GET + PATCH only.
+  // source of truth. Admins can customise label/color/icon/sortOrder
+  // and DELETE a meta row so the type stops appearing in admin / pickers.
+  // Adding new types requires extending the enum, so POST is intentionally
+  // absent. Deletion only removes the metadata — existing zones that
+  // reference the enum value continue to render with a fallback label.
   @Get('zone-types')
   @RequirePermissions({ module: 'admin', action: 'read' })
   @ApiOperation({ summary: 'List zone type metadata' })
@@ -252,5 +254,17 @@ export class ConfigController {
         sortOrder: body.sortOrder,
       },
     });
+  }
+
+  @Delete('zone-types/:id')
+  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @ApiOperation({ summary: 'Delete zone type metadata (enum value remains valid)' })
+  async deleteZoneType(@Param('id', ParseIntPipe) id: number) {
+    // Hard-deletes only the meta row; the enum value (site/building/etc.)
+    // is unchanged and any existing zones that reference it keep working.
+    // To "restore" a deleted meta row, an admin would re-seed via SQL —
+    // there's no POST because new enum values require a migration.
+    await this.prisma.zoneTypeMeta.delete({ where: { id } });
+    return { message: 'Zone type metadata deleted' };
   }
 }

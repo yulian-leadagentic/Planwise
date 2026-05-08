@@ -8,35 +8,15 @@ import client from '@/api/client';
 import { notify } from '@/lib/notify';
 
 // ---------------------------------------------------------------------------
-// Static zone types (enum-based, not stored in DB)
+// Zone types are now persisted via /admin/config/zone-types (ZoneTypeMeta).
+// The 8 enum values (site/building/level/floor/wing/section/area/zone) are
+// seeded by migration; admins can edit (label/colour/icon/sort) and delete
+// metadata rows. Deletion only removes the meta — the enum value still
+// exists, so any zones that already reference it keep working.
+//
+// Adding entirely new zone types isn't supported here because new enum
+// values require a Prisma migration (the schema-level constraint).
 // ---------------------------------------------------------------------------
-const ZONE_TYPES = [
-  { id: 'site', code: 'SITE', name: 'Site', color: '#6366F1' },
-  { id: 'building', code: 'BLD', name: 'Building', color: '#3B82F6' },
-  { id: 'level', code: 'LVL', name: 'Level', color: '#0EA5E9' },
-  { id: 'floor', code: 'FLR', name: 'Floor', color: '#14B8A6' },
-  { id: 'zone', code: 'ZONE', name: 'Zone', color: '#22C55E' },
-  { id: 'area', code: 'AREA', name: 'Area', color: '#EAB308' },
-  { id: 'section', code: 'SEC', name: 'Section', color: '#F97316' },
-  { id: 'wing', code: 'WING', name: 'Wing', color: '#EC4899' },
-];
-
-// ---------------------------------------------------------------------------
-// localStorage helpers for zone type colors
-// ---------------------------------------------------------------------------
-const ZONE_COLORS_KEY = 'planwise_zone_type_colors';
-
-function loadZoneTypeColors(): Record<string, string> {
-  try {
-    return JSON.parse(localStorage.getItem(ZONE_COLORS_KEY) || '{}');
-  } catch {
-    return {};
-  }
-}
-
-function saveZoneTypeColors(colors: Record<string, string>) {
-  localStorage.setItem(ZONE_COLORS_KEY, JSON.stringify(colors));
-}
 
 // ---------------------------------------------------------------------------
 // Tab definitions
@@ -100,8 +80,35 @@ export function TypesPage() {
   // Inline edit state
   const [editing, setEditing] = useState<EditState | null>(null);
 
-  // Zone type custom colors from localStorage
-  const [zoneColors, setZoneColors] = useState<Record<string, string>>(loadZoneTypeColors);
+  // -----------------------------------------------------------------------
+  // Zone types — backed by /admin/config/zone-types (ZoneTypeMeta table).
+  // -----------------------------------------------------------------------
+  const zoneTypesQuery = useQuery({
+    queryKey: ['admin', 'zone-types'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/admin/config/zone-types').then((r) => r.data?.data ?? r.data),
+    enabled: activeTab === 'zone',
+  });
+
+  const updateZoneType = useMutation({
+    mutationFn: ({ id, ...payload }: { id: number; label?: string; color?: string; icon?: string | null; sortOrder?: number }) =>
+      client.patch(`/admin/config/zone-types/${id}`, payload).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'zone-types'] });
+      notify.success('Zone type updated', { code: 'ZONETYPE-UPDATE-200' });
+      setEditing(null);
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update zone type'),
+  });
+
+  const deleteZoneType = useMutation({
+    mutationFn: (id: number) => client.delete(`/admin/config/zone-types/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'zone-types'] });
+      notify.success('Zone type deleted', { code: 'ZONETYPE-DELETE-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to delete zone type'),
+  });
 
   // -----------------------------------------------------------------------
   // Service types queries
@@ -287,6 +294,7 @@ export function TypesPage() {
   }
 
   const isLoading =
+    (activeTab === 'zone' && zoneTypesQuery.isLoading) ||
     (activeTab === 'service' && serviceTypesQuery.isLoading) ||
     (activeTab === 'department' && departmentsQuery.isLoading) ||
     (activeTab === 'profession' && professionsQuery.isLoading);
@@ -297,6 +305,7 @@ export function TypesPage() {
     (activeTab === 'profession' && createProfession.isPending);
 
   const isSaving =
+    updateZoneType.isPending ||
     updateServiceType.isPending ||
     updateDepartment.isPending || updateProfession.isPending;
 
@@ -307,10 +316,12 @@ export function TypesPage() {
 
       let items: typeof rows = [];
       if (activeTab === 'zone') {
-        items = ZONE_TYPES.map((z) => ({
-          ...z,
-          color: zoneColors[z.id] || z.color,
-          static: true,
+        items = (zoneTypesQuery.data ?? []).map((z: any) => ({
+          id: z.id,
+          code: (z.code ?? '').toString().toUpperCase(),
+          name: z.label ?? z.code ?? '',
+          color: z.color ?? '',
+          sortOrder: z.sortOrder ?? 0,
         }));
       } else if (activeTab === 'service') {
         items = (serviceTypesQuery.data ?? []).map((s: any) => ({
@@ -332,7 +343,7 @@ export function TypesPage() {
           r.name.toLowerCase().includes(q) ||
           r.code.toLowerCase().includes(q),
       );
-    }, [activeTab, search, serviceTypesQuery.data, departmentsQuery.data, professionsQuery.data, zoneColors]);
+    }, [activeTab, search, zoneTypesQuery.data, serviceTypesQuery.data, departmentsQuery.data, professionsQuery.data]);
 
   const hasColor = activeTab === 'zone' || activeTab === 'service';
   const hasCode = activeTab === 'zone' || activeTab === 'service' || activeTab === 'department';
@@ -363,17 +374,13 @@ export function TypesPage() {
     }
 
     if (activeTab === 'zone') {
-      const updated = { ...zoneColors };
-      const defaultColor = ZONE_TYPES.find((z) => z.id === editing.id)?.color || '';
-      if (editing.color && editing.color !== defaultColor) {
-        updated[editing.id as string] = editing.color;
-      } else if (!editing.color || editing.color === defaultColor) {
-        delete updated[editing.id as string];
-      }
-      setZoneColors(updated);
-      saveZoneTypeColors(updated);
-      notify.success('Zone type color saved');
-      setEditing(null);
+      // Zone Types map to ZoneTypeMeta — `name` is the user-facing
+      // `label` field, `code` (the enum slug) is read-only.
+      updateZoneType.mutate({
+        id: editing.id as number,
+        label: trimmedName,
+        color: editing.color.trim() || undefined,
+      });
     } else if (activeTab === 'service') {
       updateServiceType.mutate({ id: editing.id as number, name: trimmedName, code: editing.code.trim() || undefined, color: editing.color.trim() || undefined });
     } else if (activeTab === 'department') {
@@ -381,7 +388,7 @@ export function TypesPage() {
     } else if (activeTab === 'profession') {
       updateProfession.mutate({ id: editing.id as number, name: trimmedName });
     }
-  }, [editing, activeTab, zoneColors, updateServiceType, updateDepartment, updateProfession]);
+  }, [editing, activeTab, updateZoneType, updateServiceType, updateDepartment, updateProfession]);
 
   // Escape key handler for inline edit
   useEffect(() => {
@@ -416,7 +423,8 @@ export function TypesPage() {
     if (row.static) return;
     if (!confirm(`Delete "${row.name}"? This action cannot be undone.`)) return;
 
-    if (activeTab === 'service') deleteServiceType.mutate(row.id as number);
+    if (activeTab === 'zone') deleteZoneType.mutate(row.id as number);
+    else if (activeTab === 'service') deleteServiceType.mutate(row.id as number);
     else if (activeTab === 'department') deleteDepartment.mutate(row.id as number);
     else if (activeTab === 'profession') deleteProfession.mutate(row.id as number);
   }
@@ -431,7 +439,11 @@ export function TypesPage() {
     return c.startsWith('#') ? c : `#${c}`;
   }
 
-  const isMutable = activeTab !== 'zone';
+  // Zone Types: editable + deletable (via ZoneTypeMeta) but NOT addable
+  // — new values would require a Prisma enum migration. Other tabs are
+  // fully mutable.
+  const canAdd = activeTab !== 'zone';
+  const canDelete = true;
   const isSimpleList = activeTab === 'profession';
   const addLabel = activeTab === 'department' ? 'Add Department' : activeTab === 'profession' ? 'Add Profession' : activeTab === 'service' ? 'Add Category' : 'Add Type';
 
@@ -493,7 +505,7 @@ export function TypesPage() {
               className="w-full pl-9 px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
             />
           </div>
-          {isMutable && (
+          {canAdd && (
             <button
               onClick={() => setShowForm(!showForm)}
               className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap"
@@ -505,7 +517,7 @@ export function TypesPage() {
         </div>
 
         {/* Inline add form */}
-        {showForm && isMutable && (
+        {showForm && canAdd && (
           <form
             onSubmit={handleSubmit}
             className="border-b border-slate-100 bg-slate-50/60 px-5 py-4"
@@ -618,7 +630,7 @@ export function TypesPage() {
                       <td className="px-5 py-2.5">
                         <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                           onKeyDown={(e) => { if (e.key === 'Enter') saveEditing(); if (e.key === 'Escape') cancelEditing(); }}
-                          placeholder="Name" disabled={activeTab === 'zone'}
+                          placeholder="Name"
                           className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
                           autoFocus />
                       </td>
@@ -664,13 +676,11 @@ export function TypesPage() {
                     )}
                     <td className="px-5 py-3 font-medium text-slate-700">{row.name}</td>
                     <td className="px-5 py-3 text-right">
-                      {isMutable ? (
+                      {canDelete && (
                         <button onClick={(e) => { e.stopPropagation(); handleDelete(row); }}
                           className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] hover:bg-red-50 text-slate-300 hover:text-red-600 transition-colors" title={`Delete ${row.name}`}>
                           <Trash2 className="h-4 w-4" />
                         </button>
-                      ) : (
-                        <span className="rounded-[5px] bg-slate-50 text-slate-400 text-[11px] font-bold tracking-wide px-2 py-0.5">Static</span>
                       )}
                     </td>
                   </tr>
