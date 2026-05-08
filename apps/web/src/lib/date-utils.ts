@@ -66,4 +66,26 @@ export function minutesBetween(start: string | Date, end: string | Date): number
   return differenceInMinutes(e, s);
 }
 
+/**
+ * Format a number of days as a human-friendly duration. Picks the
+ * largest sensible unit so the number stays small:
+ *   <30 days  → `Nd`           (e.g. "12d")
+ *   <12 mo    → `Nmo`          (e.g. "5mo")
+ *   <2 yr     → `Ny Nmo`       (e.g. "1y 4mo")
+ *   ≥2 yr     → `Ny`           (e.g. "3y")
+ *
+ * Uses 30 days/month and 365 days/year as fixed approximations — more
+ * than precise enough for "X left" badges on planning headers and not
+ * worth importing date-fns variants for.
+ */
+export function formatDuration(days: number): string {
+  const d = Math.max(0, Math.round(Number(days) || 0));
+  if (d < 30) return `${d}d`;
+  if (d < 365) return `${Math.round(d / 30)}mo`;
+  const years = Math.floor(d / 365);
+  const remMonths = Math.round((d - years * 365) / 30);
+  if (years < 2 && remMonths > 0) return `${years}y ${remMonths}mo`;
+  return `${years}y`;
+}
+
 export { isToday, isSameDay, parseISO, addDays, startOfWeek, format };
