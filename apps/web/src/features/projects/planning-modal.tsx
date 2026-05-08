@@ -1,6 +1,7 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback, createContext, useContext } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
+import { formatDuration } from '@/lib/date-utils';
 import { notify } from '@/lib/notify';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
@@ -82,7 +83,9 @@ function FeasibilityBadge({ projectId }: { projectId: number }) {
         <span>{cfg.icon}</span>
         <span>{cfg.label}</span>
         {feasibility?.details?.daysRemaining != null && (
-          <span className="opacity-70 ml-1">({feasibility.details.daysRemaining}d left)</span>
+          <span className="opacity-70 ml-1" title={`${feasibility.details.daysRemaining} days`}>
+            ({formatDuration(feasibility.details.daysRemaining)} left)
+          </span>
         )}
       </div>
     </div>
@@ -549,11 +552,47 @@ const statusMap: Record<string, { bg: string; text: string; label: string }> = {
   cancelled: { bg: 'bg-red-100', text: 'text-red-700', label: 'Cancelled' },
 };
 
+// ─── Bulk collapse / expand ──────────────────────────────────────────────────
+//
+// Lets the toolbar's "Collapse all / Expand all" button drive every
+// collapsible card in the planning view (ZoneGroup, HierarchicalZoneGroup,
+// ProjectRootDeliverableGroup) without prop-drilling.
+//
+// Contract:
+//   • `desired` is the boolean we want every collapsible to flip to. When
+//     null the context is idle (no signal from the toolbar yet).
+//   • `version` is bumped every time the toolbar fires the signal — even
+//     if `desired` is unchanged — so a card that was manually toggled
+//     after the last bulk action still re-syncs on the next bulk click.
+//   • Cards call `useBulkCollapseSync(setCollapsed)` and an effect on
+//     `version` resets their local state to `desired`.
+//
+// Local per-card state is intentionally preserved: users can still
+// expand/collapse individual cards after a bulk action.
+const BulkCollapseContext = createContext<{ desired: boolean | null; version: number }>({
+  desired: null,
+  version: 0,
+});
+
+function useBulkCollapseSync(setCollapsed: (b: boolean) => void) {
+  const { desired, version } = useContext(BulkCollapseContext);
+  // Watching `version` (not `desired`) is intentional: see contract above.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (desired != null) setCollapsed(desired);
+  }, [version]);
+}
+
 // Column grid template shared between headers and data rows
 // Grid template for one task row.
-// Columns: drag · check · code · name · deliverable · service · est-hrs ·
-//          logged-hrs · amount · est-start · due · assignees · status · actions
-const TASK_GRID = 'grid grid-cols-[16px_16px_80px_1fr_96px_80px_56px_64px_64px_96px_96px_96px_96px_84px] gap-x-2 items-center';
+// Columns: drag · check · code · name · zone · deliverable · service ·
+//          est-hrs · logged-hrs · amount · est-start · due · assignees ·
+//          status · actions
+//
+// The Zone column is intentionally shown in every grouping mode — when
+// grouping by Deliverable / Service / None the zone context would
+// otherwise be lost. Tasks at the project root display "Project Root".
+const TASK_GRID = 'grid grid-cols-[16px_16px_80px_1fr_110px_96px_80px_56px_64px_64px_96px_96px_96px_96px_84px] gap-x-2 items-center';
 
 function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onToggleTask, onUpdate, onDeleteTask }: {
   task: any; idx: number; projectId: number; members: any[];
@@ -578,6 +617,9 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
     else if (field === 'estimatedStartDate') payload.estimatedStartDate = value || null;
     else if (field === 'startDate') payload.startDate = value || null;
     else if (field === 'endDate') payload.endDate = value || null;
+    // FK refs — empty string means "clear", otherwise expect a numeric id.
+    else if (field === 'serviceTypeId') payload.serviceTypeId = value ? Number(value) : null;
+    else if (field === 'phaseId') payload.phaseId = value ? Number(value) : null;
     else return;
 
     const isBulk = !!(selectedTaskIds && selectedTaskIds.has(task.id) && selectedTaskIds.size > 1);
@@ -657,8 +699,50 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           </span>
         )}
       </span>
-      <span className="truncate" title={serviceName ?? ''}>{serviceName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full" style={{ backgroundColor: `${serviceColor}15`, color: serviceColor }}>{serviceName}</span> : <span className="text-slate-300 text-[11px]">-</span>}</span>
-      <span className="text-[11px] text-slate-500 truncate" title={task.phase?.name ?? ''}>{task.phase?.name || <span className="text-slate-300">-</span>}</span>
+      {/* Zone context — kept visible in every grouping mode so the user
+          doesn't lose the zone when grouping by Deliverable/Service/None.
+          Tasks at the project root render as italic muted "Project Root";
+          deeply nested tasks show the leaf zone with the full breadcrumb
+          (e.g. "Building > Floor 1 > Unit A") on hover. */}
+      <span className="text-[11px] truncate">
+        {task.zoneId == null ? (
+          <span className="italic text-slate-400">Project Root</span>
+        ) : (
+          <span
+            className="text-slate-600"
+            title={Array.isArray(task.zoneBreadcrumb) && task.zoneBreadcrumb.length > 0
+              ? task.zoneBreadcrumb.join(' › ')
+              : (task.zone?.name ?? '')}
+          >
+            {task.zone?.name || <span className="text-slate-300">-</span>}
+          </span>
+        )}
+      </span>
+      {/* Deliverable cell — click to edit. The picker pulls from
+          /templates?type=task_list (the same list shown on
+          /templates/deliverables); the underlying Task FK is still
+          serviceTypeId (find-or-created from the template name on
+          save). Falls back to the [SERVICE:xxx] description marker
+          for legacy tasks that don't have a ServiceType FK yet. */}
+      <CompactPickerCell
+        projectId={projectId}
+        currentId={task.serviceTypeId ?? null}
+        currentLabel={task.serviceType?.name || task.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || null}
+        currentColor={task.serviceType?.color}
+        kind="deliverable"
+        fieldLabel="Deliverable"
+        onSave={(v) => saveField('serviceTypeId', v)}
+      />
+      {/* Service cell — click to edit. Phase is the parent Service. */}
+      <CompactPickerCell
+        projectId={projectId}
+        currentId={task.phaseId ?? null}
+        currentLabel={task.phase?.name ?? null}
+        currentColor={task.phase?.color}
+        kind="phase"
+        fieldLabel="Service"
+        onSave={(v) => saveField('phaseId', v)}
+      />
       {/* Estimate (budgetHours) — editable. */}
       <InlineEditCell value={task.budgetHours} suffix="h" width="w-14" onSave={(v) => saveField('budgetHours', v)} />
       {/* Reported / logged hours — read-only sum of all TimeEntry.minutes
@@ -969,12 +1053,17 @@ function BulkActionBar({
   members,
   projectId,
   onClear,
+  onRequestDelete,
 }: {
   selectedCount: number;
   selectedTaskIds: Set<number>;
   members: any[];
   projectId: number;
   onClear: () => void;
+  /** Open the styled confirm modal for the given task ids. The bar
+   *  itself doesn't run the delete — the parent owns the modal so the
+   *  confirm UX matches single-row deletes. */
+  onRequestDelete: (ids: number[]) => void;
 }) {
   const [assignOpen, setAssignOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
@@ -1169,6 +1258,19 @@ function BulkActionBar({
         </div>
 
         <div className="h-5 w-px bg-slate-200" />
+
+        {/* Bulk Delete — triggers the styled confirm modal owned by the
+            parent. Selection is cleared inside the modal's execute()
+            after a successful delete. */}
+        <button
+          type="button"
+          onClick={() => onRequestDelete(Array.from(selectedTaskIds))}
+          disabled={busy || selectedCount === 0}
+          className="flex items-center gap-1 rounded-md bg-red-50 hover:bg-red-100 text-red-600 text-[13px] font-semibold px-3 py-1.5 disabled:opacity-50"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Delete
+        </button>
 
         <button
           type="button"
@@ -1532,25 +1634,442 @@ function AddZoneManuallyDialog({ projectId, onClose, onCreated }: { projectId: n
 // with zoneId=null so it lives at the project root. The planning grid
 // renders these in a dedicated "Project Root" section above the zones.
 
-function AddRootTaskDialog({ projectId, onClose, onCreated }: { projectId: number; onClose: () => void; onCreated: () => void }) {
+// Project-scoped picker for one of {ServiceType, Phase}. Shows the
+// distinct entries already in use by this project's tasks, plus a
+// "+ Create new" inline form. Picking from the dropdown sets the value;
+// picking "Create new" opens an inline name+color row that POSTs to the
+// matching endpoint and then auto-selects the freshly-created entry.
+function ProjectScopedPicker({
+  value,
+  onChange,
+  projectTasks,
+  fieldKey,
+  label,
+  endpoint,
+  placeholder,
+}: {
+  value: number | null;
+  onChange: (id: number | null) => void;
+  /** All tasks in this project — used to extract the project-scoped
+   *  subset of the global catalog. */
+  projectTasks: any[];
+  /** 'serviceType' or 'phase' — drives which task field we read. */
+  fieldKey: 'serviceType' | 'phase';
+  label: string;
+  /** API path to GET (full list) and POST (create new) against. */
+  endpoint: '/service-types' | '/phases';
+  placeholder: string;
+}) {
+  const queryClient = useQueryClient();
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newColor, setNewColor] = useState('#8B5CF6');
+  const [busy, setBusy] = useState(false);
+
+  // Load the global catalog so we have id/name/color for everything,
+  // then narrow to the IDs that already appear on tasks in this project.
+  const { data: all = [] } = useQuery({
+    queryKey: [endpoint],
+    queryFn: () => client.get(endpoint).then((r) => r.data?.data ?? r.data),
+    staleTime: 60_000,
+  });
+  const list: any[] = Array.isArray(all) ? all : [];
+
+  // Project-scoped: only entries referenced by this project's tasks.
+  // Falls back to the global list if the project has no tasks yet (so
+  // the picker isn't empty on a brand-new project).
+  const usedIds = new Set<number>();
+  for (const t of projectTasks) {
+    const id: number | undefined = t[fieldKey]?.id ?? t[`${fieldKey}Id`];
+    if (typeof id === 'number') usedIds.add(id);
+  }
+  const scoped = usedIds.size > 0 ? list.filter((x: any) => usedIds.has(x.id)) : list;
+
+  const create = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setBusy(true);
+    try {
+      const resp = await client.post(endpoint, { name, color: newColor });
+      const created = resp.data?.data ?? resp.data;
+      // Refresh the cached catalog so the new entry shows in dropdowns
+      // everywhere — and so subsequent renders pick it up.
+      queryClient.invalidateQueries({ queryKey: [endpoint] });
+      if (created?.id) onChange(created.id);
+      setCreating(false);
+      setNewName('');
+      setNewColor('#8B5CF6');
+    } catch (err: any) {
+      notify.apiError(err, `Failed to create ${label.toLowerCase()}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">{label}</label>
+      {!creating ? (
+        <div className="flex items-center gap-1.5">
+          <select
+            value={value ?? ''}
+            onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+            className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] focus:border-blue-500 focus:outline-none"
+          >
+            <option value="">{placeholder}</option>
+            {scoped.map((x: any) => (
+              <option key={x.id} value={x.id}>{x.name}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="text-[12px] font-semibold text-blue-600 hover:text-blue-700 px-2 py-1 rounded hover:bg-blue-50 whitespace-nowrap"
+          >
+            + Create new
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5">
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder={`New ${label} name`}
+            autoFocus
+            onKeyDown={(e) => { if (e.key === 'Enter' && newName.trim()) create(); if (e.key === 'Escape') setCreating(false); }}
+            className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] focus:border-blue-500 focus:outline-none"
+          />
+          <input
+            type="color"
+            value={newColor}
+            onChange={(e) => setNewColor(e.target.value)}
+            className="w-9 h-8 rounded border border-slate-200 cursor-pointer p-0"
+            title="Color"
+          />
+          <button
+            type="button"
+            onClick={create}
+            disabled={busy || !newName.trim()}
+            className="text-[12px] font-semibold bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded disabled:opacity-50"
+          >
+            {busy ? 'Saving...' : 'Save'}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setCreating(false); setNewName(''); }}
+            className="text-[12px] text-slate-400 hover:text-slate-600 px-1"
+          >
+            ×
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Compact inline picker for the task grid's Deliverable + Service cells.
+// Default: shows the current label as a coloured pill (or em-dash if
+// unset). Click → swaps to a native <select> with the option list plus
+// a "__new__" sentinel that prompts for a name and creates a new
+// catalog entry. Closes on save.
+//
+// Two modes:
+//   • kind='phase'       — Service picker. Source: /phases. Save:
+//                          phaseId is the option id directly.
+//   • kind='deliverable' — Deliverable picker. Source:
+//                          /templates?type=task_list (the same list
+//                          shown on /templates/deliverables, minus
+//                          __TASK_CATALOG__). Each Deliverable is a
+//                          Template, but Task only stores serviceTypeId,
+//                          so on save we find-or-create a ServiceType
+//                          named after the chosen Template and save
+//                          its id. This way the picker matches the
+//                          user's deliverable catalog while the
+//                          underlying Task FK stays consistent with
+//                          existing data.
+function CompactPickerCell({
+  projectId,
+  currentId,
+  currentLabel,
+  currentColor,
+  kind,
+  fieldLabel,
+  onSave,
+}: {
+  projectId: number;
+  currentId: number | null | undefined;
+  currentLabel: string | null | undefined;
+  currentColor?: string | null;
+  kind: 'phase' | 'deliverable';
+  fieldLabel: string;
+  /** Called with the new id (string) — '' means clear. The id semantics
+   *  differ by kind: for 'phase' it's the phaseId; for 'deliverable'
+   *  it's the resolved serviceTypeId (after find-or-create). */
+  onSave: (newIdStr: string) => Promise<void> | void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const queryClient = useQueryClient();
+
+  // Source endpoint depends on kind. For deliverable we hit /templates
+  // and filter the synthetic __TASK_CATALOG__ entry the templates
+  // controller adds; for phase we hit /phases directly.
+  const sourceUrl = kind === 'deliverable' ? '/templates?type=task_list' : '/phases';
+  const { data: all = [] } = useQuery({
+    queryKey: [sourceUrl],
+    queryFn: () => client.get(sourceUrl).then((r) => r.data?.data ?? r.data),
+    staleTime: 60_000,
+    enabled: editing, // only fetch when the user actually opens the picker
+  });
+  const fullList: any[] = (Array.isArray(all) ? all : [])
+    .filter((x: any) => kind !== 'deliverable' || x.code !== '__TASK_CATALOG__');
+
+  // Project-scoping: for the Service picker we narrow to phases used by
+  // tasks in this project. For Deliverable we show the full template
+  // catalog — the user explicitly asked for this list to match the
+  // /templates/deliverables page (which doesn't filter by project).
+  const planningCache: any = queryClient.getQueryData(['planning', projectId]);
+  const projectTasks: any[] = planningCache?.tasks ?? planningCache?.data?.tasks ?? [];
+  let list: any[];
+  if (kind === 'deliverable') {
+    list = fullList;
+  } else {
+    const usedIds = new Set<number>();
+    for (const t of projectTasks) {
+      const id: number | undefined = t.phase?.id ?? t.phaseId;
+      if (typeof id === 'number') usedIds.add(id);
+    }
+    if (typeof currentId === 'number') usedIds.add(currentId);
+    const scoped = fullList.filter((x: any) => usedIds.has(x.id));
+    list = scoped.length > 0 ? scoped : fullList;
+  }
+
+  // For the Deliverable mode the cell stores serviceTypeId on the Task.
+  // The dropdown <option value> is the Template id, so we need a way to
+  // pre-select the option matching the task's current ServiceType. We
+  // do that by name (Template.name == ServiceType.name when the ST was
+  // find-or-created from the template).
+  const selectedTemplateValue = (() => {
+    if (kind !== 'deliverable') return currentId ?? '';
+    if (!currentLabel) return '';
+    const match = fullList.find((t: any) => t.name === currentLabel);
+    return match ? String(match.id) : '';
+  })();
+
+  // Resolve a Template (by id) to a ServiceType id, creating the ST if
+  // necessary. Used by the Deliverable mode's save handler.
+  const resolveServiceTypeIdForTemplate = async (template: any): Promise<number | null> => {
+    const stListResp = await client.get('/service-types');
+    const stList: any[] = stListResp.data?.data ?? stListResp.data ?? [];
+    const existing = (Array.isArray(stList) ? stList : []).find(
+      (s: any) => s.name === template.name,
+    );
+    if (existing) return existing.id;
+    const createResp = await client.post('/service-types', {
+      name: template.name,
+      color: template.phase?.color ?? null,
+    });
+    const created = createResp.data?.data ?? createResp.data;
+    queryClient.invalidateQueries({ queryKey: ['/service-types'] });
+    return created?.id ?? null;
+  };
+
+  const handleChange = async (raw: string) => {
+    if (raw === '__new__') {
+      const name = window.prompt(`New ${fieldLabel} name:`);
+      if (!name || !name.trim()) { setEditing(false); return; }
+      setBusy(true);
+      try {
+        if (kind === 'deliverable') {
+          // Create the deliverable as a Template (type=task_list) so it
+          // shows up on /templates/deliverables alongside the others,
+          // then find-or-create a matching ServiceType for the FK.
+          const tplResp = await client.post('/templates', {
+            name: name.trim(),
+            type: 'task_list',
+            code: `D-${Date.now().toString(36).toUpperCase()}`,
+          });
+          const tpl = tplResp.data?.data ?? tplResp.data;
+          queryClient.invalidateQueries({ queryKey: [sourceUrl] });
+          const stId = await resolveServiceTypeIdForTemplate(tpl);
+          if (stId != null) await onSave(String(stId));
+        } else {
+          // Phase — single POST.
+          const resp = await client.post('/phases', { name: name.trim() });
+          const created = resp.data?.data ?? resp.data;
+          queryClient.invalidateQueries({ queryKey: [sourceUrl] });
+          if (created?.id) await onSave(String(created.id));
+        }
+      } catch (err: any) {
+        notify.apiError(err, `Failed to create ${fieldLabel.toLowerCase()}`);
+      } finally {
+        setBusy(false);
+        setEditing(false);
+      }
+      return;
+    }
+
+    setBusy(true);
+    try {
+      if (kind === 'deliverable' && raw) {
+        // raw is a Template id — resolve to a ServiceType id then save.
+        const tpl = fullList.find((t: any) => String(t.id) === raw);
+        if (!tpl) { setEditing(false); return; }
+        const stId = await resolveServiceTypeIdForTemplate(tpl);
+        await onSave(stId != null ? String(stId) : '');
+      } else {
+        await onSave(raw);
+      }
+    } catch (err: any) {
+      notify.apiError(err, `Failed to set ${fieldLabel.toLowerCase()}`);
+    } finally {
+      setBusy(false);
+      setEditing(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+        title={`Click to edit ${fieldLabel}`}
+        className="text-left max-w-full truncate hover:bg-blue-50/50 rounded px-1 -mx-1 py-0.5"
+      >
+        {currentLabel ? (
+          <span
+            className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full"
+            style={{
+              backgroundColor: currentColor ? `${currentColor}15` : '#3B82F615',
+              color: currentColor || '#3B82F6',
+            }}
+          >
+            {currentLabel}
+          </span>
+        ) : (
+          <span className="text-slate-300 text-[11px]">-</span>
+        )}
+      </button>
+    );
+  }
+
+  return (
+    <select
+      autoFocus
+      disabled={busy}
+      value={selectedTemplateValue}
+      onChange={(e) => handleChange(e.target.value)}
+      onBlur={() => setEditing(false)}
+      onClick={(e) => e.stopPropagation()}
+      className="w-full px-1 py-0.5 rounded border border-blue-300 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+    >
+      <option value="">— None —</option>
+      {list.map((x: any) => (
+        <option key={x.id} value={x.id}>{x.name}</option>
+      ))}
+      <option value="__new__">+ Create new…</option>
+    </select>
+  );
+}
+
+function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { projectId: number; projectTasks: any[]; onClose: () => void; onCreated: () => void }) {
+  // Two flows:
+  //   • manual:  one-off task — user types code/name/hours/amount.
+  //   • catalog: pick from the existing task catalog (templates with
+  //              code='__TASK_CATALOG__'). Multiple tasks can be added
+  //              at once. Same data shape as the zone-side
+  //              CatalogPickerForZone, just without a zoneId so they
+  //              land at the project root.
+  const [mode, setMode] = useState<'manual' | 'catalog'>('manual');
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [budgetHours, setBudgetHours] = useState('');
   const [budgetAmount, setBudgetAmount] = useState('');
+  // Deliverable (= ServiceType) and Service (= Phase) for the new task.
+  // Both are project-scoped pickers — the user sees what's already in
+  // play in this project plus a "Create new" inline. Nullable means the
+  // task is created without that label.
+  const [serviceTypeId, setServiceTypeId] = useState<number | null>(null);
+  const [phaseId, setPhaseId] = useState<number | null>(null);
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [adding, setAdding] = useState(false);
+
+  // Catalog data (only fetched when the user switches to the catalog tab).
+  const { data: allTemplates = [] } = useQuery({
+    queryKey: ['templates', 'task_list'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/templates?type=task_list').then((r) => r.data?.data ?? r.data),
+    enabled: mode === 'catalog',
+  });
+  const catalogEntry = (allTemplates as any[]).find((t: any) => t.code === '__TASK_CATALOG__');
+  const { data: catalog, isLoading: catalogLoading } = useQuery({
+    queryKey: ['templates', catalogEntry?.id],
+    enabled: mode === 'catalog' && !!catalogEntry?.id,
+    queryFn: () => client.get(`/templates/${catalogEntry.id}`).then((r) => r.data?.data ?? r.data),
+  });
+  const catalogTasks: any[] = catalog?.templateTasks ?? [];
+  const filtered = search.trim()
+    ? catalogTasks.filter((t: any) =>
+        t.name?.toLowerCase().includes(search.toLowerCase())
+        || t.code?.toLowerCase().includes(search.toLowerCase()))
+    : catalogTasks;
 
   const createTask = useMutation({
     mutationFn: () => tasksApi.create({
-      // Send projectId without a zoneId — the API treats this as a
-      // root-level task and stores zone_id=NULL in the DB.
+      // No zoneId — the API treats this as a root-level task and
+      // stores zone_id = NULL.
       projectId,
       code: code.trim(),
       name: name.trim(),
       budgetHours: budgetHours ? Number(budgetHours) : undefined,
       budgetAmount: budgetAmount ? Number(budgetAmount) : undefined,
+      serviceTypeId: serviceTypeId ?? undefined,
+      phaseId: phaseId ?? undefined,
     } as any),
     onSuccess: () => { notify.success('Task created', { code: 'TASK-CREATE-200' }); onCreated(); onClose(); },
     onError: (err: any) => notify.apiError(err, 'Failed to create task'),
   });
+
+  const addFromCatalog = async () => {
+    const tasks = catalogTasks.filter((t: any) => selected.has(t.id));
+    if (tasks.length === 0) return;
+    setAdding(true);
+    try {
+      const results = await Promise.allSettled(
+        tasks.map((t: any) => tasksApi.create({
+          projectId,
+          code: t.code,
+          name: t.name,
+          description: t.description,
+          budgetHours: t.defaultBudgetHours ? Number(t.defaultBudgetHours) : undefined,
+          budgetAmount: t.defaultBudgetAmount ? Number(t.defaultBudgetAmount) : undefined,
+          // Carry over the catalog's task-level service / phase if any —
+          // this keeps the deliverable badge consistent with the zone
+          // catalog flow.
+          serviceTypeId: t.serviceTypeId ?? undefined,
+          phaseId: t.phaseId ?? undefined,
+        } as any)),
+      );
+      const ok = results.filter((r) => r.status === 'fulfilled').length;
+      const fail = results.length - ok;
+      if (fail === 0) notify.success(`Added ${ok} task${ok !== 1 ? 's' : ''} from catalog`, { code: 'TASK-ADD-200' });
+      else if (ok > 0) notify.warning(`Added ${ok}, ${fail} failed`, { code: 'TASK-ADD-207' });
+      else notify.error('Failed to add tasks', { code: 'TASK-ADD-500' });
+      onCreated();
+      onClose();
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to add tasks');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const toggleSelected = (id: number) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setSelected(next);
+  };
 
   return (
     <div className="bg-white rounded-[14px] border border-slate-200 p-5 space-y-3">
@@ -1558,25 +2077,131 @@ function AddRootTaskDialog({ projectId, onClose, onCreated }: { projectId: numbe
         <h3 className="text-[15px] font-bold text-slate-900">Add Task at Project Root</h3>
         <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400"><X className="w-4 h-4" /></button>
       </div>
-      <p className="text-[12px] text-slate-500">This task will not be tied to any zone. It appears in the Project Root section.</p>
-      <div className="grid grid-cols-[120px_1fr_120px_120px] gap-2">
-        <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code *" autoFocus
-          className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Task name *"
-          className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
-        <input value={budgetHours} onChange={(e) => setBudgetHours(e.target.value)} placeholder="Hours" type="number"
-          className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
-        <input value={budgetAmount} onChange={(e) => setBudgetAmount(e.target.value)} placeholder="Amount" type="number"
-          className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
-      </div>
-      <div className="flex justify-end gap-2">
-        <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
-        <button onClick={() => { if (!code.trim() || !name.trim()) { notify.warning('Code and Name required'); return; } createTask.mutate(); }}
-          disabled={createTask.isPending || !code.trim() || !name.trim()}
-          className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
-          {createTask.isPending ? 'Creating...' : 'Create Task'}
+
+      {/* Mode tabs */}
+      <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5 w-fit">
+        <button
+          onClick={() => setMode('manual')}
+          className={cn(
+            'px-3 py-1 rounded-md text-[12px] font-semibold transition-colors',
+            mode === 'manual' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+          )}
+        >
+          Manual
+        </button>
+        <button
+          onClick={() => setMode('catalog')}
+          className={cn(
+            'px-3 py-1 rounded-md text-[12px] font-semibold transition-colors',
+            mode === 'catalog' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+          )}
+        >
+          From Catalog
         </button>
       </div>
+
+      <p className="text-[12px] text-slate-500">
+        This task will not be tied to any zone. It appears in the Project Root section.
+      </p>
+
+      {mode === 'manual' ? (
+        <>
+          <div className="grid grid-cols-[120px_1fr_120px_120px] gap-2">
+            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code *" autoFocus
+              className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Task name *"
+              className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+            <input value={budgetHours} onChange={(e) => setBudgetHours(e.target.value)} placeholder="Hours" type="number"
+              className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+            <input value={budgetAmount} onChange={(e) => setBudgetAmount(e.target.value)} placeholder="Amount" type="number"
+              className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+          </div>
+          {/* Deliverable + Service pickers — project-scoped lists, with
+              an inline "Create new" that POSTs to the matching catalog
+              endpoint and auto-selects the new entry. */}
+          <div className="grid grid-cols-2 gap-3">
+            <ProjectScopedPicker
+              value={serviceTypeId}
+              onChange={setServiceTypeId}
+              projectTasks={projectTasks}
+              fieldKey="serviceType"
+              label="Deliverable"
+              endpoint="/service-types"
+              placeholder="None — pick or create"
+            />
+            <ProjectScopedPicker
+              value={phaseId}
+              onChange={setPhaseId}
+              projectTasks={projectTasks}
+              fieldKey="phase"
+              label="Service"
+              endpoint="/phases"
+              placeholder="None — pick or create"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+            <button onClick={() => { if (!code.trim() || !name.trim()) { notify.warning('Code and Name required'); return; } createTask.mutate(); }}
+              disabled={createTask.isPending || !code.trim() || !name.trim()}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
+              {createTask.isPending ? 'Creating...' : 'Create Task'}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          {/* Catalog search + list — same shape as CatalogPickerForZone but
+              tasks land at zoneId=null. */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search catalog..."
+              className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
+          </div>
+          <div className="max-h-[360px] overflow-y-auto border border-slate-100 rounded-lg">
+            {catalogLoading ? (
+              <p className="py-8 text-center text-sm text-slate-400">Loading catalog...</p>
+            ) : !catalogEntry ? (
+              <p className="py-8 text-center text-sm text-slate-400">No task catalog found. Create one in Templates → Task Catalog.</p>
+            ) : filtered.length === 0 ? (
+              <p className="py-8 text-center text-sm text-slate-400">{search ? 'No tasks match.' : 'Catalog is empty.'}</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-slate-100 bg-slate-50 text-xs">
+                  <th className="px-3 py-2 w-10"></th>
+                  <th className="px-3 py-2 text-left font-medium">Code</th>
+                  <th className="px-3 py-2 text-left font-medium">Name</th>
+                  <th className="px-3 py-2 text-right font-medium">Hours</th>
+                  <th className="px-3 py-2 text-right font-medium">Amount</th>
+                </tr></thead>
+                <tbody>
+                  {filtered.map((t: any) => (
+                    <tr key={t.id} className={cn('border-b border-slate-50 cursor-pointer', selected.has(t.id) ? 'bg-blue-50' : 'hover:bg-slate-50')} onClick={() => toggleSelected(t.id)}>
+                      <td className="px-3 py-2"><input type="checkbox" checked={selected.has(t.id)} onChange={() => toggleSelected(t.id)} className="h-3.5 w-3.5" /></td>
+                      <td className="px-3 py-2 font-mono text-xs text-slate-500">{t.code || '-'}</td>
+                      <td className="px-3 py-2 font-medium">{t.name}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetHours ? Number(t.defaultBudgetHours) : '-'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetAmount ? Number(t.defaultBudgetAmount).toLocaleString() : '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] text-slate-400">{selected.size} selected · {filtered.length} in catalog</span>
+            <div className="flex gap-2">
+              <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+              <button
+                onClick={addFromCatalog}
+                disabled={adding || selected.size === 0}
+                className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
+              >
+                {adding ? 'Adding...' : `Add ${selected.size || ''} task${selected.size === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1591,6 +2216,11 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
   const [search, setSearch] = useState('');
   const [applying, setApplying] = useState(false);
 
+  // The /templates listing endpoint REPLACES `templateTasks` with a
+  // synthesized [SERVICE:xxx] placeholder list for the UI's services
+  // badge — it isn't the real task catalog. To materialize a deliverable
+  // we have to fetch GET /templates/:id which returns the actual tasks
+  // (with code/name/budgetHours/serviceType/etc).
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['templates', 'task_list'],
     queryFn: () => client.get('/templates?type=task_list').then((r) => r.data?.data ?? r.data),
@@ -1603,20 +2233,61 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
       || t.name?.toLowerCase().includes(search.toLowerCase())
       || t.code?.toLowerCase().includes(search.toLowerCase()));
 
+  // Real (direct) task count — the rollup endpoint exposes this as
+  // _count.templateRootTasks. Fall back through legacy fields so older
+  // server responses still show something sensible.
+  const taskCountFor = (t: any) =>
+    t._count?.templateRootTasks
+    ?? t._count?.templateTasks  // before the rollup change
+    ?? 0;
+
   const applyTemplate = async (template: any) => {
     if (applying) return;
     setApplying(true);
     try {
-      // Pull the template's tasks (they're already returned in the list
-      // request via `templateTasks`). For each one create a task at the
-      // project root (no zoneId), inheriting hours/amount and the
-      // template's phase as "deliverable".
-      const tasks: any[] = template.templateTasks ?? [];
+      // Fetch the real template detail (with the actual templateTasks
+      // array — code, name, budgetHours, etc). The listing endpoint
+      // returns a fake placeholder list and can't be used here.
+      const detailResp = await client.get(`/templates/${template.id}`);
+      const detail = detailResp.data?.data ?? detailResp.data;
+      const tasks: any[] = (detail?.templateTasks ?? []).filter(
+        // Skip [SERVICE:xxx] marker rows (synthetic) — we want real tasks.
+        (t: any) => !(t.description?.match?.(/^\[SERVICE:.+\]$/)),
+      );
+
       if (tasks.length === 0) {
         notify.warning('Template has no tasks');
         setApplying(false);
         return;
       }
+
+      // Find-or-create a ServiceType (= Deliverable identity) matching
+      // the template name, so every materialized task carries the
+      // deliverable label even when the source TemplateTask had no
+      // serviceTypeId of its own. This is what makes "Add Deliverable
+      // X" group together as "X" in the Deliverable view.
+      let deliverableServiceTypeId: number | null = null;
+      try {
+        const stListResp = await client.get('/service-types');
+        const stList: any[] = stListResp.data?.data ?? stListResp.data ?? [];
+        const existing = (Array.isArray(stList) ? stList : []).find(
+          (s: any) => s.name === template.name,
+        );
+        if (existing) {
+          deliverableServiceTypeId = existing.id;
+        } else {
+          const createResp = await client.post('/service-types', {
+            name: template.name,
+            color: template.phase?.color ?? null,
+          });
+          const created = createResp.data?.data ?? createResp.data;
+          deliverableServiceTypeId = created?.id ?? null;
+        }
+      } catch {
+        // Non-fatal — tasks still get phaseId, just won't have a
+        // dedicated Deliverable identity.
+      }
+
       const results = await Promise.allSettled(
         tasks.map((t: any) => tasksApi.create({
           projectId,
@@ -1625,7 +2296,16 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
           description: t.description,
           budgetHours: t.defaultBudgetHours ? Number(t.defaultBudgetHours) : undefined,
           budgetAmount: t.defaultBudgetAmount ? Number(t.defaultBudgetAmount) : undefined,
-          phaseId: template.phaseId ?? undefined,
+          // Deliverable: prefer the template-task's explicit serviceType
+          // if it was set, otherwise tag with the template-level
+          // ServiceType we just resolved. Either way every task ends up
+          // with a deliverable label, satisfying the user's "every
+          // Deliverable belongs to a Service" model.
+          serviceTypeId: t.serviceTypeId ?? deliverableServiceTypeId ?? undefined,
+          // Service: the template's parent phase (= Service the
+          // deliverable belongs to). Falls back to the template-task's
+          // own phase if the template itself isn't linked.
+          phaseId: template.phaseId ?? t.phaseId ?? undefined,
         } as any)),
       );
       const ok = results.filter((r) => r.status === 'fulfilled').length;
@@ -1654,21 +2334,26 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
       <div className="max-h-[360px] overflow-y-auto border border-slate-100 rounded-lg">
         {isLoading ? <p className="py-8 text-center text-sm text-slate-400">Loading...</p>
           : list.length === 0 ? <p className="py-8 text-center text-sm text-slate-400">No deliverables found</p>
-          : list.map((t: any) => (
-            <button key={t.id} onClick={() => applyTemplate(t)} disabled={applying}
-              className="w-full text-left px-3 py-2.5 border-b border-slate-100 last:border-0 hover:bg-blue-50/40 disabled:opacity-50">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-[13px] font-semibold text-slate-800 truncate">{t.name}</p>
-                  <p className="text-[11px] text-slate-500">
-                    {t.phase?.name ? <span className="rounded px-1 py-0.5 bg-violet-50 text-violet-700">{t.phase.name}</span> : null}
-                    <span className="ml-1.5">{t.templateTasks?.length ?? 0} tasks</span>
-                  </p>
+          : list.map((t: any) => {
+            const count = taskCountFor(t);
+            return (
+              <button key={t.id} onClick={() => applyTemplate(t)} disabled={applying || count === 0}
+                className="w-full text-left px-3 py-2.5 border-b border-slate-100 last:border-0 hover:bg-blue-50/40 disabled:opacity-50">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-semibold text-slate-800 truncate">{t.name}</p>
+                    <p className="text-[11px] text-slate-500">
+                      {t.phase?.name ? <span className="rounded px-1 py-0.5 bg-violet-50 text-violet-700">{t.phase.name}</span> : null}
+                      <span className={cn('ml-1.5', count === 0 && 'text-amber-600')}>
+                        {count} task{count !== 1 ? 's' : ''}
+                      </span>
+                    </p>
+                  </div>
+                  <Plus className="h-4 w-4 text-blue-500 shrink-0" />
                 </div>
-                <Plus className="h-4 w-4 text-blue-500 shrink-0" />
-              </div>
-            </button>
-          ))
+              </button>
+            );
+          })
         }
       </div>
       <div className="flex justify-end">
@@ -1682,6 +2367,7 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
 
 function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, thClass, handleSort, sortIcon, selectedTaskIds, onToggleTask, onToggleMany }: any) {
   const [collapsed, setCollapsed] = useState(false);
+  useBulkCollapseSync(setCollapsed);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showTaskMenu, setShowTaskMenu] = useState(false);
   const [showCatalogPicker, setShowCatalogPicker] = useState(false);
@@ -1881,6 +2567,7 @@ function SortableZone(props: any) {
 
 function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth, selectedTaskIds, onToggleTask, onToggleMany, zoneDragHandleProps }: any) {
   const [collapsed, setCollapsed] = useState(false);
+  useBulkCollapseSync(setCollapsed);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddZone, setShowAddZone] = useState(false);
   const [showCatalogPicker, setShowCatalogPicker] = useState(false);
@@ -2076,6 +2763,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <span />
               <span>Code</span>
               <span>Task Name</span>
+              <span>Zone</span>
               <span>Deliverable</span>
               <span>Service</span>
               <span className="text-right">Est. Hours</span>
@@ -2172,27 +2860,77 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
 // dragging a root task INTO a zone (setZoneId) once the cross-zone move
 // confirm flow is wired up.
 
-function ProjectRootGroup({
-  projectId, tasks, members, onUpdate, onDeleteTask, selectedTaskIds, onToggleTask, onToggleMany,
+// Single deliverable group inside the project root. Renders one
+// collapsible section with its own totals + task list. Used both for
+// real deliverables (tasks grouped by phaseId) and the "No Deliverable"
+// fallback bucket for ad-hoc root tasks.
+function ProjectRootDeliverableGroup({
+  projectId, label, serviceLabel, color, tasks, members, onUpdate, onDeleteTask,
+  selectedTaskIds, onToggleTask, onToggleMany,
+  dndId,
 }: {
-  projectId: number; tasks: any[]; members: any[];
+  projectId: number;
+  label: string;
+  /** Parent Service (phase) name shown below the deliverable label.
+   *  Optional — when missing the row stays compact. */
+  serviceLabel?: string;
+  color: string;
+  tasks: any[];
+  members: any[];
   onUpdate: () => void; onDeleteTask: (id: number) => void;
   selectedTaskIds: Set<number>; onToggleTask: (id: number) => void;
   onToggleMany: (ids: number[], checked: boolean) => void;
+  /** Optional sortable id for DnD (e.g. "d-st-12" or "d-ph-3"). When
+   *  set, the card registers with dnd-kit and shows a grip handle on
+   *  the header. Cards without an id (the "No Deliverable" orphan
+   *  bucket) stay non-draggable. */
+  dndId?: string;
 }) {
   const [collapsed, setCollapsed] = useState(false);
-  if (tasks.length === 0) return null;
-
+  useBulkCollapseSync(setCollapsed);
+  // useSortable is always called (hooks must be unconditional) but we
+  // only attach listeners + transforms when dndId is provided.
+  const sortable = useSortable({ id: dndId ?? '__noop__', disabled: !dndId });
+  const sortableStyle = dndId
+    ? { transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition }
+    : undefined;
   const totalHours = tasks.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
   const totalAmount = tasks.reduce((s: number, t: any) => s + Number(t.budgetAmount || 0), 0);
   const totalLoggedMinutes = tasks.reduce((s: number, t: any) => s + Number(t.loggedMinutes || 0), 0);
   const totalLoggedHours = Math.round(totalLoggedMinutes / 60 * 10) / 10;
 
   return (
-    <div className="rounded-[14px] border border-slate-200 bg-white mb-3 shadow-sm">
-      <div className="flex items-center gap-2.5 py-3 px-4 border-l-[3px] border-l-violet-500 bg-violet-50/40 cursor-pointer hover:bg-violet-50/60"
-        onClick={() => setCollapsed(!collapsed)}>
-        <span className="w-5 shrink-0" />
+    <div
+      ref={dndId ? sortable.setNodeRef : undefined}
+      style={sortableStyle}
+      className={cn(
+        'rounded-[14px] border border-slate-200 bg-white mb-3 shadow-sm group',
+        sortable.isDragging && dndId && 'opacity-50 ring-2 ring-blue-300 z-10',
+      )}
+      {...(dndId ? sortable.attributes : {})}
+    >
+      <div
+        className="flex items-center gap-2.5 py-3 px-4 border-l-[3px] cursor-pointer hover:bg-slate-50/60"
+        style={{ borderLeftColor: color, backgroundColor: `${color}10` }}
+        onClick={() => setCollapsed(!collapsed)}
+      >
+        {/* Drag handle — appears on hover when this card is sortable.
+            Listeners are attached only here (not the whole row) so the
+            collapse-toggle on row click keeps working. */}
+        {dndId ? (
+          <button
+            type="button"
+            aria-label="Drag to reorder deliverable"
+            title="Drag to reorder"
+            {...sortable.listeners}
+            onClick={(e) => e.stopPropagation()}
+            className="-ml-1 flex h-6 w-6 items-center justify-center rounded text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-slate-600 cursor-grab active:cursor-grabbing shrink-0 touch-none focus:outline-none focus:ring-2 focus:ring-blue-300 focus:opacity-100"
+          >
+            <GripVertical className="w-4 h-4" />
+          </button>
+        ) : (
+          <span className="w-5 shrink-0" />
+        )}
         {collapsed ? <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
         <input
           type="checkbox"
@@ -2207,11 +2945,22 @@ function ProjectRootGroup({
           }}
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => onToggleMany(tasks.map((t: any) => t.id), e.target.checked)}
-          title={`Select all ${tasks.length} root tasks`}
+          title={`Select all ${tasks.length} tasks in ${label}`}
         />
-        <span className="rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide bg-violet-100 text-violet-700 shrink-0">root</span>
-        <span className="text-[15px] font-semibold text-slate-900">Project Root</span>
-        <span className="text-[11px] text-slate-400">(no zone)</span>
+        <span
+          className="rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide shrink-0"
+          style={{ backgroundColor: `${color}25`, color }}
+        >
+          deliverable
+        </span>
+        <div className="min-w-0 flex items-baseline gap-1.5">
+          <span className="text-[15px] font-semibold text-slate-900 truncate" title={label}>{label}</span>
+          {serviceLabel && (
+            <span className="text-[11px] text-slate-400 truncate" title={`Service: ${serviceLabel}`}>
+              · {serviceLabel}
+            </span>
+          )}
+        </div>
         <span className="ml-auto text-[11px] font-medium text-slate-400">
           {tasks.length} tasks · {totalHours}h budget
           <span className={cn('ml-1 font-semibold', totalLoggedHours === 0 ? 'text-slate-400' : totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-blue-500')}>
@@ -2226,6 +2975,7 @@ function ProjectRootGroup({
             <span /><span />
             <span>Code</span>
             <span>Task Name</span>
+            <span>Zone</span>
             <span>Deliverable</span>
             <span>Service</span>
             <span className="text-right">Est. Hours</span>
@@ -2239,7 +2989,7 @@ function ProjectRootGroup({
           </div>
           <SortableTaskList
             tasks={tasks}
-            zoneId={0 /* sentinel — not used by SortableTaskList for ordering since these have zoneId=null */}
+            zoneId={0 /* sentinel — root tasks have zoneId=null, this id only feeds dnd-kit's SortableContext */}
             projectId={projectId}
             members={members}
             selectedTaskIds={selectedTaskIds}
@@ -2250,6 +3000,118 @@ function ProjectRootGroup({
         </>
       )}
     </div>
+  );
+}
+
+// Project-root section: bucket orphan tasks (zoneId=null) by their
+// deliverable (phaseId). Each deliverable becomes its own collapsible
+// group with independent totals. Tasks with no phaseId go to a generic
+// "No Deliverable" bucket so nothing is dropped on the floor.
+function ProjectRootGroup({
+  projectId, tasks, members, onUpdate, onDeleteTask, selectedTaskIds, onToggleTask, onToggleMany,
+}: {
+  projectId: number; tasks: any[]; members: any[];
+  onUpdate: () => void; onDeleteTask: (id: number) => void;
+  selectedTaskIds: Set<number>; onToggleTask: (id: number) => void;
+  onToggleMany: (ids: number[], checked: boolean) => void;
+}) {
+  if (tasks.length === 0) return null;
+
+  // Bucket by Deliverable identity (serviceTypeId) — that's the primary
+  // group key in the user's mental model. Tasks without a serviceTypeId
+  // fall back to phase, then to a generic "No Deliverable" bucket so
+  // nothing is dropped on the floor.
+  type Bucket = {
+    key: string;
+    label: string;          // Deliverable name
+    serviceLabel: string;   // Parent Service (phase) name, shown as sub-label
+    color: string;
+    tasks: any[];
+    isOrphan: boolean;      // true for "No Deliverable" bucket
+    /** Sortable id for DnD. `d-st-N` for ServiceType buckets, `d-ph-N`
+     *  for Phase buckets. The orphan bucket is non-draggable. */
+    dndId?: string;
+    /** Persisted sort order from the backing entity (ServiceType.sortOrder
+     *  or Phase.sortOrder). Drives initial card order — drag-and-drop
+     *  writes back to this column. */
+    sortOrder: number;
+  };
+  const buckets = new Map<string, Bucket>();
+  for (const t of tasks) {
+    const stId: number | null = t.serviceTypeId ?? null;
+    const phId: number | null = t.phaseId ?? null;
+    let key: string;
+    let label: string;
+    let color: string;
+    let isOrphan = false;
+    let dndId: string | undefined;
+    let sortOrder = 0;
+    if (stId != null) {
+      key = `st-${stId}`;
+      label = t.serviceType?.name || `Deliverable #${stId}`;
+      color = t.serviceType?.color || t.phase?.color || '#8B5CF6';
+      dndId = `d-st-${stId}`;
+      sortOrder = Number(t.serviceType?.sortOrder ?? 0);
+    } else if (phId != null) {
+      key = `ph-${phId}`;
+      label = t.phase?.name || `Deliverable #${phId}`;
+      color = t.phase?.color || '#8B5CF6';
+      dndId = `d-ph-${phId}`;
+      sortOrder = Number(t.phase?.sortOrder ?? 0);
+    } else {
+      key = '__none__';
+      label = 'No Deliverable';
+      color = '#94a3b8'; // slate-400
+      isOrphan = true;
+    }
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        key,
+        label,
+        serviceLabel: t.phase?.name || '',
+        color,
+        tasks: [],
+        isOrphan,
+        dndId,
+        sortOrder,
+      });
+    }
+    buckets.get(key)!.tasks.push(t);
+  }
+
+  // Real deliverables first, ordered by their persisted sortOrder
+  // (ascending). Ties break by label alphabetically. "No Deliverable"
+  // is always last.
+  const sorted = Array.from(buckets.values()).sort((a, b) => {
+    if (a.isOrphan !== b.isOrphan) return a.isOrphan ? 1 : -1;
+    if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+    return a.label.localeCompare(b.label);
+  });
+
+  // SortableContext items for DnD — orphan bucket has no dndId so it
+  // sits at the bottom and isn't draggable.
+  const sortableIds = sorted.filter((b) => b.dndId).map((b) => b.dndId!);
+
+  return (
+    <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
+      {sorted.map((b) => (
+        <ProjectRootDeliverableGroup
+          key={b.key}
+          projectId={projectId}
+          label={b.label}
+          serviceLabel={b.serviceLabel}
+          color={b.color}
+          tasks={b.tasks}
+          members={members}
+          onUpdate={onUpdate}
+          onDeleteTask={onDeleteTask}
+          selectedTaskIds={selectedTaskIds}
+          onToggleTask={onToggleTask}
+          onToggleMany={onToggleMany}
+          dndId={b.dndId}
+        />
+      ))}
+    </SortableContext>
   );
 }
 
@@ -2278,7 +3140,29 @@ function PlanningView({ projectId }: { projectId: number }) {
         execute: () => Promise<void>;
       }
   >(null);
+  // Pending task delete — a styled confirm modal replaces the native
+  // browser confirm. Same closure-driven shape as pendingZoneMove:
+  // build the execute() at request time, run it on confirm, drop the
+  // state on cancel. Works for both single-row and bulk deletes.
+  const [pendingTaskDelete, setPendingTaskDelete] = useState<
+    | null
+    | {
+        ids: number[];
+        names: string[]; // up to 5 names for preview, then "+N more"
+        execute: () => Promise<void>;
+      }
+  >(null);
   const [groupBy, setGroupBy] = useState<'zone' | 'service' | 'phase' | 'none'>('zone');
+  // Bulk collapse/expand. `bulkCollapsed` tracks the last toolbar state
+  // so the button label flips between "Collapse all" / "Expand all".
+  // `bulkVersion` is bumped on every click so cards re-sync even when
+  // the desired value is unchanged (see BulkCollapseContext contract).
+  const [bulkCollapsed, setBulkCollapsed] = useState(false);
+  const [bulkVersion, setBulkVersion] = useState(0);
+  const toggleBulkCollapse = () => {
+    setBulkCollapsed((v) => !v);
+    setBulkVersion((v) => v + 1);
+  };
   const [search, setSearch] = useState('');
   const [sortCol, setSortCol] = useState('');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
@@ -2402,6 +3286,48 @@ function PlanningView({ projectId }: { projectId: number }) {
     onError: (err: any) => notify.apiError(err, 'Failed to delete task'),
   });
 
+  // Open the styled confirm modal for one or more task IDs. Builds the
+  // execute() closure here so the modal stays a dumb renderer. Single-
+  // row delete uses [id], bulk delete passes the selection set. Falls
+  // back to a numeric label when the task name isn't in the loaded set.
+  const requestTaskDelete = useCallback(
+    (ids: number[]) => {
+      if (ids.length === 0) return;
+      const idSet = new Set(ids);
+      const names = tasks
+        .filter((t: any) => idSet.has(t.id))
+        .map((t: any) => t.name || `#${t.id}`);
+      setPendingTaskDelete({
+        ids,
+        names,
+        execute: async () => {
+          if (ids.length === 1) {
+            // Single — reuse the mutation so toasts + invalidate fire.
+            deleteTask.mutate(ids[0]);
+            return;
+          }
+          // Bulk — fire all in parallel, summarise the result.
+          const results = await Promise.allSettled(
+            ids.map((id) => tasksApi.delete(id)),
+          );
+          const ok = results.filter((r) => r.status === 'fulfilled').length;
+          const fail = results.length - ok;
+          invalidate();
+          if (ok > 0 && fail === 0) {
+            notify.success(`Deleted ${ok} task${ok !== 1 ? 's' : ''}`, { code: 'TASK-DELETE-200' });
+          } else if (ok > 0 && fail > 0) {
+            notify.warning(`Deleted ${ok}, ${fail} failed`, { code: 'TASK-DELETE-207' });
+          } else {
+            notify.error('Failed to delete tasks', { code: 'TASK-DELETE-500' });
+          }
+          // Clear the selection if the bar was driving the action.
+          clearSelection();
+        },
+      });
+    },
+    [tasks, deleteTask, invalidate],
+  );
+
   const deleteZone = useMutation({
     mutationFn: (id: number) => zonesApi.remove(id),
     onSuccess: () => { invalidate(); notify.success('Zone deleted', { code: 'ZONE-DELETE-200' }); },
@@ -2425,6 +3351,78 @@ function PlanningView({ projectId }: { projectId: number }) {
     setActiveDragId(null);
     const { active, over } = event;
     if (!over || active.id === over.id) return;
+
+    // Deliverable card reorder: ids of the form "d-st-<id>" (ServiceType
+    // bucket) or "d-ph-<id>" (Phase bucket). We compute the new card
+    // order across the currently-rendered list, then PATCH the
+    // appropriate entity's sortOrder on the backend.
+    if (typeof active.id === 'string' && active.id.startsWith('d-')) {
+      if (typeof over.id !== 'string' || !over.id.startsWith('d-')) return;
+
+      // Build the current bucket list — depends on whether we're in
+      // groupBy=zone (ProjectRootGroup buckets) or alt mode (groups).
+      // We rebuild it here from the cached planning data so we don't
+      // depend on the consumer's local state.
+      type CardEntity = { dndId: string; kind: 'st' | 'ph'; entityId: number };
+      const currentCards: CardEntity[] = [];
+      const seen = new Set<string>();
+      // For zone mode the DnD covers the project-root cards (which are
+      // bucketed by ServiceType / Phase). For alt modes, the rendered
+      // groups already carry the dndId.
+      const sourceList: any[] = groupBy === 'zone'
+        ? sorted.filter((t: any) => t.zoneId == null) // root tasks
+        : sorted;
+      for (const t of sourceList) {
+        let dndId: string | undefined;
+        let kind: 'st' | 'ph' | null = null;
+        let entityId: number | null = null;
+        if (groupBy === 'zone' || groupBy === 'service') {
+          if (t.serviceTypeId != null) {
+            dndId = `d-st-${t.serviceTypeId}`;
+            kind = 'st';
+            entityId = t.serviceTypeId;
+          } else if (t.phaseId != null) {
+            dndId = `d-ph-${t.phaseId}`;
+            kind = 'ph';
+            entityId = t.phaseId;
+          }
+        } else if (groupBy === 'phase') {
+          if (t.phaseId != null) {
+            dndId = `d-ph-${t.phaseId}`;
+            kind = 'ph';
+            entityId = t.phaseId;
+          }
+        }
+        if (dndId && !seen.has(dndId) && kind && entityId != null) {
+          seen.add(dndId);
+          currentCards.push({ dndId, kind, entityId });
+        }
+      }
+
+      const fromIdx = currentCards.findIndex((c) => c.dndId === active.id);
+      const toIdx = currentCards.findIndex((c) => c.dndId === over.id);
+      if (fromIdx === -1 || toIdx === -1) return;
+      const reordered = arrayMove(currentCards, fromIdx, toIdx);
+
+      // Persist new sortOrder per affected entity. We only PATCH cards
+      // whose order actually changed (cheap; usually just a few).
+      const writes: Promise<unknown>[] = [];
+      reordered.forEach((c, i) => {
+        const endpoint = c.kind === 'st' ? '/service-types' : '/phases';
+        writes.push(client.patch(`${endpoint}/${c.entityId}`, { sortOrder: i }));
+      });
+      try {
+        await Promise.all(writes);
+        // Refetch planning so card order reflects the new sortOrder.
+        // Also invalidate the catalog caches so any open pickers refresh.
+        invalidate();
+        queryClient.invalidateQueries({ queryKey: ['/service-types'] });
+        queryClient.invalidateQueries({ queryKey: ['/phases'] });
+      } catch (err: any) {
+        notify.apiError(err, 'Failed to reorder deliverables');
+      }
+      return;
+    }
 
     // Zone reorder: ids of the form "z-<id>" come from SortableZone wrappers
     // at any depth. We only reorder within a single sibling list — moving
@@ -2609,25 +3607,86 @@ function PlanningView({ projectId }: { projectId: number }) {
   // Group tasks
   const flatZones = useMemo(() => { const r: any[] = []; function walk(z: any[]) { for (const n of z) { r.push(n); if (n.children) walk(n.children); } } walk(zones); return r; }, [zones]);
 
-  const groups = useMemo(() => {
-    if (groupBy === 'none') return [{ key: 'all', zone: null, tasks: sorted }];
+  // Group tasks by the chosen criterion. For non-zone modes we also
+  // capture a `color`, the backing entity (for DnD reorder writes), and
+  // the entity's persisted sortOrder so the cards render in a stable,
+  // user-controllable order.
+  type Group = {
+    key: string;
+    label: string;
+    serviceLabel: string;
+    color: string;
+    zone: any | null;
+    tasks: any[];
+    /** Sortable id (e.g. "d-st-12" or "d-ph-3"). Undefined for the
+     *  "No X" orphan bucket and for groupBy='zone'/'none' (which don't
+     *  participate in deliverable DnD). */
+    dndId?: string;
+    /** Persisted sortOrder on the backing entity. Drives card order. */
+    sortOrder: number;
+  };
+  const groups: Group[] = useMemo(() => {
+    if (groupBy === 'none') return [{ key: 'all', label: 'All Tasks', serviceLabel: '', color: '#8B5CF6', zone: null, tasks: sorted, sortOrder: 0 }];
     if (groupBy === 'zone') {
-      return flatZones.map((z: any) => ({ key: z.id, zone: z, tasks: sorted.filter((t: any) => t.zoneId === z.id) })).filter((g: any) => g.tasks.length > 0);
+      return flatZones.map((z: any) => ({ key: String(z.id), label: z.name, serviceLabel: '', color: '#8B5CF6', zone: z, tasks: sorted.filter((t: any) => t.zoneId === z.id), sortOrder: Number(z.sortOrder ?? 0) })).filter((g: any) => g.tasks.length > 0);
     }
-    const map = new Map<string, { key: string; zone: null; tasks: any[] }>();
+    const map = new Map<string, Group>();
     for (const t of sorted) {
       let key = '';
+      let label = '';
+      let serviceLabel = '';
+      let color = '#8B5CF6';
+      let dndId: string | undefined;
+      let sortOrder = 0;
       if (groupBy === 'service') {
-        // "service" groupBy = Deliverable grouping (by template name from [SERVICE:] tag)
-        key = t.serviceType?.name || t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || 'No Deliverable';
+        // Deliverable view. ServiceType is primary; Phase fallback for
+        // legacy tasks. We track which kind so DnD can write back to
+        // the right entity.
+        if (t.serviceTypeId != null) {
+          label = t.serviceType?.name || `Deliverable #${t.serviceTypeId}`;
+          color = t.serviceType?.color || t.phase?.color || '#8B5CF6';
+          dndId = `d-st-${t.serviceTypeId}`;
+          sortOrder = Number(t.serviceType?.sortOrder ?? 0);
+          key = `st-${t.serviceTypeId}`;
+        } else if (t.phaseId != null) {
+          label = t.phase?.name || `Deliverable #${t.phaseId}`;
+          color = t.phase?.color || '#8B5CF6';
+          dndId = `d-ph-${t.phaseId}`;
+          sortOrder = Number(t.phase?.sortOrder ?? 0);
+          key = `ph-${t.phaseId}`;
+        } else {
+          label = t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || 'No Deliverable';
+          color = '#94a3b8';
+          key = `none-${label}`;
+        }
+        serviceLabel = t.phase?.name || '';
       } else {
-        // "phase" groupBy = Service grouping (by the phase/service entity)
-        key = t.phase?.name || 'No Service';
+        // "phase" groupBy = Service grouping. Each card is a Phase.
+        if (t.phaseId != null) {
+          label = t.phase?.name || `Service #${t.phaseId}`;
+          color = t.phase?.color || '#8B5CF6';
+          dndId = `d-ph-${t.phaseId}`;
+          sortOrder = Number(t.phase?.sortOrder ?? 0);
+          key = `ph-${t.phaseId}`;
+        } else {
+          label = 'No Service';
+          color = '#94a3b8';
+          key = 'none';
+        }
+        serviceLabel = '';
       }
-      if (!map.has(key)) map.set(key, { key, zone: null, tasks: [] });
+      if (!map.has(key)) map.set(key, { key, label, serviceLabel, color, zone: null, tasks: [], dndId, sortOrder });
       map.get(key)!.tasks.push(t);
     }
-    return Array.from(map.values());
+    // Real labels first by sortOrder (ascending), then alpha; "No X"
+    // buckets always last.
+    return Array.from(map.values()).sort((a, b) => {
+      const aIsNone = a.label.startsWith('No ');
+      const bIsNone = b.label.startsWith('No ');
+      if (aIsNone !== bIsNone) return aIsNone ? 1 : -1;
+      if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+      return a.label.localeCompare(b.label);
+    });
   }, [sorted, groupBy, flatZones]);
 
   const totalHours = sorted.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
@@ -2638,13 +3697,14 @@ function PlanningView({ projectId }: { projectId: number }) {
   if (isLoading) return <div className="flex h-96 items-center justify-center text-[13px] text-slate-400">Loading...</div>;
 
   return (
+    <BulkCollapseContext.Provider value={{ desired: bulkCollapsed, version: bulkVersion }}>
     <div className="space-y-5">
       {/* Template picker / manual zone dialogs */}
       {showTemplatePicker && <TemplatePickerDialog projectId={projectId} onClose={() => setShowTemplatePicker(false)} onApplied={invalidate} />}
       {showManualZone && <AddZoneManuallyDialog projectId={projectId} onClose={() => setShowManualZone(false)} onCreated={invalidate} />}
       {/* Project-root deliverable + task dialogs */}
       {showRootTemplate && <AddRootDeliverableDialog projectId={projectId} onClose={() => setShowRootTemplate(false)} onApplied={invalidate} />}
-      {showRootTask && <AddRootTaskDialog projectId={projectId} onClose={() => setShowRootTask(false)} onCreated={invalidate} />}
+      {showRootTask && <AddRootTaskDialog projectId={projectId} projectTasks={tasks} onClose={() => setShowRootTask(false)} onCreated={invalidate} />}
 
       {/* Cross-zone move confirm — modal blocks the UI until the user
           either approves or cancels. Cancel does nothing (the optimistic
@@ -2683,6 +3743,111 @@ function PlanningView({ projectId }: { projectId: number }) {
               >
                 Move task
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Task delete confirm — replaces the native browser confirm.
+          Used by both single-row and bulk delete. Shows up to 5 task
+          names so the user can sanity-check what they're about to
+          remove; "+N more" suffix for bulk selections beyond that. */}
+      {pendingTaskDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm"
+          onClick={() => setPendingTaskDelete(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-[460px] max-w-[92vw]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-slate-100 flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-red-50 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  {pendingTaskDelete.ids.length === 1
+                    ? 'Delete this task?'
+                    : `Delete ${pendingTaskDelete.ids.length} tasks?`}
+                </h3>
+                <p className="text-[13px] text-slate-500 mt-0.5">
+                  This cannot be undone.
+                </p>
+              </div>
+            </div>
+            <div className="px-5 py-4 text-[13px] text-slate-700 space-y-1.5 max-h-48 overflow-y-auto">
+              {pendingTaskDelete.names.slice(0, 5).map((n, i) => (
+                <div key={i} className="truncate" title={n}>
+                  <span className="text-slate-400">•</span>{' '}
+                  <span className="font-medium text-slate-800">{n}</span>
+                </div>
+              ))}
+              {pendingTaskDelete.ids.length > 5 && (
+                <div className="text-[12px] text-slate-500 pt-1">
+                  +{pendingTaskDelete.ids.length - 5} more
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
+              <button
+                onClick={() => setPendingTaskDelete(null)}
+                className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  const m = pendingTaskDelete;
+                  setPendingTaskDelete(null);
+                  await m.execute();
+                }}
+                className="bg-red-600 hover:bg-red-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg"
+              >
+                {pendingTaskDelete.ids.length === 1
+                  ? 'Delete task'
+                  : `Delete ${pendingTaskDelete.ids.length} tasks`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Project-level totals strip — sticky-ish summary at the top of the
+          planning view. Same numbers that already appear inline near the
+          task table, surfaced prominently so PMs see project-wide totals
+          without scrolling. Updates live as filters/edits change. */}
+      {!showTemplatePicker && !showManualZone && sorted.length > 0 && (
+        <div className="rounded-[14px] border border-slate-200 bg-gradient-to-br from-blue-50/40 to-white px-5 py-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-[12px]">
+          <div>
+            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Tasks</div>
+            <div className="text-[18px] font-bold text-slate-900 tabular-nums">{sorted.length}</div>
+          </div>
+          <span className="h-8 w-px bg-slate-200" />
+          <div>
+            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Budget hours</div>
+            <div className="text-[18px] font-bold text-slate-900 tabular-nums">{totalHours}h</div>
+          </div>
+          <span className="h-8 w-px bg-slate-200" />
+          <div>
+            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Logged hours</div>
+            <div className={cn(
+              'text-[18px] font-bold tabular-nums',
+              totalLoggedHours === 0 ? 'text-slate-400'
+                : totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-600'
+                : 'text-blue-600',
+            )}>{totalLoggedHours}h</div>
+          </div>
+          <span className="h-8 w-px bg-slate-200" />
+          <div>
+            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Budget amount</div>
+            <div className="text-[18px] font-bold text-slate-900 tabular-nums">₪{totalAmount.toLocaleString()}</div>
+          </div>
+          <span className="h-8 w-px bg-slate-200" />
+          <div>
+            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Progress</div>
+            <div className="text-[18px] font-bold text-slate-900 tabular-nums">
+              {totalHours > 0 ? `${Math.min(100, Math.round((totalLoggedHours / totalHours) * 100))}%` : '—'}
             </div>
           </div>
         </div>
@@ -2743,6 +3908,18 @@ function PlanningView({ projectId }: { projectId: number }) {
                 <option value="none">No Grouping</option>
               </select>
             </div>
+            {/* One-click collapse/expand for every card on the page —
+                zones, hierarchical zones, project-root deliverables. */}
+            <button
+              type="button"
+              onClick={toggleBulkCollapse}
+              title={bulkCollapsed ? 'Expand all groups' : 'Collapse all groups'}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-[12px] font-semibold text-slate-600 hover:bg-slate-50 hover:border-slate-300"
+            >
+              {bulkCollapsed
+                ? <><ChevronsUpDown className="w-3.5 h-3.5" /> Expand all</>
+                : <><ChevronsDownUp className="w-3.5 h-3.5" /> Collapse all</>}
+            </button>
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
               <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter tasks..." className="w-48 pl-8 px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none" />
@@ -2854,7 +4031,14 @@ function PlanningView({ projectId }: { projectId: number }) {
                   tasks={sorted.filter((t: any) => t.zoneId == null)}
                   members={members}
                   onUpdate={invalidate}
-                  onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
+                  onDeleteTask={(id: number) => requestTaskDelete(
+  // If the trashed row is part of a multi-selection, treat the
+  // click as a bulk delete (same spreadsheet pattern used for
+  // other inline edits). Otherwise it's just this row.
+  selectedTaskIds.has(id) && selectedTaskIds.size > 1
+    ? Array.from(selectedTaskIds)
+    : [id],
+)}
                   selectedTaskIds={selectedTaskIds}
                   onToggleTask={toggleTask}
                   onToggleMany={toggleManyTasks}
@@ -2865,7 +4049,14 @@ function PlanningView({ projectId }: { projectId: number }) {
                 >
                   {zones.map((z: any) => (
                     <SortableZone key={z.id} zone={z} allTasks={sorted} members={members} projectId={projectId} depth={0}
-                      onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
+                      onUpdate={invalidate} onDeleteTask={(id: number) => requestTaskDelete(
+  // If the trashed row is part of a multi-selection, treat the
+  // click as a bulk delete (same spreadsheet pattern used for
+  // other inline edits). Otherwise it's just this row.
+  selectedTaskIds.has(id) && selectedTaskIds.size > 1
+    ? Array.from(selectedTaskIds)
+    : [id],
+)}
                       onDeleteZone={(id: number) => deleteZone.mutate(id)} onDuplicateZone={(id: number, name: string) => duplicateZone.mutate({ id, name })}
                       thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
                       selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
@@ -2873,21 +4064,68 @@ function PlanningView({ projectId }: { projectId: number }) {
                 </SortableContext>
               </>
             ) : (
-              groups.map((g: any) => (
-                <ZoneGroup key={g.key} zone={{ id: 0, name: g.key, zoneType: groupBy }} tasks={g.tasks} members={members} projectId={projectId}
-                  onUpdate={invalidate} onDeleteTask={(id: number) => { if (confirm('Delete this task?')) deleteTask.mutate(id); }}
-                  onDeleteZone={() => {}} thClass={thClass} handleSort={handleSort} sortIcon={sortIcon}
-                  selectedTaskIds={selectedTaskIds} onToggleTask={toggleTask} onToggleMany={toggleManyTasks} />
-              ))
+              // Non-zone groupings (Deliverable / Service / None) — render
+              // each group with the same deliverable-card visual language
+              // used for the project root, so the design stays consistent
+              // when the user flips the groupBy dropdown. Each card gets
+              // its entity's accent colour and is draggable via the grip
+              // handle on hover; drag-and-drop reorder writes back to
+              // ServiceType.sortOrder or Phase.sortOrder.
+              <SortableContext
+                items={groups.filter((g: any) => g.dndId).map((g: any) => g.dndId)}
+                strategy={verticalListSortingStrategy}
+              >
+                {groups.map((g: any) => (
+                  <ProjectRootDeliverableGroup
+                    key={g.key}
+                    projectId={projectId}
+                    label={g.label}
+                    serviceLabel={g.serviceLabel}
+                    color={g.color}
+                    tasks={g.tasks}
+                    members={members}
+                    onUpdate={invalidate}
+                    onDeleteTask={(id: number) => requestTaskDelete(
+  // If the trashed row is part of a multi-selection, treat the
+  // click as a bulk delete (same spreadsheet pattern used for
+  // other inline edits). Otherwise it's just this row.
+  selectedTaskIds.has(id) && selectedTaskIds.size > 1
+    ? Array.from(selectedTaskIds)
+    : [id],
+)}
+                    selectedTaskIds={selectedTaskIds}
+                    onToggleTask={toggleTask}
+                    onToggleMany={toggleManyTasks}
+                    dndId={g.dndId}
+                  />
+                ))}
+              </SortableContext>
             )}
             {activeDragId != null && (
               <DragOverlay>
                 <div className="flex items-center gap-3 py-2 px-4 bg-white border border-blue-300 shadow-xl rounded-lg text-[13px] opacity-90">
                   <GripVertical className="w-3.5 h-3.5 text-blue-500" />
                   <span className="font-medium text-slate-900">
-                    {typeof activeDragId === 'string' && activeDragId.startsWith('z-')
-                      ? (zones.find((z: any) => z.id === Number((activeDragId as string).slice(2)))?.name || 'Zone')
-                      : (tasks.find((t: any) => t.id === activeDragId)?.name || 'Task')}
+                    {(() => {
+                      // Identify the dragged item to render a useful preview.
+                      // Order matters: deliverable strings start with "d-",
+                      // zones with "z-", tasks are numeric.
+                      const aid = activeDragId as any;
+                      if (typeof aid === 'string' && aid.startsWith('d-st-')) {
+                        const id = Number(aid.slice(5));
+                        const t = tasks.find((x: any) => x.serviceTypeId === id);
+                        return t?.serviceType?.name || 'Deliverable';
+                      }
+                      if (typeof aid === 'string' && aid.startsWith('d-ph-')) {
+                        const id = Number(aid.slice(5));
+                        const t = tasks.find((x: any) => x.phaseId === id);
+                        return t?.phase?.name || 'Deliverable';
+                      }
+                      if (typeof aid === 'string' && aid.startsWith('z-')) {
+                        return zones.find((z: any) => z.id === Number(aid.slice(2)))?.name || 'Zone';
+                      }
+                      return tasks.find((t: any) => t.id === activeDragId)?.name || 'Task';
+                    })()}
                   </span>
                 </div>
               </DragOverlay>
@@ -2926,8 +4164,10 @@ function PlanningView({ projectId }: { projectId: number }) {
         members={members}
         projectId={projectId}
         onClear={clearSelection}
+        onRequestDelete={requestTaskDelete}
       />
     </div>
+    </BulkCollapseContext.Provider>
   );
 }
 
