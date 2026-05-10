@@ -7,6 +7,9 @@ import {
   Bell,
   Tags,
   Users,
+  Hash,
+  DollarSign,
+  GraduationCap,
 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -75,6 +78,30 @@ const adminCards = [
     href: '/admin/notification-settings',
     module: 'admin/notification-settings',
     color: 'bg-amber-100 text-amber-700',
+  },
+  {
+    title: 'Number Ranges',
+    description: 'Auto-generated codes for Persons, Organizations, Employees and more',
+    icon: Hash,
+    href: '/admin/number-ranges',
+    module: 'admin/number-ranges',
+    color: 'bg-slate-100 text-slate-700',
+  },
+  {
+    title: 'Currencies',
+    description: 'ISO-4217 currencies used for cost rates and monetary fields',
+    icon: DollarSign,
+    href: '/admin/currencies',
+    module: 'admin',
+    color: 'bg-green-100 text-green-700',
+  },
+  {
+    title: 'Seniority Levels',
+    description: 'Define the seniority ladder for employees and cost rates',
+    icon: GraduationCap,
+    href: '/admin/seniority-levels',
+    module: 'admin',
+    color: 'bg-indigo-100 text-indigo-700',
   },
 ];
 

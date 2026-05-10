@@ -267,4 +267,102 @@ export class ConfigController {
     await this.prisma.zoneTypeMeta.delete({ where: { id } });
     return { message: 'Zone type metadata deleted' };
   }
+
+  // Currencies — ISO-4217 catalog. Seeded with ILS/USD/EUR; admins can
+  // add or deactivate. Code is the primary key (immutable on update).
+  @Get('currencies')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  async getCurrencies() {
+    return this.prisma.currency.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }],
+    });
+  }
+
+  @Post('currencies')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  async createCurrency(
+    @Body() body: { code: string; name: string; symbol?: string; decimals?: number; sortOrder?: number },
+  ) {
+    return this.prisma.currency.create({
+      data: {
+        code: body.code.toUpperCase(),
+        name: body.name,
+        symbol: body.symbol ?? null,
+        decimals: body.decimals ?? 2,
+        sortOrder: body.sortOrder ?? 0,
+      },
+    });
+  }
+
+  @Patch('currencies/:code')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  async updateCurrency(
+    @Param('code') code: string,
+    @Body() body: { name?: string; symbol?: string | null; decimals?: number; isActive?: boolean; sortOrder?: number },
+  ) {
+    return this.prisma.currency.update({
+      where: { code: code.toUpperCase() },
+      data: {
+        name: body.name,
+        symbol: body.symbol === null ? null : body.symbol,
+        decimals: body.decimals,
+        isActive: body.isActive,
+        sortOrder: body.sortOrder,
+      },
+    });
+  }
+
+  @Delete('currencies/:code')
+  @RequirePermissions({ module: 'admin', action: 'delete' })
+  async deleteCurrency(@Param('code') code: string) {
+    await this.prisma.currency.delete({ where: { code: code.toUpperCase() } });
+    return { message: 'Currency deleted' };
+  }
+
+  // Seniority levels — user-managed ladder (Junior / Mid / Senior / …).
+  // No seed; each org defines its own. Used by EmployeeRole + RoleCostRate.
+  @Get('seniority-levels')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  async getSeniorityLevels() {
+    return this.prisma.seniorityLevel.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  @Post('seniority-levels')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  async createSeniorityLevel(@Body() body: { code: string; name: string; sortOrder?: number }) {
+    const count = await this.prisma.seniorityLevel.count();
+    return this.prisma.seniorityLevel.create({
+      data: {
+        code: body.code.trim(),
+        name: body.name.trim(),
+        sortOrder: body.sortOrder ?? (count + 1) * 10,
+      },
+    });
+  }
+
+  @Patch('seniority-levels/:id')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  async updateSeniorityLevel(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { code?: string; name?: string; sortOrder?: number; isActive?: boolean },
+  ) {
+    return this.prisma.seniorityLevel.update({
+      where: { id },
+      data: {
+        code: body.code?.trim(),
+        name: body.name?.trim(),
+        sortOrder: body.sortOrder,
+        isActive: body.isActive,
+      },
+    });
+  }
+
+  @Delete('seniority-levels/:id')
+  @RequirePermissions({ module: 'admin', action: 'delete' })
+  async deleteSeniorityLevel(@Param('id', ParseIntPipe) id: number) {
+    await this.prisma.seniorityLevel.delete({ where: { id } });
+    return { message: 'Seniority level deleted' };
+  }
 }
