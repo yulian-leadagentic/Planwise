@@ -592,7 +592,7 @@ function useBulkCollapseSync(setCollapsed: (b: boolean) => void) {
 // The Zone column is intentionally shown in every grouping mode — when
 // grouping by Deliverable / Service / None the zone context would
 // otherwise be lost. Tasks at the project root display "Project Root".
-const TASK_GRID = 'grid grid-cols-[16px_16px_80px_1fr_110px_96px_80px_56px_64px_64px_96px_96px_96px_96px_84px] gap-x-2 items-center';
+const TASK_GRID = 'grid grid-cols-[16px_16px_80px_1fr_180px_96px_80px_56px_64px_64px_96px_96px_96px_96px_84px] gap-x-2 items-center';
 
 function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onToggleTask, onUpdate, onDeleteTask }: {
   task: any; idx: number; projectId: number; members: any[];
@@ -620,6 +620,7 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
     // FK refs — empty string means "clear", otherwise expect a numeric id.
     else if (field === 'serviceTypeId') payload.serviceTypeId = value ? Number(value) : null;
     else if (field === 'phaseId') payload.phaseId = value ? Number(value) : null;
+    else if (field === 'deliverableTemplateId') payload.deliverableTemplateId = value ? Number(value) : null;
     else return;
 
     const isBulk = !!(selectedTaskIds && selectedTaskIds.has(task.id) && selectedTaskIds.size > 1);
@@ -701,37 +702,47 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       </span>
       {/* Zone context — kept visible in every grouping mode so the user
           doesn't lose the zone when grouping by Deliverable/Service/None.
-          Tasks at the project root render as italic muted "Project Root";
-          deeply nested tasks show the leaf zone with the full breadcrumb
-          (e.g. "Building > Floor 1 > Unit A") on hover. */}
-      <span className="text-[11px] truncate">
-        {task.zoneId == null ? (
-          <span className="italic text-slate-400">Project Root</span>
-        ) : (
-          <span
-            className="text-slate-600"
-            title={Array.isArray(task.zoneBreadcrumb) && task.zoneBreadcrumb.length > 0
-              ? task.zoneBreadcrumb.join(' › ')
-              : (task.zone?.name ?? '')}
-          >
-            {task.zone?.name || <span className="text-slate-300">-</span>}
+          Renders the FULL breadcrumb (e.g. "Building 1 › Typical floor")
+          rather than just the leaf, because identical leaf names under
+          different parents (e.g. "מרתף" under Building A vs Building B)
+          are otherwise indistinguishable. Hover shows the same breadcrumb
+          for screen-reader / pinned-tooltip use. */}
+      {(() => {
+        if (task.zoneId == null) {
+          return (
+            <span className="text-[11px] truncate">
+              <span className="italic text-slate-400">Project Root</span>
+            </span>
+          );
+        }
+        const crumbs: string[] = Array.isArray(task.zoneBreadcrumb) && task.zoneBreadcrumb.length > 0
+          ? task.zoneBreadcrumb
+          : (task.zone?.name ? [task.zone.name] : []);
+        const fullPath = crumbs.join(' › ');
+        return (
+          <span className="text-[11px] truncate text-slate-600" title={fullPath}>
+            {crumbs.length > 0 ? fullPath : <span className="text-slate-300">-</span>}
           </span>
-        )}
-      </span>
-      {/* Deliverable cell — click to edit. The picker pulls from
-          /templates?type=task_list (the same list shown on
-          /templates/deliverables); the underlying Task FK is still
-          serviceTypeId (find-or-created from the template name on
-          save). Falls back to the [SERVICE:xxx] description marker
-          for legacy tasks that don't have a ServiceType FK yet. */}
+        );
+      })()}
+      {/* Deliverable cell — click to edit. Source of truth is
+          `task.deliverableTemplate` (FK to /templates/deliverables);
+          falls back to the legacy serviceType name + [SERVICE:xxx]
+          marker so tasks created before this column existed still
+          render their old label. Save writes deliverableTemplateId. */}
       <CompactPickerCell
         projectId={projectId}
-        currentId={task.serviceTypeId ?? null}
-        currentLabel={task.serviceType?.name || task.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || null}
+        currentId={task.deliverableTemplateId ?? null}
+        currentLabel={
+          task.deliverableTemplate?.name
+          || task.serviceType?.name
+          || task.description?.match(/^\[SERVICE:(.+)\]$/)?.[1]
+          || null
+        }
         currentColor={task.serviceType?.color}
         kind="deliverable"
         fieldLabel="Deliverable"
-        onSave={(v) => saveField('serviceTypeId', v)}
+        onSave={(v) => saveField('deliverableTemplateId', v)}
       />
       {/* Service cell — click to edit. Phase is the parent Service. */}
       <CompactPickerCell
@@ -1824,55 +1835,28 @@ function CompactPickerCell({
   const fullList: any[] = (Array.isArray(all) ? all : [])
     .filter((x: any) => kind !== 'deliverable' || x.code !== '__TASK_CATALOG__');
 
-  // Project-scoping: for the Service picker we narrow to phases used by
-  // tasks in this project. For Deliverable we show the full template
-  // catalog — the user explicitly asked for this list to match the
-  // /templates/deliverables page (which doesn't filter by project).
-  const planningCache: any = queryClient.getQueryData(['planning', projectId]);
-  const projectTasks: any[] = planningCache?.tasks ?? planningCache?.data?.tasks ?? [];
-  let list: any[];
-  if (kind === 'deliverable') {
-    list = fullList;
-  } else {
-    const usedIds = new Set<number>();
-    for (const t of projectTasks) {
-      const id: number | undefined = t.phase?.id ?? t.phaseId;
-      if (typeof id === 'number') usedIds.add(id);
-    }
-    if (typeof currentId === 'number') usedIds.add(currentId);
-    const scoped = fullList.filter((x: any) => usedIds.has(x.id));
-    list = scoped.length > 0 ? scoped : fullList;
-  }
+  // Show the full catalog for both pickers. Earlier project-scoping for
+  // Service hid most options when the project only had tasks against a
+  // few phases — the user couldn't pick anything else without first
+  // creating it. Deliverable already shows the full template catalog
+  // (matches /templates/deliverables exactly); Service now matches the
+  // full /templates/services page the same way.
+  const list = fullList;
 
   // For the Deliverable mode the cell stores serviceTypeId on the Task.
-  // The dropdown <option value> is the Template id, so we need a way to
-  // pre-select the option matching the task's current ServiceType. We
-  // do that by name (Template.name == ServiceType.name when the ST was
-  // find-or-created from the template).
+  // The dropdown <option value> is the Template id (in deliverable
+  // mode) or the Phase id (in phase mode) — `currentId` is now the
+  // matching FK directly, so pre-selection is a simple identity check.
+  // The legacy "match by name" fallback handles tasks that still carry
+  // a ServiceType label but no deliverableTemplateId yet (pre-migration
+  // data).
   const selectedTemplateValue = (() => {
     if (kind !== 'deliverable') return currentId ?? '';
+    if (typeof currentId === 'number' && currentId > 0) return String(currentId);
     if (!currentLabel) return '';
     const match = fullList.find((t: any) => t.name === currentLabel);
     return match ? String(match.id) : '';
   })();
-
-  // Resolve a Template (by id) to a ServiceType id, creating the ST if
-  // necessary. Used by the Deliverable mode's save handler.
-  const resolveServiceTypeIdForTemplate = async (template: any): Promise<number | null> => {
-    const stListResp = await client.get('/service-types');
-    const stList: any[] = stListResp.data?.data ?? stListResp.data ?? [];
-    const existing = (Array.isArray(stList) ? stList : []).find(
-      (s: any) => s.name === template.name,
-    );
-    if (existing) return existing.id;
-    const createResp = await client.post('/service-types', {
-      name: template.name,
-      color: template.phase?.color ?? null,
-    });
-    const created = createResp.data?.data ?? createResp.data;
-    queryClient.invalidateQueries({ queryKey: ['/service-types'] });
-    return created?.id ?? null;
-  };
 
   const handleChange = async (raw: string) => {
     if (raw === '__new__') {
@@ -1883,7 +1867,9 @@ function CompactPickerCell({
         if (kind === 'deliverable') {
           // Create the deliverable as a Template (type=task_list) so it
           // shows up on /templates/deliverables alongside the others,
-          // then find-or-create a matching ServiceType for the FK.
+          // then save its id directly as the Task's deliverableTemplateId.
+          // No more ServiceType find-or-create — Template is the source
+          // of truth for Deliverable identity.
           const tplResp = await client.post('/templates', {
             name: name.trim(),
             type: 'task_list',
@@ -1891,8 +1877,7 @@ function CompactPickerCell({
           });
           const tpl = tplResp.data?.data ?? tplResp.data;
           queryClient.invalidateQueries({ queryKey: [sourceUrl] });
-          const stId = await resolveServiceTypeIdForTemplate(tpl);
-          if (stId != null) await onSave(String(stId));
+          if (tpl?.id) await onSave(String(tpl.id));
         } else {
           // Phase — single POST.
           const resp = await client.post('/phases', { name: name.trim() });
@@ -1911,15 +1896,10 @@ function CompactPickerCell({
 
     setBusy(true);
     try {
-      if (kind === 'deliverable' && raw) {
-        // raw is a Template id — resolve to a ServiceType id then save.
-        const tpl = fullList.find((t: any) => String(t.id) === raw);
-        if (!tpl) { setEditing(false); return; }
-        const stId = await resolveServiceTypeIdForTemplate(tpl);
-        await onSave(stId != null ? String(stId) : '');
-      } else {
-        await onSave(raw);
-      }
+      // For deliverable mode `raw` is now the Template id, saved
+      // directly to Task.deliverableTemplateId. For phase mode it's
+      // the Phase id. Both are simple pass-throughs.
+      await onSave(raw);
     } catch (err: any) {
       notify.apiError(err, `Failed to set ${fieldLabel.toLowerCase()}`);
     } finally {
@@ -2261,33 +2241,12 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
         return;
       }
 
-      // Find-or-create a ServiceType (= Deliverable identity) matching
-      // the template name, so every materialized task carries the
-      // deliverable label even when the source TemplateTask had no
-      // serviceTypeId of its own. This is what makes "Add Deliverable
-      // X" group together as "X" in the Deliverable view.
-      let deliverableServiceTypeId: number | null = null;
-      try {
-        const stListResp = await client.get('/service-types');
-        const stList: any[] = stListResp.data?.data ?? stListResp.data ?? [];
-        const existing = (Array.isArray(stList) ? stList : []).find(
-          (s: any) => s.name === template.name,
-        );
-        if (existing) {
-          deliverableServiceTypeId = existing.id;
-        } else {
-          const createResp = await client.post('/service-types', {
-            name: template.name,
-            color: template.phase?.color ?? null,
-          });
-          const created = createResp.data?.data ?? createResp.data;
-          deliverableServiceTypeId = created?.id ?? null;
-        }
-      } catch {
-        // Non-fatal — tasks still get phaseId, just won't have a
-        // dedicated Deliverable identity.
-      }
-
+      // Tag every materialized task with the source Template id so the
+      // planning grid groups them under the Template's name (matches
+      // /templates/deliverables exactly). The old find-or-create-
+      // ServiceType workaround is gone — we still send `serviceTypeId`
+      // when the TemplateTask had its own, but it's no longer the
+      // Deliverable identity.
       const results = await Promise.allSettled(
         tasks.map((t: any) => tasksApi.create({
           projectId,
@@ -2296,15 +2255,14 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
           description: t.description,
           budgetHours: t.defaultBudgetHours ? Number(t.defaultBudgetHours) : undefined,
           budgetAmount: t.defaultBudgetAmount ? Number(t.defaultBudgetAmount) : undefined,
-          // Deliverable: prefer the template-task's explicit serviceType
-          // if it was set, otherwise tag with the template-level
-          // ServiceType we just resolved. Either way every task ends up
-          // with a deliverable label, satisfying the user's "every
-          // Deliverable belongs to a Service" model.
-          serviceTypeId: t.serviceTypeId ?? deliverableServiceTypeId ?? undefined,
-          // Service: the template's parent phase (= Service the
-          // deliverable belongs to). Falls back to the template-task's
-          // own phase if the template itself isn't linked.
+          // Direct FK to the source Deliverable (Template).
+          deliverableTemplateId: template.id,
+          // Pass through the per-task service type if the template
+          // had one — purely informational, not the Deliverable
+          // identity any more.
+          serviceTypeId: t.serviceTypeId ?? undefined,
+          // Service the Deliverable belongs to. Falls back to the
+          // template-task's own phase if the template isn't linked.
           phaseId: template.phaseId ?? t.phaseId ?? undefined,
         } as any)),
       );
@@ -3017,27 +2975,29 @@ function ProjectRootGroup({
 }) {
   if (tasks.length === 0) return null;
 
-  // Bucket by Deliverable identity (serviceTypeId) — that's the primary
-  // group key in the user's mental model. Tasks without a serviceTypeId
-  // fall back to phase, then to a generic "No Deliverable" bucket so
-  // nothing is dropped on the floor.
+  // Bucket by Deliverable identity. Priority order:
+  //   1. deliverableTemplateId — the source Template (matches
+  //      /templates/deliverables exactly). New tasks all get this.
+  //   2. serviceTypeId — legacy fallback for tasks created before
+  //      the deliverable_template_id column existed.
+  //   3. phaseId — last-resort fallback so nothing falls into the
+  //      orphan bucket just because it's missing a deliverable label.
+  //   4. __none__ — orphan bucket, sorted to the bottom.
+  // Template buckets aren't draggable yet (Template has no sortOrder
+  // column). Legacy ServiceType/Phase buckets keep their existing DnD.
   type Bucket = {
     key: string;
     label: string;          // Deliverable name
     serviceLabel: string;   // Parent Service (phase) name, shown as sub-label
     color: string;
     tasks: any[];
-    isOrphan: boolean;      // true for "No Deliverable" bucket
-    /** Sortable id for DnD. `d-st-N` for ServiceType buckets, `d-ph-N`
-     *  for Phase buckets. The orphan bucket is non-draggable. */
-    dndId?: string;
-    /** Persisted sort order from the backing entity (ServiceType.sortOrder
-     *  or Phase.sortOrder). Drives initial card order — drag-and-drop
-     *  writes back to this column. */
+    isOrphan: boolean;
+    dndId?: string;         // Only set when the bucket has a sortOrder entity
     sortOrder: number;
   };
   const buckets = new Map<string, Bucket>();
   for (const t of tasks) {
+    const tplId: number | null = t.deliverableTemplateId ?? null;
     const stId: number | null = t.serviceTypeId ?? null;
     const phId: number | null = t.phaseId ?? null;
     let key: string;
@@ -3046,24 +3006,36 @@ function ProjectRootGroup({
     let isOrphan = false;
     let dndId: string | undefined;
     let sortOrder = 0;
-    if (stId != null) {
+    // Same priority as the alt-grouping memo: Template → ServiceType
+    // → description marker → orphan. Phase is intentionally NOT a
+    // fallback — Phase is a Service, not a Deliverable, and using it
+    // here would conflate the two grouping modes.
+    const markerName: string | null = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1] ?? null;
+    if (tplId != null) {
+      key = `tpl-${tplId}`;
+      label = t.deliverableTemplate?.name || `Deliverable #${tplId}`;
+      color = t.phase?.color || '#8B5CF6';
+      // No dndId — Template has no sortOrder yet.
+    } else if (stId != null) {
       key = `st-${stId}`;
       label = t.serviceType?.name || `Deliverable #${stId}`;
       color = t.serviceType?.color || t.phase?.color || '#8B5CF6';
       dndId = `d-st-${stId}`;
       sortOrder = Number(t.serviceType?.sortOrder ?? 0);
-    } else if (phId != null) {
-      key = `ph-${phId}`;
-      label = t.phase?.name || `Deliverable #${phId}`;
+    } else if (markerName) {
+      key = `marker-${markerName}`;
+      label = markerName;
       color = t.phase?.color || '#8B5CF6';
-      dndId = `d-ph-${phId}`;
-      sortOrder = Number(t.phase?.sortOrder ?? 0);
+      // No dndId — markers aren't backed by an entity with sortOrder.
     } else {
       key = '__none__';
       label = 'No Deliverable';
       color = '#94a3b8'; // slate-400
       isOrphan = true;
     }
+    // We never used phId here even before — kept the variable for
+    // documentation; suppress the unused-var lint.
+    void phId;
     if (!buckets.has(key)) {
       buckets.set(key, {
         key,
@@ -3639,26 +3611,37 @@ function PlanningView({ projectId }: { projectId: number }) {
       let dndId: string | undefined;
       let sortOrder = 0;
       if (groupBy === 'service') {
-        // Deliverable view. ServiceType is primary; Phase fallback for
-        // legacy tasks. We track which kind so DnD can write back to
-        // the right entity.
-        if (t.serviceTypeId != null) {
+        // Deliverable view. Priority order (Phase is intentionally NOT
+        // in the chain — a Phase is a Service, not a Deliverable;
+        // letting it fall through made Deliverable grouping look
+        // identical to Service grouping):
+        //   1. deliverableTemplateId  → Template (source of truth)
+        //   2. serviceTypeId          → legacy ServiceType FK
+        //   3. [SERVICE:xxx] marker   → legacy zone-template description
+        //   4. "No Deliverable"       → orphan bucket
+        const marker = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1];
+        if (t.deliverableTemplateId != null) {
+          label = t.deliverableTemplate?.name || `Deliverable #${t.deliverableTemplateId}`;
+          color = t.phase?.color || '#8B5CF6';
+          // No dndId — no sortOrder on Template. Cards stay alpha-sorted.
+          key = `tpl-${t.deliverableTemplateId}`;
+        } else if (t.serviceTypeId != null) {
           label = t.serviceType?.name || `Deliverable #${t.serviceTypeId}`;
           color = t.serviceType?.color || t.phase?.color || '#8B5CF6';
           dndId = `d-st-${t.serviceTypeId}`;
           sortOrder = Number(t.serviceType?.sortOrder ?? 0);
           key = `st-${t.serviceTypeId}`;
-        } else if (t.phaseId != null) {
-          label = t.phase?.name || `Deliverable #${t.phaseId}`;
+        } else if (marker) {
+          label = marker;
           color = t.phase?.color || '#8B5CF6';
-          dndId = `d-ph-${t.phaseId}`;
-          sortOrder = Number(t.phase?.sortOrder ?? 0);
-          key = `ph-${t.phaseId}`;
+          key = `marker-${marker}`;
         } else {
-          label = t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || 'No Deliverable';
+          label = 'No Deliverable';
           color = '#94a3b8';
-          key = `none-${label}`;
+          key = 'none-no-deliverable';
         }
+        // Parent Service (Phase) shown as a sub-label on the card so
+        // the user still sees which Service the deliverable belongs to.
         serviceLabel = t.phase?.name || '';
       } else {
         // "phase" groupBy = Service grouping. Each card is a Phase.
