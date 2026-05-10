@@ -1452,3 +1452,63 @@ model BusinessPartnerRelationship {
   @@index([relationshipTypeId])
   @@map("business_partner_relationships")
 }
+
+// ─── Numbering & Foundation Catalogs ────────────────────────────────────────
+//
+// SAP NRIV-style number range. Each numbered object (Person, Organization,
+// Employee, Project, …) draws its business code from a NumberRange row.
+// NumberRangeService.next(objectCode) atomically increments currentNumber
+// inside a row-locked transaction and returns a formatted string built from
+// prefix + zero-padded number (padWidth). One range per (objectCode,
+// rangeName); multiple named ranges per object are allowed (e.g. 'default'
+// and 'external') so admins can carve out segments without code changes.
+
+model NumberRange {
+  id            Int      @id @default(autoincrement())
+  objectCode    String   @map("object_code") @db.VarChar(50)
+  rangeName     String   @default("default") @map("range_name") @db.VarChar(50)
+  prefix        String   @default("") @db.VarChar(20)
+  padWidth      Int      @default(8) @map("pad_width")
+  fromNumber    BigInt   @default(1) @map("from_number")
+  toNumber      BigInt   @default(99999999) @map("to_number")
+  currentNumber BigInt   @default(0) @map("current_number")
+  isActive      Boolean  @default(true) @map("is_active")
+  description   String?  @db.VarChar(255)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt      @map("updated_at")
+
+  @@unique([objectCode, rangeName])
+  @@map("number_ranges")
+}
+
+// ISO-4217 currency catalog. Used for cost rates and any monetary value.
+// Multiple currencies can coexist; cross-currency conversion (exchange
+// rates) is a future enhancement — for now reports show per-currency
+// subtotals.
+model Currency {
+  code      String   @id @db.VarChar(3) // 'ILS', 'USD', 'EUR'
+  name      String   @db.VarChar(100)
+  symbol    String?  @db.VarChar(10)
+  decimals  Int      @default(2)
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt      @map("updated_at")
+
+  @@map("currencies")
+}
+
+// User-managed seniority ladder (Junior / Mid / Senior / Principal / …).
+// Empty by default — each org defines their own. Used by EmployeeRole and
+// the RoleCostRate matrix (added in M5).
+model SeniorityLevel {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique @db.VarChar(50)
+  name      String   @db.VarChar(100)
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt      @map("updated_at")
+
+  @@map("seniority_levels")
+}

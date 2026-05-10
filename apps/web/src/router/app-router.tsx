@@ -47,6 +47,9 @@ const MessagingDashboardPage = lazy(() => import('@/features/messaging/messaging
 const MessageSearchPage = lazy(() => import('@/features/messaging/message-search-page').then(m => ({ default: m.MessageSearchPage })));
 const NotificationSettingsPage = lazy(() => import('@/features/admin/notification-settings-page').then(m => ({ default: m.NotificationSettingsPage })));
 const ProjectTypesPage = lazy(() => import('@/features/admin/project-types-page').then(m => ({ default: m.ProjectTypesPage })));
+const NumberRangesPage = lazy(() => import('@/features/admin/number-ranges-page').then(m => ({ default: m.NumberRangesPage })));
+const CurrenciesPage = lazy(() => import('@/features/admin/currencies-page').then(m => ({ default: m.CurrenciesPage })));
+const SeniorityLevelsPage = lazy(() => import('@/features/admin/seniority-levels-page').then(m => ({ default: m.SeniorityLevelsPage })));
 const ActivityLogPage = lazy(() => import('@/features/admin/activity-log-page').then(m => ({ default: m.ActivityLogPage })));
 const WorkSchedulesPage = lazy(() => import('@/features/admin/work-schedules-page').then(m => ({ default: m.WorkSchedulesPage })));
 const CalendarDaysPage = lazy(() => import('@/features/admin/calendar-page').then(m => ({ default: m.CalendarDaysPage })));
@@ -145,6 +148,9 @@ export function AppRouter() {
         <Route path="admin/notification-settings" element={<L><NotificationSettingsPage /></L>} />
         <Route path="admin/clock-dashboard" element={<L><ClockDashboardPage /></L>} />
         <Route path="admin/partner-types" element={<L><PartnerTypesPage /></L>} />
+        <Route path="admin/number-ranges" element={<L><NumberRangesPage /></L>} />
+        <Route path="admin/currencies" element={<L><CurrenciesPage /></L>} />
+        <Route path="admin/seniority-levels" element={<L><SeniorityLevelsPage /></L>} />
       </Route>
 
       {/* Catch-all */}

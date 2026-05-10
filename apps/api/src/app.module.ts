@@ -33,6 +33,7 @@ import { ExecutionPlanningModule } from './modules/execution-planning/execution-
 import { ExecutionBoardModule } from './modules/execution-board/execution-board.module';
 import { HealthModule } from './modules/health/health.module';
 import { PresenceModule } from './modules/presence/presence.module';
+import { NumberRangesModule } from './modules/number-ranges/number-ranges.module';
 
 @Module({
   imports: [
@@ -101,6 +102,7 @@ import { PresenceModule } from './modules/presence/presence.module';
     ExecutionBoardModule,
     HealthModule,
     PresenceModule,
+    NumberRangesModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
