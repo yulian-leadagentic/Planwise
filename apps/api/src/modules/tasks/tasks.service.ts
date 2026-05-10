@@ -56,6 +56,9 @@ export class TasksService {
         zoneId: dto.zoneId ?? null,
         projectId,
         serviceTypeId: dto.serviceTypeId,
+        // Source Deliverable (Template). Optional — null is fine for
+        // ad-hoc tasks not tied to a template.
+        deliverableTemplateId: dto.deliverableTemplateId ?? null,
         code: dto.code,
         name: dto.name,
         description: dto.description,
@@ -71,6 +74,7 @@ export class TasksService {
         zone: true,
         serviceType: true,
         phase: true,
+        deliverableTemplate: { select: { id: true, name: true } },
         assignees: {
           include: {
             user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
@@ -114,6 +118,7 @@ export class TasksService {
           zone: { select: { id: true, name: true } },
           serviceType: { select: { id: true, name: true, code: true, color: true } },
           phase: { select: { id: true, name: true } },
+          deliverableTemplate: { select: { id: true, name: true } },
           assignees: {
             include: {
               user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
@@ -150,6 +155,7 @@ export class TasksService {
         project: { select: { id: true, name: true, number: true } },
         serviceType: { select: { id: true, name: true, code: true, color: true } },
         phase: { select: { id: true, name: true, color: true } },
+        deliverableTemplate: { select: { id: true, name: true } },
         assignees: {
           where: { deletedAt: null },
           include: {
@@ -248,6 +254,7 @@ export class TasksService {
         project: true,
         serviceType: true,
         phase: true,
+        deliverableTemplate: { select: { id: true, name: true } },
         creator: { select: { id: true, firstName: true, lastName: true } },
         assignees: {
           where: { deletedAt: null },
@@ -315,6 +322,7 @@ export class TasksService {
         zone: true,
         serviceType: true,
         phase: true,
+        deliverableTemplate: { select: { id: true, name: true } },
         assignees: {
           include: {
             user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },

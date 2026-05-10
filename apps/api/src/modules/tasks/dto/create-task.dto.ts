@@ -53,6 +53,14 @@ export class CreateTaskDto {
   @IsInt()
   phaseId?: number;
 
+  /** Source Deliverable (Template with type=task_list). Set when the
+   *  task was materialized from a deliverable template, OR explicitly
+   *  picked via the inline Deliverable cell on the planning grid. */
+  @ApiPropertyOptional({ description: 'Source Template (deliverable) id.' })
+  @IsOptional()
+  @IsInt()
+  deliverableTemplateId?: number | null;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

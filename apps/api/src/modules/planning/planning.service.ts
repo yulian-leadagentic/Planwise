@@ -47,6 +47,11 @@ export class PlanningService {
         zone: { select: { id: true, name: true, zoneType: true } },
         serviceType: true,
         phase: true,
+        // Source Deliverable (Template) — drives the planning grid's
+        // "Group by Deliverable" labels so they match
+        // /templates/deliverables exactly. Only id+name needed for
+        // display; full template data is fetched on demand.
+        deliverableTemplate: { select: { id: true, name: true } },
         dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true } } } },
         assignees: {
           where: { deletedAt: null },
@@ -79,11 +84,36 @@ export class PlanningService {
       if (row.taskId) loggedByTask.set(row.taskId, row._sum.minutes ?? 0);
     }
 
-    // Attach loggedMinutes to each task
-    const tasksWithLogged = tasks.map((t) => ({
-      ...t,
-      loggedMinutes: loggedByTask.get(t.id) ?? 0,
-    }));
+    // Build a flat zoneId → name lookup from the zone tree. Used to
+    // resolve each task's full zone breadcrumb so the planning grid
+    // can show "Building 1 › Typical floor" instead of just the leaf
+    // — critical for disambiguating identically-named sub-zones
+    // across different parents (e.g. "מרתף" under building A vs B).
+    const zoneNameById = new Map<number, string>();
+    for (const z of flatZones) zoneNameById.set(z.id, z.name);
+
+    // Attach loggedMinutes + zoneBreadcrumb to each task. Breadcrumb
+    // walks the zone.path (a slash-separated list of zone ids from
+    // root → leaf). Falls back to an empty array for tasks at the
+    // project root (zone is null).
+    const tasksWithLogged = tasks.map((t) => {
+      const zonePath: string = (t as any).zone
+        ? (flatZones.find((z) => z.id === t.zoneId)?.path ?? '')
+        : '';
+      const zoneBreadcrumb = zonePath
+        ? zonePath
+            .split('/')
+            .map((s) => Number(s))
+            .filter((n) => Number.isFinite(n))
+            .map((id) => zoneNameById.get(id))
+            .filter((n): n is string => !!n)
+        : [];
+      return {
+        ...t,
+        loggedMinutes: loggedByTask.get(t.id) ?? 0,
+        zoneBreadcrumb,
+      };
+    });
 
     // Budget summary
     const totalHours = tasks.reduce((s, t) => s + Number(t.budgetHours || 0), 0);

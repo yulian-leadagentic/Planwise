@@ -272,6 +272,12 @@ export class ZonesService {
       // Use the service template's phaseId for all tasks (falls back to per-task phaseId)
       const templatePhaseId = template.phaseId;
       const catalog = await this.loadCatalogMap(tx);
+      // deliverableTemplateId is only meaningful when the source is a
+      // task_list template (a real Deliverable). Zone templates aren't
+      // deliverables — they describe spatial structure — so we leave
+      // the FK NULL in that case so the planning grid falls through to
+      // the description marker / serviceType for display.
+      const deliverableId = template.type === 'task_list' ? template.id : null;
 
       const createdTasks: any[] = [];
       for (const tt of template.templateTasks) {
@@ -288,6 +294,11 @@ export class ZonesService {
             zoneId,
             projectId: zone.projectId,
             serviceTypeId: tt.serviceTypeId,
+            // Track the source Deliverable directly so the planning grid
+            // can group by Template.name (matches /templates/deliverables).
+            // Gated on `template.type === 'task_list'` — zone templates
+            // are spatial scaffolding, not deliverables.
+            deliverableTemplateId: deliverableId,
             code: tt.code,
             name: tt.name,
             description: tt.description,
@@ -367,6 +378,9 @@ export class ZonesService {
             data: {
               zoneId: newZone.id, projectId: sourceZone.projectId,
               serviceTypeId: task.serviceTypeId, code: task.code, name: task.name,
+              // Preserve source Deliverable so duplicated tasks keep
+              // grouping under the same template name.
+              deliverableTemplateId: task.deliverableTemplateId,
               description: task.description, budgetHours: task.budgetHours, budgetAmount: task.budgetAmount,
               phaseId: task.phaseId, priority: task.priority, status: 'not_started', completionPct: 0, createdBy: userId,
             },
@@ -471,6 +485,8 @@ export class ZonesService {
             await tx.task.create({
               data: {
                 zoneId: zone.id, projectId, serviceTypeId: tt.serviceTypeId,
+                // The linked task template is the Deliverable for these tasks.
+                deliverableTemplateId: tz.linkedTaskTemplateId,
                 code: tt.code, name: tt.name, description: tt.description,
                 budgetHours: budget.budgetHours, budgetAmount: budget.budgetAmount,
                 phaseId: servicePhaseId ?? tt.phaseId, priority: tt.defaultPriority, status: 'not_started', createdBy: userId,
@@ -520,11 +536,17 @@ export class ZonesService {
           if (refTemplate) {
             // Copy root-level templateTasks using referenced template's phaseId
             const refPhaseId = refTemplate.phaseId;
+            // Only tag with the referenced template's id when it's a
+            // task_list (Deliverable). Zone templates referenced
+            // recursively contribute spatial structure — not a
+            // deliverable identity.
+            const refDeliverableId = refTemplate.type === 'task_list' ? tz.referencedTemplateId : null;
             for (const tt of (refTemplate.templateTasks || [])) {
               const budget = resolveBudget(tt, catalog);
               await tx.task.create({
                 data: {
                   zoneId: zone.id, projectId, serviceTypeId: tt.serviceTypeId,
+                  deliverableTemplateId: refDeliverableId,
                   code: tt.code, name: tt.name, description: tt.description,
                   budgetHours: budget.budgetHours, budgetAmount: budget.budgetAmount,
                   phaseId: refPhaseId ?? tt.phaseId, priority: tt.defaultPriority || 'medium', status: 'not_started', createdBy: userId,
@@ -553,13 +575,20 @@ export class ZonesService {
       await tx.zone.update({ where: { id: mainZone.id }, data: { path: mainPath } });
       createdZones.push({ ...mainZone, path: mainPath });
 
-      // Create tasks from root-level templateTasks on the main zone
+      // Create tasks from root-level templateTasks on the main zone.
+      // Only tag with deliverableTemplateId when the outer template is
+      // type=task_list (a real Deliverable). Zone templates aren't
+      // deliverables, so leave the FK NULL there — the description
+      // marker [SERVICE:xxx] on each templateTask still encodes the
+      // deliverable identity for the legacy grouping fallback.
       if (template.templateTasks?.length) {
+        const rootDeliverableId = template.type === 'task_list' ? templateId : null;
         for (const tt of template.templateTasks) {
           const budget = resolveBudget(tt, catalog);
           await tx.task.create({
             data: {
               zoneId: mainZone.id, projectId, serviceTypeId: tt.serviceTypeId,
+              deliverableTemplateId: rootDeliverableId,
               code: tt.code, name: tt.name, description: tt.description,
               budgetHours: budget.budgetHours, budgetAmount: budget.budgetAmount,
               phaseId: tt.phaseId, priority: tt.defaultPriority || 'medium', status: 'not_started', createdBy: userId,

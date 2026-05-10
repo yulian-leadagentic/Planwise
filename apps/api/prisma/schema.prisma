@@ -988,6 +988,11 @@ model Task {
   zoneId        Int?         @map("zone_id")
   projectId     Int          @map("project_id")
   serviceTypeId Int?         @map("service_type_id")
+  // Source Deliverable (Template with type=task_list). Direct FK so
+  // the planning grid's "Group by Deliverable" can label cards by the
+  // same name shown on /templates/deliverables. ServiceType is kept
+  // alongside as a legacy fallback for tasks that pre-date this column.
+  deliverableTemplateId Int?  @map("deliverable_template_id")
   code          String       @db.VarChar(50)
   name          String       @db.VarChar(255)
   description   String?      @db.Text
@@ -1013,6 +1018,7 @@ model Task {
   project      Project      @relation(fields: [projectId], references: [id])
   serviceType  ServiceType? @relation(fields: [serviceTypeId], references: [id])
   phase        Phase?       @relation(fields: [phaseId], references: [id])
+  deliverableTemplate Template? @relation("TaskDeliverableTemplate", fields: [deliverableTemplateId], references: [id], onDelete: SetNull)
   creator      User         @relation("TaskCreator", fields: [createdBy], references: [id])
   assignees    TaskAssignee[]
   comments     TaskComment[]
@@ -1144,6 +1150,10 @@ model Template {
   templateZones      TemplateZone[]
   linkedZones        TemplateZone[] @relation("LinkedTaskTemplate")
   referencedByZones  TemplateZone[] @relation("ReferencedZoneTemplate")
+  // Project tasks materialized from this Template — back-relation for
+  // Task.deliverableTemplate. Enables COUNT-by-deliverable and "where
+  // is this template used" queries without scanning Tasks globally.
+  projectTasks       Task[]         @relation("TaskDeliverableTemplate")
 
   @@map("templates")
 }
