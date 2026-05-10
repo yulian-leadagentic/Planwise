@@ -18,7 +18,14 @@ interface PartnerRole {
   roleType: RoleType;
 }
 
-interface Relationship {
+interface RelationshipTarget {
+  /** Human-readable name of the target (project name, org displayName, dept name). */
+  targetName?: string;
+  /** Optional secondary code (e.g. project.number, department.code). */
+  targetCode?: string | null;
+}
+
+interface Relationship extends RelationshipTarget {
   id: number;
   targetType: 'project' | 'organization' | 'department' | 'team';
   targetId: number;
@@ -602,14 +609,22 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
           {items.map((r) => (
             <div key={r.id} className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 flex items-start gap-2">
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[13px] font-medium text-slate-800">{r.relationshipType.name}</span>
-                  {r.isPrimary && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">PRIMARY</span>}
+                  <span className="text-[12px] text-slate-400">→</span>
+                  <span className="text-[13px] font-semibold text-slate-900 truncate">
+                    {r.targetName ?? `${r.targetType} #${r.targetId}`}
+                  </span>
+                  {r.targetCode && (
+                    <span className="text-[11px] text-slate-400 font-mono">({r.targetCode})</span>
+                  )}
+                  {r.isPrimary && (
+                    <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">PRIMARY</span>
+                  )}
                 </div>
-                {r.roleInContext && <p className="text-[12px] text-slate-600">{r.roleInContext}</p>}
-                <p className="text-[11px] text-slate-400 font-mono">{r.targetType} #{r.targetId}</p>
+                {r.roleInContext && <p className="text-[12px] text-slate-600 mt-0.5">{r.roleInContext}</p>}
                 {(r.validFrom || r.validTo) && (
-                  <p className="text-[10px] text-slate-400">
+                  <p className="text-[10px] text-slate-400 mt-0.5">
                     {r.validFrom ? `from ${formatDate(r.validFrom)}` : ''}
                     {r.validTo ? ` to ${formatDate(r.validTo)}` : ''}
                   </p>
