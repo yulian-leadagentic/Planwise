@@ -59,7 +59,11 @@ export function NumberRangesPage() {
 
   const { data, isLoading } = useQuery<NumberRangeRow[]>({
     queryKey: ['admin', 'number-ranges'],
-    queryFn: () => client.get('/admin/number-ranges').then((r) => r.data),
+    queryFn: () =>
+      client.get('/admin/number-ranges').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
   });
 
   const createMutation = useMutation({

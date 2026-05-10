@@ -41,7 +41,11 @@ export function CurrenciesPage() {
 
   const { data, isLoading } = useQuery<CurrencyRow[]>({
     queryKey: ['admin', 'currencies'],
-    queryFn: () => client.get('/admin/config/currencies').then((r) => r.data),
+    queryFn: () =>
+      client.get('/admin/config/currencies').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
   });
 
   const createMutation = useMutation({

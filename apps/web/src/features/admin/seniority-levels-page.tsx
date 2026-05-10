@@ -34,7 +34,11 @@ export function SeniorityLevelsPage() {
 
   const { data, isLoading } = useQuery<SeniorityRow[]>({
     queryKey: ['admin', 'seniority-levels'],
-    queryFn: () => client.get('/admin/config/seniority-levels').then((r) => r.data),
+    queryFn: () =>
+      client.get('/admin/config/seniority-levels').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
   });
 
   const createMutation = useMutation({
