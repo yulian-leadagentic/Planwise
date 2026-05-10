@@ -82,6 +82,61 @@ export class BusinessPartnersService {
       include: partnerInclude,
     });
     if (!bp) throw new NotFoundException('Business partner not found');
+    return this.attachRelationshipTargets(bp);
+  }
+
+  // ─── Relationship target hydration (interim — pre-M3) ─────────────────────
+  // Each BusinessPartnerRelationship row carries (targetType, targetId) as a
+  // polymorphic reference. The drawer's Relationships tab needs human-readable
+  // labels. Until M3 collapses targets into Party↔Party, this helper
+  // batch-fetches names per target type and decorates the in-memory rows
+  // with `targetName` and `targetCode` so the UI can render a sentence
+  // ("Customer of → Project Alpha (P-001)") instead of "project #1".
+  private async attachRelationshipTargets<
+    T extends { outgoingRelationships: Array<{ targetType: string; targetId: number }> },
+  >(bp: T): Promise<T> {
+    const rels = bp.outgoingRelationships;
+    if (rels.length === 0) return bp;
+
+    const idsByType: Record<string, Set<number>> = {};
+    for (const r of rels) {
+      (idsByType[r.targetType] ||= new Set()).add(r.targetId);
+    }
+
+    const nameMap: Record<string, Record<number, { name: string; code?: string | null }>> = {};
+
+    if (idsByType.project?.size) {
+      const rows = await this.prisma.project.findMany({
+        where: { id: { in: [...idsByType.project] } },
+        select: { id: true, name: true, number: true },
+      });
+      nameMap.project = Object.fromEntries(rows.map((p) => [p.id, { name: p.name, code: p.number }]));
+    }
+    if (idsByType.organization?.size) {
+      const rows = await this.prisma.businessPartner.findMany({
+        where: { id: { in: [...idsByType.organization] } },
+        select: { id: true, displayName: true },
+      });
+      nameMap.organization = Object.fromEntries(rows.map((o) => [o.id, { name: o.displayName }]));
+    }
+    if (idsByType.department?.size) {
+      const rows = await this.prisma.department.findMany({
+        where: { id: { in: [...idsByType.department] } },
+        select: { id: true, name: true, code: true },
+      });
+      nameMap.department = Object.fromEntries(rows.map((d) => [d.id, { name: d.name, code: d.code }]));
+    }
+    // 'team' has no backing model in the current schema — leave name unset
+    // and let the UI fall back to "team #N" gracefully.
+
+    for (const r of rels as Array<typeof rels[number] & { targetName?: string; targetCode?: string | null }>) {
+      const hit = nameMap[r.targetType]?.[r.targetId];
+      if (hit) {
+        r.targetName = hit.name;
+        r.targetCode = hit.code ?? null;
+      }
+    }
+
     return bp;
   }
 
