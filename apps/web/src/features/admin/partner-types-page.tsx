@@ -17,6 +17,8 @@ interface RoleType {
   description: string | null;
   /** Coarse grouping (e.g. "cst" for customer, "sup" for supplier). Optional. */
   category: string | null;
+  /** Which party kind can hold this role: 'person', 'organization', or 'any'. */
+  appliesToKind: 'person' | 'organization' | 'any';
   sortOrder: number;
   isSystem: boolean;
 }
@@ -152,6 +154,7 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
                 <th className="px-4 py-2 text-left font-semibold w-32">Code</th>
                 <th className="px-4 py-2 text-left font-semibold w-48">Name</th>
                 <th className="px-4 py-2 text-left font-semibold w-24">Category</th>
+                <th className="px-4 py-2 text-left font-semibold w-28">Applies to</th>
                 <th className="px-4 py-2 text-left font-semibold">Description</th>
                 <th className="px-4 py-2 text-center font-semibold w-20">Origin</th>
                 <th className="px-4 py-2 text-right font-semibold w-32"></th>
@@ -174,6 +177,16 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
                             {t.category}
                           </span>
                         ) : <span className="italic text-slate-400 text-[11px]">—</span>}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className={cn(
+                          'inline-flex rounded-md px-1.5 py-0.5 font-mono text-[11px] font-semibold',
+                          t.appliesToKind === 'person' && 'bg-blue-50 text-blue-700',
+                          t.appliesToKind === 'organization' && 'bg-emerald-50 text-emerald-700',
+                          t.appliesToKind === 'any' && 'bg-slate-100 text-slate-600',
+                        )}>
+                          {t.appliesToKind}
+                        </span>
                       </td>
                       <td className="px-4 py-2.5 text-slate-600 text-[12px]">{t.description || <span className="italic text-slate-400">—</span>}</td>
                       <td className="px-4 py-2.5 text-center">
@@ -229,6 +242,7 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
     name: type?.name ?? '',
     description: type?.description ?? '',
     category: type?.category ?? '',
+    appliesToKind: (type?.appliesToKind ?? 'any') as 'person' | 'organization' | 'any',
   });
   // Once the user touches the Code field, stop syncing it to Name.
   const [codeTouched, setCodeTouched] = useState(!isNew);
@@ -253,6 +267,7 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
         description: form.description.trim() || undefined,
         // Always send category (empty string clears it server-side).
         category: form.category.trim().toLowerCase(),
+        appliesToKind: form.appliesToKind,
       };
       if (isNew) body.code = form.code.trim().toLowerCase();
       else if (!type?.isSystem) body.code = form.code.trim().toLowerCase();
@@ -312,6 +327,20 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
         <datalist id="partner-role-category-suggestions">
           {categorySuggestions.map((c) => <option key={c} value={c} />)}
         </datalist>
+      </td>
+      <td className="px-4 py-2">
+        {/* Applies to — drives which roles appear when a side picker has
+            kind=person vs kind=organization. 'any' shows the role under
+            both kinds; the specific options hide it from the wrong one. */}
+        <select
+          value={form.appliesToKind}
+          onChange={(e) => setForm((f) => ({ ...f, appliesToKind: e.target.value as 'person' | 'organization' | 'any' }))}
+          className={cn(inputClass, 'text-[12px] py-1')}
+        >
+          <option value="any">any</option>
+          <option value="person">person</option>
+          <option value="organization">organization</option>
+        </select>
       </td>
       <td className="px-4 py-2" colSpan={2}>
         <input value={form.description} onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))} className={inputClass} />
@@ -734,17 +763,37 @@ function TargetRow({
   roleTypes: RoleType[];
   categorySuggestions: string[];
 }) {
+  // Per-target toggle: by default we only show roles whose appliesToKind
+  // is compatible with this target's kind. The "show all" escape hatch
+  // surfaces every role for the rare advanced case (e.g. a custom role
+  // that wasn't tagged yet).
+  const [showAllRoles, setShowAllRoles] = useState(false);
+
   const toggle = (key: 'roleCodes' | 'categoryCodes', code: string) => {
     const current = target[key] ?? [];
     const next = current.includes(code) ? current.filter((c) => c !== code) : [...current, code];
     onChange({ [key]: next.length ? next : undefined });
   };
 
-  // For organization/person kinds, filter the role catalog to roles whose
-  // role.category aligns with the kind context — but PartnerRoleType doesn't
-  // know its target kind. So we just show all role types and rely on the
-  // admin's judgement. Could refine later.
-  const rolesByCategory = roleTypes.reduce<Record<string, RoleType[]>>((acc, r) => {
+  // Roles relevant to the chosen kind. 'any' targets show all roles; a
+  // specific kind shows roles tagged for that kind OR 'any'.
+  const visibleRoles = showAllRoles
+    ? roleTypes
+    : roleTypes.filter((r) => {
+        if (target.kind === 'any') return true;
+        return r.appliesToKind === 'any' || r.appliesToKind === target.kind;
+      });
+  const hiddenCount = roleTypes.length - visibleRoles.length;
+
+  // Currently-selected roles that the filter hides (e.g. user previously
+  // picked a person-only role, then changed the target's kind to org).
+  // Always render those chips so users can deselect them; mark visually.
+  const selectedHidden = (target.roleCodes ?? []).filter((c) => !visibleRoles.some((r) => r.code === c));
+  const effectiveRoles = showAllRoles
+    ? visibleRoles
+    : [...visibleRoles, ...roleTypes.filter((r) => selectedHidden.includes(r.code))];
+
+  const rolesByCategory = effectiveRoles.reduce<Record<string, RoleType[]>>((acc, r) => {
     const key = r.category || '_uncategorized';
     (acc[key] ||= []).push(r);
     return acc;
@@ -777,7 +826,20 @@ function TargetRow({
       {showRoleFilters && (
         <>
           <div className="space-y-1">
-            <span className="text-[10px] font-semibold text-slate-400 uppercase block">Restrict to roles (optional)</span>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-semibold text-slate-400 uppercase">Restrict to roles (optional)</span>
+              {hiddenCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllRoles((s) => !s)}
+                  className="text-[10px] text-blue-600 hover:underline"
+                >
+                  {showAllRoles
+                    ? `Showing all (${roleTypes.length})`
+                    : `Show all (${hiddenCount} hidden — don't apply to ${target.kind})`}
+                </button>
+              )}
+            </div>
             <div className="space-y-1">
               {sortedCategoryKeys.map((cat) => (
                 <div key={cat} className="flex flex-wrap items-center gap-1">
@@ -786,16 +848,25 @@ function TargetRow({
                   </span>
                   {rolesByCategory[cat].map((r) => {
                     const on = (target.roleCodes ?? []).includes(r.code);
+                    const mismatched =
+                      target.kind !== 'any' &&
+                      r.appliesToKind !== 'any' &&
+                      r.appliesToKind !== target.kind;
                     return (
                       <button
                         key={r.id}
                         type="button"
                         onClick={() => toggle('roleCodes', r.code)}
+                        title={mismatched ? `'${r.code}' applies to ${r.appliesToKind}, not ${target.kind} — will never match` : r.name}
                         className={cn(
                           'rounded-full border px-2 py-0.5 text-[10px] font-medium',
                           on
-                            ? 'border-amber-400 bg-amber-50 text-amber-800'
-                            : 'border-slate-200 text-slate-500 hover:border-slate-300',
+                            ? mismatched
+                              ? 'border-red-400 bg-red-50 text-red-700 line-through'
+                              : 'border-amber-400 bg-amber-50 text-amber-800'
+                            : mismatched
+                              ? 'border-red-200 text-red-400 hover:border-red-300'
+                              : 'border-slate-200 text-slate-500 hover:border-slate-300',
                         )}
                       >
                         {r.code}

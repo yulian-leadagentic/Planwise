@@ -41,6 +41,9 @@ interface UpsertTypeDto {
   // Coarse grouping label, role types only (e.g. "cst", "sup"). Empty
   // string clears the category; undefined leaves the existing value.
   category?: string;
+  // Role types only — restricts the role to a party kind. 'person',
+  // 'organization', or 'any' (default — both).
+  appliesToKind?: 'person' | 'organization' | 'any';
   // M3a — display labels (free text). The kind/role constraints moved to
   // sideATargets/sideBTargets in M3.5; these labels are now optional
   // overrides for nicer display.
@@ -148,6 +151,7 @@ export class PartnerTypesController {
         name: body.name.trim(),
         description: body.description?.trim() || null,
         category: body.category?.trim().toLowerCase() || null,
+        appliesToKind: body.appliesToKind ?? 'any',
         sortOrder: body.sortOrder ?? 0,
         isSystem: false,
       },
@@ -171,6 +175,9 @@ export class PartnerTypesController {
     if (body.category !== undefined) {
       const c = body.category?.trim().toLowerCase();
       data.category = c || null;
+    }
+    if (body.appliesToKind !== undefined) {
+      data.appliesToKind = body.appliesToKind;
     }
     // System rows can't change their stable code
     if (!existing.isSystem && body.code) {
