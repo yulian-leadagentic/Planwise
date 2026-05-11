@@ -7,6 +7,7 @@ import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
 import { ActivityFeed } from './activity-feed';
 import { FilesTab } from './files-tab';
 import { CreateContactModal } from '@/features/partners/create-contact-modal';
+import { PartnerDrawer } from '@/features/partners/partner-drawer';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 
 // Lazy-load DnD-heavy components
@@ -324,6 +325,9 @@ function TeamTab({
   const removeMember = useRemoveProjectMember();
   const [picker, setPicker] = useState<null | 'customer-contact' | 'supplier' | 'supplier-worker'>(null);
   const [pickerSupplierId, setPickerSupplierId] = useState<number | null>(null);
+  // Profile-link clicks open the partner drawer overlay in-place rather
+  // than navigating to /partners. Shared state across all team rows.
+  const [focusedPartnerId, setFocusedPartnerId] = useState<number | null>(null);
 
   const { data: team, isLoading } = useQuery<ProjectTeamData>({
     queryKey: ['project-team', projectId],
@@ -386,6 +390,7 @@ function TeamTab({
             email={team.customer.email}
             phone={team.customer.phone}
             bpId={team.customer.organizationId}
+            onOpenProfile={setFocusedPartnerId}
             // The customer is locked — changing it is a separate operation.
             // No remove button.
           />
@@ -414,7 +419,7 @@ function TeamTab({
         ) : (
           <div className="space-y-2">
             {team.myTeam.map((row) => (
-              <PersonRow key={row.relationshipId} row={row} onRemove={() => removeMyTeam(row)} accent="blue" />
+              <PersonRow key={row.relationshipId} row={row} onRemove={() => removeMyTeam(row)} accent="blue" onOpenProfile={setFocusedPartnerId} />
             ))}
           </div>
         )}
@@ -442,7 +447,7 @@ function TeamTab({
         ) : (
           <div className="space-y-2">
             {team.customerContacts.map((row) => (
-              <PersonRow key={row.relationshipId} row={row} onRemove={() => softEnd.mutate(row.relationshipId)} accent="violet" />
+              <PersonRow key={row.relationshipId} row={row} onRemove={() => softEnd.mutate(row.relationshipId)} accent="violet" onOpenProfile={setFocusedPartnerId} />
             ))}
           </div>
         )}
@@ -471,9 +476,14 @@ function TeamTab({
               <div key={sup.relationshipId} className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-3 space-y-2">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex-1 min-w-0">
-                    <a href={`/partners?focus_bp=${sup.organizationId}`} className="text-sm font-semibold text-slate-900 hover:underline truncate block">
+                    <button
+                      type="button"
+                      onClick={() => setFocusedPartnerId(sup.organizationId)}
+                      className="text-sm font-semibold text-slate-900 hover:underline truncate text-left w-full"
+                      title="Open partner profile"
+                    >
                       {sup.displayName}
-                    </a>
+                    </button>
                     {(sup.email || sup.phone) && (
                       <p className="text-[11px] text-slate-500">{sup.email}{sup.email && sup.phone ? ' · ' : ''}{sup.phone}</p>
                     )}
@@ -496,7 +506,7 @@ function TeamTab({
                 {sup.workers.length > 0 ? (
                   <div className="space-y-1.5 ml-3 border-l-2 border-emerald-200 pl-3">
                     {sup.workers.map((w) => (
-                      <PersonRow key={w.relationshipId} row={w} onRemove={() => softEnd.mutate(w.relationshipId)} accent="emerald" compact />
+                      <PersonRow key={w.relationshipId} row={w} onRemove={() => softEnd.mutate(w.relationshipId)} accent="emerald" compact onOpenProfile={setFocusedPartnerId} />
                     ))}
                   </div>
                 ) : (
@@ -530,6 +540,19 @@ function TeamTab({
             ...team.suppliers.flatMap((s) => [s.organizationId, ...s.workers.map((w) => w.businessPartnerId)]),
           ]}
           onClose={() => { setPicker(null); setPickerSupplierId(null); }}
+        />
+      )}
+
+      {/* Profile clicks open the partner drawer overlay in-place. On close,
+          invalidate project-team so any role/rel edits made in the drawer
+          flow back into the team view. */}
+      {focusedPartnerId != null && (
+        <PartnerDrawer
+          partnerId={focusedPartnerId}
+          onClose={() => {
+            setFocusedPartnerId(null);
+            queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
+          }}
         />
       )}
     </div>
@@ -568,8 +591,9 @@ function Section({
   );
 }
 
-function OrgRow({ displayName, email, phone, bpId }: {
+function OrgRow({ displayName, email, phone, bpId, onOpenProfile }: {
   displayName: string; email: string | null; phone: string | null; bpId: number;
+  onOpenProfile?: (bpId: number) => void;
 }) {
   return (
     <div className="rounded-lg border border-indigo-200 bg-white p-3 flex items-center gap-3">
@@ -577,7 +601,14 @@ function OrgRow({ displayName, email, phone, bpId }: {
         <Users className="h-4 w-4" />
       </div>
       <div className="flex-1 min-w-0">
-        <a href={`/partners?focus_bp=${bpId}`} className="text-sm font-semibold text-slate-900 hover:underline truncate block">{displayName}</a>
+        <button
+          type="button"
+          onClick={() => onOpenProfile?.(bpId)}
+          className="text-sm font-semibold text-slate-900 hover:underline truncate text-left w-full"
+          title="Open partner profile"
+        >
+          {displayName}
+        </button>
         {(email || phone) && (
           <p className="text-[11px] text-slate-500">{email}{email && phone ? ' · ' : ''}{phone}</p>
         )}
@@ -586,13 +617,13 @@ function OrgRow({ displayName, email, phone, bpId }: {
   );
 }
 
-function PersonRow({ row, onRemove, accent, compact = false }: {
+function PersonRow({ row, onRemove, accent, compact = false, onOpenProfile }: {
   row: ProjectTeamPerson;
   onRemove: () => void;
   accent: keyof typeof ACCENTS;
   compact?: boolean;
+  onOpenProfile?: (bpId: number) => void;
 }) {
-  const profileLink = `/partners?focus_bp=${row.businessPartnerId}`;
   return (
     <div className={cn(
       'flex items-center gap-3 rounded-lg border bg-white',
@@ -607,68 +638,22 @@ function PersonRow({ row, onRemove, accent, compact = false }: {
         {getInitials(row.firstName ?? '', row.lastName ?? '') || row.displayName.slice(0, 2).toUpperCase()}
       </div>
       <div className="flex-1 min-w-0">
-        <p className={cn('font-medium text-slate-900 truncate', compact ? 'text-[13px]' : 'text-sm')}>
+        <button
+          type="button"
+          onClick={() => onOpenProfile?.(row.businessPartnerId)}
+          className={cn('font-medium text-slate-900 hover:underline truncate text-left block w-full', compact ? 'text-[13px]' : 'text-sm')}
+          title="Open partner profile"
+        >
           {row.displayName}
-        </p>
+        </button>
         <p className="text-[11px] text-slate-500 truncate">
           {[row.roleInContext, row.email].filter(Boolean).join(' · ') || row.position || '—'}
         </p>
       </div>
-      <a href={profileLink} className="text-[11px] text-blue-600 hover:underline shrink-0" title="Open partner profile">
-        Profile →
-      </a>
       <button
         onClick={onRemove}
         className="rounded p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50"
         title="End relationship"
-      >
-        <X className="h-4 w-4" />
-      </button>
-    </div>
-  );
-}
-
-/* ─── Team Row ─────────────────────────────────────────────────────────────── */
-
-function TeamRow({ row, onRemove }: { row: UnifiedTeamRow; onRemove: () => void }) {
-  const isExternal = row.kind === 'external';
-  const profileLink = row.businessPartnerId
-    ? `/partners?focus_bp=${row.businessPartnerId}`
-    : (row.userId ? `/partners?focus=${row.userId}` : null);
-
-  return (
-    <div className={cn(
-      'flex items-center gap-3 rounded-lg border bg-white p-3',
-      isExternal ? 'border-violet-200' : 'border-slate-200',
-    )}>
-      <div className={cn(
-        'flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-semibold shrink-0',
-        isExternal ? 'bg-violet-100 text-violet-600' : 'bg-indigo-100 text-indigo-600',
-      )}>
-        {getInitials(row.firstName ?? '', row.lastName ?? '') || row.displayName.slice(0, 2).toUpperCase()}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <p className="text-sm font-medium text-slate-900 truncate">{row.displayName}</p>
-          {isExternal && row.relationshipType && (
-            <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">
-              {row.relationshipType.name}
-            </span>
-          )}
-        </div>
-        {row.role && <p className="text-xs text-slate-500">{row.role}</p>}
-        {row.email && <p className="text-[11px] text-slate-400">{row.email}</p>}
-      </div>
-      {profileLink && (
-        <a href={profileLink} className="text-[11px] text-blue-600 hover:underline shrink-0" title="Open partner profile">
-          Profile →
-        </a>
-      )}
-      <button
-        onClick={onRemove}
-        className="rounded p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors"
-        aria-label="Remove from team"
-        title={isExternal ? 'Remove partner' : 'Remove member'}
       >
         <X className="h-4 w-4" />
       </button>
