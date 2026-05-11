@@ -286,15 +286,40 @@ interface ProjectTeamPerson {
   phone: string | null;
   position: string | null;
   roleInContext: string | null;
+  // Customer contacts may carry which rel-type wired them to the customer.
+  relationshipTypeCode?: string;
+  relationshipTypeName?: string;
 }
 
-interface ProjectTeamSupplier {
-  relationshipId: number;
-  organizationId: number;
-  displayName: string;
-  email: string | null;
-  phone: string | null;
-  workers: ProjectTeamPerson[];
+interface ProjectRoleTypeRow {
+  id: number;
+  code: string;
+  name: string;
+  description: string | null;
+  allowedPartnerKind: 'person' | 'organization' | 'any';
+  requiredPartnerRoleCode: string | null;
+  isPrimaryRequired: boolean;
+  sortOrder: number;
+  isSystem: boolean;
+}
+
+interface ProjectRoleAssignment {
+  id: number;
+  role: ProjectRoleTypeRow;
+  party: {
+    id: number;
+    partnerType: 'person' | 'organization';
+    displayName: string;
+    firstName: string | null;
+    lastName: string | null;
+    email: string | null;
+    phone: string | null;
+  };
+  isPrimary: boolean;
+  titleInProject: string | null;
+  validFrom: string | null;
+  validTo: string | null;
+  status: string;
 }
 
 interface ProjectTeamData {
@@ -305,9 +330,9 @@ interface ProjectTeamData {
     email: string | null;
     phone: string | null;
   } | null;
-  myTeam: ProjectTeamPerson[];
   customerContacts: ProjectTeamPerson[];
-  suppliers: ProjectTeamSupplier[];
+  projectTeam: ProjectTeamPerson[];
+  roleAssignments: ProjectRoleAssignment[];
 }
 
 function TeamTab({
@@ -323,8 +348,12 @@ function TeamTab({
 }) {
   const queryClient = useQueryClient();
   const removeMember = useRemoveProjectMember();
-  const [picker, setPicker] = useState<null | 'customer-contact' | 'supplier' | 'supplier-worker'>(null);
-  const [pickerSupplierId, setPickerSupplierId] = useState<number | null>(null);
+  // M4a — pickers are now driven by the role catalog. Two kinds of add flows:
+  //   - customerContact: adds a person → customer-org partner-relationship.
+  //   - roleAssignment:  adds a party → project_partner_role for a specific
+  //                      ProjectRoleType (Supplier, Architect, Engineer, …).
+  const [showCustomerContactPicker, setShowCustomerContactPicker] = useState(false);
+  const [roleAssignmentTarget, setRoleAssignmentTarget] = useState<ProjectRoleTypeRow | null>(null);
   // Profile-link clicks open the partner drawer overlay in-place rather
   // than navigating to /partners. Shared state across all team rows.
   const [focusedPartnerId, setFocusedPartnerId] = useState<number | null>(null);
@@ -334,12 +363,38 @@ function TeamTab({
     queryFn: () => client.get(`/projects/${projectId}/team`).then((r) => r.data?.data ?? r.data),
   });
 
+  // The role catalog drives the dynamic sections below. We exclude
+  // 'customer' (its own locked section) and 'participant' (handled by
+  // the internal Project Team section).
+  const { data: roleCatalog = [] } = useQuery<ProjectRoleTypeRow[]>({
+    queryKey: ['project-role-types'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/project-role-types').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+  const dynamicRoles = roleCatalog
+    .filter((rt) => rt.code !== 'customer' && rt.code !== 'participant')
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+
   const softEnd = useMutation({
     mutationFn: (relationshipId: number) =>
       client.delete(`/business-partner-relationships/${relationshipId}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
       notify.success('Disconnected (soft-ended)', { code: 'PROJECT-TEAM-DELETE-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to disconnect'),
+  });
+
+  const removeRoleAssignment = useMutation({
+    mutationFn: (id: number) =>
+      client.delete(`/project-partner-roles/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
+      notify.success('Disconnected', { code: 'PROJECT-PPR-DELETE-200' });
     },
     onError: (err: any) => notify.apiError(err, 'Failed to disconnect'),
   });
@@ -378,12 +433,8 @@ function TeamTab({
         </p>
       </div>
 
-      {/* Customer */}
-      <Section
-        label="Customer"
-        count={team.customer ? 1 : 0}
-        accent="indigo"
-      >
+      {/* Section 1 — Customer (locked, hardcoded). */}
+      <Section label="Customer" count={team.customer ? 1 : 0} accent="indigo">
         {team.customer ? (
           <OrgRow
             displayName={team.customer.displayName}
@@ -391,18 +442,52 @@ function TeamTab({
             phone={team.customer.phone}
             bpId={team.customer.organizationId}
             onOpenProfile={setFocusedPartnerId}
-            // The customer is locked — changing it is a separate operation.
-            // No remove button.
           />
         ) : (
           <p className="text-[12px] text-amber-600 italic">No customer set on this project (data inconsistency — contact admin).</p>
         )}
       </Section>
 
-      {/* My Team */}
+      {/* Section 2 — Customer Contacts (org-level: anyone with an active
+          rel pointing at the customer org). Shared across every project
+          of this customer; not project-scoped. */}
       <Section
-        label="My Team"
-        count={team.myTeam.length}
+        label={team.customer ? `${team.customer.displayName} Contacts` : 'Customer Contacts'}
+        count={team.customerContacts.length}
+        accent="violet"
+        action={(
+          <button
+            onClick={() => setShowCustomerContactPicker(true)}
+            disabled={!team.customer}
+            title={!team.customer ? 'No customer on project' : undefined}
+            className="flex items-center gap-1.5 rounded-md bg-white border border-slate-200 hover:border-slate-400 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors"
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Add Customer Contact
+          </button>
+        )}
+      >
+        {team.customerContacts.length === 0 ? (
+          <p className="text-[12px] text-slate-400 italic">No customer contacts yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {team.customerContacts.map((row) => (
+              <PersonRow
+                key={row.relationshipId}
+                row={row}
+                onRemove={() => softEnd.mutate(row.relationshipId)}
+                accent="violet"
+                onOpenProfile={setFocusedPartnerId}
+              />
+            ))}
+          </div>
+        )}
+      </Section>
+
+      {/* Section 3 — Project Team (internal employees with User accounts). */}
+      <Section
+        label="Project Team"
+        count={team.projectTeam.length}
         accent="blue"
         action={(
           <button
@@ -414,111 +499,65 @@ function TeamTab({
           </button>
         )}
       >
-        {team.myTeam.length === 0 ? (
+        {team.projectTeam.length === 0 ? (
           <p className="text-[12px] text-slate-400 italic">No internal members yet.</p>
         ) : (
           <div className="space-y-2">
-            {team.myTeam.map((row) => (
+            {team.projectTeam.map((row) => (
               <PersonRow key={row.relationshipId} row={row} onRemove={() => removeMyTeam(row)} accent="blue" onOpenProfile={setFocusedPartnerId} />
             ))}
           </div>
         )}
       </Section>
 
-      {/* Customer Contacts */}
-      <Section
-        label={team.customer ? `${team.customer.displayName} Contacts` : 'Customer Contacts'}
-        count={team.customerContacts.length}
-        accent="violet"
-        action={(
-          <button
-            onClick={() => setPicker('customer-contact')}
-            disabled={!team.customer}
-            title={!team.customer ? 'No customer on project' : undefined}
-            className="flex items-center gap-1.5 rounded-md bg-white border border-slate-200 hover:border-slate-400 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors"
+      {/* Sections 4+ — Dynamic per ProjectRoleType (Supplier, Architect, …).
+          Adding a new project_role_type in admin makes a new section appear
+          here automatically. */}
+      {dynamicRoles.map((rt) => {
+        const assignments = team.roleAssignments.filter((a) => a.role.id === rt.id);
+        return (
+          <Section
+            key={rt.id}
+            label={rt.name}
+            count={assignments.length}
+            accent="emerald"
+            action={(
+              <button
+                onClick={() => setRoleAssignmentTarget(rt)}
+                className="flex items-center gap-1.5 rounded-md bg-white border border-slate-200 hover:border-slate-400 px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors"
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                Add {rt.name}
+              </button>
+            )}
           >
-            <UserPlus className="h-3.5 w-3.5" />
-            Add Customer Contact
-          </button>
-        )}
-      >
-        {team.customerContacts.length === 0 ? (
-          <p className="text-[12px] text-slate-400 italic">No customer contacts on this project yet.</p>
-        ) : (
-          <div className="space-y-2">
-            {team.customerContacts.map((row) => (
-              <PersonRow key={row.relationshipId} row={row} onRemove={() => softEnd.mutate(row.relationshipId)} accent="violet" onOpenProfile={setFocusedPartnerId} />
-            ))}
-          </div>
-        )}
-      </Section>
-
-      {/* Suppliers */}
-      <Section
-        label="Suppliers"
-        count={team.suppliers.length}
-        accent="emerald"
-        action={(
-          <button
-            onClick={() => setPicker('supplier')}
-            className="flex items-center gap-1.5 rounded-md bg-white border border-slate-200 hover:border-slate-400 px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors"
-          >
-            <UserPlus className="h-3.5 w-3.5" />
-            Add Supplier
-          </button>
-        )}
-      >
-        {team.suppliers.length === 0 ? (
-          <p className="text-[12px] text-slate-400 italic">No suppliers on this project yet.</p>
-        ) : (
-          <div className="space-y-3">
-            {team.suppliers.map((sup) => (
-              <div key={sup.relationshipId} className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-3 space-y-2">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <button
-                      type="button"
-                      onClick={() => setFocusedPartnerId(sup.organizationId)}
-                      className="text-sm font-semibold text-slate-900 hover:underline truncate text-left w-full"
-                      title="Open partner profile"
-                    >
-                      {sup.displayName}
-                    </button>
-                    {(sup.email || sup.phone) && (
-                      <p className="text-[11px] text-slate-500">{sup.email}{sup.email && sup.phone ? ' · ' : ''}{sup.phone}</p>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => { setPickerSupplierId(sup.organizationId); setPicker('supplier-worker'); }}
-                    className="flex items-center gap-1 rounded-md bg-white border border-slate-200 hover:border-slate-400 px-2 py-1 text-[11px] font-semibold text-slate-700"
-                  >
-                    <UserPlus className="h-3 w-3" />
-                    Add Worker
-                  </button>
-                  <button
-                    onClick={() => { if (confirm(`Disconnect ${sup.displayName} from this project? Their workers will also need to be removed separately.`)) softEnd.mutate(sup.relationshipId); }}
-                    className="rounded p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50"
-                    title="End supplier on project"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                {sup.workers.length > 0 ? (
-                  <div className="space-y-1.5 ml-3 border-l-2 border-emerald-200 pl-3">
-                    {sup.workers.map((w) => (
-                      <PersonRow key={w.relationshipId} row={w} onRemove={() => softEnd.mutate(w.relationshipId)} accent="emerald" compact onOpenProfile={setFocusedPartnerId} />
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-[11px] text-slate-400 italic ml-3">No workers from this supplier on the project yet.</p>
-                )}
+            {assignments.length === 0 ? (
+              <p className="text-[12px] text-slate-400 italic">
+                No {rt.name.toLowerCase()} on this project yet.
+                {rt.allowedPartnerKind !== 'any' && ` Allowed: ${rt.allowedPartnerKind} only.`}
+                {rt.requiredPartnerRoleCode && ` Must hold role "${rt.requiredPartnerRoleCode}".`}
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {assignments.map((a) => (
+                  <RoleAssignmentRow
+                    key={a.id}
+                    assignment={a}
+                    onRemove={() => {
+                      if (confirm(`Remove ${a.party.displayName} as ${rt.name}?`)) {
+                        removeRoleAssignment.mutate(a.id);
+                      }
+                    }}
+                    onOpenProfile={setFocusedPartnerId}
+                  />
+                ))}
               </div>
-            ))}
-          </div>
-        )}
-      </Section>
+            )}
+          </Section>
+        );
+      })}
 
-      {/* Add Member (internal) modal */}
+      {/* Add Member (internal) modal — unchanged. */}
       {showAddMember && (
         <AddMemberDialog
           projectId={projectId}
@@ -527,19 +566,25 @@ function TeamTab({
         />
       )}
 
-      {/* Picker for the 3 BP-driven add flows */}
-      {picker && (
-        <ProjectBpPicker
-          mode={picker}
+      {/* Customer-contact add flow. */}
+      {showCustomerContactPicker && team.customer && (
+        <CustomerContactPicker
+          customerOrgId={team.customer.organizationId}
+          customerName={team.customer.displayName}
+          existingContactBpIds={team.customerContacts.map((p) => p.businessPartnerId)}
+          onClose={() => setShowCustomerContactPicker(false)}
+        />
+      )}
+
+      {/* Project-role add flow (Supplier, Architect, …). */}
+      {roleAssignmentTarget && (
+        <RoleAssignmentPicker
+          role={roleAssignmentTarget}
           projectId={projectId}
-          customerOrgId={team.customer?.organizationId ?? null}
-          supplierOrgId={pickerSupplierId}
-          existingBpIds={[
-            ...team.myTeam.map((p) => p.businessPartnerId),
-            ...team.customerContacts.map((p) => p.businessPartnerId),
-            ...team.suppliers.flatMap((s) => [s.organizationId, ...s.workers.map((w) => w.businessPartnerId)]),
-          ]}
-          onClose={() => { setPicker(null); setPickerSupplierId(null); }}
+          existingPartyIds={team.roleAssignments
+            .filter((a) => a.role.id === roleAssignmentTarget.id)
+            .map((a) => a.party.id)}
+          onClose={() => setRoleAssignmentTarget(null)}
         />
       )}
 
@@ -661,8 +706,314 @@ function PersonRow({ row, onRemove, accent, compact = false, onOpenProfile }: {
   );
 }
 
+// Shared input class used by the M4a pickers.
+const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
+
+/* ─── Role Assignment Row ─────────────────────────────────────────────────── */
+
+function RoleAssignmentRow({
+  assignment,
+  onRemove,
+  onOpenProfile,
+}: {
+  assignment: ProjectRoleAssignment;
+  onRemove: () => void;
+  onOpenProfile?: (bpId: number) => void;
+}) {
+  const p = assignment.party;
+  const initials = getInitials(p.firstName ?? '', p.lastName ?? '') || p.displayName.slice(0, 2).toUpperCase();
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-white p-3">
+      <div className={cn(
+        'flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-semibold shrink-0',
+        p.partnerType === 'organization' ? 'bg-emerald-100 text-emerald-700' : 'bg-violet-100 text-violet-700',
+      )}>
+        {p.partnerType === 'organization' ? <Users className="h-4 w-4" /> : initials}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => onOpenProfile?.(p.id)}
+            className="text-sm font-semibold text-slate-900 hover:underline truncate text-left"
+            title="Open partner profile"
+          >
+            {p.displayName}
+          </button>
+          <span className="text-[10px] text-slate-400 font-mono">({p.partnerType})</span>
+          {assignment.isPrimary && (
+            <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">PRIMARY</span>
+          )}
+        </div>
+        {assignment.titleInProject && <p className="text-[11px] text-slate-500 truncate">{assignment.titleInProject}</p>}
+        {(p.email || p.phone) && (
+          <p className="text-[11px] text-slate-400 truncate">{p.email}{p.email && p.phone ? ' · ' : ''}{p.phone}</p>
+        )}
+      </div>
+      <button
+        onClick={onRemove}
+        className="rounded p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50"
+        title="End assignment"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+/* ─── Customer Contact Picker ───────────────────────────────────────────────
+   Adds a person → customer-org relationship. Uses 'contact_of_customer'
+   rel type if it exists, falling back to 'worker_of'. The created row
+   surfaces on every project of this customer. */
+
+function CustomerContactPicker({
+  customerOrgId,
+  customerName,
+  existingContactBpIds,
+  onClose,
+}: {
+  customerOrgId: number;
+  customerName: string;
+  existingContactBpIds: number[];
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
+  const [titleAtCustomer, setTitleAtCustomer] = useState('');
+
+  useEffect(() => {
+    const original = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = original; };
+  }, []);
+
+  const { data: persons = [] } = useQuery<any[]>({
+    queryKey: ['bp-persons-for-customer-contact', customerOrgId],
+    queryFn: () => client.get('/business-partners', {
+      params: { partnerType: 'person', perPage: 500 },
+    }).then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : (d?.data ?? []);
+    }),
+  });
+  const filtered = persons.filter((p: any) => !existingContactBpIds.includes(p.id));
+
+  const { data: relTypes = [] } = useQuery<any[]>({
+    queryKey: ['partner-relationship-types'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () => client.get('/admin/partner-types/relationship-types').then((r) => r.data?.data ?? r.data ?? []),
+  });
+  // Prefer a dedicated contact_of_customer type; else any person→org rel; else worker_of.
+  const relType = relTypes.find((rt: any) => rt.code === 'contact_of_customer')
+    ?? relTypes.find((rt: any) => rt.code === 'worker_of');
+
+  const create = useMutation({
+    mutationFn: () => {
+      if (!selectedPersonId || !relType) {
+        throw new Error('Missing person or relationship type');
+      }
+      return client.post('/business-partner-relationships', {
+        sourcePartnerId: selectedPersonId,
+        targetType: 'organization',
+        targetId: customerOrgId,
+        relationshipTypeId: relType.id,
+        roleInContext: titleAtCustomer.trim() || undefined,
+      }).then((r) => r.data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-team'] });
+      queryClient.invalidateQueries({ queryKey: ['business-partners'] });
+      notify.success('Contact added', { code: 'CUSTOMER-CONTACT-200' });
+      onClose();
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to add contact'),
+  });
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-[440px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <h3 className="text-sm font-bold text-slate-900">Add Contact at {customerName}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="p-5 space-y-3">
+          {!relType && (
+            <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded">
+              No suitable relationship type found. Configure <code>contact_of_customer</code> or <code>worker_of</code> in admin first.
+            </p>
+          )}
+          <div>
+            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Person</label>
+            <select
+              value={selectedPersonId ?? ''}
+              onChange={(e) => setSelectedPersonId(Number(e.target.value) || null)}
+              className={inputClass}
+            >
+              <option value="">Select a person...</option>
+              {filtered.map((p: any) => (
+                <option key={p.id} value={p.id}>{p.displayName}{p.email ? ` — ${p.email}` : ''}</option>
+              ))}
+            </select>
+            {filtered.length === 0 && (
+              <p className="text-[10px] text-slate-400 mt-1">No people available. All are already contacts, or no persons exist yet.</p>
+            )}
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Title at customer (optional)</label>
+            <input
+              value={titleAtCustomer}
+              onChange={(e) => setTitleAtCustomer(e.target.value)}
+              placeholder='e.g. "CFO", "Operations Manager"'
+              className={inputClass}
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
+            <button
+              onClick={() => create.mutate()}
+              disabled={create.isPending || !selectedPersonId || !relType}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
+            >
+              {create.isPending ? 'Adding...' : 'Add Contact'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Role Assignment Picker ────────────────────────────────────────────────
+   Generic picker for any ProjectRoleType (Supplier, Architect, Engineer, …).
+   Filters candidates by the role's allowedPartnerKind + requiredPartnerRoleCode.
+   Creates a project_partner_role row. */
+
+function RoleAssignmentPicker({
+  role,
+  projectId,
+  existingPartyIds,
+  onClose,
+}: {
+  role: ProjectRoleTypeRow;
+  projectId: number;
+  existingPartyIds: number[];
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [selectedPartyId, setSelectedPartyId] = useState<number | null>(null);
+  const [titleInProject, setTitleInProject] = useState('');
+  const [isPrimary, setIsPrimary] = useState(false);
+
+  useEffect(() => {
+    const original = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = original; };
+  }, []);
+
+  const { data: candidates = [] } = useQuery<any[]>({
+    queryKey: ['bp-candidates-for-role', role.id],
+    queryFn: () => client.get('/business-partners', {
+      params: {
+        partnerType: role.allowedPartnerKind === 'any' ? undefined : role.allowedPartnerKind,
+        roleType: role.requiredPartnerRoleCode ?? undefined,
+        perPage: 500,
+      },
+    }).then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : (d?.data ?? []);
+    }),
+  });
+  const filtered = candidates.filter((p: any) => !existingPartyIds.includes(p.id));
+
+  const create = useMutation({
+    mutationFn: () =>
+      client.post('/project-partner-roles', {
+        projectId,
+        partyId: selectedPartyId,
+        roleId: role.id,
+        isPrimary,
+        titleInProject: titleInProject.trim() || undefined,
+      }).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
+      notify.success(`Added ${role.name}`, { code: 'PPR-ADD-201' });
+      onClose();
+    },
+    onError: (err: any) => notify.apiError(err, `Failed to add ${role.name}`),
+  });
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-[440px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <h3 className="text-sm font-bold text-slate-900">Add {role.name}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+            Eligible: <span className="font-mono font-semibold">{role.allowedPartnerKind}</span>
+            {role.requiredPartnerRoleCode && (
+              <> · must hold role <span className="font-mono font-semibold">{role.requiredPartnerRoleCode}</span></>
+            )}
+            {role.isPrimaryRequired && <> · one PRIMARY required</>}
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">{role.name}</label>
+            <select
+              value={selectedPartyId ?? ''}
+              onChange={(e) => setSelectedPartyId(Number(e.target.value) || null)}
+              className={inputClass}
+            >
+              <option value="">Select...</option>
+              {filtered.map((p: any) => (
+                <option key={p.id} value={p.id}>{p.displayName}</option>
+              ))}
+            </select>
+            {filtered.length === 0 && (
+              <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded mt-1">
+                No eligible parties. Add a {role.allowedPartnerKind}
+                {role.requiredPartnerRoleCode ? ` with role "${role.requiredPartnerRoleCode}"` : ''} in /partners first.
+              </p>
+            )}
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Title / role-in-context (optional)</label>
+            <input
+              value={titleInProject}
+              onChange={(e) => setTitleInProject(e.target.value)}
+              placeholder={`e.g. "Lead ${role.name}"`}
+              className={inputClass}
+            />
+          </div>
+          {role.isPrimaryRequired && (
+            <label className="flex items-center gap-2 text-sm text-slate-700 pt-1">
+              <input type="checkbox" checked={isPrimary} onChange={(e) => setIsPrimary(e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+              Mark as primary {role.name}
+            </label>
+          )}
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
+            <button
+              onClick={() => create.mutate()}
+              disabled={create.isPending || !selectedPartyId}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
+            >
+              {create.isPending ? 'Adding...' : `Add ${role.name}`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Project BP Picker ────────────────────────────────────────────────────
-   One reusable picker driving three structured add-flows on the Team tab:
+   Legacy picker — still used by the Add Team Member dialog elsewhere. Kept
+   for now; will be removed when M7 drops legacy surfaces.
      - 'customer-contact'  → adds a worker_of-the-customer to the project
                               (creates participates_in_project)
      - 'supplier'          → adds a supplier organization to the project
