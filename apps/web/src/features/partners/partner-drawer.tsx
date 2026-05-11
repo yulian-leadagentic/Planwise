@@ -9,7 +9,7 @@ import { formatDate } from '@/lib/date-utils';
 
 const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
 
-interface RoleType { id: number; code: string; name: string }
+interface RoleType { id: number; code: string; name: string; category?: string | null }
 interface SideTarget {
   kind: 'person' | 'organization' | 'project' | 'any';
   roleCodes?: string[];
@@ -692,6 +692,15 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
       {showAdd && (
         <AddRelationshipModal
           partnerId={bp.id}
+          partnerKind={bp.partnerType}
+          partnerRoleCodes={bp.roles.map((r) => r.roleType.code)}
+          partnerRoleCategories={Array.from(
+            new Set(
+              bp.roles
+                .map((r) => r.roleType.category)
+                .filter((c): c is string => !!c),
+            ),
+          )}
           onClose={() => setShowAdd(false)}
         />
       )}
@@ -717,7 +726,19 @@ interface CandidatesResponse {
   existingCount: number;
 }
 
-function AddRelationshipModal({ partnerId, onClose }: { partnerId: number; onClose: () => void }) {
+function AddRelationshipModal({
+  partnerId,
+  partnerKind,
+  partnerRoleCodes,
+  partnerRoleCategories,
+  onClose,
+}: {
+  partnerId: number;
+  partnerKind: 'person' | 'organization';
+  partnerRoleCodes: string[];
+  partnerRoleCategories: string[];
+  onClose: () => void;
+}) {
   const queryClient = useQueryClient();
   const [relationshipTypeId, setRelationshipTypeId] = useState<number | null>(null);
   const [chosenKind, setChosenKind] = useState<string | null>(null);
@@ -725,13 +746,37 @@ function AddRelationshipModal({ partnerId, onClose }: { partnerId: number; onClo
   const [roleInContext, setRoleInContext] = useState('');
   const [isPrimary, setIsPrimary] = useState(false);
 
+  // True if at least one of the type's sideATargets accepts our current
+  // partner (right kind + matches role/category constraints if any).
+  const isCompatibleForSideA = (type: RelationshipType): boolean => {
+    const targets = type.sideATargets;
+    if (!targets || targets.length === 0) {
+      // No structured targets defined — fall back to permissive: assume
+      // applicable. This keeps user-built types without sides usable.
+      return true;
+    }
+    return targets.some((t) => {
+      // 1) Kind must match.
+      const kindOk = t.kind === 'any' || t.kind === partnerKind;
+      if (!kindOk) return false;
+      // 2) If role/category constraints exist, the partner must satisfy at
+      //    least one of them (roleCodes OR categoryCodes — same as server).
+      const hasRoleConstraints = (t.roleCodes?.length ?? 0) > 0;
+      const hasCatConstraints = (t.categoryCodes?.length ?? 0) > 0;
+      if (!hasRoleConstraints && !hasCatConstraints) return true; // any role accepted
+      const roleHit = (t.roleCodes ?? []).some((c) => partnerRoleCodes.includes(c));
+      const catHit = (t.categoryCodes ?? []).some((c) => partnerRoleCategories.includes(c));
+      return roleHit || catHit;
+    });
+  };
+
   useEffect(() => {
     const original = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = original; };
   }, []);
 
-  const { data: relTypes = [] } = useQuery<RelationshipType[]>({
+  const { data: allRelTypes = [] } = useQuery<RelationshipType[]>({
     queryKey: ['partner-relationship-types'],
     staleTime: 10 * 60 * 1000,
     queryFn: () =>
@@ -740,6 +785,12 @@ function AddRelationshipModal({ partnerId, onClose }: { partnerId: number; onClo
         return Array.isArray(d) ? d : [];
       }),
   });
+
+  // Only show types where this partner can be on Side A. Hides types that
+  // would never accept this partner (e.g. supplier_of_project on a customer
+  // org without a supplier role).
+  const relTypes = allRelTypes.filter(isCompatibleForSideA);
+  const hiddenTypeCount = allRelTypes.length - relTypes.length;
 
   const selectedType = relTypes.find((rt) => rt.id === relationshipTypeId) || null;
 
@@ -840,6 +891,17 @@ function AddRelationshipModal({ partnerId, onClose }: { partnerId: number; onClo
               <option value="">Select...</option>
               {relTypes.map((rt) => <option key={rt.id} value={rt.id}>{rt.name}</option>)}
             </select>
+            {hiddenTypeCount > 0 && (
+              <p className="text-[10px] text-slate-400 mt-1">
+                {hiddenTypeCount} type{hiddenTypeCount > 1 ? 's' : ''} hidden — Side A doesn't accept this partner ({partnerKind}
+                {partnerRoleCodes.length > 0 ? ` with roles: ${partnerRoleCodes.join(', ')}` : ''}).
+              </p>
+            )}
+            {relTypes.length === 0 && (
+              <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded mt-1">
+                No relationship types accept this partner on Side A. Configure a type whose Side A matches this partner's kind/roles.
+              </p>
+            )}
           </div>
 
           {selectedType && (
