@@ -226,37 +226,56 @@ export class PartnerTypesController {
   //   - applicable kind tabs for the picker (e.g. ['project', 'organization'])
   @Get('relationship-types/:id/candidates')
   @RequirePermissions({ module: 'partners', action: 'read' })
-  @ApiOperation({ summary: 'List eligible party-B candidates for an Add Relationship form' })
+  @ApiOperation({
+    summary:
+      'List eligible candidates for an Add Relationship form. Pass forSide=A (default) to find Side-B candidates when the current partner is on Side A; forSide=B to find Side-A candidates when the current partner is on Side B.',
+  })
   async listCandidates(
     @Param('id', ParseIntPipe) id: number,
-    @Query('partyAId', ParseIntPipe) partyAId: number,
+    @Query('partyAId', ParseIntPipe) partnerId: number,
+    @Query('forSide') forSide: 'A' | 'B' = 'A',
   ) {
     const type = await this.prisma.partnerRelationshipType.findUnique({ where: { id } });
     if (!type) throw new NotFoundException('Relationship type not found');
 
-    const targets = (type.sideBTargets as any[] | null) ?? [];
+    // If the current partner is on Side A, we look for Side-B candidates;
+    // if they're on Side B, we look for Side-A candidates.
+    const targets = ((forSide === 'B' ? type.sideATargets : type.sideBTargets) as any[] | null) ?? [];
     const kinds = Array.from(new Set(targets.map((t: any) => t.kind))) as Array<'person' | 'organization' | 'project' | 'any'>;
 
-    // Find existing active rels of this type from party-A so we can exclude
-    // already-related parties from the candidate list.
+    // Find existing active rels of this type involving the current partner
+    // so we can exclude already-related parties from the candidate list.
+    // - Side A view: partner is source, exclude rows where (source=partner, type) already
+    // - Side B view: partner is target, exclude rows where (target=partner, type) already
     const now = new Date();
+    const existingWhere: Prisma.BusinessPartnerRelationshipWhereInput = {
+      relationshipTypeId: id,
+      validFrom: { lte: now },
+      validTo: { gt: now },
+      status: 'active',
+    };
+    if (forSide === 'B') {
+      existingWhere.targetType = 'organization' as any; // legacy enum reused for BP targets
+      existingWhere.targetId = partnerId;
+    } else {
+      existingWhere.sourcePartnerId = partnerId;
+    }
     const existingRels = await this.prisma.businessPartnerRelationship.findMany({
-      where: {
-        sourcePartnerId: partyAId,
-        relationshipTypeId: id,
-        validFrom: { lte: now },
-        validTo:   { gt: now },
-        status: 'active',
-      },
-      select: { targetType: true, targetId: true },
+      where: existingWhere,
+      select: { sourcePartnerId: true, targetType: true, targetId: true },
     });
-    const blockedBy = (kind: string, id: number) =>
-      existingRels.some((r) => r.targetType === kind && r.targetId === id);
+    // From side A: blocked if (sourceMine, candidate=target). From side B:
+    // blocked if (candidate=source, targetMine). So we just track the "other"
+    // party id for each side.
+    const blockedIds = new Set<number>(
+      existingRels.map((r) => (forSide === 'B' ? r.sourcePartnerId : r.targetId)),
+    );
 
     const result: Record<string, any[]> = {};
 
     for (const kind of kinds) {
       if (kind === 'project') {
+        if (forSide === 'B') continue; // 'project' is never on Side A — skip safely
         const projects = await this.prisma.project.findMany({
           where: { deletedAt: null },
           select: { id: true, name: true, number: true },
@@ -264,11 +283,10 @@ export class PartnerTypesController {
           take: 500,
         });
         result.project = projects
-          .filter((p) => !blockedBy('project', p.id))
+          .filter((p) => !blockedIds.has(p.id))
           .map((p) => ({ id: p.id, name: p.name, code: p.number }));
       } else if (kind === 'person' || kind === 'organization' || kind === 'any') {
-        // Build role/category filter from ALL targets of this kind (any or specific kind).
-        const matching = targets.filter((t: any) => t.kind === kind || (kind === 'any'));
+        const matching = targets.filter((t: any) => t.kind === kind || kind === 'any');
         const allowedRoleCodes = new Set<string>();
         const allowedCategoryCodes = new Set<string>();
         let unrestricted = false;
@@ -280,7 +298,7 @@ export class PartnerTypesController {
 
         const partnerWhere: Prisma.BusinessPartnerWhereInput = {
           deletedAt: null,
-          id: { not: partyAId }, // can't relate to self
+          id: { not: partnerId },
         };
         if (kind !== 'any') partnerWhere.partnerType = kind;
 
@@ -302,14 +320,15 @@ export class PartnerTypesController {
 
         result[kind] = bps
           .filter(matchesRoles)
-          .filter((bp) => !blockedBy('organization', bp.id)) // blocked-list uses legacy targetType 'organization' for BP-targets
+          .filter((bp) => !blockedIds.has(bp.id))
           .map((bp) => ({ id: bp.id, name: bp.displayName, partnerType: bp.partnerType }));
       }
     }
 
     return {
       type,
-      kinds,
+      forSide,
+      kinds: kinds.filter((k) => !(forSide === 'B' && k === 'project')),
       candidates: result,
       existingCount: existingRels.length,
     };

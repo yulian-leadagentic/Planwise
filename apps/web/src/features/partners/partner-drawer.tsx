@@ -46,6 +46,25 @@ interface RelationshipTarget {
   targetCode?: string | null;
 }
 
+/**
+ * A relationship where this partner is the TARGET (not the source).
+ * Used to render lines like "Has contact: Sarah Smith" on the customer's
+ * drawer — the inverse view of an outgoing 'Contact of customer' on Sarah.
+ */
+interface IncomingRelationship {
+  id: number;
+  relationshipType: RelationshipType;
+  sourcePartnerId: number;
+  sourceName: string;
+  sourceKind: 'person' | 'organization';
+  roleInContext: string | null;
+  isPrimary: boolean;
+  validFrom: string | null;
+  validTo: string | null;
+  status: string;
+  notes: string | null;
+}
+
 interface Relationship extends RelationshipTarget {
   id: number;
   targetType: 'project' | 'organization' | 'department' | 'team';
@@ -83,6 +102,7 @@ interface BusinessPartnerFull {
   updatedAt: string;
   roles: PartnerRole[];
   outgoingRelationships: Relationship[];
+  incomingRelationships: IncomingRelationship[];
   user: { id: number; isActive: boolean; lastLoginAt: string | null } | null;
 }
 
@@ -135,7 +155,7 @@ export function PartnerDrawer({
           {([
             { key: 'details',      label: 'Details' },
             { key: 'roles',        label: `Roles${bp ? ` (${bp.roles.length})` : ''}` },
-            { key: 'relationships',label: `Relationships${bp ? ` (${bp.outgoingRelationships.length})` : ''}` },
+            { key: 'relationships',label: `Relationships${bp ? ` (${(bp.outgoingRelationships?.length ?? 0) + (bp.incomingRelationships?.length ?? 0)})` : ''}` },
           ] as const).map((t) => (
             <button
               key={t.key}
@@ -667,16 +687,70 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
     );
   };
 
+  // Incoming relationships — this partner is the target. Render with the
+  // type's inverseLabel ("Has contact: Sarah") so the row reads correctly
+  // from the receiving side.
+  const incoming = bp.incomingRelationships ?? [];
+
+  const removeIncoming = useMutation({
+    mutationFn: (id: number) => client.delete(`/business-partner-relationships/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['business-partners'] });
+      notify.success('Relationship removed', { code: 'BP-REL-DELETE-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to remove'),
+  });
+
   return (
     <div className="space-y-4">
-      {bp.outgoingRelationships.length === 0 && (
+      {bp.outgoingRelationships.length === 0 && incoming.length === 0 && (
         <p className="text-[12px] text-slate-400 italic text-center py-6">No relationships yet.</p>
       )}
 
+      {/* Outgoing — this partner is Side A. */}
       {renderGroup('Organizations', 'organization', <Building2 className="h-3 w-3" />)}
       {renderGroup('Projects', 'project', <FolderKanban className="h-3 w-3" />)}
       {renderGroup('Departments', 'department', <ChevronRight className="h-3 w-3" />)}
       {renderGroup('Teams', 'team', <ChevronRight className="h-3 w-3" />)}
+
+      {/* Incoming — this partner is Side B. Use inverseLabel for natural reading. */}
+      {incoming.length > 0 && (
+        <div>
+          <p className="text-[11px] font-semibold text-slate-400 uppercase mb-2 flex items-center gap-1.5">
+            <ChevronRight className="h-3 w-3 rotate-180" />
+            Pointing at this partner ({incoming.length})
+          </p>
+          <div className="space-y-1.5">
+            {incoming.map((r) => (
+              <div key={`in-${r.id}`} className="rounded-lg border border-slate-200 bg-amber-50/40 px-3 py-2 flex items-start gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[13px] font-medium text-slate-800">
+                      {r.relationshipType.inverseLabel || `← ${r.relationshipType.name}`}
+                    </span>
+                    <span className="text-[12px] text-slate-400">←</span>
+                    <span className="text-[13px] font-semibold text-slate-900 truncate">{r.sourceName}</span>
+                    <span className="text-[10px] text-slate-400 font-mono">({r.sourceKind})</span>
+                    {r.isPrimary && (
+                      <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">PRIMARY</span>
+                    )}
+                  </div>
+                  {r.roleInContext && <p className="text-[12px] text-slate-600 mt-0.5">{r.roleInContext}</p>}
+                </div>
+                {canDelete && (
+                  <button
+                    onClick={() => { if (confirm('Remove this relationship?')) removeIncoming.mutate(r.id); }}
+                    className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-600 shrink-0"
+                    title="Remove"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {canWrite && (
         <div className="pt-2 border-t border-slate-100">
@@ -746,28 +820,30 @@ function AddRelationshipModal({
   const [roleInContext, setRoleInContext] = useState('');
   const [isPrimary, setIsPrimary] = useState(false);
 
-  // True if at least one of the type's sideATargets accepts our current
-  // partner (right kind + matches role/category constraints if any).
-  const isCompatibleForSideA = (type: RelationshipType): boolean => {
-    const targets = type.sideATargets;
-    if (!targets || targets.length === 0) {
-      // No structured targets defined — fall back to permissive: assume
-      // applicable. This keeps user-built types without sides usable.
-      return true;
-    }
+  // Check whether the current partner can fit one specific side's targets.
+  // Empty target list = permissive (no constraint).
+  const fitsSide = (targets: SideTarget[] | null): boolean => {
+    if (!targets || targets.length === 0) return true;
     return targets.some((t) => {
-      // 1) Kind must match.
       const kindOk = t.kind === 'any' || t.kind === partnerKind;
       if (!kindOk) return false;
-      // 2) If role/category constraints exist, the partner must satisfy at
-      //    least one of them (roleCodes OR categoryCodes — same as server).
       const hasRoleConstraints = (t.roleCodes?.length ?? 0) > 0;
       const hasCatConstraints = (t.categoryCodes?.length ?? 0) > 0;
-      if (!hasRoleConstraints && !hasCatConstraints) return true; // any role accepted
+      if (!hasRoleConstraints && !hasCatConstraints) return true;
       const roleHit = (t.roleCodes ?? []).some((c) => partnerRoleCodes.includes(c));
       const catHit = (t.categoryCodes ?? []).some((c) => partnerRoleCategories.includes(c));
       return roleHit || catHit;
     });
+  };
+  /** Returns 'A', 'B', 'both' or null depending on which side(s) accept the
+   *  current partner. */
+  const sideFor = (type: RelationshipType): 'A' | 'B' | 'both' | null => {
+    const a = fitsSide(type.sideATargets);
+    const b = fitsSide(type.sideBTargets);
+    if (a && b) return 'both';
+    if (a) return 'A';
+    if (b) return 'B';
+    return null;
   };
 
   useEffect(() => {
@@ -786,24 +862,32 @@ function AddRelationshipModal({
       }),
   });
 
-  // Only show types where this partner can be on Side A. Hides types that
-  // would never accept this partner (e.g. supplier_of_project on a customer
-  // org without a supplier role).
-  const relTypes = allRelTypes.filter(isCompatibleForSideA);
-  const hiddenTypeCount = allRelTypes.length - relTypes.length;
+  // Annotate each type with which side(s) accept this partner, and keep
+  // only those where at least one side fits. For types where only Side B
+  // fits, the modal will save the row in reverse (other party as source,
+  // this partner as target).
+  const annotatedRelTypes = allRelTypes
+    .map((t) => ({ type: t, side: sideFor(t) }))
+    .filter((x): x is { type: RelationshipType; side: 'A' | 'B' | 'both' } => x.side != null);
+  const hiddenTypeCount = allRelTypes.length - annotatedRelTypes.length;
 
-  const selectedType = relTypes.find((rt) => rt.id === relationshipTypeId) || null;
+  const selectedEntry = annotatedRelTypes.find((x) => x.type.id === relationshipTypeId) || null;
+  const selectedType = selectedEntry?.type ?? null;
+  // When the type accepts the partner on either side, default to A.
+  const forSide: 'A' | 'B' = selectedEntry?.side === 'B' ? 'B' : 'A';
 
   // The candidates endpoint does all the heavy lifting:
   //   - resolves sideBTargets into actual eligible parties per kind
   //   - excludes parties already in an active relationship of this type
   //   - groups by kind for the kind-tab UI
   const { data: candidatesData } = useQuery<CandidatesResponse>({
-    queryKey: ['partner-rel-candidates', relationshipTypeId, partnerId],
+    queryKey: ['partner-rel-candidates', relationshipTypeId, partnerId, forSide],
     enabled: relationshipTypeId != null,
     queryFn: () =>
       client
-        .get(`/admin/partner-types/relationship-types/${relationshipTypeId}/candidates?partyAId=${partnerId}`)
+        .get(
+          `/admin/partner-types/relationship-types/${relationshipTypeId}/candidates?partyAId=${partnerId}&forSide=${forSide}`,
+        )
         .then((r) => r.data?.data ?? r.data),
   });
 
@@ -822,9 +906,9 @@ function AddRelationshipModal({
     setChosenKind(null);
   }, [relationshipTypeId]);
 
-  // The legacy POST body still uses targetType ('project' | 'organization' | …)
-  // because business_partner_relationships is the underlying table. The
-  // M3d cutover routes writes to partner_relationships / project_partner_roles.
+  // The legacy POST body uses (sourcePartnerId, targetType, targetId). For
+  // forSide='A' the current partner is the source; for 'B' they're the
+  // target and the picked candidate becomes the source.
   const legacyTargetType =
     chosenKind === 'person' ? 'organization' /* persons-as-targets piggy-back the BP-target column */
     : (chosenKind as 'project' | 'organization' | null);
@@ -834,16 +918,26 @@ function AddRelationshipModal({
       if (!chosenKind || !targetId) {
         throw new Error('Pick a target before saving');
       }
-      return client
-        .post('/business-partner-relationships', {
-          sourcePartnerId: partnerId,
-          targetType: legacyTargetType,
-          targetId,
-          relationshipTypeId,
-          roleInContext: roleInContext.trim() || undefined,
-          isPrimary,
-        })
-        .then((r) => r.data);
+      const body =
+        forSide === 'A'
+          ? {
+              sourcePartnerId: partnerId,
+              targetType: legacyTargetType,
+              targetId,
+              relationshipTypeId,
+              roleInContext: roleInContext.trim() || undefined,
+              isPrimary,
+            }
+          : {
+              // Side B: the picked candidate is the source, current partner is target.
+              sourcePartnerId: targetId,
+              targetType: 'organization' as const,
+              targetId: partnerId,
+              relationshipTypeId,
+              roleInContext: roleInContext.trim() || undefined,
+              isPrimary,
+            };
+      return client.post('/business-partner-relationships', body).then((r) => r.data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });
@@ -863,8 +957,16 @@ function AddRelationshipModal({
     create.mutate();
   };
 
-  const sideALabel = selectedType?.sideALabel || 'This partner';
-  const sideBLabel = selectedType?.sideBLabel || 'Other party';
+  // When the partner is on Side A we use the type's labels normally.
+  // When the partner is on Side B, we read the sentence in reverse:
+  //   "This partner is the {sideBLabel}, of someone playing {sideALabel}"
+  // and we ask the user to pick that {sideALabel} party.
+  const partnerSideLabel = forSide === 'A'
+    ? (selectedType?.sideALabel || 'This partner')
+    : (selectedType?.sideBLabel || 'This partner');
+  const otherSideLabel = forSide === 'A'
+    ? (selectedType?.sideBLabel || 'Other party')
+    : (selectedType?.sideALabel || 'Other party');
   const optionsForChosenKind = chosenKind ? candidates[chosenKind] ?? [] : [];
   const exhausted =
     candidatesData != null &&
@@ -889,17 +991,22 @@ function AddRelationshipModal({
               className={inputClass}
             >
               <option value="">Select...</option>
-              {relTypes.map((rt) => <option key={rt.id} value={rt.id}>{rt.name}</option>)}
+              {annotatedRelTypes.map(({ type, side }) => (
+                <option key={type.id} value={type.id}>
+                  {type.name}
+                  {side === 'B' ? ` — as ${type.sideBLabel || 'side B'}` : ''}
+                </option>
+              ))}
             </select>
             {hiddenTypeCount > 0 && (
               <p className="text-[10px] text-slate-400 mt-1">
-                {hiddenTypeCount} type{hiddenTypeCount > 1 ? 's' : ''} hidden — Side A doesn't accept this partner ({partnerKind}
+                {hiddenTypeCount} type{hiddenTypeCount > 1 ? 's' : ''} hidden — neither side accepts this partner ({partnerKind}
                 {partnerRoleCodes.length > 0 ? ` with roles: ${partnerRoleCodes.join(', ')}` : ''}).
               </p>
             )}
-            {relTypes.length === 0 && (
+            {annotatedRelTypes.length === 0 && (
               <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded mt-1">
-                No relationship types accept this partner on Side A. Configure a type whose Side A matches this partner's kind/roles.
+                No relationship types accept this partner on either side. Configure a type whose Side A or Side B matches this partner's kind/roles.
               </p>
             )}
           </div>
@@ -907,10 +1014,15 @@ function AddRelationshipModal({
           {selectedType && (
             <>
               <div className="rounded-lg bg-blue-50/60 px-3 py-2 text-[12px] text-slate-700">
-                <span className="font-semibold text-blue-700">{sideALabel}</span>
-                <span className="text-slate-400 mx-1.5">→</span>
-                <span className="font-semibold text-violet-700">{sideBLabel}</span>
-                {selectedType.inverseLabel && (
+                <span className="font-semibold text-blue-700">{partnerSideLabel}</span>
+                <span className="text-slate-400 mx-1.5">{forSide === 'B' ? '←' : '→'}</span>
+                <span className="font-semibold text-violet-700">{otherSideLabel}</span>
+                {forSide === 'B' && (
+                  <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
+                    INCOMING
+                  </span>
+                )}
+                {selectedType.inverseLabel && forSide === 'A' && (
                   <span className="text-[10px] text-slate-400 ml-2">(reads back as "{selectedType.inverseLabel}")</span>
                 )}
                 {candidatesData && candidatesData.existingCount > 0 && (

@@ -82,7 +82,40 @@ export class BusinessPartnersService {
       include: partnerInclude,
     });
     if (!bp) throw new NotFoundException('Business partner not found');
-    return this.attachRelationshipTargets(bp);
+    const withTargets = await this.attachRelationshipTargets(bp);
+
+    // M3 — also load incoming relationships: rows where this BP is the
+    // *target* (target_type='organization' AND target_id=this.id). Lets
+    // a customer org show its contacts; an employer show its workers; etc.
+    const incoming = await this.prisma.businessPartnerRelationship.findMany({
+      where: {
+        targetType: 'organization' as any,
+        targetId: id,
+        status: 'active',
+      },
+      include: {
+        relationshipType: true,
+        source: { select: { id: true, partnerType: true, displayName: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return {
+      ...withTargets,
+      incomingRelationships: incoming.map((r) => ({
+        id: r.id,
+        relationshipType: r.relationshipType,
+        sourcePartnerId: r.sourcePartnerId,
+        sourceName: r.source.displayName,
+        sourceKind: r.source.partnerType,
+        roleInContext: r.roleInContext,
+        isPrimary: r.isPrimary,
+        validFrom: r.validFrom,
+        validTo: r.validTo,
+        status: r.status,
+        notes: r.notes,
+      })),
+    };
   }
 
   // ─── Relationship target hydration (interim — pre-M3) ─────────────────────
