@@ -10,6 +10,7 @@ import {
   Hash,
   DollarSign,
   GraduationCap,
+  Briefcase,
 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -30,6 +31,14 @@ const adminCards = [
     href: '/admin/partner-types',
     module: 'admin/partner-types',
     color: 'bg-pink-100 text-pink-700',
+  },
+  {
+    title: 'Project Role Types',
+    description: 'Catalog of roles a party can hold on a project (Customer, Supplier, Architect, …)',
+    icon: Briefcase,
+    href: '/admin/project-role-types',
+    module: 'admin/project-role-types',
+    color: 'bg-fuchsia-100 text-fuchsia-700',
   },
   {
     title: 'Roles & Permissions',
