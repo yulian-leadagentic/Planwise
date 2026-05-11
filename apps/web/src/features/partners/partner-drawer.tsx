@@ -10,7 +10,19 @@ import { formatDate } from '@/lib/date-utils';
 const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
 
 interface RoleType { id: number; code: string; name: string }
-interface RelationshipType { id: number; code: string; name: string; applicableTargetTypes: string | null }
+interface RelationshipType {
+  id: number;
+  code: string;
+  name: string;
+  applicableTargetTypes: string | null;
+  // M3a — named-side fields. The form uses these to label the two
+  // pickers ("Employee" / "Employer" instead of "source" / "target").
+  sideALabel: string | null;
+  sideBLabel: string | null;
+  sideAKind: string | null;
+  sideBKind: string | null;
+  inverseLabel: string | null;
+}
 
 interface PartnerRole {
   id: number;
@@ -680,11 +692,15 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
 
 // ─── Add Relationship Modal ──────────────────────────────────────────────────
 
+// M3a — Modal flow: pick the relationship type FIRST, then the modal labels
+// the partner-B picker with the type's sideBLabel ("Employer", "Project", …).
+// The form no longer asks "target type?" generically — it follows from the
+// chosen relationship type's sideBKind.
+
 function AddRelationshipModal({ partnerId, onClose }: { partnerId: number; onClose: () => void }) {
   const queryClient = useQueryClient();
-  const [targetType, setTargetType] = useState<'project' | 'organization'>('project');
-  const [targetId, setTargetId] = useState<number | null>(null);
   const [relationshipTypeId, setRelationshipTypeId] = useState<number | null>(null);
+  const [targetId, setTargetId] = useState<number | null>(null);
   const [roleInContext, setRoleInContext] = useState('');
   const [isPrimary, setIsPrimary] = useState(false);
 
@@ -699,6 +715,22 @@ function AddRelationshipModal({ partnerId, onClose }: { partnerId: number; onClo
     staleTime: 10 * 60 * 1000,
     queryFn: () => client.get('/admin/partner-types/relationship-types').then((r) => r.data?.data ?? r.data ?? []),
   });
+
+  const selectedType = relTypes.find((rt) => rt.id === relationshipTypeId) || null;
+
+  // Resolve which target collection to query from the type's sideBKind.
+  // 'project' → /projects ; 'organization' → /business-partners?partnerType=organization.
+  // 'person' / 'any' / unset fall back to the legacy applicableTargetTypes
+  // CSV. 'department' / 'team' aren't browsable from this modal yet.
+  const targetType: 'project' | 'organization' | null = (() => {
+    if (!selectedType) return null;
+    if (selectedType.sideBKind === 'project') return 'project';
+    if (selectedType.sideBKind === 'organization') return 'organization';
+    const legacy = selectedType.applicableTargetTypes?.split(',').map((s) => s.trim()).filter(Boolean) ?? [];
+    if (legacy.includes('project')) return 'project';
+    if (legacy.includes('organization')) return 'organization';
+    return null;
+  })();
 
   const { data: projects = [] } = useQuery<any[]>({
     queryKey: ['projects-for-rel'],
@@ -718,21 +750,23 @@ function AddRelationshipModal({ partnerId, onClose }: { partnerId: number; onClo
     }),
   });
 
-  const applicableRelTypes = relTypes.filter((rt) => {
-    if (!rt.applicableTargetTypes) return true;
-    return rt.applicableTargetTypes.split(',').map((s) => s.trim()).includes(targetType);
-  });
+  // When the user changes the type, the previously-selected target may no
+  // longer apply (e.g. they picked a project and then switched to a
+  // person↔org type). Clear it.
+  useEffect(() => { setTargetId(null); }, [relationshipTypeId]);
 
   const create = useMutation({
-    mutationFn: () =>
-      client.post('/business-partner-relationships', {
+    mutationFn: () => {
+      if (!targetType) throw new Error('No target collection resolved for this relationship type');
+      return client.post('/business-partner-relationships', {
         sourcePartnerId: partnerId,
         targetType,
         targetId,
         relationshipTypeId,
         roleInContext: roleInContext.trim() || undefined,
         isPrimary,
-      }).then((r) => r.data),
+      }).then((r) => r.data);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });
       notify.success('Relationship added', { code: 'BP-REL-200' });
@@ -743,12 +777,15 @@ function AddRelationshipModal({ partnerId, onClose }: { partnerId: number; onClo
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!targetId || !relationshipTypeId) {
-      notify.warning('Select a target and a relationship type', { code: 'BP-REL-400' });
+    if (!relationshipTypeId || !targetId) {
+      notify.warning('Pick a relationship type and a target', { code: 'BP-REL-400' });
       return;
     }
     create.mutate();
   };
+
+  const sideBLabel = selectedType?.sideBLabel || (targetType === 'project' ? 'Project' : targetType === 'organization' ? 'Organization' : 'Target');
+  const sideALabel = selectedType?.sideALabel || 'This partner';
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm" onClick={onClose}>
@@ -760,61 +797,68 @@ function AddRelationshipModal({ partnerId, onClose }: { partnerId: number; onClo
           </button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-3">
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Target type</label>
-            <div className="grid grid-cols-2 gap-2">
-              {(['project', 'organization'] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => { setTargetType(t); setTargetId(null); }}
-                  className={cn(
-                    'rounded-lg border-2 px-3 py-2 text-sm font-medium capitalize',
-                    targetType === t ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600',
-                  )}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">{targetType === 'project' ? 'Project' : 'Organization'}</label>
-            <select value={targetId ?? ''} onChange={(e) => setTargetId(Number(e.target.value) || null)} className={inputClass}>
-              <option value="">Select...</option>
-              {targetType === 'project'
-                ? projects.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)
-                : orgs.map((o: any) => <option key={o.id} value={o.id}>{o.displayName}</option>)}
-            </select>
-          </div>
-
+          {/* 1. Pick the type first — it drives the rest of the form. */}
           <div>
             <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Relationship type</label>
             <select value={relationshipTypeId ?? ''} onChange={(e) => setRelationshipTypeId(Number(e.target.value) || null)} className={inputClass}>
               <option value="">Select...</option>
-              {applicableRelTypes.map((rt) => <option key={rt.id} value={rt.id}>{rt.name}</option>)}
+              {relTypes.map((rt) => <option key={rt.id} value={rt.id}>{rt.name}</option>)}
             </select>
           </div>
 
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Role in context (optional)</label>
-            <input
-              value={roleInContext}
-              onChange={(e) => setRoleInContext(e.target.value)}
-              placeholder='e.g. "Operations Manager"'
-              className={inputClass}
-            />
-          </div>
+          {/* 2. Once a type is chosen, show the sentence and pick side B. */}
+          {selectedType && (
+            <>
+              <div className="rounded-lg bg-blue-50/60 px-3 py-2 text-[12px] text-slate-700">
+                <span className="font-semibold text-blue-700">{sideALabel}</span>
+                <span className="text-slate-400 mx-1.5">→</span>
+                <span className="font-semibold text-violet-700">{sideBLabel}</span>
+                {selectedType.inverseLabel && (
+                  <span className="text-[10px] text-slate-400 ml-2">(reads back as "{selectedType.inverseLabel}")</span>
+                )}
+              </div>
 
-          <label className="flex items-center gap-2 text-sm text-slate-700 pt-1">
-            <input type="checkbox" checked={isPrimary} onChange={(e) => setIsPrimary(e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
-            Mark as primary
-          </label>
+              <div>
+                <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">{sideBLabel}</label>
+                {targetType === 'project' && (
+                  <select value={targetId ?? ''} onChange={(e) => setTargetId(Number(e.target.value) || null)} className={inputClass}>
+                    <option value="">Select project...</option>
+                    {projects.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                )}
+                {targetType === 'organization' && (
+                  <select value={targetId ?? ''} onChange={(e) => setTargetId(Number(e.target.value) || null)} className={inputClass}>
+                    <option value="">Select organization...</option>
+                    {orgs.map((o: any) => <option key={o.id} value={o.id}>{o.displayName}</option>)}
+                  </select>
+                )}
+                {!targetType && (
+                  <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded">
+                    This type's Side B kind isn't supported by the form yet — configure sideBKind on the type.
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Title / role in this context (optional)</label>
+                <input
+                  value={roleInContext}
+                  onChange={(e) => setRoleInContext(e.target.value)}
+                  placeholder='e.g. "Operations Manager"'
+                  className={inputClass}
+                />
+              </div>
+
+              <label className="flex items-center gap-2 text-sm text-slate-700 pt-1">
+                <input type="checkbox" checked={isPrimary} onChange={(e) => setIsPrimary(e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+                Mark as primary
+              </label>
+            </>
+          )}
 
           <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
             <button type="button" onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
-            <button type="submit" disabled={create.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50">
+            <button type="submit" disabled={create.isPending || !selectedType || !targetId} className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50">
               {create.isPending ? 'Adding...' : 'Add'}
             </button>
           </div>

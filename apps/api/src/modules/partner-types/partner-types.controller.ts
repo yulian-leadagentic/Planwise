@@ -27,10 +27,19 @@ interface UpsertTypeDto {
   // Coarse grouping label, role types only (e.g. "cst", "sup"). Empty
   // string clears the category; undefined leaves the existing value.
   category?: string;
-  applicableTargetTypes?: string;   // CSV — only used by relationship types
-  applicableSourceType?: string;    // CSV — only used by relationship types: "person" | "organization" | "person,organization"
-  requiredSourceRoleCode?: string;  // only used by relationship types
-  requiredTargetRoleCode?: string;  // only used by relationship types — target BP must hold this role
+  // M3a — named-side fields for relationship types (preferred going forward).
+  sideALabel?: string;
+  sideBLabel?: string;
+  sideAKind?: string;               // 'person' | 'organization' | 'any'
+  sideBKind?: string;               // 'person' | 'organization' | 'project' | 'any'
+  inverseLabel?: string;
+  isSymmetric?: boolean;
+  allowsMultiple?: boolean;
+  // Legacy validation fields — kept until M3b moves rows to their new tables.
+  applicableTargetTypes?: string;   // CSV
+  applicableSourceType?: string;    // CSV
+  requiredSourceRoleCode?: string;
+  requiredTargetRoleCode?: string;
   sortOrder?: number;
 }
 
@@ -140,6 +149,13 @@ export class PartnerTypesController {
         code: body.code.trim().toLowerCase(),
         name: body.name.trim(),
         description: body.description?.trim() || null,
+        sideALabel: body.sideALabel?.trim() || null,
+        sideBLabel: body.sideBLabel?.trim() || null,
+        sideAKind: body.sideAKind?.trim() || null,
+        sideBKind: body.sideBKind?.trim() || null,
+        inverseLabel: body.inverseLabel?.trim() || null,
+        isSymmetric: body.isSymmetric ?? false,
+        allowsMultiple: body.allowsMultiple ?? true,
         applicableTargetTypes: body.applicableTargetTypes?.trim() || null,
         applicableSourceType: body.applicableSourceType?.trim() || null,
         requiredSourceRoleCode: body.requiredSourceRoleCode?.trim() || null,
@@ -160,6 +176,13 @@ export class PartnerTypesController {
     const data: any = {
       name: body.name?.trim(),
       description: body.description?.trim() ?? null,
+      sideALabel: body.sideALabel?.trim() ?? null,
+      sideBLabel: body.sideBLabel?.trim() ?? null,
+      sideAKind: body.sideAKind?.trim() ?? null,
+      sideBKind: body.sideBKind?.trim() ?? null,
+      inverseLabel: body.inverseLabel?.trim() ?? null,
+      isSymmetric: body.isSymmetric,
+      allowsMultiple: body.allowsMultiple,
       applicableTargetTypes: body.applicableTargetTypes?.trim() ?? null,
       applicableSourceType: body.applicableSourceType?.trim() ?? null,
       requiredSourceRoleCode: body.requiredSourceRoleCode?.trim() ?? null,
