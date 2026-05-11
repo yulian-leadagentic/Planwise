@@ -1378,29 +1378,53 @@ model PartnerRoleType {
 // requiredSourceRoleCode) are evaluated by the relationship service, so
 // admins can define new types without code changes.
 model PartnerRelationshipType {
-  id                    Int       @id @default(autoincrement())
-  code                  String    @unique @db.VarChar(50)
-  name                  String    @db.VarChar(100)
-  description           String?   @db.VarChar(500)
-  // CSV of RelationshipTarget values this type applies to:
-  // e.g. "project,organization". Empty/NULL = any target.
-  applicableTargetTypes String?   @map("applicable_target_types") @db.VarChar(255)
-  // CSV of PartnerType values this type's source must be:
-  // "person", "organization", or "person,organization". NULL/empty = any.
-  applicableSourceType  String?   @map("applicable_source_type")  @db.VarChar(50)
-  // If set, the source BP must hold this PartnerRoleType.code on its roles.
-  // E.g. customer_of_project → "customer" so only customer orgs qualify.
-  requiredSourceRoleCode String?  @map("required_source_role_code") @db.VarChar(50)
-  // If set, when the target is a Business Partner (targetType=organization),
-  // the target BP must hold this PartnerRoleType.code on its roles. Lets
-  // admins express constraints like "an external_contact relates ONLY to a
-  // customer org" — set requiredSourceRoleCode='external_contact' and
-  // requiredTargetRoleCode='customer'. NULL = no target-role constraint.
-  requiredTargetRoleCode String?  @map("required_target_role_code") @db.VarChar(50)
-  sortOrder             Int       @default(0) @map("sort_order")
-  isSystem              Boolean   @default(false) @map("is_system")
-  createdAt             DateTime  @default(now()) @map("created_at")
-  updatedAt             DateTime  @updatedAt      @map("updated_at")
+  id          Int     @id @default(autoincrement())
+  code        String  @unique @db.VarChar(50)
+  name        String  @db.VarChar(100)
+  description String? @db.VarChar(500)
+
+  // ─── M3a — named sides (SAP-BUT050 + Salesforce hybrid) ────────────────
+  // Each relationship type names what each side IS, so the form / lists
+  // can read "Customer → Project Alpha" instead of "source → target".
+  //
+  //   sideALabel:  the role name of party A in the sentence
+  //                  e.g. 'Employee'    for worker_of
+  //                  e.g. 'Customer'    for customer_of_project
+  //   sideBLabel:  the role name of party B
+  //                  e.g. 'Employer'    for worker_of
+  //                  e.g. 'Project'     for customer_of_project
+  //   sideAKind:   what kind of entity is allowed on side A
+  //                  'person' | 'organization' | 'any'
+  //   sideBKind:   what kind of entity is allowed on side B
+  //                  'person' | 'organization' | 'project' | 'any'
+  //                  ('project' marks this row for migration to
+  //                  ProjectPartnerRole in M3b — these aren't real
+  //                  party↔party rels.)
+  //   inverseLabel: how to label this rel when listed on side B
+  //                  e.g. for worker_of, sideB sees "Employs"
+  //   isSymmetric:  e.g. partner_of, joint_venture_with — same label both ways
+  //   allowsMultiple: false ⇒ a single party can have at most one active
+  //                  rel of this type (e.g. one primary employer at a time)
+  sideALabel     String?  @map("side_a_label")    @db.VarChar(100)
+  sideBLabel     String?  @map("side_b_label")    @db.VarChar(100)
+  sideAKind      String?  @map("side_a_kind")     @db.VarChar(20)
+  sideBKind      String?  @map("side_b_kind")     @db.VarChar(20)
+  inverseLabel   String?  @map("inverse_label")   @db.VarChar(100)
+  isSymmetric    Boolean  @default(false)         @map("is_symmetric")
+  allowsMultiple Boolean  @default(true)          @map("allows_multiple")
+
+  // ─── Legacy fields — kept until M3b migrates rows into the new tables.
+  // The relationship service still consults these for validation; the
+  // admin UI shows them in an "advanced" section.
+  applicableTargetTypes  String? @map("applicable_target_types")  @db.VarChar(255)
+  applicableSourceType   String? @map("applicable_source_type")   @db.VarChar(50)
+  requiredSourceRoleCode String? @map("required_source_role_code") @db.VarChar(50)
+  requiredTargetRoleCode String? @map("required_target_role_code") @db.VarChar(50)
+
+  sortOrder Int      @default(0) @map("sort_order")
+  isSystem  Boolean  @default(false) @map("is_system")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt      @map("updated_at")
 
   relationships BusinessPartnerRelationship[]
 
