@@ -10,18 +10,27 @@ import { formatDate } from '@/lib/date-utils';
 const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
 
 interface RoleType { id: number; code: string; name: string }
+interface SideTarget {
+  kind: 'person' | 'organization' | 'project' | 'any';
+  roleCodes?: string[];
+  categoryCodes?: string[];
+}
+
 interface RelationshipType {
   id: number;
   code: string;
   name: string;
   applicableTargetTypes: string | null;
-  // M3a — named-side fields. The form uses these to label the two
-  // pickers ("Employee" / "Employer" instead of "source" / "target").
+  // M3a — display labels.
   sideALabel: string | null;
   sideBLabel: string | null;
+  inverseLabel: string | null;
+  // M3.5 — structured targets (preferred).
+  sideATargets: SideTarget[] | null;
+  sideBTargets: SideTarget[] | null;
+  // Legacy single-kind shim.
   sideAKind: string | null;
   sideBKind: string | null;
-  inverseLabel: string | null;
 }
 
 interface PartnerRole {
@@ -692,14 +701,26 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
 
 // ─── Add Relationship Modal ──────────────────────────────────────────────────
 
-// M3a — Modal flow: pick the relationship type FIRST, then the modal labels
-// the partner-B picker with the type's sideBLabel ("Employer", "Project", …).
-// The form no longer asks "target type?" generically — it follows from the
-// chosen relationship type's sideBKind.
+// M3.5 — Modal flow:
+//   1. Pick the relationship type.
+//   2. The form labels both sides from the type's sideALabel/sideBLabel.
+//   3. The server pre-filters candidate targets via /candidates so we
+//      don't even render parties that already have an active relation
+//      of this type (duplicate prevention).
+//   4. When sideBTargets allow multiple kinds, a tabbed kind selector
+//      appears (e.g. Subcontractor → [Project] [Organization]).
+
+interface CandidatesResponse {
+  type: RelationshipType;
+  kinds: string[];
+  candidates: Record<string, Array<{ id: number; name: string; partnerType?: string; code?: string }>>;
+  existingCount: number;
+}
 
 function AddRelationshipModal({ partnerId, onClose }: { partnerId: number; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [relationshipTypeId, setRelationshipTypeId] = useState<number | null>(null);
+  const [chosenKind, setChosenKind] = useState<string | null>(null);
   const [targetId, setTargetId] = useState<number | null>(null);
   const [roleInContext, setRoleInContext] = useState('');
   const [isPrimary, setIsPrimary] = useState(false);
@@ -713,62 +734,69 @@ function AddRelationshipModal({ partnerId, onClose }: { partnerId: number; onClo
   const { data: relTypes = [] } = useQuery<RelationshipType[]>({
     queryKey: ['partner-relationship-types'],
     staleTime: 10 * 60 * 1000,
-    queryFn: () => client.get('/admin/partner-types/relationship-types').then((r) => r.data?.data ?? r.data ?? []),
+    queryFn: () =>
+      client.get('/admin/partner-types/relationship-types').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
   });
 
   const selectedType = relTypes.find((rt) => rt.id === relationshipTypeId) || null;
 
-  // Resolve which target collection to query from the type's sideBKind.
-  // 'project' → /projects ; 'organization' → /business-partners?partnerType=organization.
-  // 'person' / 'any' / unset fall back to the legacy applicableTargetTypes
-  // CSV. 'department' / 'team' aren't browsable from this modal yet.
-  const targetType: 'project' | 'organization' | null = (() => {
-    if (!selectedType) return null;
-    if (selectedType.sideBKind === 'project') return 'project';
-    if (selectedType.sideBKind === 'organization') return 'organization';
-    const legacy = selectedType.applicableTargetTypes?.split(',').map((s) => s.trim()).filter(Boolean) ?? [];
-    if (legacy.includes('project')) return 'project';
-    if (legacy.includes('organization')) return 'organization';
-    return null;
-  })();
-
-  const { data: projects = [] } = useQuery<any[]>({
-    queryKey: ['projects-for-rel'],
-    enabled: targetType === 'project',
-    queryFn: () => client.get('/projects?perPage=200').then((r) => {
-      const d = r.data?.data ?? r.data;
-      return Array.isArray(d) ? d : (d?.data ?? []);
-    }),
+  // The candidates endpoint does all the heavy lifting:
+  //   - resolves sideBTargets into actual eligible parties per kind
+  //   - excludes parties already in an active relationship of this type
+  //   - groups by kind for the kind-tab UI
+  const { data: candidatesData } = useQuery<CandidatesResponse>({
+    queryKey: ['partner-rel-candidates', relationshipTypeId, partnerId],
+    enabled: relationshipTypeId != null,
+    queryFn: () =>
+      client
+        .get(`/admin/partner-types/relationship-types/${relationshipTypeId}/candidates?partyAId=${partnerId}`)
+        .then((r) => r.data?.data ?? r.data),
   });
 
-  const { data: orgs = [] } = useQuery<any[]>({
-    queryKey: ['orgs-for-rel'],
-    enabled: targetType === 'organization',
-    queryFn: () => client.get('/business-partners?partnerType=organization&perPage=200').then((r) => {
-      const d = r.data?.data ?? r.data;
-      return Array.isArray(d) ? d : (d?.data ?? []);
-    }),
-  });
+  const kinds = candidatesData?.kinds ?? [];
+  const candidates = candidatesData?.candidates ?? {};
 
-  // When the user changes the type, the previously-selected target may no
-  // longer apply (e.g. they picked a project and then switched to a
-  // person↔org type). Clear it.
-  useEffect(() => { setTargetId(null); }, [relationshipTypeId]);
+  // Auto-pick the only kind if there's just one.
+  useEffect(() => {
+    if (kinds.length === 1 && chosenKind !== kinds[0]) setChosenKind(kinds[0]);
+    if (kinds.length > 1 && chosenKind && !kinds.includes(chosenKind)) setChosenKind(null);
+  }, [kinds, chosenKind]);
+
+  // Reset selection when type changes.
+  useEffect(() => {
+    setTargetId(null);
+    setChosenKind(null);
+  }, [relationshipTypeId]);
+
+  // The legacy POST body still uses targetType ('project' | 'organization' | …)
+  // because business_partner_relationships is the underlying table. The
+  // M3d cutover routes writes to partner_relationships / project_partner_roles.
+  const legacyTargetType =
+    chosenKind === 'person' ? 'organization' /* persons-as-targets piggy-back the BP-target column */
+    : (chosenKind as 'project' | 'organization' | null);
 
   const create = useMutation({
     mutationFn: () => {
-      if (!targetType) throw new Error('No target collection resolved for this relationship type');
-      return client.post('/business-partner-relationships', {
-        sourcePartnerId: partnerId,
-        targetType,
-        targetId,
-        relationshipTypeId,
-        roleInContext: roleInContext.trim() || undefined,
-        isPrimary,
-      }).then((r) => r.data);
+      if (!chosenKind || !targetId) {
+        throw new Error('Pick a target before saving');
+      }
+      return client
+        .post('/business-partner-relationships', {
+          sourcePartnerId: partnerId,
+          targetType: legacyTargetType,
+          targetId,
+          relationshipTypeId,
+          roleInContext: roleInContext.trim() || undefined,
+          isPrimary,
+        })
+        .then((r) => r.data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });
+      queryClient.invalidateQueries({ queryKey: ['partner-rel-candidates'] });
       notify.success('Relationship added', { code: 'BP-REL-200' });
       onClose();
     },
@@ -784,12 +812,17 @@ function AddRelationshipModal({ partnerId, onClose }: { partnerId: number; onClo
     create.mutate();
   };
 
-  const sideBLabel = selectedType?.sideBLabel || (targetType === 'project' ? 'Project' : targetType === 'organization' ? 'Organization' : 'Target');
   const sideALabel = selectedType?.sideALabel || 'This partner';
+  const sideBLabel = selectedType?.sideBLabel || 'Other party';
+  const optionsForChosenKind = chosenKind ? candidates[chosenKind] ?? [] : [];
+  const exhausted =
+    candidatesData != null &&
+    kinds.length > 0 &&
+    kinds.every((k) => (candidates[k] ?? []).length === 0);
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[460px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-2xl w-[480px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
           <h3 className="text-base font-bold text-slate-900">Add Relationship</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
@@ -797,16 +830,18 @@ function AddRelationshipModal({ partnerId, onClose }: { partnerId: number; onClo
           </button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-3">
-          {/* 1. Pick the type first — it drives the rest of the form. */}
           <div>
             <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Relationship type</label>
-            <select value={relationshipTypeId ?? ''} onChange={(e) => setRelationshipTypeId(Number(e.target.value) || null)} className={inputClass}>
+            <select
+              value={relationshipTypeId ?? ''}
+              onChange={(e) => setRelationshipTypeId(Number(e.target.value) || null)}
+              className={inputClass}
+            >
               <option value="">Select...</option>
               {relTypes.map((rt) => <option key={rt.id} value={rt.id}>{rt.name}</option>)}
             </select>
           </div>
 
-          {/* 2. Once a type is chosen, show the sentence and pick side B. */}
           {selectedType && (
             <>
               <div className="rounded-lg bg-blue-50/60 px-3 py-2 text-[12px] text-slate-700">
@@ -816,28 +851,66 @@ function AddRelationshipModal({ partnerId, onClose }: { partnerId: number; onClo
                 {selectedType.inverseLabel && (
                   <span className="text-[10px] text-slate-400 ml-2">(reads back as "{selectedType.inverseLabel}")</span>
                 )}
-              </div>
-
-              <div>
-                <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">{sideBLabel}</label>
-                {targetType === 'project' && (
-                  <select value={targetId ?? ''} onChange={(e) => setTargetId(Number(e.target.value) || null)} className={inputClass}>
-                    <option value="">Select project...</option>
-                    {projects.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
-                )}
-                {targetType === 'organization' && (
-                  <select value={targetId ?? ''} onChange={(e) => setTargetId(Number(e.target.value) || null)} className={inputClass}>
-                    <option value="">Select organization...</option>
-                    {orgs.map((o: any) => <option key={o.id} value={o.id}>{o.displayName}</option>)}
-                  </select>
-                )}
-                {!targetType && (
-                  <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded">
-                    This type's Side B kind isn't supported by the form yet — configure sideBKind on the type.
+                {candidatesData && candidatesData.existingCount > 0 && (
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    {candidatesData.existingCount} existing relationship(s) of this type already on this partner — hidden from the list below.
                   </p>
                 )}
               </div>
+
+              {/* Multi-kind sideB ⇒ show a kind tab strip. */}
+              {kinds.length > 1 && (
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Kind</label>
+                  <div className="flex gap-2">
+                    {kinds.map((k) => (
+                      <button
+                        type="button"
+                        key={k}
+                        onClick={() => { setChosenKind(k); setTargetId(null); }}
+                        className={cn(
+                          'rounded-lg border-2 px-3 py-1.5 text-[12px] font-medium capitalize',
+                          chosenKind === k ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600',
+                        )}
+                      >
+                        {k} <span className="text-[10px] text-slate-400">({(candidates[k] ?? []).length})</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {chosenKind && (
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">
+                    {chosenKind === 'project' ? 'Project' : chosenKind === 'organization' ? 'Organization' : 'Person'}
+                  </label>
+                  {optionsForChosenKind.length > 0 ? (
+                    <select
+                      value={targetId ?? ''}
+                      onChange={(e) => setTargetId(Number(e.target.value) || null)}
+                      className={inputClass}
+                    >
+                      <option value="">Select...</option>
+                      {optionsForChosenKind.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}{o.code ? ` (${o.code})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded">
+                      No eligible {chosenKind}s — they may already be related to this partner under this type, or none match the type's role constraints.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {exhausted && (
+                <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded">
+                  No eligible parties for this relationship type. Either all candidates are already related, or the type has constraints that no parties match.
+                </p>
+              )}
 
               <div>
                 <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Title / role in this context (optional)</label>
