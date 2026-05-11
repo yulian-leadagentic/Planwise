@@ -21,27 +21,57 @@ interface RoleType {
   isSystem: boolean;
 }
 
+/**
+ * M3.5 — Structured side target. A side accepts a party if it matches AT
+ * LEAST ONE entry: the party's partnerType matches `kind`, AND
+ * (no role constraints, OR the party holds a role whose code is in
+ * roleCodes, OR the party holds a role whose category is in categoryCodes).
+ */
+interface SideTarget {
+  kind: 'person' | 'organization' | 'project' | 'any';
+  roleCodes?: string[];
+  categoryCodes?: string[];
+}
+
 interface RelationshipType extends RoleType {
-  // M3a — named-side fields (preferred). Each row reads as a sentence:
-  // "{sideALabel} ({sideAKind}) ↔ {sideBLabel} ({sideBKind})".
+  // M3.5 — structured target lists (preferred).
+  sideATargets: SideTarget[] | null;
+  sideBTargets: SideTarget[] | null;
+  // Optional human labels (free text). When null, we auto-derive from
+  // sideATargets/sideBTargets in the UI.
   sideALabel: string | null;
   sideBLabel: string | null;
-  sideAKind: string | null;        // 'person' | 'organization' | 'any'
-  sideBKind: string | null;        // 'person' | 'organization' | 'project' | 'any'
   inverseLabel: string | null;
   isSymmetric: boolean;
   allowsMultiple: boolean;
-  // Legacy fields — still used by the relationship service for validation
-  // until M3b moves rows into the new tables.
+  // Legacy (auto-shimmed server-side from the JSON targets). Kept on the
+  // type so the existing rel validator keeps working until M7.
+  sideAKind: string | null;
+  sideBKind: string | null;
   applicableTargetTypes: string | null;
   applicableSourceType: string | null;
   requiredSourceRoleCode: string | null;
   requiredTargetRoleCode: string | null;
 }
 
-const TARGET_OPTIONS = ['project', 'organization', 'department', 'team'] as const;
-const SOURCE_OPTIONS = ['person', 'organization'] as const;
-const SIDE_KIND_OPTIONS = ['person', 'organization', 'project', 'any'] as const;
+const SIDE_KIND_OPTIONS = ['person', 'organization', 'project'] as const;
+type SideKind = (typeof SIDE_KIND_OPTIONS)[number];
+
+/** Render one side's target list as a compact sentence, e.g.
+ *  "Organization with role: customer, supplier  |  Project". */
+function summarizeSide(targets: SideTarget[] | null, fallbackLabel: string | null): string {
+  if (!targets?.length) return fallbackLabel || 'Any';
+  return targets
+    .map((t) => {
+      let s = t.kind === 'any' ? 'Any' : t.kind.charAt(0).toUpperCase() + t.kind.slice(1);
+      const constraints: string[] = [];
+      if (t.roleCodes?.length) constraints.push(`role: ${t.roleCodes.join(', ')}`);
+      if (t.categoryCodes?.length) constraints.push(`category: ${t.categoryCodes.join(', ')}`);
+      if (constraints.length) s += ` (${constraints.join(' / ')})`;
+      return s;
+    })
+    .join('  |  ');
+}
 
 export function PartnerTypesPage() {
   const [tab, setTab] = useState<'role-types' | 'relationship-types'>('role-types');
@@ -182,6 +212,15 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
   );
 }
 
+// Derive a stable lowercase_with_underscores code from a free-text name.
+// Used by both Role Type and Relationship Type forms.
+function deriveCode(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
 function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => void }) {
   const queryClient = useQueryClient();
   const isNew = !type;
@@ -190,6 +229,21 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
     name: type?.name ?? '',
     description: type?.description ?? '',
     category: type?.category ?? '',
+  });
+  // Once the user touches the Code field, stop syncing it to Name.
+  const [codeTouched, setCodeTouched] = useState(!isNew);
+
+  // Datalist source for the Category picker — DISTINCT values already used
+  // across the role-type catalog. Stops users typing 'cst', 'CST', 'cust'
+  // variants of the same thing.
+  const { data: categorySuggestions = [] } = useQuery<string[]>({
+    queryKey: ['partner-role-categories'],
+    staleTime: 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/partner-types/role-types/categories').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
   });
 
   const save = useMutation({
@@ -219,31 +273,44 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
       <td className="px-4 py-2">
         <input
           value={form.code}
-          onChange={(e) => setForm(f => ({ ...f, code: e.target.value }))}
+          onChange={(e) => {
+            setCodeTouched(true);
+            setForm((f) => ({ ...f, code: e.target.value }));
+          }}
           disabled={!isNew && type?.isSystem}
-          placeholder="e.g. partner"
+          placeholder="auto-fills from name"
           className={cn(inputClass, 'font-mono text-[12px] disabled:bg-slate-100 disabled:cursor-not-allowed')}
         />
       </td>
       <td className="px-4 py-2">
-        <input value={form.name} onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} className={inputClass} autoFocus />
+        <input
+          value={form.name}
+          onChange={(e) => {
+            const v = e.target.value;
+            setForm((f) => ({
+              ...f,
+              name: v,
+              // Auto-derive the code while the user hasn't touched the Code field.
+              code: codeTouched ? f.code : deriveCode(v),
+            }));
+          }}
+          className={inputClass}
+          autoFocus
+        />
       </td>
       <td className="px-4 py-2">
-        {/* Category — short code that groups related role types.
-            Datalist offers the established codes so spelling stays consistent. */}
+        {/* Category — datalist sourced from existing DISTINCT values in
+            partner_role_types so admins don't spawn 'cst', 'CST', 'cust'
+            variants of the same thing. */}
         <input
           list="partner-role-category-suggestions"
           value={form.category}
-          onChange={(e) => setForm(f => ({ ...f, category: e.target.value }))}
-          placeholder="e.g. cst"
+          onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+          placeholder="(optional)"
           className={cn(inputClass, 'font-mono text-[12px]')}
         />
         <datalist id="partner-role-category-suggestions">
-          <option value="cst" />
-          <option value="sup" />
-          <option value="mun" />
-          <option value="int" />
-          <option value="ext" />
+          {categorySuggestions.map((c) => <option key={c} value={c} />)}
         </datalist>
       </td>
       <td className="px-4 py-2" colSpan={2}>
@@ -346,47 +413,25 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
                       <td className="px-4 py-2.5 font-mono text-[12px] text-slate-600">{t.code}</td>
                       <td className="px-4 py-2.5 font-medium text-slate-800">{t.name}</td>
                       <td className="px-4 py-2.5">
-                        {/* Reads as: "{Side A} ({kind}) ↔ {Side B} ({kind})" — the
-                            new clear-sentence format. If sides aren't filled
-                            in yet, show the legacy summary as a fallback. */}
-                        {t.sideALabel || t.sideBLabel ? (
-                          <div className="space-y-1">
-                            <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
-                              <span className="rounded-full bg-blue-50 px-2 py-0.5 font-semibold text-blue-700">
-                                {t.sideALabel || '?'}
-                              </span>
-                              {t.sideAKind && (
-                                <span className="text-[10px] text-slate-400">({t.sideAKind})</span>
-                              )}
-                              <span className="text-slate-400 mx-0.5">{t.isSymmetric ? '⇄' : '→'}</span>
-                              <span className="rounded-full bg-violet-50 px-2 py-0.5 font-semibold text-violet-700">
-                                {t.sideBLabel || '?'}
-                              </span>
-                              {t.sideBKind && (
-                                <span className="text-[10px] text-slate-400">({t.sideBKind})</span>
-                              )}
-                            </div>
-                            {(t.inverseLabel || !t.allowsMultiple) && (
-                              <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
-                                {t.inverseLabel && <span>inverse: <span className="font-medium text-slate-600">{t.inverseLabel}</span></span>}
-                                {!t.allowsMultiple && <span className="rounded-full bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-700">one at a time</span>}
-                              </div>
-                            )}
-                            {(t.requiredSourceRoleCode || t.requiredTargetRoleCode) && (
-                              <div className="flex flex-wrap items-center gap-1 text-[10px] text-slate-400">
-                                <span>requires:</span>
-                                {t.requiredSourceRoleCode && (
-                                  <span className="rounded-full bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-700">A: {t.requiredSourceRoleCode}</span>
-                                )}
-                                {t.requiredTargetRoleCode && (
-                                  <span className="rounded-full bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-700">B: {t.requiredTargetRoleCode}</span>
-                                )}
-                              </div>
-                            )}
+                        {/* Reads as: "Side A summary  →  Side B summary".
+                            Side summary built from the structured target list. */}
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+                            <span className="rounded-md bg-blue-50 px-2 py-0.5 font-medium text-blue-700">
+                              {summarizeSide(t.sideATargets, t.sideALabel)}
+                            </span>
+                            <span className="text-slate-400 mx-0.5">{t.isSymmetric ? '⇄' : '→'}</span>
+                            <span className="rounded-md bg-violet-50 px-2 py-0.5 font-medium text-violet-700">
+                              {summarizeSide(t.sideBTargets, t.sideBLabel)}
+                            </span>
                           </div>
-                        ) : (
-                          <span className="italic text-slate-400 text-[12px]">Sides not configured</span>
-                        )}
+                          {(t.inverseLabel || !t.allowsMultiple) && (
+                            <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                              {t.inverseLabel && <span>inverse: <span className="font-medium text-slate-600">{t.inverseLabel}</span></span>}
+                              {!t.allowsMultiple && <span className="rounded-full bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-700">one at a time</span>}
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-2.5 text-center">
                         {t.isSystem ? (
@@ -440,53 +485,38 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
     code: type?.code ?? '',
     name: type?.name ?? '',
     description: type?.description ?? '',
+    sideATargets: (type?.sideATargets ?? []) as SideTarget[],
+    sideBTargets: (type?.sideBTargets ?? []) as SideTarget[],
     sideALabel: type?.sideALabel ?? '',
     sideBLabel: type?.sideBLabel ?? '',
-    sideAKind: type?.sideAKind ?? '',
-    sideBKind: type?.sideBKind ?? '',
     inverseLabel: type?.inverseLabel ?? '',
     isSymmetric: type?.isSymmetric ?? false,
     allowsMultiple: type?.allowsMultiple ?? true,
-    applicableTargetTypes: (type?.applicableTargetTypes ?? '').split(',').map((s) => s.trim()).filter(Boolean),
-    applicableSourceType: (type?.applicableSourceType ?? '').split(',').map((s) => s.trim()).filter(Boolean),
-    requiredSourceRoleCode: type?.requiredSourceRoleCode ?? '',
-    requiredTargetRoleCode: type?.requiredTargetRoleCode ?? '',
   });
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [codeTouched, setCodeTouched] = useState(!isNew);
 
-  const toggleTarget = (t: string) => {
-    setForm((f) => ({
-      ...f,
-      applicableTargetTypes: f.applicableTargetTypes.includes(t)
-        ? f.applicableTargetTypes.filter((x) => x !== t)
-        : [...f.applicableTargetTypes, t],
-    }));
-  };
-  const toggleSource = (s: string) => {
-    setForm((f) => ({
-      ...f,
-      applicableSourceType: f.applicableSourceType.includes(s)
-        ? f.applicableSourceType.filter((x) => x !== s)
-        : [...f.applicableSourceType, s],
-    }));
-  };
+  const { data: categorySuggestions = [] } = useQuery<string[]>({
+    queryKey: ['partner-role-categories'],
+    staleTime: 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/partner-types/role-types/categories').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
 
   const save = useMutation({
     mutationFn: () => {
       const body: any = {
         name: form.name.trim(),
         description: form.description.trim() || undefined,
+        sideATargets: form.sideATargets.length ? form.sideATargets : null,
+        sideBTargets: form.sideBTargets.length ? form.sideBTargets : null,
         sideALabel: form.sideALabel.trim() || undefined,
         sideBLabel: form.sideBLabel.trim() || undefined,
-        sideAKind: form.sideAKind || undefined,
-        sideBKind: form.sideBKind || undefined,
         inverseLabel: form.inverseLabel.trim() || undefined,
         isSymmetric: form.isSymmetric,
         allowsMultiple: form.allowsMultiple,
-        applicableTargetTypes: form.applicableTargetTypes.length > 0 ? form.applicableTargetTypes.join(',') : undefined,
-        applicableSourceType: form.applicableSourceType.length > 0 ? form.applicableSourceType.join(',') : undefined,
-        requiredSourceRoleCode: form.requiredSourceRoleCode.trim() || undefined,
-        requiredTargetRoleCode: form.requiredTargetRoleCode.trim() || undefined,
       };
       if (isNew) body.code = form.code.trim().toLowerCase();
       else if (!type?.isSystem) body.code = form.code.trim().toLowerCase();
@@ -507,64 +537,56 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
       <td className="px-4 py-2">
         <input
           value={form.code}
-          onChange={(e) => setForm(f => ({ ...f, code: e.target.value }))}
+          onChange={(e) => {
+            setCodeTouched(true);
+            setForm((f) => ({ ...f, code: e.target.value }));
+          }}
           disabled={!isNew && type?.isSystem}
-          placeholder="e.g. mentor_of"
+          placeholder="auto-fills from name"
           className={cn(inputClass, 'font-mono text-[12px] disabled:bg-slate-100 disabled:cursor-not-allowed')}
         />
       </td>
       <td className="px-4 py-2">
-        <input value={form.name} onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} className={inputClass} autoFocus />
+        <input
+          value={form.name}
+          onChange={(e) => {
+            const v = e.target.value;
+            setForm((f) => ({ ...f, name: v, code: codeTouched ? f.code : deriveCode(v) }));
+          }}
+          className={inputClass}
+          autoFocus
+        />
       </td>
-      <td className="px-4 py-2 space-y-2">
-        {/* Side A / Side B — the named-sides model. The form labels for the
-            create-relationship dialog use these strings, so picking good
-            labels here is what makes the partner-drawer form readable. */}
-        <div className="grid grid-cols-2 gap-2">
-          <div className="space-y-1">
-            <label className="text-[10px] font-semibold text-blue-700 uppercase block">Side A</label>
-            <input
-              value={form.sideALabel}
-              onChange={(e) => setForm(f => ({ ...f, sideALabel: e.target.value }))}
-              placeholder="e.g. Employee"
-              className={cn(inputClass, 'text-[12px] py-1')}
-            />
-            <select
-              value={form.sideAKind}
-              onChange={(e) => setForm(f => ({ ...f, sideAKind: e.target.value }))}
-              className={cn(inputClass, 'text-[11px] py-1 font-mono')}
-            >
-              <option value="">— kind —</option>
-              {SIDE_KIND_OPTIONS.map((k) => <option key={k} value={k}>{k}</option>)}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-[10px] font-semibold text-violet-700 uppercase block">
-              Side B {form.isSymmetric ? '(same as A)' : ''}
-            </label>
-            <input
-              value={form.sideBLabel}
-              onChange={(e) => setForm(f => ({ ...f, sideBLabel: e.target.value }))}
-              placeholder="e.g. Employer"
-              className={cn(inputClass, 'text-[12px] py-1')}
-            />
-            <select
-              value={form.sideBKind}
-              onChange={(e) => setForm(f => ({ ...f, sideBKind: e.target.value }))}
-              className={cn(inputClass, 'text-[11px] py-1 font-mono')}
-            >
-              <option value="">— kind —</option>
-              {SIDE_KIND_OPTIONS.map((k) => <option key={k} value={k}>{k}</option>)}
-            </select>
-          </div>
+      <td className="px-4 py-2 space-y-3">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <SidePickerCard
+            color="blue"
+            label="Side A"
+            optionalDisplayLabel={form.sideALabel}
+            onDisplayLabelChange={(v) => setForm((f) => ({ ...f, sideALabel: v }))}
+            value={form.sideATargets}
+            onChange={(v) => setForm((f) => ({ ...f, sideATargets: v }))}
+            roleTypes={roleTypes}
+            categorySuggestions={categorySuggestions}
+          />
+          <SidePickerCard
+            color="violet"
+            label={form.isSymmetric ? 'Side B (same as A — ignored)' : 'Side B'}
+            optionalDisplayLabel={form.sideBLabel}
+            onDisplayLabelChange={(v) => setForm((f) => ({ ...f, sideBLabel: v }))}
+            value={form.sideBTargets}
+            onChange={(v) => setForm((f) => ({ ...f, sideBTargets: v }))}
+            roleTypes={roleTypes}
+            categorySuggestions={categorySuggestions}
+          />
         </div>
 
         <div className="flex items-center gap-3 flex-wrap text-[11px]">
-          <div className="flex-1 min-w-[160px]">
-            <span className="text-[10px] font-semibold text-slate-400 uppercase block mb-0.5">Inverse label</span>
+          <div className="flex-1 min-w-[180px]">
+            <span className="text-[10px] font-semibold text-slate-400 uppercase block mb-0.5">Inverse label (reads back from side B)</span>
             <input
               value={form.inverseLabel}
-              onChange={(e) => setForm(f => ({ ...f, inverseLabel: e.target.value }))}
+              onChange={(e) => setForm((f) => ({ ...f, inverseLabel: e.target.value }))}
               placeholder="e.g. Employs"
               className={cn(inputClass, 'text-[12px] py-1')}
             />
@@ -573,7 +595,7 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
             <input
               type="checkbox"
               checked={form.isSymmetric}
-              onChange={(e) => setForm(f => ({ ...f, isSymmetric: e.target.checked }))}
+              onChange={(e) => setForm((f) => ({ ...f, isSymmetric: e.target.checked }))}
             />
             <span className="text-slate-600">Symmetric</span>
           </label>
@@ -581,75 +603,23 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
             <input
               type="checkbox"
               checked={form.allowsMultiple}
-              onChange={(e) => setForm(f => ({ ...f, allowsMultiple: e.target.checked }))}
+              onChange={(e) => setForm((f) => ({ ...f, allowsMultiple: e.target.checked }))}
             />
-            <span className="text-slate-600">Allows multiple</span>
+            <span className="text-slate-600">Allow multiple active instances</span>
           </label>
         </div>
 
-        {/* Advanced — legacy validation rules. Kept until M3b moves the
-            data to PartnerRelationship + ProjectPartnerRole, where the
-            constraints will live in cleaner per-table form. */}
-        <button
-          type="button"
-          onClick={() => setShowAdvanced((s) => !s)}
-          className="text-[10px] text-slate-400 hover:text-slate-600 underline"
-        >
-          {showAdvanced ? '− Hide' : '+ Show'} validation rules (legacy)
-        </button>
-        {showAdvanced && (
-          <div className="space-y-1.5 rounded-lg bg-slate-50 p-2">
-            <div className="flex items-center gap-1 flex-wrap">
-              <span className="text-[10px] font-semibold text-slate-400 uppercase mr-1">Source kinds</span>
-              {SOURCE_OPTIONS.map((s) => {
-                const on = form.applicableSourceType.includes(s);
-                return (
-                  <button key={s} type="button" onClick={() => toggleSource(s)}
-                    className={cn('rounded-full border px-2 py-0.5 text-[11px] font-medium',
-                      on ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-500')}>
-                    {s}
-                  </button>
-                );
-              })}
-              <span className="text-[10px] text-slate-400 mx-1">→</span>
-              <span className="text-[10px] font-semibold text-slate-400 uppercase mr-1">Target kinds</span>
-              {TARGET_OPTIONS.map((t) => {
-                const on = form.applicableTargetTypes.includes(t);
-                return (
-                  <button key={t} type="button" onClick={() => toggleTarget(t)}
-                    className={cn('rounded-full border px-2 py-0.5 text-[11px] font-medium',
-                      on ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-slate-200 text-slate-500')}>
-                    {t}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[10px] font-semibold text-slate-400 uppercase whitespace-nowrap">Required source role</span>
-              <select
-                value={form.requiredSourceRoleCode}
-                onChange={(e) => setForm(f => ({ ...f, requiredSourceRoleCode: e.target.value }))}
-                className={cn(inputClass, 'font-mono text-[11px] py-1 max-w-[200px]')}
-              >
-                <option value="">— Any —</option>
-                {roleTypes.map((rt) => (
-                  <option key={rt.id} value={rt.code}>{rt.code} ({rt.name})</option>
-                ))}
-              </select>
-              <span className="text-[10px] font-semibold text-slate-400 uppercase whitespace-nowrap">Required target role</span>
-              <select
-                value={form.requiredTargetRoleCode}
-                onChange={(e) => setForm(f => ({ ...f, requiredTargetRoleCode: e.target.value }))}
-                className={cn(inputClass, 'font-mono text-[11px] py-1 max-w-[200px]')}
-              >
-                <option value="">— Any —</option>
-                {roleTypes.map((rt) => (
-                  <option key={rt.id} value={rt.code}>{rt.code} ({rt.name})</option>
-                ))}
-              </select>
-            </div>
-          </div>
-        )}
+        {/* Live preview — the same sentence the rest of the UI will render. */}
+        <div className="rounded-lg bg-slate-50 px-3 py-2 text-[12px] text-slate-700">
+          <span className="text-[10px] font-semibold text-slate-400 uppercase mr-2">Reads as</span>
+          <span className="rounded-md bg-blue-50 px-2 py-0.5 font-medium text-blue-700">
+            {summarizeSide(form.sideATargets, form.sideALabel || null)}
+          </span>
+          <span className="text-slate-400 mx-1.5">{form.isSymmetric ? '⇄' : '→'}</span>
+          <span className="rounded-md bg-violet-50 px-2 py-0.5 font-medium text-violet-700">
+            {summarizeSide(form.sideBTargets, form.sideBLabel || null)}
+          </span>
+        </div>
       </td>
       <td />
       <td className="px-4 py-2 text-right whitespace-nowrap">
@@ -666,5 +636,211 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
         </button>
       </td>
     </tr>
+  );
+}
+
+// ─── SidePickerCard ──────────────────────────────────────────────────────────
+//
+// One side of a PartnerRelationshipType. Internally a list of "targets",
+// each target being:
+//   { kind, roleCodes[], categoryCodes[] }
+//
+// UI: a stack of target cards with [+ Add target] at the bottom. Each card
+// picks an entity kind first (person / organization / project); for person
+// / organization, two role/category checkbox grids appear. Multiple targets
+// on one side express OR (e.g. "Project | Organization w/ role customer").
+
+function SidePickerCard({
+  color,
+  label,
+  optionalDisplayLabel,
+  onDisplayLabelChange,
+  value,
+  onChange,
+  roleTypes,
+  categorySuggestions,
+}: {
+  color: 'blue' | 'violet';
+  label: string;
+  optionalDisplayLabel: string;
+  onDisplayLabelChange: (v: string) => void;
+  value: SideTarget[];
+  onChange: (v: SideTarget[]) => void;
+  roleTypes: RoleType[];
+  categorySuggestions: string[];
+}) {
+  const headerCls = color === 'blue' ? 'text-blue-700' : 'text-violet-700';
+  const cardBgCls = color === 'blue' ? 'bg-blue-50/50 border-blue-100' : 'bg-violet-50/50 border-violet-100';
+
+  const updateAt = (i: number, patch: Partial<SideTarget>) => {
+    onChange(value.map((t, idx) => (idx === i ? { ...t, ...patch } : t)));
+  };
+  const removeAt = (i: number) => onChange(value.filter((_, idx) => idx !== i));
+  const add = () => onChange([...value, { kind: 'person' }]);
+
+  return (
+    <div className={cn('rounded-lg border p-2.5 space-y-2', cardBgCls)}>
+      <div className="flex items-center justify-between">
+        <span className={cn('text-[10px] font-semibold uppercase', headerCls)}>{label}</span>
+        <span className="text-[10px] text-slate-400">{value.length === 0 ? 'No targets — accepts any party' : `${value.length} target${value.length > 1 ? 's' : ''}`}</span>
+      </div>
+
+      <div className="space-y-1.5">
+        {value.map((target, idx) => (
+          <TargetRow
+            key={idx}
+            target={target}
+            onChange={(patch) => updateAt(idx, patch)}
+            onRemove={() => removeAt(idx)}
+            roleTypes={roleTypes}
+            categorySuggestions={categorySuggestions}
+          />
+        ))}
+      </div>
+
+      <button
+        type="button"
+        onClick={add}
+        className="w-full rounded border border-dashed border-slate-300 text-[11px] text-slate-500 py-1 hover:bg-white hover:text-slate-700"
+      >
+        + Add target
+      </button>
+
+      <div>
+        <label className="text-[9px] font-semibold text-slate-400 uppercase block">
+          Display label (optional — defaults to summary above)
+        </label>
+        <input
+          value={optionalDisplayLabel}
+          onChange={(e) => onDisplayLabelChange(e.target.value)}
+          placeholder="e.g. Employee"
+          className={cn(inputClass, 'text-[11px] py-1')}
+        />
+      </div>
+    </div>
+  );
+}
+
+function TargetRow({
+  target,
+  onChange,
+  onRemove,
+  roleTypes,
+  categorySuggestions,
+}: {
+  target: SideTarget;
+  onChange: (patch: Partial<SideTarget>) => void;
+  onRemove: () => void;
+  roleTypes: RoleType[];
+  categorySuggestions: string[];
+}) {
+  const toggle = (key: 'roleCodes' | 'categoryCodes', code: string) => {
+    const current = target[key] ?? [];
+    const next = current.includes(code) ? current.filter((c) => c !== code) : [...current, code];
+    onChange({ [key]: next.length ? next : undefined });
+  };
+
+  // For organization/person kinds, filter the role catalog to roles whose
+  // role.category aligns with the kind context — but PartnerRoleType doesn't
+  // know its target kind. So we just show all role types and rely on the
+  // admin's judgement. Could refine later.
+  const rolesByCategory = roleTypes.reduce<Record<string, RoleType[]>>((acc, r) => {
+    const key = r.category || '_uncategorized';
+    (acc[key] ||= []).push(r);
+    return acc;
+  }, {});
+  const sortedCategoryKeys = Object.keys(rolesByCategory).sort();
+
+  const showRoleFilters = target.kind === 'person' || target.kind === 'organization' || target.kind === 'any';
+
+  return (
+    <div className="rounded border border-slate-200 bg-white p-2 space-y-1.5">
+      <div className="flex items-center gap-2">
+        <select
+          value={target.kind}
+          onChange={(e) => onChange({ kind: e.target.value as SideKind | 'any' })}
+          className={cn(inputClass, 'text-[12px] py-1 max-w-[160px] font-mono')}
+        >
+          {SIDE_KIND_OPTIONS.map((k) => <option key={k} value={k}>{k}</option>)}
+          <option value="any">any</option>
+        </select>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="ml-auto p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-600"
+          title="Remove this target"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </div>
+
+      {showRoleFilters && (
+        <>
+          <div className="space-y-1">
+            <span className="text-[10px] font-semibold text-slate-400 uppercase block">Restrict to roles (optional)</span>
+            <div className="space-y-1">
+              {sortedCategoryKeys.map((cat) => (
+                <div key={cat} className="flex flex-wrap items-center gap-1">
+                  <span className="text-[9px] text-slate-400 font-mono uppercase mr-1">
+                    {cat === '_uncategorized' ? '(no category)' : cat}
+                  </span>
+                  {rolesByCategory[cat].map((r) => {
+                    const on = (target.roleCodes ?? []).includes(r.code);
+                    return (
+                      <button
+                        key={r.id}
+                        type="button"
+                        onClick={() => toggle('roleCodes', r.code)}
+                        className={cn(
+                          'rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                          on
+                            ? 'border-amber-400 bg-amber-50 text-amber-800'
+                            : 'border-slate-200 text-slate-500 hover:border-slate-300',
+                        )}
+                      >
+                        {r.code}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+              {roleTypes.length === 0 && (
+                <span className="text-[10px] italic text-slate-400">No role types defined yet.</span>
+              )}
+            </div>
+          </div>
+
+          {categorySuggestions.length > 0 && (
+            <div className="space-y-1">
+              <span className="text-[10px] font-semibold text-slate-400 uppercase block">…or by category (matches any role in the group)</span>
+              <div className="flex flex-wrap gap-1">
+                {categorySuggestions.map((c) => {
+                  const on = (target.categoryCodes ?? []).includes(c);
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => toggle('categoryCodes', c)}
+                      className={cn(
+                        'rounded-full border px-2 py-0.5 text-[10px] font-mono font-medium',
+                        on
+                          ? 'border-emerald-400 bg-emerald-50 text-emerald-800'
+                          : 'border-slate-200 text-slate-500 hover:border-slate-300',
+                      )}
+                    >
+                      {c}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {target.kind === 'project' && (
+        <p className="text-[10px] italic text-slate-400">Projects don't have partner-roles — no further filtering.</p>
+      )}
+    </div>
   );
 }
