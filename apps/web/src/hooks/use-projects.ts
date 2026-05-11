@@ -83,6 +83,11 @@ export function useAddProjectMember() {
       queryClient.invalidateQueries({ queryKey: ['projects', variables.projectId, 'members'] });
       // Also invalidate planning data so assignee pickers pick up the new member
       queryClient.invalidateQueries({ queryKey: ['planning', variables.projectId] });
+      // Team tab on the project page reads /projects/:id/team into the
+      // 'project-team' query key — invalidate that too so the new member
+      // shows up immediately after add (write-through into the
+      // participates_in_project relationship feeds this view).
+      queryClient.invalidateQueries({ queryKey: ['project-team', variables.projectId] });
       notify.success('Member added', { code: 'PROJECT-UPDATE-200' });
     },
     onError: (err: any) => {
@@ -100,6 +105,7 @@ export function useRemoveProjectMember() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['projects', variables.projectId, 'members'] });
       queryClient.invalidateQueries({ queryKey: ['planning', variables.projectId] });
+      queryClient.invalidateQueries({ queryKey: ['project-team', variables.projectId] });
       notify.success('Member removed', { code: 'PROJECT-UPDATE-200' });
     },
     onError: (err: any) => {
