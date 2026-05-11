@@ -1420,6 +1420,29 @@ model PartnerRelationshipType {
   isSymmetric    Boolean  @default(false)         @map("is_symmetric")
   allowsMultiple Boolean  @default(true)          @map("allows_multiple")
 
+  // M3.5 — structured side targets. Each side is a JSON array of allowed
+  // (kind, optional role/category constraint) tuples; the relationship
+  // accepts a party if it matches ANY of the entries on its side.
+  //
+  // Shape:
+  //   [
+  //     { "kind": "organization", "roleCodes": ["customer","supplier"] },
+  //     { "kind": "project" }
+  //   ]
+  //
+  //   kind:           'person' | 'organization' | 'project' | 'any'
+  //   roleCodes:      optional. The party must hold ONE OF these
+  //                   PartnerRoleType.code values. Ignored for kind='project'.
+  //   categoryCodes:  optional. The party must hold a role whose
+  //                   PartnerRoleType.category is in this list. Combined
+  //                   with roleCodes via OR.
+  //
+  // The single-shot sideAKind/sideBKind + required*RoleCode columns above
+  // are still backfilled and read by older clients; the API prefers the
+  // JSON when present. Old columns will be dropped in M7.
+  sideATargets   Json?    @map("side_a_targets")
+  sideBTargets   Json?    @map("side_b_targets")
+
   // ─── Legacy fields — kept until M3b migrates rows into the new tables.
   // The relationship service still consults these for validation; the
   // admin UI shows them in an "advanced" section.
