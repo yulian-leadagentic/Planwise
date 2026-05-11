@@ -445,15 +445,16 @@ model Project {
   creator     User         @relation("ProjectCreatedBy", fields: [createdBy], references: [id])
   leader      User?        @relation("ProjectLeader", fields: [leaderId], references: [id])
 
-  members     ProjectMember[]
-  labels      Label[]
-  contracts   Contract[]
-  expenses    Expense[]
-  timeEntries TimeEntry[]
-  zones       Zone[]
-  tasks       Task[]
-  categories  ProjectCategory[]
-  files       ProjectFile[]
+  members      ProjectMember[]
+  labels       Label[]
+  contracts    Contract[]
+  expenses     Expense[]
+  timeEntries  TimeEntry[]
+  zones        Zone[]
+  tasks        Task[]
+  categories   ProjectCategory[]
+  files        ProjectFile[]
+  partnerRoles ProjectPartnerRole[]
 
   @@index([projectTypeId])
   @@index([departmentId])
@@ -1333,6 +1334,12 @@ model BusinessPartner {
   user                  User?                          @relation("UserBusinessPartner")
   roles                 BusinessPartnerRole[]
   outgoingRelationships BusinessPartnerRelationship[]  @relation("RelationshipSource")
+  // M3b — new party↔party + project-role tables. The FK column is named
+  // `party_id` so M2's swap from BusinessPartner → Party is a target-only
+  // change (no schema rename).
+  partnerRelationshipsA PartnerRelationship[]          @relation("PartyAOnRel")
+  partnerRelationshipsB PartnerRelationship[]          @relation("PartyBOnRel")
+  projectPartnerRoles   ProjectPartnerRole[]           @relation("PartyOnProjectRole")
 
   @@index([partnerType])
   @@index([status])
@@ -1426,7 +1433,8 @@ model PartnerRelationshipType {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt      @map("updated_at")
 
-  relationships BusinessPartnerRelationship[]
+  relationships        BusinessPartnerRelationship[]
+  partnerRelationships PartnerRelationship[]
 
   @@map("partner_relationship_types")
 }
@@ -1535,4 +1543,101 @@ model SeniorityLevel {
   updatedAt DateTime @updatedAt      @map("updated_at")
 
   @@map("seniority_levels")
+}
+
+// ─── M3b — Party↔Party + Project-Party-Role tables ─────────────────────────
+//
+// PartnerRelationship is the new BUT050-style party↔party model. Both sides
+// are BusinessPartners (which become "Party" in M2 — column names already
+// say party_*). Replaces the polymorphic targetType+targetId pattern from
+// BusinessPartnerRelationship for org-targeted rows; project-targeted rows
+// move to ProjectPartnerRole instead.
+//
+// The relationship type names what each side IS (sideALabel / sideBLabel
+// on PartnerRelationshipType), so a row reads as a sentence:
+// "Acme Ltd (Employer) ↔ John Doe (Employee)".
+
+model PartnerRelationship {
+  id        Int      @id @default(autoincrement())
+  partyAId  Int      @map("party_a_id")
+  partyBId  Int      @map("party_b_id")
+  typeId    Int      @map("type_id")
+  isPrimary Boolean  @default(false) @map("is_primary")
+  // Contextual title at side B (e.g. 'CFO at Acme'). Plain text by design —
+  // the structured part is the type + role catalogs.
+  titleAtB  String?  @map("title_at_b") @db.VarChar(255)
+  validFrom DateTime @default(now()) @map("valid_from")
+  validTo   DateTime @default(dbgenerated("'9999-12-31 00:00:00'")) @map("valid_to")
+  status    String   @default("active") @db.VarChar(20)
+  notes     String?  @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt      @map("updated_at")
+
+  partyA BusinessPartner         @relation("PartyAOnRel", fields: [partyAId], references: [id], onDelete: Cascade)
+  partyB BusinessPartner         @relation("PartyBOnRel", fields: [partyBId], references: [id], onDelete: Cascade)
+  type   PartnerRelationshipType @relation(fields: [typeId], references: [id])
+
+  @@unique([partyAId, partyBId, typeId, validFrom])
+  @@index([partyAId])
+  @@index([partyBId])
+  @@index([typeId])
+  @@map("partner_relationships")
+}
+
+// Catalog of roles a Party can hold on a Project — Customer, Supplier,
+// Architect, Engineer, Inspector, … This is the project-side counterpart
+// to PartnerRoleType (which is the partner-side catalog of customer /
+// supplier / employee / etc.). Admins can extend; system rows protected.
+model ProjectRoleType {
+  id                      Int      @id @default(autoincrement())
+  code                    String   @unique @db.VarChar(50)
+  name                    String   @db.VarChar(100)
+  description             String?  @db.VarChar(500)
+  // Constrains which kind of party can hold this role on a project:
+  // 'person' | 'organization' | 'any'.
+  allowedPartnerKind      String   @default("any") @map("allowed_partner_kind") @db.VarChar(20)
+  // If set, the party also has to hold this PartnerRoleType.code on its
+  // party-role list (e.g. project Customer role requires the org to also
+  // carry the 'customer' partner-role globally).
+  requiredPartnerRoleCode String?  @map("required_partner_role_code") @db.VarChar(50)
+  // If true, exactly one party can hold this role as PRIMARY on a project
+  // (e.g. one primary Customer per project). Enforced at the service layer.
+  isPrimaryRequired       Boolean  @default(false) @map("is_primary_required")
+  sortOrder               Int      @default(0) @map("sort_order")
+  isSystem                Boolean  @default(false) @map("is_system")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt      @map("updated_at")
+
+  roles ProjectPartnerRole[]
+
+  @@map("project_role_types")
+}
+
+// Project × Party × Role — replaces the customer_of_project / supplier_of_project
+// / participates_in_project rows in BusinessPartnerRelationship. The
+// project FK is a real FK (no polymorphism), so listing "who is on this
+// project" is now a straight join.
+model ProjectPartnerRole {
+  id             Int      @id @default(autoincrement())
+  projectId      Int      @map("project_id")
+  partyId        Int      @map("party_id")
+  roleId         Int      @map("role_id")
+  isPrimary      Boolean  @default(false) @map("is_primary")
+  titleInProject String?  @map("title_in_project") @db.VarChar(255)
+  validFrom      DateTime @default(now()) @map("valid_from")
+  validTo        DateTime @default(dbgenerated("'9999-12-31 00:00:00'")) @map("valid_to")
+  status         String   @default("active") @db.VarChar(20)
+  notes          String?  @db.Text
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt      @map("updated_at")
+
+  project Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  party   BusinessPartner @relation("PartyOnProjectRole", fields: [partyId], references: [id], onDelete: Cascade)
+  role    ProjectRoleType @relation(fields: [roleId], references: [id])
+
+  @@unique([projectId, partyId, roleId, validFrom])
+  @@index([projectId])
+  @@index([partyId])
+  @@index([roleId])
+  @@map("project_partner_roles")
 }
