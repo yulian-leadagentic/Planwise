@@ -330,7 +330,9 @@ export class ProjectsService {
     await this.findOne(projectId);
     const now = new Date();
 
-    // Load the four kinds of relationships in parallel.
+    // Load the legacy relationship rows in parallel: customer +
+    // participants (the two we still source from legacy). Supplier rels
+    // are picked up generically through project_partner_roles below.
     const [customerRel, supplierRels, participantRels] = await Promise.all([
       // customer_of_project — at most one active row.
       this.prisma.businessPartnerRelationship.findFirst({
@@ -396,19 +398,14 @@ export class ProjectsService {
     ]);
 
     const customerOrgId = customerRel?.source.id ?? null;
-    const supplierOrgIds = new Set(supplierRels.map((r) => r.source.id));
 
-    // Categorize participants.
-    const myTeam: any[] = [];
-    const customerContacts: any[] = [];
-    const supplierWorkersByOrg = new Map<number, any[]>();
-
-    for (const r of participantRels) {
-      const employerOrgIds = new Set(r.source.outgoingRelationships.map((w) => w.targetId));
-      const row = {
+    // Project Team = internal employees (Users) who participate.
+    const projectTeam = participantRels
+      .filter((r) => r.source.user?.id)
+      .map((r) => ({
         relationshipId: r.id,
         businessPartnerId: r.source.id,
-        userId: r.source.user?.id ?? null,
+        userId: r.source.user!.id,
         displayName: r.source.displayName,
         firstName: r.source.firstName,
         lastName: r.source.lastName,
@@ -418,38 +415,91 @@ export class ProjectsService {
         roleInContext: r.roleInContext,
         validFrom: r.validFrom,
         validTo: r.validTo,
-      };
+      }));
 
-      // Internal employee (has a User row) → My Team
-      if (r.source.user?.id) {
-        myTeam.push(row);
-        continue;
-      }
-
-      // Customer contact?
-      if (customerOrgId != null && employerOrgIds.has(customerOrgId)) {
-        customerContacts.push(row);
-        continue;
-      }
-
-      // Supplier worker?
-      let placed = false;
-      for (const empId of employerOrgIds) {
-        if (supplierOrgIds.has(empId)) {
-          if (!supplierWorkersByOrg.has(empId)) supplierWorkersByOrg.set(empId, []);
-          supplierWorkersByOrg.get(empId)!.push(row);
-          placed = true;
-          break;
-        }
-      }
-      if (placed) continue;
-
-      // Falls outside our 3 categories (e.g. someone with no employer or
-      // an employer that's neither customer nor supplier of this project).
-      // Surface them in a generic "Other Participants" bucket so they're
-      // visible. Frontend can show or hide as needed.
-      customerContacts.push({ ...row, _uncategorized: true });
+    // Customer Contacts — anyone with an active relationship pointing at
+    // the customer org (any rel type, source is a person). Org-level
+    // association: contacts surface on every project of that customer.
+    let customerContacts: any[] = [];
+    if (customerOrgId != null) {
+      const rows = await this.prisma.businessPartnerRelationship.findMany({
+        where: {
+          targetType: 'organization' as any,
+          targetId: customerOrgId,
+          status: 'active',
+          validFrom: { lte: now },
+          validTo: { gt: now },
+          source: { partnerType: 'person', deletedAt: null },
+        },
+        include: {
+          relationshipType: true,
+          source: {
+            select: {
+              id: true,
+              partnerType: true,
+              displayName: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              user: { select: { id: true, position: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+      // Dedupe by source — a person might have multiple rels to the
+      // customer org (e.g. worker_of + contact_of_customer).
+      const seen = new Set<number>();
+      customerContacts = rows
+        .filter((r) => {
+          if (seen.has(r.source.id)) return false;
+          seen.add(r.source.id);
+          return true;
+        })
+        .map((r) => ({
+          relationshipId: r.id,
+          relationshipTypeCode: r.relationshipType.code,
+          relationshipTypeName: r.relationshipType.name,
+          businessPartnerId: r.source.id,
+          userId: r.source.user?.id ?? null,
+          displayName: r.source.displayName,
+          firstName: r.source.firstName,
+          lastName: r.source.lastName,
+          email: r.source.email,
+          phone: r.source.phone,
+          position: r.source.user?.position ?? null,
+          validFrom: r.validFrom,
+          validTo: r.validTo,
+        }));
     }
+
+    // Role-driven sections — all project_partner_role rows for this project,
+    // enriched with role type + party metadata. Frontend renders one
+    // section per ProjectRoleType using these.
+    const roleAssignments = await this.prisma.projectPartnerRole.findMany({
+      where: {
+        projectId,
+        status: 'active',
+        validFrom: { lte: now },
+        validTo: { gt: now },
+      },
+      include: {
+        role: true,
+        party: {
+          select: {
+            id: true,
+            partnerType: true,
+            displayName: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+      orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+    });
 
     return {
       customer: customerRel ? {
@@ -459,15 +509,28 @@ export class ProjectsService {
         email: customerRel.source.email,
         phone: customerRel.source.phone,
       } : null,
-      myTeam,
       customerContacts,
+      projectTeam,
+      roleAssignments: roleAssignments.map((a) => ({
+        id: a.id,
+        role: a.role,
+        party: a.party,
+        isPrimary: a.isPrimary,
+        titleInProject: a.titleInProject,
+        validFrom: a.validFrom,
+        validTo: a.validTo,
+        status: a.status,
+      })),
+      // Backward-compat shims so the old frontend hasn't broken in-flight.
+      // Removed in a follow-up commit once the new Team tab ships.
+      myTeam: projectTeam,
       suppliers: supplierRels.map((s) => ({
         relationshipId: s.id,
         organizationId: s.source.id,
         displayName: s.source.displayName,
         email: s.source.email,
         phone: s.source.phone,
-        workers: supplierWorkersByOrg.get(s.source.id) ?? [],
+        workers: [] as any[],
       })),
     };
   }
