@@ -74,6 +74,27 @@ export function ProjectFormPage() {
       return Array.isArray(d) ? d : (d?.data ?? []);
     }),
   });
+  // M4a.2 — ProjectRoleType catalog. Any role flagged isPrimaryRequired
+  // (other than 'customer', which has its own field above) becomes a
+  // required picker on the create form. New role-types added in admin
+  // surface here automatically.
+  const { data: projectRoleTypes = [] } = useQuery<any[]>({
+    queryKey: ['project-role-types'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/project-role-types').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+  const requiredRoles = projectRoleTypes.filter(
+    (rt: any) => rt.isPrimaryRequired && rt.code !== 'customer',
+  );
+
+  // Required-role assignments — { [roleId]: partyId }. The form blocks
+  // submit until every required role has a pick.
+  const [requiredRoleSelections, setRequiredRoleSelections] = useState<Record<number, number | null>>({});
+
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
 
@@ -265,6 +286,27 @@ export function ProjectFormPage() {
         },
       );
     } else {
+      // M4a.2 — Validate required-role selections before POST.
+      const missing = requiredRoles.filter((rt: any) => !requiredRoleSelections[rt.id]);
+      if (missing.length > 0) {
+        notify.warning(
+          `Missing required role${missing.length > 1 ? 's' : ''}: ${missing.map((r: any) => r.name).join(', ')}`,
+          { code: 'PROJECT-CREATE-400' },
+        );
+        return;
+      }
+      // Build the roleAssignments payload from the picks. Each pick is
+      // automatically isPrimary=true so it satisfies the server's
+      // isPrimaryRequired check.
+      const roleAssignments = requiredRoles
+        .filter((rt: any) => requiredRoleSelections[rt.id])
+        .map((rt: any) => ({
+          roleId: rt.id,
+          partyId: requiredRoleSelections[rt.id],
+          isPrimary: true,
+        }));
+      if (roleAssignments.length) payload.roleAssignments = roleAssignments;
+
       createProject.mutate(payload, {
         onSuccess: async (created: any) => {
           await persistQuickLinkIfNeeded(created.id);
@@ -444,6 +486,20 @@ export function ProjectFormPage() {
                     )}
                   </p>
                 </div>
+
+                {/* M4a.2 — Required project-role pickers (e.g. Project Lead).
+                    One field per ProjectRoleType where isPrimaryRequired=true
+                    (excluding 'customer', which has its own picker above). */}
+                {!isEdit && requiredRoles.map((rt: any) => (
+                  <RequiredRolePicker
+                    key={rt.id}
+                    role={rt}
+                    value={requiredRoleSelections[rt.id] ?? null}
+                    onChange={(v) =>
+                      setRequiredRoleSelections((prev) => ({ ...prev, [rt.id]: v }))
+                    }
+                  />
+                ))}
 
                 {/* Status */}
                 <div>
@@ -825,6 +881,73 @@ function QuickLinkBlock({
             Clear
           </button>
         </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Required Role Picker ──────────────────────────────────────────────────
+   One field per ProjectRoleType.isPrimaryRequired=true row. Fetches eligible
+   parties filtered by allowedPartnerKind + requiredPartnerRoleCode. Empty
+   list yields an inline note pointing to where to create such a party. */
+
+function RequiredRolePicker({
+  role,
+  value,
+  onChange,
+}: {
+  role: {
+    id: number;
+    name: string;
+    code: string;
+    allowedPartnerKind: 'person' | 'organization' | 'any';
+    requiredPartnerRoleCode: string | null;
+    description: string | null;
+  };
+  value: number | null;
+  onChange: (partyId: number | null) => void;
+}) {
+  const { data: candidates = [] } = useQuery<any[]>({
+    queryKey: ['required-role-candidates', role.id],
+    staleTime: 60 * 1000,
+    queryFn: () =>
+      client.get('/business-partners', {
+        params: {
+          partnerType: role.allowedPartnerKind === 'any' ? undefined : role.allowedPartnerKind,
+          roleType: role.requiredPartnerRoleCode ?? undefined,
+          perPage: 500,
+        },
+      }).then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : (d?.data ?? []);
+      }),
+  });
+
+  return (
+    <div>
+      <label className={labelClass}>
+        {role.name} <span className="text-red-500">*</span>
+      </label>
+      <select
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+        className={inputClass}
+      >
+        <option value="">Select {role.name.toLowerCase()}…</option>
+        {candidates.map((c: any) => (
+          <option key={c.id} value={c.id}>{c.displayName}</option>
+        ))}
+      </select>
+      {candidates.length === 0 ? (
+        <p className="mt-1 text-[11px] text-amber-700">
+          No eligible {role.allowedPartnerKind === 'any' ? 'parties' : `${role.allowedPartnerKind}s`}
+          {role.requiredPartnerRoleCode ? ` with role "${role.requiredPartnerRoleCode}"` : ''}
+          . Add one from <a href="/partners" className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">Partners</a> first.
+        </p>
+      ) : (
+        <p className="mt-1 text-[11px] text-slate-400">
+          {role.description || `Required for project creation (admin configured ${role.name} as required).`}
+        </p>
       )}
     </div>
   );
