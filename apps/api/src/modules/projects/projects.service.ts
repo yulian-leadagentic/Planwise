@@ -15,7 +15,7 @@ export class ProjectsService {
   ) {}
 
   async create(userId: number, dto: CreateProjectDto) {
-    const { memberIds, leaderId, customerOrgId, ...rest } = dto;
+    const { memberIds, leaderId, customerOrgId, roleAssignments, ...rest } = dto;
 
     // Validate the customer organization up-front so we don't leave a
     // dangling project if the relationship rules reject it.
@@ -33,6 +33,26 @@ export class ProjectsService {
       throw new BadRequestException(
         `Organization "${customerOrg.displayName}" does not hold the "customer" role. Add it from /partners → Organizations before using this org as a project customer.`,
       );
+    }
+
+    // M4a.2 — Validate role assignments BEFORE creating the project so we
+    // can fail fast without rolling back. Every ProjectRoleType with
+    // isPrimaryRequired=true (excluding 'customer', which is handled
+    // separately via customerOrgId) must have at least one assignment
+    // marked isPrimary=true in the payload.
+    const requiredRoles = await this.prisma.projectRoleType.findMany({
+      where: { isPrimaryRequired: true, code: { not: 'customer' } },
+    });
+    if (requiredRoles.length > 0) {
+      const provided = roleAssignments ?? [];
+      for (const rt of requiredRoles) {
+        const match = provided.find((a) => a.roleId === rt.id && a.isPrimary === true);
+        if (!match) {
+          throw new BadRequestException(
+            `Project role "${rt.name}" is required (isPrimaryRequired=true). Provide a primary assignment for this role.`,
+          );
+        }
+      }
     }
 
     const project = await this.prisma.project.create({
@@ -58,6 +78,33 @@ export class ProjectsService {
       // a customer breaks our invariant.
       await this.prisma.project.delete({ where: { id: project.id } }).catch(() => undefined);
       throw err;
+    }
+
+    // M4a.2 — Persist the role assignments. The picker on the frontend
+    // already filters candidates by allowedPartnerKind/requiredPartnerRoleCode,
+    // and the create endpoint on project-partner-roles re-checks server-side.
+    // We use the same service so the same validation runs.
+    if (roleAssignments?.length) {
+      for (const a of roleAssignments) {
+        try {
+          await this.prisma.projectPartnerRole.create({
+            data: {
+              projectId: project.id,
+              partyId: a.partyId,
+              roleId: a.roleId,
+              isPrimary: a.isPrimary ?? false,
+              titleInProject: a.titleInProject ?? null,
+            },
+          });
+        } catch (err) {
+          // Roll back: project + customer rel + any already-created assignments.
+          await this.prisma.projectPartnerRole.deleteMany({ where: { projectId: project.id } }).catch(() => undefined);
+          await this.prisma.project.delete({ where: { id: project.id } }).catch(() => undefined);
+          throw new BadRequestException(
+            `Failed to create role assignment (roleId=${a.roleId}, partyId=${a.partyId}): ${(err as Error).message}`,
+          );
+        }
+      }
     }
 
     // Auto-add leader as a member with role "Project Leader"

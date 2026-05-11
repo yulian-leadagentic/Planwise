@@ -1,7 +1,30 @@
-import { IsString, IsOptional, IsInt, IsEnum, IsNumber, IsDateString, IsArray } from 'class-validator';
+import { IsString, IsOptional, IsInt, IsEnum, IsNumber, IsDateString, IsArray, IsBoolean, ValidateNested } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { ProjectStatus } from '@prisma/client';
+
+/**
+ * One role assignment supplied at project-create time. Used to satisfy
+ * ProjectRoleType.isPrimaryRequired roles (e.g. "Project Lead" if the
+ * admin flagged it required). Creates a project_partner_role row.
+ */
+export class ProjectRoleAssignmentDto {
+  @IsInt()
+  @Type(() => Number)
+  roleId: number;
+
+  @IsInt()
+  @Type(() => Number)
+  partyId: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isPrimary?: boolean;
+
+  @IsOptional()
+  @IsString()
+  titleInProject?: string;
+}
 
 export class CreateProjectDto {
   @ApiProperty()
@@ -75,4 +98,17 @@ export class CreateProjectDto {
   @IsInt()
   @Type(() => Number)
   customerOrgId: number;
+
+  /**
+   * Optional list of project-role assignments wired at create time. The
+   * service validates that every ProjectRoleType with isPrimaryRequired=true
+   * (excluding 'customer', which is handled via customerOrgId) has at least
+   * one entry here with isPrimary=true.
+   */
+  @ApiPropertyOptional({ type: [ProjectRoleAssignmentDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProjectRoleAssignmentDto)
+  roleAssignments?: ProjectRoleAssignmentDto[];
 }
