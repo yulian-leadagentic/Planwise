@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Trash2, Pencil, Save, X, Briefcase, Lock } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
@@ -18,8 +18,10 @@ interface ProjectRoleType {
   code: string;
   name: string;
   description: string | null;
-  allowedPartnerKind: 'person' | 'organization' | 'any';
+  allowedPartnerKind: 'person' | 'organization';
   requiredPartnerRoleCode: string | null;
+  /** M4a.3 — Multi-select of Profession ids ("Job Titles"). null/empty = no constraint. */
+  requiredProfessionIds: number[] | null;
   isPrimaryRequired: boolean;
   sortOrder: number;
   isSystem: boolean;
@@ -29,10 +31,20 @@ interface PartnerRoleType {
   id: number;
   code: string;
   name: string;
+  /** M4a.3 — Filters this role's visibility in the project-role form to a kind. */
+  appliesToKind: 'person' | 'organization' | 'any';
+}
+
+interface Profession {
+  id: number;
+  name: string;
+  sortOrder: number;
 }
 
 const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
-const KIND_OPTIONS: Array<'person' | 'organization' | 'any'> = ['any', 'person', 'organization'];
+// 'any' removed in M4a.3 — every project role attaches to a single
+// kind (person OR organization).
+const KIND_OPTIONS: Array<'person' | 'organization'> = ['person', 'organization'];
 
 export function ProjectRoleTypesPage() {
   const { can, isAdmin } = usePermissions();
@@ -119,12 +131,20 @@ export function ProjectRoleTypesPage() {
                           <span className="rounded-full bg-blue-50 px-2 py-0.5 font-semibold text-blue-700">{t.allowedPartnerKind}</span>
                           {t.requiredPartnerRoleCode && (
                             <span className="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">
-                              requires: {t.requiredPartnerRoleCode}
+                              role: {t.requiredPartnerRoleCode}
+                            </span>
+                          )}
+                          {t.requiredProfessionIds && t.requiredProfessionIds.length > 0 && (
+                            <span
+                              className="rounded-full bg-violet-50 px-2 py-0.5 font-semibold text-violet-700"
+                              title={`Job titles required: ${t.requiredProfessionIds.length} selected`}
+                            >
+                              {t.requiredProfessionIds.length} job title{t.requiredProfessionIds.length > 1 ? 's' : ''}
                             </span>
                           )}
                           {t.isPrimaryRequired && (
                             <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
-                              one primary
+                              required on every project
                             </span>
                           )}
                         </div>
@@ -182,7 +202,9 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
   const isNew = !type;
   const queryClient = useQueryClient();
 
-  // Live partner role catalog — used for the requiredPartnerRoleCode dropdown.
+  // Partner role catalog. We filter visibility to roles whose
+  // appliesToKind matches the form's selected kind (employee shows
+  // only when kind=person, supplier only when kind=organization, etc.).
   const { data: partnerRoleTypes = [] } = useQuery<PartnerRoleType[]>({
     queryKey: ['partner-role-types'],
     staleTime: 10 * 60 * 1000,
@@ -192,16 +214,54 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
         return Array.isArray(d) ? d : [];
       }),
   });
+  // Job Title (Profession) catalog.
+  const { data: professions = [] } = useQuery<Profession[]>({
+    queryKey: ['professions'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/config/professions').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
 
   const [form, setForm] = useState({
     code: type?.code ?? '',
     name: type?.name ?? '',
     description: type?.description ?? '',
-    allowedPartnerKind: (type?.allowedPartnerKind ?? 'any') as 'person' | 'organization' | 'any',
+    allowedPartnerKind: (type?.allowedPartnerKind ?? 'person') as 'person' | 'organization',
     requiredPartnerRoleCode: type?.requiredPartnerRoleCode ?? '',
+    requiredProfessionIds: (type?.requiredProfessionIds ?? []) as number[],
     isPrimaryRequired: type?.isPrimaryRequired ?? false,
     sortOrder: type?.sortOrder ?? 0,
   });
+
+  // Filter the Required partner-role dropdown to roles that can attach to
+  // the chosen kind (employee shows when kind=person, supplier shows when
+  // kind=organization, etc.). 'any' partner-roles always show.
+  const eligibleRoles = partnerRoleTypes.filter(
+    (rt) => rt.appliesToKind === 'any' || rt.appliesToKind === form.allowedPartnerKind,
+  );
+  // If the user previously selected a role that becomes ineligible after
+  // changing the kind, clear it so we don't post a stale value.
+  useEffect(() => {
+    if (
+      form.requiredPartnerRoleCode &&
+      !eligibleRoles.some((r) => r.code === form.requiredPartnerRoleCode)
+    ) {
+      setForm((f) => ({ ...f, requiredPartnerRoleCode: '' }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.allowedPartnerKind, partnerRoleTypes]);
+
+  const toggleProfession = (id: number) => {
+    setForm((f) => ({
+      ...f,
+      requiredProfessionIds: f.requiredProfessionIds.includes(id)
+        ? f.requiredProfessionIds.filter((x) => x !== id)
+        : [...f.requiredProfessionIds, id],
+    }));
+  };
 
   const save = useMutation({
     mutationFn: () => {
@@ -210,6 +270,8 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
         description: form.description.trim() || undefined,
         allowedPartnerKind: form.allowedPartnerKind,
         requiredPartnerRoleCode: form.requiredPartnerRoleCode || null,
+        requiredProfessionIds:
+          form.requiredProfessionIds.length > 0 ? form.requiredProfessionIds : null,
         isPrimaryRequired: form.isPrimaryRequired,
         sortOrder: form.sortOrder,
       };
@@ -267,17 +329,72 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
           })}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] font-semibold text-slate-400 uppercase whitespace-nowrap">Required partner-role</span>
+          <span
+            className="text-[10px] font-semibold text-slate-400 uppercase whitespace-nowrap"
+            title="Filter assignable parties to those who hold this partner-role globally (e.g. only employees can be a 'Project Lead'). The list only shows roles compatible with the kind you chose above."
+          >
+            Required partner-role
+          </span>
           <select
             value={form.requiredPartnerRoleCode}
             onChange={(e) => setForm((f) => ({ ...f, requiredPartnerRoleCode: e.target.value }))}
             className={cn(inputClass, 'font-mono text-[11px] py-1 max-w-[220px]')}
           >
             <option value="">— None —</option>
-            {partnerRoleTypes.map((rt) => (
+            {eligibleRoles.map((rt) => (
               <option key={rt.id} value={rt.code}>{rt.code} ({rt.name})</option>
             ))}
           </select>
+        </div>
+
+        {/* M4a.3 — Required Job Titles (Professions). Multi-select. The
+            picker filters assignable parties to those who hold AT LEAST ONE
+            of the chosen job titles. Person-only constraint conceptually,
+            but we render for orgs too in case an org has a registered
+            'profession' (rare but allowed). */}
+        <div className="space-y-1 pt-1">
+          <div className="flex items-center justify-between">
+            <span
+              className="text-[10px] font-semibold text-slate-400 uppercase"
+              title="Filter assignable parties to those whose Job Title is in this list. Job titles are managed at /templates/types → Job Titles. Combined with Required partner-role above as AND — the party must satisfy both."
+            >
+              Required job title(s)
+            </span>
+            {professions.length === 0 && (
+              <a
+                href="/templates/types"
+                className="text-[10px] text-blue-600 hover:underline"
+                target="_blank"
+                rel="noreferrer"
+              >
+                + Add job titles
+              </a>
+            )}
+          </div>
+          {professions.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {professions.map((p) => {
+                const on = form.requiredProfessionIds.includes(p.id);
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => toggleProfession(p.id)}
+                    className={cn(
+                      'rounded-full border px-2 py-0.5 text-[11px] font-medium',
+                      on
+                        ? 'border-violet-500 bg-violet-50 text-violet-700'
+                        : 'border-slate-200 text-slate-500 hover:border-slate-300',
+                    )}
+                  >
+                    {p.name}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-[10px] italic text-slate-400">No job titles defined yet.</p>
+          )}
         </div>
         <label
           className="flex items-center gap-2 text-[11px] text-slate-600 pt-1"
