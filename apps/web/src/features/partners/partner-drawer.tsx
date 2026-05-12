@@ -616,6 +616,143 @@ function RolesTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull; canWri
           </div>
         </div>
       )}
+
+      {/* M4a.3 — Job Titles. Only meaningful for persons (organizations
+          don't have a "profession") but we render unconditionally so it's
+          discoverable. Drives the Required Job Title constraint on Project
+          Role Types. */}
+      {bp.partnerType === 'person' && (
+        <JobTitlesSection bpId={bp.id} canWrite={canWrite} />
+      )}
+    </div>
+  );
+}
+
+// ─── Job Titles (Professions) ────────────────────────────────────────────────
+
+interface JobTitle {
+  id: number;
+  professionId: number;
+  isPrimary: boolean;
+  profession: { id: number; name: string };
+}
+
+function JobTitlesSection({ bpId, canWrite }: { bpId: number; canWrite: boolean }) {
+  const queryClient = useQueryClient();
+  const { data: current = [], isLoading } = useQuery<JobTitle[]>({
+    queryKey: ['bp-professions', bpId],
+    queryFn: () =>
+      client.get(`/business-partners/${bpId}/professions`).then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+  const { data: catalog = [] } = useQuery<Array<{ id: number; name: string }>>({
+    queryKey: ['professions'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/config/professions').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+
+  const assignedIds = new Set(current.map((c) => c.professionId));
+  const primaryId = current.find((c) => c.isPrimary)?.professionId ?? null;
+  const available = catalog.filter((p) => !assignedIds.has(p.id));
+
+  // Single set-call replaces the whole list. The server diffs.
+  const save = useMutation({
+    mutationFn: (vars: { professionIds: number[]; primaryProfessionId: number | null }) =>
+      client.put(`/business-partners/${bpId}/professions`, vars).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bp-professions', bpId] });
+      queryClient.invalidateQueries({ queryKey: ['business-partners'] });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update job titles'),
+  });
+
+  const addOne = (id: number) => {
+    const next = Array.from(new Set([...current.map((c) => c.professionId), id]));
+    save.mutate({ professionIds: next, primaryProfessionId: primaryId ?? id });
+  };
+  const removeOne = (id: number) => {
+    const next = current.map((c) => c.professionId).filter((x) => x !== id);
+    const nextPrimary = primaryId === id ? (next[0] ?? null) : primaryId;
+    save.mutate({ professionIds: next, primaryProfessionId: nextPrimary });
+  };
+  const setPrimary = (id: number) => {
+    save.mutate({ professionIds: current.map((c) => c.professionId), primaryProfessionId: id });
+  };
+
+  return (
+    <div>
+      <p className="text-[11px] font-semibold text-slate-400 uppercase mb-2">Job titles</p>
+      {isLoading ? (
+        <p className="text-[11px] text-slate-400">Loading…</p>
+      ) : current.length === 0 ? (
+        <p className="text-[12px] text-slate-400 italic mb-2">No job titles yet.</p>
+      ) : (
+        <div className="space-y-1.5 mb-2">
+          {current.map((c) => (
+            <div key={c.id} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
+              <Briefcase className="h-3.5 w-3.5 text-violet-500 shrink-0" />
+              <span className="text-[13px] font-medium text-slate-800 flex-1">{c.profession.name}</span>
+              {canWrite && (
+                <button
+                  onClick={() => setPrimary(c.professionId)}
+                  title={c.isPrimary ? 'This is the primary job title' : 'Mark as primary'}
+                  className={cn(
+                    'rounded-full px-2 py-0.5 text-[10px] font-semibold border transition-colors',
+                    c.isPrimary
+                      ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                      : 'border-slate-200 text-slate-500 hover:border-slate-300',
+                  )}
+                >
+                  {c.isPrimary ? 'PRIMARY' : 'Make primary'}
+                </button>
+              )}
+              {canWrite && (
+                <button
+                  onClick={() => removeOne(c.professionId)}
+                  className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-600"
+                  title="Remove job title"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {canWrite && available.length > 0 && (
+        <div>
+          <p className="text-[10px] text-slate-400 mb-1">Add:</p>
+          <div className="flex flex-wrap gap-2">
+            {available.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => addOne(p.id)}
+                disabled={save.isPending}
+                className="rounded-full border border-slate-200 bg-white hover:border-violet-400 hover:bg-violet-50 text-slate-700 hover:text-violet-700 text-[12px] font-medium px-3 py-1 flex items-center gap-1"
+              >
+                <Plus className="h-3 w-3" />
+                {p.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {canWrite && catalog.length === 0 && (
+        <p className="text-[11px] text-slate-400 italic">
+          No job titles defined yet. Manage the list in{' '}
+          <a href="/templates/types" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+            /templates/types → Job Titles
+          </a>.
+        </p>
+      )}
     </div>
   );
 }
