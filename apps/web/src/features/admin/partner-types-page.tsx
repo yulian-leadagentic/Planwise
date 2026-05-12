@@ -10,6 +10,16 @@ import client from '@/api/client';
 
 const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
 
+interface PartnerRoleCategory {
+  id: number;
+  code: string;
+  name: string;
+  description: string | null;
+  color: string | null;
+  sortOrder: number;
+  isSystem: boolean;
+}
+
 interface RoleType {
   id: number;
   code: string;
@@ -79,7 +89,7 @@ function summarizeSide(targets: SideTarget[] | null, fallbackLabel: string | nul
 }
 
 export function PartnerTypesPage() {
-  const [tab, setTab] = useState<'role-types' | 'relationship-types'>('role-types');
+  const [tab, setTab] = useState<'role-types' | 'relationship-types' | 'categories'>('role-types');
   const { can, isAdmin } = usePermissions();
   const canWrite = isAdmin || can('admin/partner-types', 'write');
   const canDelete = isAdmin || can('admin/partner-types', 'delete');
@@ -95,6 +105,7 @@ export function PartnerTypesPage() {
         {([
           { key: 'role-types', label: 'Role Types' },
           { key: 'relationship-types', label: 'Relationship Types' },
+          { key: 'categories', label: 'Categories' },
         ] as const).map((t) => (
           <button
             key={t.key}
@@ -109,9 +120,9 @@ export function PartnerTypesPage() {
         ))}
       </div>
 
-      {tab === 'role-types'
-        ? <RoleTypesTab canWrite={canWrite} canDelete={canDelete} />
-        : <RelationshipTypesTab canWrite={canWrite} canDelete={canDelete} />}
+      {tab === 'role-types' && <RoleTypesTab canWrite={canWrite} canDelete={canDelete} />}
+      {tab === 'relationship-types' && <RelationshipTypesTab canWrite={canWrite} canDelete={canDelete} />}
+      {tab === 'categories' && <CategoriesTab canWrite={canWrite} canDelete={canDelete} />}
     </div>
   );
 }
@@ -126,6 +137,18 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
     queryKey: ['partner-role-types'],
     queryFn: () => client.get('/admin/partner-types/role-types').then((r) => r.data?.data ?? r.data ?? []),
   });
+
+  // Catalog used to render coloured category chips next to each role.
+  const { data: categories = [] } = useQuery<PartnerRoleCategory[]>({
+    queryKey: ['partner-role-categories-catalog'],
+    staleTime: 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/partner-types/categories').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+  const categoryByCode = new Map(categories.map((c) => [c.code, c]));
 
   const remove = useMutation({
     mutationFn: (id: number) => client.delete(`/admin/partner-types/role-types/${id}`).then((r) => r.data),
@@ -179,11 +202,20 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
                       <td className="px-4 py-2.5 font-mono text-[12px] text-slate-600">{t.code}</td>
                       <td className="px-4 py-2.5 font-medium text-slate-800">{t.name}</td>
                       <td className="px-4 py-2.5">
-                        {t.category ? (
-                          <span className="inline-flex rounded-md bg-violet-50 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-violet-700">
-                            {t.category}
-                          </span>
-                        ) : <span className="italic text-slate-400 text-[11px]">—</span>}
+                        {t.category ? (() => {
+                          const cat = categoryByCode.get(t.category);
+                          const color = cat?.color || '#A78BFA';
+                          return (
+                            <span
+                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold"
+                              style={{ backgroundColor: `${color}22`, color }}
+                              title={cat?.description || cat?.name || t.category}
+                            >
+                              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
+                              {cat?.name || t.category}
+                            </span>
+                          );
+                        })() : <span className="italic text-slate-400 text-[11px]">—</span>}
                       </td>
                       <td className="px-4 py-2.5">
                         <span className={cn(
@@ -254,14 +286,12 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
   // Once the user touches the Code field, stop syncing it to Name.
   const [codeTouched, setCodeTouched] = useState(!isNew);
 
-  // Datalist source for the Category picker — DISTINCT values already used
-  // across the role-type catalog. Stops users typing 'cst', 'CST', 'cust'
-  // variants of the same thing.
-  const { data: categorySuggestions = [] } = useQuery<string[]>({
-    queryKey: ['partner-role-categories'],
+  // Categories are now a proper catalog with code/name/color.
+  const { data: categoryCatalog = [] } = useQuery<PartnerRoleCategory[]>({
+    queryKey: ['partner-role-categories-catalog'],
     staleTime: 60 * 1000,
     queryFn: () =>
-      client.get('/admin/partner-types/role-types/categories').then((r) => {
+      client.get('/admin/partner-types/categories').then((r) => {
         const d = r.data?.data ?? r.data;
         return Array.isArray(d) ? d : [];
       }),
@@ -321,19 +351,20 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
         />
       </td>
       <td className="px-4 py-2">
-        {/* Category — datalist sourced from existing DISTINCT values in
-            partner_role_types so admins don't spawn 'cst', 'CST', 'cust'
-            variants of the same thing. */}
-        <input
-          list="partner-role-category-suggestions"
+        {/* Category — dropdown sourced from the partner_role_categories
+            catalog (managed in the Categories tab). FK constraint at the
+            DB layer guarantees only catalog values are stored. */}
+        <select
           value={form.category}
           onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-          placeholder="(optional)"
-          className={cn(inputClass, 'font-mono text-[12px]')}
-        />
-        <datalist id="partner-role-category-suggestions">
-          {categorySuggestions.map((c) => <option key={c} value={c} />)}
-        </datalist>
+          className={cn(inputClass, 'text-[12px] py-1')}
+          title="Coarse grouping of this role. Manage the list in the Categories tab."
+        >
+          <option value="">— None —</option>
+          {categoryCatalog.map((c) => (
+            <option key={c.id} value={c.code}>{c.name} ({c.code})</option>
+          ))}
+        </select>
       </td>
       <td className="px-4 py-2">
         {/* Applies to — drives which roles appear when a side picker has
@@ -671,6 +702,242 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
             {summarizeSide(form.sideBTargets, form.sideBLabel || null)}
           </span>
         </div>
+      </td>
+      <td />
+      <td className="px-4 py-2 text-right whitespace-nowrap">
+        <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700" title="Cancel">
+          <X className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={() => save.mutate()}
+          disabled={save.isPending || !form.name.trim() || (isNew && !form.code.trim())}
+          className="p-1.5 rounded hover:bg-blue-100 text-blue-600 hover:text-blue-700 disabled:opacity-30 disabled:cursor-not-allowed"
+          title="Save"
+        >
+          <Save className="h-3.5 w-3.5" />
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+// ─── Categories Tab ─────────────────────────────────────────────────────────
+//
+// CRUD over partner_role_categories. Each row drives a coloured chip on
+// the Role Types tab. System rows can be renamed / recoloured but not
+// deleted. Custom rows can be deleted only when no role-type references
+// them (server enforces).
+
+function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: boolean }) {
+  const queryClient = useQueryClient();
+  const [editingId, setEditingId] = useState<number | 'new' | null>(null);
+
+  const { data: categories = [], isLoading } = useQuery<PartnerRoleCategory[]>({
+    queryKey: ['partner-role-categories-catalog'],
+    queryFn: () =>
+      client.get('/admin/partner-types/categories').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: number) =>
+      client.delete(`/admin/partner-types/categories/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['partner-role-categories-catalog'] });
+      notify.success('Category deleted', { code: 'CAT-DELETE-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to delete category'),
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-[12px] text-slate-500 max-w-3xl">
+          Coarse grouping for role types (Customer-side, Supplier-side, Internal, External, …). Each role type
+          references one category. Used to colour chips and as a constraint option on relationship-type side pickers.
+        </p>
+        {canWrite && editingId === null && (
+          <button
+            onClick={() => setEditingId('new')}
+            title="Define a new category. Each role type can then be tagged with this category."
+            className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
+          >
+            <Plus className="h-3 w-3" /> Add Category
+          </button>
+        )}
+      </div>
+
+      {isLoading ? (
+        <TableSkeleton rows={3} cols={4} />
+      ) : (
+        <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
+                <th className="px-4 py-2 text-left font-semibold w-28">Code</th>
+                <th className="px-4 py-2 text-left font-semibold w-48">Name</th>
+                <th className="px-4 py-2 text-left font-semibold w-24">Color</th>
+                <th className="px-4 py-2 text-left font-semibold">Description</th>
+                <th className="px-4 py-2 text-center font-semibold w-20">Origin</th>
+                <th className="px-4 py-2 text-right font-semibold w-32"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {editingId === 'new' && <CategoryEditRow onClose={() => setEditingId(null)} />}
+              {categories.map((c) =>
+                editingId === c.id ? (
+                  <CategoryEditRow key={c.id} category={c} onClose={() => setEditingId(null)} />
+                ) : (
+                  <tr key={c.id} className="border-t border-slate-100">
+                    <td className="px-4 py-2.5 font-mono text-[12px] text-slate-600">{c.code}</td>
+                    <td className="px-4 py-2.5 font-medium text-slate-800">{c.name}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="inline-block h-4 w-4 rounded-full border border-slate-200"
+                          style={{ backgroundColor: c.color || '#A78BFA' }}
+                        />
+                        <span className="font-mono text-[10px] text-slate-400">{c.color ?? 'auto'}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-600 text-[12px]">
+                      {c.description || <span className="italic text-slate-400">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      {c.isSystem ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                          <Lock className="h-2.5 w-2.5" /> System
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                          Custom
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      {canWrite && (
+                        <button
+                          onClick={() => setEditingId(c.id)}
+                          className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
+                          title="Edit"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {canDelete && !c.isSystem && (
+                        <button
+                          onClick={() => {
+                            if (confirm(`Delete category "${c.name}"?`)) remove.mutate(c.id);
+                          }}
+                          className="p-1.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-600"
+                          title="Delete"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ),
+              )}
+              {!isLoading && categories.length === 0 && editingId !== 'new' && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400 text-sm">
+                    No categories yet. Add one to start grouping role types.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CategoryEditRow({ category, onClose }: { category?: PartnerRoleCategory; onClose: () => void }) {
+  const isNew = !category;
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState({
+    code: category?.code ?? '',
+    name: category?.name ?? '',
+    description: category?.description ?? '',
+    color: category?.color ?? '#3B82F6',
+    sortOrder: category?.sortOrder ?? 0,
+  });
+  // Auto-derive code from name on create (until user touches Code).
+  const [codeTouched, setCodeTouched] = useState(!isNew);
+
+  const save = useMutation({
+    mutationFn: () => {
+      const body: any = {
+        name: form.name.trim(),
+        description: form.description.trim() || null,
+        color: form.color || null,
+        sortOrder: form.sortOrder,
+      };
+      if (isNew) body.code = form.code.trim().toLowerCase();
+      else if (!category?.isSystem) body.code = form.code.trim().toLowerCase();
+      return isNew
+        ? client.post('/admin/partner-types/categories', body).then((r) => r.data)
+        : client.patch(`/admin/partner-types/categories/${category!.id}`, body).then((r) => r.data);
+    },
+    onSuccess: () => {
+      // Invalidate every consumer of the catalog so colour chips refresh.
+      queryClient.invalidateQueries({ queryKey: ['partner-role-categories-catalog'] });
+      queryClient.invalidateQueries({ queryKey: ['partner-role-types'] });
+      notify.success(isNew ? 'Category created' : 'Category updated', { code: 'CAT-200' });
+      onClose();
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to save'),
+  });
+
+  return (
+    <tr className="border-t border-slate-100 bg-blue-50/30">
+      <td className="px-4 py-2">
+        <input
+          value={form.code}
+          onChange={(e) => { setCodeTouched(true); setForm((f) => ({ ...f, code: e.target.value })); }}
+          disabled={!isNew && category?.isSystem}
+          placeholder="auto-fills from name"
+          className={cn(inputClass, 'font-mono text-[12px] disabled:bg-slate-100 disabled:cursor-not-allowed')}
+        />
+      </td>
+      <td className="px-4 py-2">
+        <input
+          value={form.name}
+          onChange={(e) => {
+            const v = e.target.value;
+            setForm((f) => ({ ...f, name: v, code: codeTouched ? f.code : deriveCode(v) }));
+          }}
+          className={inputClass}
+          autoFocus
+        />
+      </td>
+      <td className="px-4 py-2">
+        <div className="flex items-center gap-2">
+          <input
+            type="color"
+            value={form.color}
+            onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
+            className="h-7 w-10 cursor-pointer rounded border border-slate-200"
+          />
+          <input
+            value={form.color}
+            onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
+            placeholder="#3B82F6"
+            className={cn(inputClass, 'font-mono text-[11px] py-1')}
+          />
+        </div>
+      </td>
+      <td className="px-4 py-2">
+        <input
+          value={form.description}
+          onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+          placeholder="(optional)"
+          className={inputClass}
+        />
       </td>
       <td />
       <td className="px-4 py-2 text-right whitespace-nowrap">

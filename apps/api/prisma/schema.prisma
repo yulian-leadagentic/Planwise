@@ -1383,18 +1383,38 @@ model BusinessPartner {
 // Predefined seeds: employee, customer, supplier, consultant,
 // external_contact, subcontractor. Admins can add their own; system
 // rows are protected from deletion (UI enforces; isSystem flag).
+/// Catalog of role-type categories. Each PartnerRoleType belongs to at
+/// most one category (a grouping label like 'cst' = Customer-side, 'int'
+/// = Internal). Used to group roles on the UI and as a constraint in
+/// relationship-type side-pickers (SideTarget.categoryCodes).
+model PartnerRoleCategory {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique @db.VarChar(20)
+  name        String   @db.VarChar(100)
+  description String?  @db.VarChar(500)
+  color       String?  @db.VarChar(7)  // hex like '#3B82F6' for chip background
+  sortOrder   Int      @default(0) @map("sort_order")
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt      @map("updated_at")
+
+  roleTypes PartnerRoleType[] @relation("PartnerRoleTypeCategory")
+
+  @@map("partner_role_categories")
+}
+
 model PartnerRoleType {
   id          Int       @id @default(autoincrement())
   code        String    @unique @db.VarChar(50)
   name        String    @db.VarChar(100)
   description String?   @db.VarChar(500)
-  // Category — coarse grouping label (e.g. "cst" for customer, "sup" for
-  // supplier, "mun" for municipality, "int" for internal). Multiple role
-  // codes can share a category (e.g. "smb_customer" and "enterprise_customer"
-  // both with category="cst"). Used for grouping in the UI today; future
-  // work can let relationship rules constrain by category instead of an
-  // exact role code.
+  // Coarse grouping. References PartnerRoleCategory.code. The column
+  // keeps the string code (not an FK to .id) so legacy JSON references in
+  // SideTarget.categoryCodes / relationship-type side-pickers stay valid.
+  // ON DELETE SET NULL — deleting a category unbinds it from role types
+  // rather than cascading; the admin UI also blocks delete while in use.
   category    String?   @db.VarChar(20)
+  categoryRef PartnerRoleCategory? @relation("PartnerRoleTypeCategory", fields: [category], references: [code], onUpdate: Cascade, onDelete: SetNull)
   // Which kind of party can hold this role. 'person', 'organization', or
   // 'any' (default — the role can attach to either). Used by the
   // SidePickerCard to filter the role chip list so admins don't see
