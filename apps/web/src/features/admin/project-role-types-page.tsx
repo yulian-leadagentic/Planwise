@@ -68,6 +68,7 @@ export function ProjectRoleTypesPage() {
         actions={canWrite && editingId === null ? (
           <button
             onClick={() => setEditingId('new')}
+            title="Define a new role a partner can hold on a project (e.g. Lead Architect, BIM Manager, Site Engineer). Each project role gets its own section on the project Team tab with an Add button. Use the 'Allowed kind' + 'Required partner-role' fields to constrain who can be picked."
             className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
           >
             <Plus className="h-3 w-3" /> Add Project Role
@@ -278,13 +279,16 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
             ))}
           </select>
         </div>
-        <label className="flex items-center gap-2 text-[11px] text-slate-600 pt-1">
+        <label
+          className="flex items-center gap-2 text-[11px] text-slate-600 pt-1"
+          title="When checked, this role is REQUIRED at project creation — the project create form will render a required picker for it, and the server rejects projects without a primary assignment. Use for roles every project must have (Customer, Project Lead, …). Leave unchecked for optional roles (Architect, Engineer, etc.)."
+        >
           <input
             type="checkbox"
             checked={form.isPrimaryRequired}
             onChange={(e) => setForm((f) => ({ ...f, isPrimaryRequired: e.target.checked }))}
           />
-          Only one party can hold this role as primary per project
+          Required on every project — exactly one party must hold this role as primary
         </label>
         <input
           value={form.description}
