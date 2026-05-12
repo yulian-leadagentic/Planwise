@@ -11,6 +11,7 @@ import {
   DollarSign,
   GraduationCap,
   Briefcase,
+  Link as LinkIcon,
 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -90,11 +91,19 @@ const adminCards = [
   },
   {
     title: 'Number Ranges',
-    description: 'Auto-generated codes for Persons, Organizations, Employees and more',
+    description: 'Sequence library — define ranges, prefixes, padding, and mode (auto / manual / external)',
     icon: Hash,
     href: '/admin/number-ranges',
     module: 'admin/number-ranges',
     color: 'bg-slate-100 text-slate-700',
+  },
+  {
+    title: 'Object Numbering',
+    description: 'Assign which number range each object uses (Persons, Organizations, Employees, Projects, Contracts)',
+    icon: LinkIcon,
+    href: '/admin/object-numbering',
+    module: 'admin/number-ranges',
+    color: 'bg-sky-100 text-sky-700',
   },
   {
     title: 'Currencies',
