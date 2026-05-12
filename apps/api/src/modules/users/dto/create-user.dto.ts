@@ -4,6 +4,16 @@ import { Type } from 'class-transformer';
 import { UserType } from '@prisma/client';
 
 export class CreateUserDto {
+  /**
+   * M1.1 — Optional business code. Required when the EMPLOYEE entity-kind's
+   * range is in manual/external mode (admin-supplied). Omitted when in
+   * auto mode (system allocates).
+   */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  code?: string;
+
   @ApiProperty()
   @IsEmail()
   email: string;

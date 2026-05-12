@@ -39,6 +39,15 @@ function getColumns(
       ),
     },
     {
+      accessorKey: 'code',
+      header: 'Code',
+      cell: ({ row }) => (
+        <span className="text-xs font-mono text-slate-500">
+          {(row.original as any).code ?? '—'}
+        </span>
+      ),
+    },
+    {
       accessorKey: 'email',
       header: 'Email',
       cell: ({ row }) => <span className="text-sm text-slate-600">{row.original.email ?? '-'}</span>,
@@ -140,6 +149,9 @@ function getColumns(
 // `businessPartnerId === ''` means "create a fresh BP" (default); a number
 // means link this login to that existing person BP and skip BP creation.
 const emptyPerson = {
+  // M1.1 — business code. For auto-mode ranges the server allocates;
+  // leave blank. For manual/external, the admin enters here.
+  code: '',
   email: '',
   password: '',
   firstName: '',
@@ -181,6 +193,21 @@ export function PeoplePage() {
     queryFn: () => client.get('/admin/config/professions').then((r) => { const d = r.data?.data ?? r.data; return Array.isArray(d) ? d : []; }),
   });
 
+  // M1.1 — EMPLOYEE entity-kind assignment. Drives the Code field on the
+  // create form: auto -> read-only preview, manual/external -> required
+  // text input, no assignment -> field hidden (admin can backfill later).
+  const { data: entityKinds = [] } = useQuery<any[]>({
+    queryKey: ['admin', 'entity-kinds'],
+    staleTime: 30 * 1000,
+    queryFn: () =>
+      client.get('/admin/entity-kinds').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+  const employeeKind = entityKinds.find((k: any) => k.code === 'EMPLOYEE');
+  const employeeRange = employeeKind?.numberRange ?? null;
+
   // All person-type BPs that don't yet have a User account — these are the
   // candidates the create form can link a fresh login to. Loaded only when
   // the modal is open. Cached for the session.
@@ -216,11 +243,24 @@ export function PeoplePage() {
       notify.warning('Please fill all required fields', { code: 'USER-CREATE-400' });
       return;
     }
+    // M1.1 — Code is required when the EMPLOYEE range is manual/external;
+    // server allocates on auto. Block submit if missing.
+    if (employeeRange && employeeRange.mode !== 'auto' && !form.code.trim()) {
+      notify.warning(`Enter an Employee Code (range "${employeeRange.code}" is ${employeeRange.mode} mode)`, {
+        code: 'USER-CREATE-400',
+      });
+      return;
+    }
     const payload: any = {
       ...form,
       roleId: Number(form.roleId),
       userType: peopleTab === 'partners' ? 'partner' : 'employee',
     };
+    // M1.1 — Don't send `code` for auto-mode ranges; the server allocates.
+    // The DTO rejects a supplied code in auto mode.
+    if (!employeeRange || employeeRange.mode === 'auto' || !form.code.trim()) {
+      delete payload.code;
+    }
     // Only send businessPartnerId when the user explicitly picked one.
     // Empty string would otherwise be sent as the literal "" — server-side
     // validation would reject it as a non-int.
@@ -417,6 +457,41 @@ export function PeoplePage() {
                   app access without duplicating the contact record.
                 </p>
               </div>
+
+              {/* M1.1 — Code field driven by EMPLOYEE entity-kind assignment.
+                  auto  : read-only preview of the next code (system allocates on save).
+                  manual / external : input the admin fills in.
+                  no range bound: hidden — admins wire one up in /admin/object-numbering. */}
+              {employeeRange && (
+                <div>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title={`From range ${employeeRange.code} (${employeeRange.mode} mode)`}>
+                    Employee Code
+                    {employeeRange.mode !== 'auto' && <span className="text-red-500"> *</span>}
+                    <span className="ml-2 text-[10px] font-normal text-slate-400">
+                      {employeeRange.mode === 'auto'
+                        ? `auto from range ${employeeRange.code}`
+                        : employeeRange.mode === 'manual'
+                          ? `you type it — range ${employeeRange.code}`
+                          : `external — range ${employeeRange.code}${employeeRange.externalPattern ? ` (pattern: ${employeeRange.externalPattern})` : ''}`}
+                    </span>
+                  </label>
+                  {employeeRange.mode === 'auto' ? (
+                    <input
+                      value={employeeRange.preview ?? ''}
+                      disabled
+                      placeholder="(allocated on save)"
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 bg-slate-50 text-sm font-mono text-slate-500 cursor-not-allowed"
+                    />
+                  ) : (
+                    <input
+                      value={form.code}
+                      onChange={(e) => setForm((f) => ({ ...f, code: e.target.value }))}
+                      placeholder={employeeRange.prefix ? `e.g. ${employeeRange.prefix}…` : 'Enter the code'}
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm font-mono text-slate-700 focus:border-blue-500 focus:outline-none"
+                    />
+                  )}
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <div>

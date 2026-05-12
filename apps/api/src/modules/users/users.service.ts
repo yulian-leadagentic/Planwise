@@ -1,15 +1,57 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { NumberRangesService } from '../number-ranges/number-ranges.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
 
 @Injectable()
 export class UsersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private numberRanges: NumberRangesService,
+  ) {}
+
+  /**
+   * M1.1 — Allocate or validate a User business code (employee number).
+   * Looks up the EMPLOYEE entity kind, finds its assigned NumberRange,
+   * and either:
+   *   auto     → allocates the next code atomically.
+   *   manual   → uses the user-supplied code (uniqueness only).
+   *   external → uses the user-supplied code with optional regex check.
+   * If EMPLOYEE isn't bound to a range, returns null and the User row
+   * is created without a code (admins can backfill later).
+   */
+  private async resolveUserCode(suppliedCode: string | undefined): Promise<string | null> {
+    const kind = await this.prisma.entityKind.findUnique({
+      where: { code: 'EMPLOYEE' },
+      include: { numberRange: true },
+    });
+    const range = kind?.numberRange;
+    if (!range || !range.isActive) {
+      // No assignment yet — let the caller proceed without a code. Admin
+      // can backfill via Object Numbering then edit the user.
+      return suppliedCode?.trim() || null;
+    }
+    if (range.mode === 'auto') {
+      if (suppliedCode?.trim()) {
+        throw new BadRequestException(
+          `Range "${range.code}" is auto — the system allocates the code. Don't supply one.`,
+        );
+      }
+      return this.numberRanges.next(range.code);
+    }
+    if (!suppliedCode?.trim()) {
+      throw new BadRequestException(
+        `Range "${range.code}" is ${range.mode} — please supply a code for the new user.`,
+      );
+    }
+    await this.numberRanges.validateManual(range.code, suppliedCode.trim());
+    return suppliedCode.trim();
+  }
 
   async create(dto: CreateUserDto) {
     const existing = await this.prisma.user.findFirst({ where: { email: dto.email } });
@@ -112,10 +154,17 @@ export class UsersService {
       }
     }
 
+    // M1.1 — Resolve the business code (employee number) from the
+    // EMPLOYEE entity kind's number range. Strip from userData so it
+    // doesn't double-pass into Prisma below.
+    const { code: codeFromDto, ...restUserData } = userData;
+    const code = await this.resolveUserCode(codeFromDto);
+
     // 4) Create the User row, linking to the BP.
     const user = await this.prisma.user.create({
       data: {
-        ...userData,
+        ...restUserData,
+        code,
         password: hashedPassword,
         businessPartnerId,
         employmentDate: dto.employmentDate ? new Date(dto.employmentDate) : undefined,
@@ -123,6 +172,7 @@ export class UsersService {
       },
       select: {
         id: true,
+        code: true,
         email: true,
         firstName: true,
         lastName: true,
@@ -166,6 +216,7 @@ export class UsersService {
         orderBy: { createdAt: 'desc' },
         select: {
           id: true,
+          code: true,
           email: true,
           firstName: true,
           lastName: true,
@@ -211,6 +262,7 @@ export class UsersService {
       where: { id },
       select: {
         id: true,
+        code: true,
         email: true,
         firstName: true,
         lastName: true,
@@ -274,6 +326,7 @@ export class UsersService {
       data,
       select: {
         id: true,
+        code: true,
         email: true,
         firstName: true,
         lastName: true,
