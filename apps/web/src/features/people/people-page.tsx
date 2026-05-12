@@ -45,7 +45,7 @@ function getColumns(
     },
     {
       accessorKey: 'position',
-      header: 'Profession',
+      header: 'Job Title',
       cell: ({ row }) => row.original.position ?? '-',
     },
     {
@@ -66,7 +66,7 @@ function getColumns(
   cols.push(
     {
       accessorKey: 'roleName',
-      header: 'Role',
+      header: 'Authorization Role',
       cell: ({ row }) => {
         const user = row.original;
         const currentRoleId = (user as any).roleId;
@@ -150,6 +150,10 @@ const emptyPerson = {
   position: '',
   department: '',
   companyName: '',
+  // M4a.4 — employment fields.
+  employmentDate: '',
+  employmentEndDate: '',
+  dailyStandardHours: '',
   businessPartnerId: '' as number | '',
 };
 
@@ -425,7 +429,10 @@ export function PeoplePage() {
                 </div>
               </div>
               <div>
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Email *</label>
+                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="Email is the unique identifier for every person — used for login and as the dedupe key.">
+                  Email <span className="text-red-500">*</span>
+                  <span className="ml-2 text-[10px] font-normal text-slate-400">(unique — login & identifier)</span>
+                </label>
                 <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
               </div>
               <div>
@@ -434,23 +441,27 @@ export function PeoplePage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Role *</label>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="Determines what the user can see and edit — separate from job title.">
+                    Authorization Role <span className="text-red-500">*</span>
+                  </label>
                   <select value={form.roleId} onChange={(e) => setForm(f => ({ ...f, roleId: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none">
                     <option value="">Select role</option>
                     {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Phone</label>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Telephone</label>
                   <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Profession</label>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="What this person does by trade. Manage the list in /templates/types → Job Titles.">
+                    Job Title
+                  </label>
                   <select value={form.position} onChange={(e) => setForm(f => ({ ...f, position: e.target.value }))}
                     className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none">
-                    <option value="">Select profession</option>
+                    <option value="">Select job title</option>
                     {professions.map((p: any) => <option key={p.id} value={p.name}>{p.name}</option>)}
                   </select>
                 </div>
@@ -461,6 +472,42 @@ export function PeoplePage() {
                     <option value="">Select department</option>
                     {departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
                   </select>
+                </div>
+              </div>
+              {/* M4a.4 — Employment fields */}
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Start date</label>
+                  <input
+                    type="date"
+                    value={form.employmentDate}
+                    onChange={(e) => setForm((f) => ({ ...f, employmentDate: e.target.value }))}
+                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">End date</label>
+                  <input
+                    type="date"
+                    value={form.employmentEndDate}
+                    onChange={(e) => setForm((f) => ({ ...f, employmentEndDate: e.target.value }))}
+                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="Standard daily hours used for cost & utilisation calculations.">
+                    Daily standard hours
+                  </label>
+                  <input
+                    type="number"
+                    step="0.25"
+                    min="0"
+                    max="24"
+                    value={form.dailyStandardHours}
+                    onChange={(e) => setForm((f) => ({ ...f, dailyStandardHours: e.target.value }))}
+                    placeholder="e.g. 8"
+                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                  />
                 </div>
               </div>
               {peopleTab === 'partners' && (
@@ -517,6 +564,8 @@ function EditPersonModal({
 }) {
   const queryClient = useQueryClient();
   const isPartner = user.userType === 'partner';
+  // M4a.4 — toDateInput slices ISO to YYYY-MM-DD so <input type=date> accepts it.
+  const toDateInput = (v: string | null | undefined) => (v ? String(v).slice(0, 10) : '');
   const [form, setForm] = useState({
     email: user.email ?? '',
     firstName: user.firstName ?? '',
@@ -526,6 +575,14 @@ function EditPersonModal({
     position: user.position ?? '',
     department: user.department ?? '',
     companyName: user.companyName ?? '',
+    // Employment fields — applicable to employees primarily. Surfaced on
+    // partners too because the same person may later become an employee
+    // (the model is a single User record; the userType flag just
+    // categorises them on this list).
+    employmentDate: toDateInput((user as any).employmentDate),
+    employmentEndDate: toDateInput((user as any).employmentEndDate),
+    dailyStandardHours:
+      (user as any).dailyStandardHours != null ? String((user as any).dailyStandardHours) : '',
     isActive: user.isActive,
   });
 
@@ -562,6 +619,9 @@ function EditPersonModal({
       position: form.position || undefined,
       department: form.department || undefined,
       companyName: form.companyName || undefined,
+      employmentDate: form.employmentDate || undefined,
+      employmentEndDate: form.employmentEndDate || undefined,
+      dailyStandardHours: form.dailyStandardHours ? Number(form.dailyStandardHours) : undefined,
       isActive: form.isActive,
     });
   };
@@ -587,27 +647,34 @@ function EditPersonModal({
             </div>
           </div>
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Email *</label>
+            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="Email is the unique identifier for every person — used for login and as the dedupe key on imports.">
+              Email <span className="text-red-500">*</span>
+              <span className="ml-2 text-[10px] font-normal text-slate-400">(unique — login & identifier)</span>
+            </label>
             <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} className={inputClass} />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Role *</label>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="Determines what the user can see and edit — separate from job title / profession.">
+                Authorization Role <span className="text-red-500">*</span>
+              </label>
               <select value={form.roleId} onChange={(e) => setForm(f => ({ ...f, roleId: e.target.value }))} className={inputClass}>
                 <option value="">Select role</option>
                 {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Phone</label>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Telephone</label>
               <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className={inputClass} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Profession</label>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="What this person does by trade. Manage the list in /templates/types → Job Titles.">
+                Job Title
+              </label>
               <select value={form.position} onChange={(e) => setForm(f => ({ ...f, position: e.target.value }))} className={inputClass}>
-                <option value="">Select profession</option>
+                <option value="">Select job title</option>
                 {professions.map((p: any) => <option key={p.id} value={p.name}>{p.name}</option>)}
               </select>
             </div>
@@ -617,6 +684,42 @@ function EditPersonModal({
                 <option value="">Select department</option>
                 {departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
               </select>
+            </div>
+          </div>
+          {/* M4a.4 — Employment fields */}
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Start date</label>
+              <input
+                type="date"
+                value={form.employmentDate}
+                onChange={(e) => setForm((f) => ({ ...f, employmentDate: e.target.value }))}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">End date</label>
+              <input
+                type="date"
+                value={form.employmentEndDate}
+                onChange={(e) => setForm((f) => ({ ...f, employmentEndDate: e.target.value }))}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="Standard daily hours used for cost & utilisation calculations.">
+                Daily standard hours
+              </label>
+              <input
+                type="number"
+                step="0.25"
+                min="0"
+                max="24"
+                value={form.dailyStandardHours}
+                onChange={(e) => setForm((f) => ({ ...f, dailyStandardHours: e.target.value }))}
+                placeholder="e.g. 8"
+                className={inputClass}
+              />
             </div>
           </div>
           {isPartner && (

@@ -175,6 +175,10 @@ export class UsersService {
           position: true,
           department: true,
           companyName: true,
+          // M4a.4 — employment fields surfaced on the Employees list/edit.
+          dailyStandardHours: true,
+          employmentDate: true,
+          employmentEndDate: true,
           isActive: true,
           lastLoginAt: true,
           createdAt: true,
@@ -219,9 +223,15 @@ export class UsersService {
         taxId: true,
         address: true,
         website: true,
+        // M4a.4 — employment fields needed by the Employees edit modal.
+        dailyStandardHours: true,
+        employmentDate: true,
+        employmentEndDate: true,
+        roleId: true,
         isActive: true,
         lastLoginAt: true,
         createdAt: true,
+        businessPartnerId: true,
         role: {
           include: {
             roleModules: { include: { module: true } },
@@ -273,6 +283,9 @@ export class UsersService {
         position: true,
         department: true,
         companyName: true,
+        dailyStandardHours: true,
+        employmentDate: true,
+        employmentEndDate: true,
         isActive: true,
         role: { select: { id: true, name: true } },
       },
