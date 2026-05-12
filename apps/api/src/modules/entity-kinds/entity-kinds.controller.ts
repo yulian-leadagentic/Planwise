@@ -33,11 +33,51 @@ export class EntityKindsController {
   @Get()
   @RequirePermissions({ module: 'admin/number-ranges', action: 'read' })
   @ApiOperation({ summary: 'List entity kinds with their assigned number range' })
-  list() {
-    return this.prisma.entityKind.findMany({
+  async list() {
+    const rows = await this.prisma.entityKind.findMany({
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-      include: { numberRange: true },
+      include: {
+        // SELECT subset — NumberRange has BigInt columns
+        // (from/to/currentNumber) that crash JSON.stringify if included
+        // raw. We re-shape the embedded range with computed `preview`
+        // (string) and skip the bigints entirely.
+        numberRange: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            mode: true,
+            prefix: true,
+            padWidth: true,
+            externalPattern: true,
+            isActive: true,
+            currentNumber: true,
+          },
+        },
+      },
     });
+    // BigInt → string + compute preview for the consumer.
+    return rows.map((k) => ({
+      ...k,
+      numberRange: k.numberRange
+        ? {
+            id: k.numberRange.id,
+            code: k.numberRange.code,
+            name: k.numberRange.name,
+            mode: k.numberRange.mode,
+            prefix: k.numberRange.prefix,
+            padWidth: k.numberRange.padWidth,
+            externalPattern: k.numberRange.externalPattern,
+            isActive: k.numberRange.isActive,
+            preview:
+              k.numberRange.mode === 'auto'
+                ? `${k.numberRange.prefix}${(k.numberRange.currentNumber + 1n)
+                    .toString()
+                    .padStart(k.numberRange.padWidth, '0')}`
+                : null,
+          }
+        : null,
+    }));
   }
 
   @Patch(':id')
@@ -61,7 +101,7 @@ export class EntityKindsController {
       }
     }
 
-    return this.prisma.entityKind.update({
+    const updated = await this.prisma.entityKind.update({
       where: { id },
       data: {
         numberRangeCode:
@@ -72,7 +112,35 @@ export class EntityKindsController {
         description: body.description === undefined ? undefined : (body.description?.trim() || null),
         sortOrder: body.sortOrder,
       },
-      include: { numberRange: true },
+      include: {
+        numberRange: {
+          select: {
+            id: true, code: true, name: true, mode: true, prefix: true,
+            padWidth: true, externalPattern: true, isActive: true, currentNumber: true,
+          },
+        },
+      },
     });
+    return {
+      ...updated,
+      numberRange: updated.numberRange
+        ? {
+            id: updated.numberRange.id,
+            code: updated.numberRange.code,
+            name: updated.numberRange.name,
+            mode: updated.numberRange.mode,
+            prefix: updated.numberRange.prefix,
+            padWidth: updated.numberRange.padWidth,
+            externalPattern: updated.numberRange.externalPattern,
+            isActive: updated.numberRange.isActive,
+            preview:
+              updated.numberRange.mode === 'auto'
+                ? `${updated.numberRange.prefix}${(updated.numberRange.currentNumber + 1n)
+                    .toString()
+                    .padStart(updated.numberRange.padWidth, '0')}`
+                : null,
+          }
+        : null,
+    };
   }
 }
