@@ -1575,22 +1575,56 @@ model BusinessPartnerRelationship {
 // rangeName); multiple named ranges per object are allowed (e.g. 'default'
 // and 'external') so admins can carve out segments without code changes.
 
+/// M1.1 — Pure sequence catalog. Each row is a named sequence with a
+/// stable `code`. Other entities (Persons, Organizations, Employees,
+/// Projects, …) reference a NumberRange.code via the EntityKind catalog
+/// below to decide HOW their business code is assigned.
+///
+/// Mode controls write-side behaviour:
+///   auto     — system allocates next number atomically on create.
+///   manual   — user types the code at create time; uniqueness only.
+///   external — same as manual but with an optional validation regex
+///              (`externalPattern`). For codes coming from another system.
 model NumberRange {
   id            Int      @id @default(autoincrement())
-  objectCode    String   @map("object_code") @db.VarChar(50)
-  rangeName     String   @default("default") @map("range_name") @db.VarChar(50)
+  code          String   @unique @db.VarChar(50)
+  name          String?  @db.VarChar(100)
+  mode          String   @default("auto") @db.VarChar(20)
   prefix        String   @default("") @db.VarChar(20)
   padWidth      Int      @default(8) @map("pad_width")
   fromNumber    BigInt   @default(1) @map("from_number")
   toNumber      BigInt   @default(99999999) @map("to_number")
   currentNumber BigInt   @default(0) @map("current_number")
+  externalPattern String? @map("external_pattern") @db.VarChar(255)
   isActive      Boolean  @default(true) @map("is_active")
   description   String?  @db.VarChar(255)
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt      @map("updated_at")
 
-  @@unique([objectCode, rangeName])
+  entityKinds   EntityKind[] @relation("EntityKindRange")
+
   @@map("number_ranges")
+}
+
+/// M1.1 — Registry of "objects" that can be numbered (Persons, Organizations,
+/// Employees, Projects, Contracts, …). Each entity kind points at one
+/// NumberRange that determines how its codes are issued. Admins reassign
+/// via the Object Numbering admin page; one number range can serve several
+/// entity kinds.
+model EntityKind {
+  id              Int      @id @default(autoincrement())
+  code            String   @unique @db.VarChar(50)
+  name            String   @db.VarChar(100)
+  description     String?  @db.VarChar(500)
+  numberRangeCode String?  @map("number_range_code") @db.VarChar(50)
+  sortOrder       Int      @default(0) @map("sort_order")
+  isSystem        Boolean  @default(false) @map("is_system")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt      @map("updated_at")
+
+  numberRange     NumberRange? @relation("EntityKindRange", fields: [numberRangeCode], references: [code], onUpdate: Cascade, onDelete: SetNull)
+
+  @@map("entity_kinds")
 }
 
 // ISO-4217 currency catalog. Used for cost rates and any monetary value.
