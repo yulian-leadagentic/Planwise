@@ -204,6 +204,11 @@ enum MessageType {
 
 model User {
   id           Int       @id @default(autoincrement())
+  /// Business code (employee number). Allocated from the EMPLOYEE entity
+  /// kind's number range at user create time. Mode determines who supplies
+  /// it: auto = system, manual/external = user. Nullable for backward
+  /// compat with users created before M1.1.
+  code         String?   @unique @db.VarChar(50)
   email        String    @unique
   password     String
   firstName    String    @map("first_name")
