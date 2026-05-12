@@ -334,6 +334,92 @@ export class BusinessPartnersService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // M4a.3 — Job Title (Profession) management
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** List a partner's current job titles, with their primary flag. */
+  async listProfessions(bpId: number) {
+    await this.findOne(bpId);
+    return this.prisma.businessPartnerProfession.findMany({
+      where: { businessPartnerId: bpId },
+      include: { profession: true },
+      orderBy: [{ isPrimary: 'desc' }, { profession: { sortOrder: 'asc' } }],
+    });
+  }
+
+  /**
+   * Replace the partner's full job-title list with the given set. Adds new
+   * ones, removes the dropped ones, and marks `primaryProfessionId` as the
+   * primary (clearing isPrimary on the rest). Set-semantics: callers send
+   * the desired final state and the service diffs.
+   */
+  async setProfessions(
+    bpId: number,
+    professionIds: number[],
+    primaryProfessionId: number | null,
+  ) {
+    await this.findOne(bpId);
+
+    // Sanity: every desired id must reference an existing profession.
+    if (professionIds.length > 0) {
+      const existing = await this.prisma.profession.findMany({
+        where: { id: { in: professionIds } },
+        select: { id: true },
+      });
+      const known = new Set(existing.map((p) => p.id));
+      const missing = professionIds.filter((id) => !known.has(id));
+      if (missing.length > 0) {
+        throw new BadRequestException(`Unknown profession id(s): ${missing.join(', ')}`);
+      }
+    }
+    if (primaryProfessionId != null && !professionIds.includes(primaryProfessionId)) {
+      throw new BadRequestException(
+        'primaryProfessionId must be included in professionIds',
+      );
+    }
+
+    const current = await this.prisma.businessPartnerProfession.findMany({
+      where: { businessPartnerId: bpId },
+      select: { id: true, professionId: true, isPrimary: true },
+    });
+    const currentIds = new Set(current.map((c) => c.professionId));
+    const desiredIds = new Set(professionIds);
+
+    const toAdd = professionIds.filter((id) => !currentIds.has(id));
+    const toRemove = current.filter((c) => !desiredIds.has(c.professionId));
+
+    await this.prisma.$transaction(async (tx) => {
+      if (toRemove.length > 0) {
+        await tx.businessPartnerProfession.deleteMany({
+          where: { id: { in: toRemove.map((r) => r.id) } },
+        });
+      }
+      for (const profId of toAdd) {
+        await tx.businessPartnerProfession.create({
+          data: {
+            businessPartnerId: bpId,
+            professionId: profId,
+            isPrimary: profId === primaryProfessionId,
+          },
+        });
+      }
+      // Re-sync isPrimary on remaining rows.
+      await tx.businessPartnerProfession.updateMany({
+        where: { businessPartnerId: bpId },
+        data: { isPrimary: false },
+      });
+      if (primaryProfessionId != null) {
+        await tx.businessPartnerProfession.updateMany({
+          where: { businessPartnerId: bpId, professionId: primaryProfessionId },
+          data: { isPrimary: true },
+        });
+      }
+    });
+
+    return this.listProfessions(bpId);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // CSV import
   // ─────────────────────────────────────────────────────────────────────────
 

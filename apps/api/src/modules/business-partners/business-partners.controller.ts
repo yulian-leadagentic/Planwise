@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Patch,
   Delete,
   Body,
@@ -90,6 +91,27 @@ export class BusinessPartnersController {
     @Param('roleId', ParseIntPipe) roleId: number,
   ) {
     return this.service.removeRole(id, roleId);
+  }
+
+  // ─── Job Title (Profession) management ────────────────────────────────
+  // Sets the partner's full list of job titles in one shot. Frontend sends
+  // an array of profession ids (optionally with isPrimary on one). The
+  // service diffs the current vs. desired set and adds/removes as needed.
+  @Get(':id/professions')
+  @RequirePermissions({ module: 'partners', action: 'read' })
+  @ApiOperation({ summary: "List a partner's job titles (professions)" })
+  listProfessions(@Param('id', ParseIntPipe) id: number) {
+    return this.service.listProfessions(id);
+  }
+
+  @Put(':id/professions')
+  @RequirePermissions({ module: 'partners', action: 'write' })
+  @ApiOperation({ summary: "Set a partner's job titles (replaces the list)" })
+  setProfessions(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { professionIds: number[]; primaryProfessionId?: number | null },
+  ) {
+    return this.service.setProfessions(id, body.professionIds ?? [], body.primaryProfessionId ?? null);
   }
 
   // ─── CSV import ───────────────────────────────────────────────────────

@@ -12,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Prisma } from '@prisma/client';
 
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -22,8 +23,13 @@ interface UpsertProjectRoleTypeDto {
   code?: string;
   name: string;
   description?: string;
-  allowedPartnerKind?: 'person' | 'organization' | 'any';
+  // M4a.3 — 'any' removed; project roles attach to either person OR
+  // organization, never both.
+  allowedPartnerKind?: 'person' | 'organization';
   requiredPartnerRoleCode?: string | null;
+  // Multi-select of Profession.id values. When non-empty, the party must
+  // hold at least one of these professions ("Job Titles" in the UI).
+  requiredProfessionIds?: number[] | null;
   isPrimaryRequired?: boolean;
   sortOrder?: number;
 }
@@ -55,8 +61,12 @@ export class ProjectRoleTypesController {
         code: body.code.trim().toLowerCase(),
         name: body.name.trim(),
         description: body.description?.trim() || null,
-        allowedPartnerKind: body.allowedPartnerKind ?? 'any',
+        allowedPartnerKind: body.allowedPartnerKind ?? 'person',
         requiredPartnerRoleCode: body.requiredPartnerRoleCode || null,
+        requiredProfessionIds:
+          body.requiredProfessionIds && body.requiredProfessionIds.length > 0
+            ? (body.requiredProfessionIds as Prisma.InputJsonValue)
+            : Prisma.DbNull,
         isPrimaryRequired: body.isPrimaryRequired ?? false,
         sortOrder: body.sortOrder ?? 0,
         isSystem: false,
@@ -79,6 +89,12 @@ export class ProjectRoleTypesController {
       allowedPartnerKind: body.allowedPartnerKind,
       requiredPartnerRoleCode:
         body.requiredPartnerRoleCode === undefined ? undefined : (body.requiredPartnerRoleCode || null),
+      requiredProfessionIds:
+        body.requiredProfessionIds === undefined
+          ? undefined
+          : body.requiredProfessionIds && body.requiredProfessionIds.length > 0
+            ? (body.requiredProfessionIds as Prisma.InputJsonValue)
+            : Prisma.DbNull,
       isPrimaryRequired: body.isPrimaryRequired,
       sortOrder: body.sortOrder,
     };

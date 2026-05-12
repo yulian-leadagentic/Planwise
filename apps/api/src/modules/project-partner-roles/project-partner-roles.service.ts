@@ -82,7 +82,10 @@ export class ProjectPartnerRolesService {
       this.prisma.project.findUnique({ where: { id: dto.projectId } }),
       this.prisma.businessPartner.findFirst({
         where: { id: dto.partyId, deletedAt: null },
-        include: { roles: { include: { roleType: true } } },
+        include: {
+          roles: { include: { roleType: true } },
+          professions: { include: { profession: true } },
+        },
       }),
       this.prisma.projectRoleType.findUnique({ where: { id: dto.roleId } }),
     ]);
@@ -102,6 +105,22 @@ export class ProjectPartnerRolesService {
       if (!has) {
         throw new BadRequestException(
           `Role '${role.name}' requires the party to hold the '${role.requiredPartnerRoleCode}' partner-role first`,
+        );
+      }
+    }
+    // M4a.3 — required job titles (professions). Party must hold at least
+    // one of the listed profession ids.
+    const requiredProfIds = (role.requiredProfessionIds as number[] | null) ?? [];
+    if (requiredProfIds.length > 0) {
+      const partyProfIds = new Set(party.professions.map((p) => p.professionId));
+      const hit = requiredProfIds.some((id) => partyProfIds.has(id));
+      if (!hit) {
+        const profNames = await this.prisma.profession.findMany({
+          where: { id: { in: requiredProfIds } },
+          select: { name: true },
+        });
+        throw new BadRequestException(
+          `Role '${role.name}' requires the party to hold one of these job titles: ${profNames.map((p) => p.name).join(', ')}.`,
         );
       }
     }
