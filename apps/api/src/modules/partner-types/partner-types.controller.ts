@@ -107,21 +107,101 @@ export class PartnerTypesController {
     });
   }
 
-  // Categories are stored as a free-text column on PartnerRoleType. To
-  // avoid users typing garbage variants ("cst", "cust", "customer-side"),
-  // the admin UI sources its picker from the DISTINCT values already in
-  // use. Returns sorted, deduplicated list of non-empty categories.
+  // ─── Role categories ──────────────────────────────────────────────────
+  // Catalog of categories (Customer-side, Supplier-side, Internal, …).
+  // Each PartnerRoleType references one of these by code. System rows
+  // (the four seeds) can be renamed/recoloured but not deleted.
+  @Get('categories')
+  @RequirePermissions({ module: 'admin/partner-types', action: 'read' })
+  @ApiOperation({ summary: 'List partner-role categories' })
+  listCategories() {
+    return this.prisma.partnerRoleCategory.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  @Post('categories')
+  @RequirePermissions({ module: 'admin/partner-types', action: 'write' })
+  @ApiOperation({ summary: 'Create a partner-role category' })
+  async createCategory(@Body() body: { code: string; name: string; description?: string; color?: string; sortOrder?: number }) {
+    if (!body.code?.trim() || !body.name?.trim()) {
+      throw new BadRequestException('code and name are required');
+    }
+    const dup = await this.prisma.partnerRoleCategory.findFirst({
+      where: { OR: [{ code: body.code.trim().toLowerCase() }, { name: body.name.trim() }] },
+    });
+    if (dup) {
+      throw new BadRequestException(
+        `Category already exists: "${dup.name}" (code: ${dup.code}).`,
+      );
+    }
+    return this.prisma.partnerRoleCategory.create({
+      data: {
+        code: body.code.trim().toLowerCase(),
+        name: body.name.trim(),
+        description: body.description?.trim() || null,
+        color: body.color?.trim() || null,
+        sortOrder: body.sortOrder ?? 0,
+        isSystem: false,
+      },
+    });
+  }
+
+  @Patch('categories/:id')
+  @RequirePermissions({ module: 'admin/partner-types', action: 'write' })
+  @ApiOperation({ summary: 'Update a partner-role category (code locked on system rows)' })
+  async updateCategory(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { code?: string; name?: string; description?: string | null; color?: string | null; sortOrder?: number },
+  ) {
+    const existing = await this.prisma.partnerRoleCategory.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Category not found');
+    const data: any = {
+      name: body.name?.trim(),
+      description: body.description === undefined ? undefined : (body.description?.trim() || null),
+      color: body.color === undefined ? undefined : (body.color?.trim() || null),
+      sortOrder: body.sortOrder,
+    };
+    // System rows can't change their stable code; non-system rows can
+    // (the FK has ON UPDATE CASCADE, so role-types track the rename).
+    if (!existing.isSystem && body.code) {
+      data.code = body.code.trim().toLowerCase();
+    }
+    return this.prisma.partnerRoleCategory.update({ where: { id }, data });
+  }
+
+  @Delete('categories/:id')
+  @RequirePermissions({ module: 'admin/partner-types', action: 'delete' })
+  @ApiOperation({ summary: 'Delete a custom partner-role category (system protected, in-use blocked)' })
+  async deleteCategory(@Param('id', ParseIntPipe) id: number) {
+    const existing = await this.prisma.partnerRoleCategory.findUnique({
+      where: { id },
+      include: { _count: { select: { roleTypes: true } } },
+    });
+    if (!existing) throw new NotFoundException('Category not found');
+    if (existing.isSystem) {
+      throw new BadRequestException('System categories cannot be deleted');
+    }
+    if (existing._count.roleTypes > 0) {
+      throw new BadRequestException(
+        `Cannot delete: ${existing._count.roleTypes} role-type(s) currently use this category. Reassign them first.`,
+      );
+    }
+    await this.prisma.partnerRoleCategory.delete({ where: { id } });
+    return { message: 'Category deleted' };
+  }
+
+  // Legacy endpoint kept for any older client — returns just the codes
+  // sourced from the new catalog. Will be dropped in M7.
   @Get('role-types/categories')
   @RequirePermissions({ module: 'admin/partner-types', action: 'read' })
-  @ApiOperation({ summary: 'List distinct category labels currently used by role types' })
+  @ApiOperation({ summary: '[deprecated] List category codes — use GET /categories' })
   async listRoleCategories() {
-    const rows = await this.prisma.partnerRoleType.findMany({
-      where: { category: { not: null } },
-      select: { category: true },
-      distinct: ['category'],
-      orderBy: { category: 'asc' },
+    const rows = await this.prisma.partnerRoleCategory.findMany({
+      orderBy: { sortOrder: 'asc' },
+      select: { code: true },
     });
-    return rows.map((r) => r.category).filter((c): c is string => !!c);
+    return rows.map((r) => r.code);
   }
 
   @Post('role-types')
