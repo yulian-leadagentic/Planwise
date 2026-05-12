@@ -377,91 +377,78 @@ export class ProjectsService {
     await this.findOne(projectId);
     const now = new Date();
 
-    // Load the legacy relationship rows in parallel: customer +
-    // participants (the two we still source from legacy). Supplier rels
-    // are picked up generically through project_partner_roles below.
-    const [customerRel, supplierRels, participantRels] = await Promise.all([
-      // customer_of_project — at most one active row.
-      this.prisma.businessPartnerRelationship.findFirst({
-        where: {
-          targetType: 'project',
-          targetId: projectId,
-          relationshipType: { code: 'customer_of_project' },
-          validFrom: { lte: now },
-          validTo: { gt: now },
-        },
-        include: {
-          source: { select: { id: true, displayName: true, companyName: true, email: true, phone: true } },
-        },
-      }),
-      // supplier_of_project — one row per supplier on the project.
-      this.prisma.businessPartnerRelationship.findMany({
-        where: {
-          targetType: 'project',
-          targetId: projectId,
-          relationshipType: { code: 'supplier_of_project' },
-          validFrom: { lte: now },
-          validTo: { gt: now },
-        },
-        include: {
-          source: { select: { id: true, displayName: true, companyName: true, email: true, phone: true } },
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
-      // participates_in_project — every person on the project.
-      this.prisma.businessPartnerRelationship.findMany({
-        where: {
-          targetType: 'project',
-          targetId: projectId,
-          relationshipType: { code: 'participates_in_project' },
-          validFrom: { lte: now },
-          validTo: { gt: now },
-        },
-        include: {
-          source: {
-            select: {
-              id: true,
-              partnerType: true,
-              displayName: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-              user: { select: { id: true, isActive: true, position: true } },
-              outgoingRelationships: {
-                where: {
-                  targetType: 'organization',
-                  relationshipType: { code: 'worker_of' },
-                  validFrom: { lte: now },
-                  validTo: { gt: now },
-                },
-                select: { targetId: true },
+    // Customer + Project Team now come from project_partner_roles. Legacy
+    // business_partner_relationships rows of types customer_of_project /
+    // supplier_of_project / participates_in_project were deleted in
+    // migration 20260511050000.
+    const customerRoleType = await this.prisma.projectRoleType.findUnique({
+      where: { code: 'customer' },
+    });
+    const participantRoleType = await this.prisma.projectRoleType.findUnique({
+      where: { code: 'participant' },
+    });
+
+    const customerAssignment = customerRoleType
+      ? await this.prisma.projectPartnerRole.findFirst({
+          where: {
+            projectId,
+            roleId: customerRoleType.id,
+            isPrimary: true,
+            validFrom: { lte: now },
+            validTo: { gt: now },
+          },
+          include: {
+            party: {
+              select: { id: true, displayName: true, email: true, phone: true },
+            },
+          },
+        })
+      : null;
+
+    const participantAssignments = participantRoleType
+      ? await this.prisma.projectPartnerRole.findMany({
+          where: {
+            projectId,
+            roleId: participantRoleType.id,
+            validFrom: { lte: now },
+            validTo: { gt: now },
+          },
+          include: {
+            party: {
+              select: {
+                id: true,
+                partnerType: true,
+                displayName: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phone: true,
+                user: { select: { id: true, position: true } },
               },
             },
           },
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
-    ]);
+          orderBy: { createdAt: 'asc' },
+        })
+      : [];
 
-    const customerOrgId = customerRel?.source.id ?? null;
+    const customerOrgId = customerAssignment?.party.id ?? null;
 
-    // Project Team = internal employees (Users) who participate.
-    const projectTeam = participantRels
-      .filter((r) => r.source.user?.id)
-      .map((r) => ({
-        relationshipId: r.id,
-        businessPartnerId: r.source.id,
-        userId: r.source.user!.id,
-        displayName: r.source.displayName,
-        firstName: r.source.firstName,
-        lastName: r.source.lastName,
-        email: r.source.email,
-        phone: r.source.phone,
-        position: r.source.user?.position ?? null,
-        roleInContext: r.roleInContext,
-        validFrom: r.validFrom,
-        validTo: r.validTo,
+    // Project Team = participants whose party has a User row (internal staff).
+    const projectTeam = participantAssignments
+      .filter((a) => a.party.user?.id)
+      .map((a) => ({
+        relationshipId: a.id,
+        businessPartnerId: a.party.id,
+        userId: a.party.user!.id,
+        displayName: a.party.displayName,
+        firstName: a.party.firstName,
+        lastName: a.party.lastName,
+        email: a.party.email,
+        phone: a.party.phone,
+        position: a.party.user?.position ?? null,
+        roleInContext: a.titleInProject,
+        validFrom: a.validFrom,
+        validTo: a.validTo,
       }));
 
     // Customer Contacts — anyone with an active relationship pointing at
@@ -523,13 +510,15 @@ export class ProjectsService {
 
     // Role-driven sections — all project_partner_role rows for this project,
     // enriched with role type + party metadata. Frontend renders one
-    // section per ProjectRoleType using these.
+    // section per ProjectRoleType using these. We exclude customer and
+    // participant since those have their own pinned sections.
     const roleAssignments = await this.prisma.projectPartnerRole.findMany({
       where: {
         projectId,
         status: 'active',
         validFrom: { lte: now },
         validTo: { gt: now },
+        role: { code: { notIn: ['customer', 'participant'] } },
       },
       include: {
         role: true,
@@ -549,12 +538,12 @@ export class ProjectsService {
     });
 
     return {
-      customer: customerRel ? {
-        relationshipId: customerRel.id,
-        organizationId: customerRel.source.id,
-        displayName: customerRel.source.displayName,
-        email: customerRel.source.email,
-        phone: customerRel.source.phone,
+      customer: customerAssignment ? {
+        relationshipId: customerAssignment.id,
+        organizationId: customerAssignment.party.id,
+        displayName: customerAssignment.party.displayName,
+        email: customerAssignment.party.email,
+        phone: customerAssignment.party.phone,
       } : null,
       customerContacts,
       projectTeam,
@@ -567,17 +556,6 @@ export class ProjectsService {
         validFrom: a.validFrom,
         validTo: a.validTo,
         status: a.status,
-      })),
-      // Backward-compat shims so the old frontend hasn't broken in-flight.
-      // Removed in a follow-up commit once the new Team tab ships.
-      myTeam: projectTeam,
-      suppliers: supplierRels.map((s) => ({
-        relationshipId: s.id,
-        organizationId: s.source.id,
-        displayName: s.source.displayName,
-        email: s.source.email,
-        phone: s.source.phone,
-        workers: [] as any[],
       })),
     };
   }

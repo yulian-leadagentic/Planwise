@@ -28,7 +28,9 @@ export class NumberRangesService {
     const rows = await this.prisma.numberRange.findMany({
       orderBy: [{ objectCode: 'asc' }, { rangeName: 'asc' }],
     });
-    return rows.map(this.serialize);
+    // Arrow preserves `this` — `rows.map(this.serialize)` would lose
+    // binding and crash inside `this.format()`.
+    return rows.map((r) => this.serialize(r));
   }
 
   async findOne(id: number) {
