@@ -56,7 +56,10 @@ interface RelationshipType extends RoleType {
   requiredTargetRoleCode: string | null;
 }
 
-const SIDE_KIND_OPTIONS = ['person', 'organization', 'project'] as const;
+// Only party kinds. Project-side roles belong in /admin/project-role-types,
+// not here — relationships are party↔party. Existing system rows with
+// side_b_kind='project' still render but can't be re-saved with that kind.
+const SIDE_KIND_OPTIONS = ['person', 'organization'] as const;
 type SideKind = (typeof SIDE_KIND_OPTIONS)[number];
 
 /** Render one side's target list as a compact sentence, e.g.
@@ -138,7 +141,11 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
       <div className="flex items-center justify-between">
         <p className="text-[12px] text-slate-500">Roles a partner can hold (employee, customer, etc.). Used in the partner profile and as filters.</p>
         {canWrite && editingId === null && (
-          <button onClick={() => setEditingId('new')} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1">
+          <button
+            onClick={() => setEditingId('new')}
+            title="Define a new kind of role a partner can hold (e.g. customer, supplier, contractor). Roles are global tags on the partner — they show up in the partner drawer and drive who's eligible for relationship-type and project-role pickers."
+            className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
+          >
             <Plus className="h-3 w-3" /> Add Role Type
           </button>
         )}
@@ -386,10 +393,16 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex-1 max-w-3xl">
-          <p className="text-[12px] text-slate-500 mb-1">Relationship verbs between a partner and a target (project, organization, etc.).</p>
+          <p className="text-[12px] text-slate-500 mb-1">
+            Defines how two business partners can be connected (person↔organization, organization↔organization, etc.). For a party's role on a specific project, use <a href="/admin/project-role-types" className="text-blue-600 hover:underline">Project Role Types</a> instead.
+          </p>
         </div>
         {canWrite && editingId === null && (
-          <button onClick={() => setEditingId('new')} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1">
+          <button
+            onClick={() => setEditingId('new')}
+            title="Define a new partner-to-partner relationship kind (e.g. 'contact_at_customer', 'subsidiary_of'). Each type names both sides and constrains which kinds and roles can hold each side. Project-side roles belong in Project Role Types, not here."
+            className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
+          >
             <Plus className="h-3 w-3" /> Add Relationship Type
           </button>
         )}
@@ -611,7 +624,10 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
         </div>
 
         <div className="flex items-center gap-3 flex-wrap text-[11px]">
-          <div className="flex-1 min-w-[180px]">
+          <div
+            className="flex-1 min-w-[180px]"
+            title="How the relationship reads when viewed from Side B's drawer. Example: type 'worker_of' shows on the person's drawer as 'Employer ← Acme'; on Acme's drawer it should show as 'Employs ← John' — set the inverse label to 'Employs'. Leave empty if symmetric or if the type name reads the same both ways."
+          >
             <span className="text-[10px] font-semibold text-slate-400 uppercase block mb-0.5">Inverse label (reads back from side B)</span>
             <input
               value={form.inverseLabel}
@@ -620,7 +636,10 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
               className={cn(inputClass, 'text-[12px] py-1')}
             />
           </div>
-          <label className="flex items-center gap-1.5 cursor-pointer">
+          <label
+            className="flex items-center gap-1.5 cursor-pointer"
+            title="Check if the relationship reads the same from either side (e.g. 'partner_of': if A partner_of B, then B partner_of A). Side B is ignored when symmetric — the system clones side A. Most rels are asymmetric (employee ≠ employer)."
+          >
             <input
               type="checkbox"
               checked={form.isSymmetric}
@@ -628,7 +647,10 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
             />
             <span className="text-slate-600">Symmetric</span>
           </label>
-          <label className="flex items-center gap-1.5 cursor-pointer">
+          <label
+            className="flex items-center gap-1.5 cursor-pointer"
+            title="If checked, a partner can hold several active relationships of this type at once (e.g. a supplier can be a supplier on many projects). If unchecked, creating a new relationship soft-ends the existing one (e.g. exactly one primary employer at a time)."
+          >
             <input
               type="checkbox"
               checked={form.allowsMultiple}
@@ -730,6 +752,7 @@ function SidePickerCard({
       <button
         type="button"
         onClick={add}
+        title="Add another allowed target kind to this side. Multiple targets read as OR — e.g. a Subcontractor's side B can accept a Project OR an Organization with role customer OR supplier."
         className="w-full rounded border border-dashed border-slate-300 text-[11px] text-slate-500 py-1 hover:bg-white hover:text-slate-700"
       >
         + Add target
@@ -802,6 +825,12 @@ function TargetRow({
 
   const showRoleFilters = target.kind === 'person' || target.kind === 'organization' || target.kind === 'any';
 
+  // Legacy rows may still carry kind='project' (the system seeds
+  // customer_of_project / supplier_of_project / participates_in_project).
+  // We surface that as an option only when already selected, so admins can
+  // see and clear it but not introduce new project-targeted rels.
+  const showLegacyProject = target.kind === 'project';
+
   return (
     <div className="rounded border border-slate-200 bg-white p-2 space-y-1.5">
       <div className="flex items-center gap-2">
@@ -809,19 +838,28 @@ function TargetRow({
           value={target.kind}
           onChange={(e) => onChange({ kind: e.target.value as SideKind | 'any' })}
           className={cn(inputClass, 'text-[12px] py-1 max-w-[160px] font-mono')}
+          title="What kind of party can sit on this side"
         >
           {SIDE_KIND_OPTIONS.map((k) => <option key={k} value={k}>{k}</option>)}
           <option value="any">any</option>
+          {showLegacyProject && <option value="project">project (legacy)</option>}
         </select>
         <button
           type="button"
           onClick={onRemove}
           className="ml-auto p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-600"
-          title="Remove this target"
+          title="Remove this target from this side"
         >
           <X className="h-3 w-3" />
         </button>
       </div>
+
+      {showLegacyProject && (
+        <p className="text-[10px] text-amber-700 bg-amber-50 px-2 py-1 rounded">
+          'project' is legacy here. To define roles a party holds on a project, use{' '}
+          <a href="/admin/project-role-types" className="font-semibold underline">Project Role Types</a> instead.
+        </p>
+      )}
 
       {showRoleFilters && (
         <>
