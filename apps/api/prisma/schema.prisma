@@ -401,6 +401,11 @@ model Department {
   @@map("departments")
 }
 
+/// "Job Title" in the UI. Represents what a person DOES by trade
+/// (Architect, BIM Manager, Site Engineer, ...). Linked to people via
+/// `business_partner_professions`. Distinct from PartnerRoleType
+/// (what someone IS to the business) and ProjectRoleType (what someone
+/// DOES on a specific project).
 model Profession {
   id        Int      @id @default(autoincrement())
   name      String   @unique
@@ -408,7 +413,32 @@ model Profession {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  partners  BusinessPartnerProfession[]
+
   @@map("professions")
+}
+
+/// Person × Profession join. One person can hold several professions;
+/// one may be marked primary. Independent of the project-role table —
+/// professions are a classification of the person regardless of which
+/// project they're working on.
+model BusinessPartnerProfession {
+  id                Int       @id @default(autoincrement())
+  businessPartnerId Int       @map("business_partner_id")
+  professionId      Int       @map("profession_id")
+  isPrimary         Boolean   @default(false) @map("is_primary")
+  since             DateTime? @db.Date
+  notes             String?   @db.VarChar(255)
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt      @map("updated_at")
+
+  businessPartner BusinessPartner @relation(fields: [businessPartnerId], references: [id], onDelete: Cascade)
+  profession      Profession      @relation(fields: [professionId], references: [id], onDelete: Cascade)
+
+  @@unique([businessPartnerId, professionId])
+  @@index([businessPartnerId])
+  @@index([professionId])
+  @@map("business_partner_professions")
 }
 
 model ProjectRoleTemplate {
@@ -1340,6 +1370,7 @@ model BusinessPartner {
   partnerRelationshipsA PartnerRelationship[]          @relation("PartyAOnRel")
   partnerRelationshipsB PartnerRelationship[]          @relation("PartyBOnRel")
   projectPartnerRoles   ProjectPartnerRole[]           @relation("PartyOnProjectRole")
+  professions           BusinessPartnerProfession[]
 
   @@index([partnerType])
   @@index([status])
@@ -1629,6 +1660,10 @@ model ProjectRoleType {
   // party-role list (e.g. project Customer role requires the org to also
   // carry the 'customer' partner-role globally).
   requiredPartnerRoleCode String?  @map("required_partner_role_code") @db.VarChar(50)
+  // M4a.3 — Required Job Titles (Profession ids). JSON array; when non-empty,
+  // the party must hold at least one of these professions for the picker to
+  // accept them. Empty/null = no profession constraint.
+  requiredProfessionIds   Json?    @map("required_profession_ids")
   // If true, exactly one party can hold this role as PRIMARY on a project
   // (e.g. one primary Customer per project). Enforced at the service layer.
   isPrimaryRequired       Boolean  @default(false) @map("is_primary_required")
