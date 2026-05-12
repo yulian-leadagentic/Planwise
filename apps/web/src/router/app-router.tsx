@@ -48,6 +48,7 @@ const MessageSearchPage = lazy(() => import('@/features/messaging/message-search
 const NotificationSettingsPage = lazy(() => import('@/features/admin/notification-settings-page').then(m => ({ default: m.NotificationSettingsPage })));
 const ProjectTypesPage = lazy(() => import('@/features/admin/project-types-page').then(m => ({ default: m.ProjectTypesPage })));
 const NumberRangesPage = lazy(() => import('@/features/admin/number-ranges-page').then(m => ({ default: m.NumberRangesPage })));
+const ObjectNumberingPage = lazy(() => import('@/features/admin/object-numbering-page').then(m => ({ default: m.ObjectNumberingPage })));
 const CurrenciesPage = lazy(() => import('@/features/admin/currencies-page').then(m => ({ default: m.CurrenciesPage })));
 const SeniorityLevelsPage = lazy(() => import('@/features/admin/seniority-levels-page').then(m => ({ default: m.SeniorityLevelsPage })));
 const ProjectRoleTypesPage = lazy(() => import('@/features/admin/project-role-types-page').then(m => ({ default: m.ProjectRoleTypesPage })));
@@ -150,6 +151,7 @@ export function AppRouter() {
         <Route path="admin/clock-dashboard" element={<L><ClockDashboardPage /></L>} />
         <Route path="admin/partner-types" element={<L><PartnerTypesPage /></L>} />
         <Route path="admin/number-ranges" element={<L><NumberRangesPage /></L>} />
+        <Route path="admin/object-numbering" element={<L><ObjectNumberingPage /></L>} />
         <Route path="admin/currencies" element={<L><CurrenciesPage /></L>} />
         <Route path="admin/seniority-levels" element={<L><SeniorityLevelsPage /></L>} />
         <Route path="admin/project-role-types" element={<L><ProjectRoleTypesPage /></L>} />
