@@ -36,12 +36,9 @@ export class NumberRangesController {
 
   @Get('peek')
   @RequirePermissions({ module: 'admin/number-ranges', action: 'read' })
-  @ApiOperation({ summary: 'Preview the next code for an object (no allocation)' })
-  peek(
-    @Query('objectCode') objectCode: string,
-    @Query('rangeName') rangeName?: string,
-  ) {
-    return this.service.peek(objectCode, rangeName).then((preview) => ({ preview }));
+  @ApiOperation({ summary: 'Preview next code for a range (auto mode only)' })
+  peek(@Query('code') code: string) {
+    return this.service.peek(code).then((preview) => ({ preview }));
   }
 
   @Get(':id')
@@ -59,7 +56,7 @@ export class NumberRangesController {
 
   @Patch(':id')
   @RequirePermissions({ module: 'admin/number-ranges', action: 'write' })
-  @ApiOperation({ summary: 'Update a number range (currentNumber can only move forward)' })
+  @ApiOperation({ summary: 'Update a number range (currentNumber can only move forward; code is immutable)' })
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: Partial<UpsertNumberRangeDto>,
@@ -69,7 +66,7 @@ export class NumberRangesController {
 
   @Delete(':id')
   @RequirePermissions({ module: 'admin/number-ranges', action: 'delete' })
-  @ApiOperation({ summary: 'Delete a number range' })
+  @ApiOperation({ summary: 'Delete a number range (entity-kind references become null)' })
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

@@ -8,14 +8,18 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 
+export type NumberRangeMode = 'auto' | 'manual' | 'external';
+
 export interface UpsertNumberRangeDto {
-  objectCode: string;
-  rangeName?: string;
+  code: string;
+  name?: string;
+  mode?: NumberRangeMode;
   prefix?: string;
   padWidth?: number;
-  fromNumber?: number | bigint;
-  toNumber?: number | bigint;
-  currentNumber?: number | bigint;
+  fromNumber?: number | bigint | string;
+  toNumber?: number | bigint | string;
+  currentNumber?: number | bigint | string;
+  externalPattern?: string | null;
   isActive?: boolean;
   description?: string | null;
 }
@@ -26,10 +30,8 @@ export class NumberRangesService {
 
   async findAll() {
     const rows = await this.prisma.numberRange.findMany({
-      orderBy: [{ objectCode: 'asc' }, { rangeName: 'asc' }],
+      orderBy: [{ code: 'asc' }],
     });
-    // Arrow preserves `this` — `rows.map(this.serialize)` would lose
-    // binding and crash inside `this.format()`.
     return rows.map((r) => this.serialize(r));
   }
 
@@ -39,20 +41,32 @@ export class NumberRangesService {
     return this.serialize(row);
   }
 
+  async findByCode(code: string) {
+    const row = await this.prisma.numberRange.findUnique({ where: { code } });
+    if (!row) return null;
+    return this.serialize(row);
+  }
+
   async create(dto: UpsertNumberRangeDto) {
-    if (!dto.objectCode?.trim()) {
-      throw new BadRequestException('objectCode is required');
+    if (!dto.code?.trim()) {
+      throw new BadRequestException('code is required');
+    }
+    const mode = (dto.mode ?? 'auto') as NumberRangeMode;
+    if (!['auto', 'manual', 'external'].includes(mode)) {
+      throw new BadRequestException(`Invalid mode "${dto.mode}"`);
     }
     try {
       const created = await this.prisma.numberRange.create({
         data: {
-          objectCode: dto.objectCode.trim(),
-          rangeName: dto.rangeName?.trim() || 'default',
+          code: dto.code.trim().toUpperCase(),
+          name: dto.name?.trim() || null,
+          mode,
           prefix: dto.prefix ?? '',
           padWidth: dto.padWidth ?? 8,
           fromNumber: BigInt(dto.fromNumber ?? 1),
           toNumber: BigInt(dto.toNumber ?? 99999999),
           currentNumber: BigInt(dto.currentNumber ?? 0),
+          externalPattern: dto.externalPattern ?? null,
           isActive: dto.isActive ?? true,
           description: dto.description ?? null,
         },
@@ -60,9 +74,7 @@ export class NumberRangesService {
       return this.serialize(created);
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        throw new ConflictException(
-          `Number range (${dto.objectCode}, ${dto.rangeName ?? 'default'}) already exists`,
-        );
+        throw new ConflictException(`Number range "${dto.code}" already exists`);
       }
       throw e;
     }
@@ -72,8 +84,8 @@ export class NumberRangesService {
     const existing = await this.prisma.numberRange.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Number range not found');
 
-    // Guard: currentNumber may only move forward, never backward — protects
-    // already-issued codes from being re-handed-out.
+    // currentNumber may only move forward — protects already-issued codes
+    // from being re-handed-out.
     if (dto.currentNumber !== undefined) {
       const next = BigInt(dto.currentNumber);
       if (next < existing.currentNumber) {
@@ -82,18 +94,27 @@ export class NumberRangesService {
         );
       }
     }
+    if (dto.mode && !['auto', 'manual', 'external'].includes(dto.mode)) {
+      throw new BadRequestException(`Invalid mode "${dto.mode}"`);
+    }
 
     const updated = await this.prisma.numberRange.update({
       where: { id },
       data: {
+        // `code` is intentionally immutable — other tables reference it.
+        // If renaming is ever needed, add a separate rename endpoint with
+        // ON UPDATE CASCADE on the FKs (entity_kinds already has it).
+        name: dto.name === undefined ? undefined : (dto.name?.trim() || null),
+        mode: dto.mode,
         prefix: dto.prefix ?? undefined,
         padWidth: dto.padWidth ?? undefined,
         fromNumber: dto.fromNumber !== undefined ? BigInt(dto.fromNumber) : undefined,
         toNumber: dto.toNumber !== undefined ? BigInt(dto.toNumber) : undefined,
         currentNumber:
           dto.currentNumber !== undefined ? BigInt(dto.currentNumber) : undefined,
+        externalPattern: dto.externalPattern === undefined ? undefined : (dto.externalPattern || null),
         isActive: dto.isActive ?? undefined,
-        description: dto.description === undefined ? undefined : dto.description,
+        description: dto.description === undefined ? undefined : (dto.description ?? null),
       },
     });
     return this.serialize(updated);
@@ -105,18 +126,17 @@ export class NumberRangesService {
   }
 
   /**
-   * Atomically allocate the next code for an object. Locks the range row,
-   * increments `current_number`, and returns the formatted code (e.g.
-   * "00000001" or "EMP-00000001"). Throws if the range is exhausted or
-   * disabled. Safe to call inside another transaction.
+   * Atomically allocate the next code for the given range (by code).
+   * Only valid for mode='auto'. Throws for manual/external/exhausted/disabled.
+   * Safe to call inside another transaction.
    */
-  async next(objectCode: string, rangeName = 'default'): Promise<string> {
+  async next(code: string): Promise<string> {
     return this.prisma.$transaction(async (tx) => {
-      // Row-lock the matching range. MySQL: SELECT ... FOR UPDATE serialises
-      // concurrent allocations so two callers can't collide on the same number.
+      // SELECT ... FOR UPDATE serialises concurrent allocations.
       const rows = await tx.$queryRaw<
         Array<{
           id: number;
+          mode: string;
           prefix: string;
           pad_width: number;
           from_number: bigint;
@@ -125,21 +145,22 @@ export class NumberRangesService {
           is_active: number;
         }>
       >(Prisma.sql`
-        SELECT id, prefix, pad_width, from_number, to_number, current_number, is_active
+        SELECT id, mode, prefix, pad_width, from_number, to_number, current_number, is_active
           FROM number_ranges
-          WHERE object_code = ${objectCode} AND range_name = ${rangeName}
+          WHERE code = ${code}
           FOR UPDATE
       `);
 
       const row = rows[0];
       if (!row) {
-        throw new NotFoundException(
-          `Number range not configured for (${objectCode}, ${rangeName})`,
-        );
+        throw new NotFoundException(`Number range "${code}" not configured`);
       }
       if (!row.is_active) {
+        throw new BadRequestException(`Number range "${code}" is disabled`);
+      }
+      if (row.mode !== 'auto') {
         throw new BadRequestException(
-          `Number range (${objectCode}, ${rangeName}) is disabled`,
+          `Number range "${code}" is in ${row.mode} mode — caller must provide the code instead of allocating`,
         );
       }
 
@@ -148,9 +169,7 @@ export class NumberRangesService {
       const upper = row.to_number;
       const next = candidate < lower ? lower : candidate;
       if (next > upper) {
-        throw new BadRequestException(
-          `Number range (${objectCode}, ${rangeName}) exhausted`,
-        );
+        throw new BadRequestException(`Number range "${code}" exhausted`);
       }
 
       await tx.$executeRaw(Prisma.sql`
@@ -163,35 +182,58 @@ export class NumberRangesService {
     });
   }
 
-  /**
-   * Preview what the next code would look like without consuming a number.
-   * Read-only; no row lock.
-   */
-  async peek(objectCode: string, rangeName = 'default') {
-    const row = await this.prisma.numberRange.findUnique({
-      where: { objectCode_rangeName: { objectCode, rangeName } },
-    });
+  /** Preview next code without consuming. Returns null for manual/external. */
+  async peek(code: string) {
+    const row = await this.prisma.numberRange.findUnique({ where: { code } });
     if (!row) return null;
+    if (row.mode !== 'auto') return null;
     const next = row.currentNumber + 1n;
     const candidate = next < row.fromNumber ? row.fromNumber : next;
     if (candidate > row.toNumber) return null;
     return this.format(row.prefix, row.padWidth, candidate);
   }
 
+  /**
+   * Validate a user-supplied code against a range's pattern. Used in
+   * manual/external mode at entity-create time. Throws on mismatch.
+   */
+  async validateManual(code: string, candidate: string) {
+    const row = await this.prisma.numberRange.findUnique({ where: { code } });
+    if (!row) {
+      throw new NotFoundException(`Number range "${code}" not configured`);
+    }
+    if (row.mode === 'auto') {
+      throw new BadRequestException(
+        `Number range "${code}" is auto — callers should not pass a manual code`,
+      );
+    }
+    if (row.externalPattern) {
+      const re = new RegExp(row.externalPattern);
+      if (!re.test(candidate)) {
+        throw new BadRequestException(
+          `Code "${candidate}" does not match the pattern for range "${code}" (${row.externalPattern})`,
+        );
+      }
+    }
+    return candidate;
+  }
+
   private format(prefix: string, padWidth: number, value: bigint): string {
     return `${prefix}${value.toString().padStart(padWidth, '0')}`;
   }
 
-  // BigInt isn't JSON-serialisable by default. The HTTP layer needs strings.
+  // BigInt isn't JSON-serialisable. The HTTP layer needs strings.
   private serialize(row: {
     id: number;
-    objectCode: string;
-    rangeName: string;
+    code: string;
+    name: string | null;
+    mode: string;
     prefix: string;
     padWidth: number;
     fromNumber: bigint;
     toNumber: bigint;
     currentNumber: bigint;
+    externalPattern: string | null;
     isActive: boolean;
     description: string | null;
     createdAt: Date;
@@ -199,16 +241,21 @@ export class NumberRangesService {
   }) {
     return {
       id: row.id,
-      objectCode: row.objectCode,
-      rangeName: row.rangeName,
+      code: row.code,
+      name: row.name,
+      mode: row.mode,
       prefix: row.prefix,
       padWidth: row.padWidth,
       fromNumber: row.fromNumber.toString(),
       toNumber: row.toNumber.toString(),
       currentNumber: row.currentNumber.toString(),
+      externalPattern: row.externalPattern,
       isActive: row.isActive,
       description: row.description,
-      preview: this.format(row.prefix, row.padWidth, row.currentNumber + 1n),
+      preview:
+        row.mode === 'auto'
+          ? this.format(row.prefix, row.padWidth, row.currentNumber + 1n)
+          : null,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };

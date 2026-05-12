@@ -34,6 +34,7 @@ import { ExecutionBoardModule } from './modules/execution-board/execution-board.
 import { HealthModule } from './modules/health/health.module';
 import { PresenceModule } from './modules/presence/presence.module';
 import { NumberRangesModule } from './modules/number-ranges/number-ranges.module';
+import { EntityKindsModule } from './modules/entity-kinds/entity-kinds.module';
 import { PartnerRelationshipsModule } from './modules/partner-relationships/partner-relationships.module';
 import { ProjectRoleTypesModule } from './modules/project-role-types/project-role-types.module';
 import { ProjectPartnerRolesModule } from './modules/project-partner-roles/project-partner-roles.module';
@@ -106,6 +107,7 @@ import { ProjectPartnerRolesModule } from './modules/project-partner-roles/proje
     HealthModule,
     PresenceModule,
     NumberRangesModule,
+    EntityKindsModule,
     PartnerRelationshipsModule,
     ProjectRoleTypesModule,
     ProjectPartnerRolesModule,
