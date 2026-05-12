@@ -27,7 +27,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'zone', label: 'Zone Types' },
   { key: 'service', label: 'Project Categories' },
   { key: 'department', label: 'Departments' },
-  { key: 'profession', label: 'Professions' },
+  { key: 'profession', label: 'Job Titles' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -236,20 +236,20 @@ export function TypesPage() {
   const createProfession = useMutation({
     mutationFn: (payload: { name: string }) =>
       client.post('/admin/config/professions', payload).then((r) => r.data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'professions'] }); notify.success('Profession created'); resetForm(); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'professions'] }); notify.success('Job title created'); resetForm(); },
     onError: (err: any) => notify.apiError(err, 'Failed to create profession'),
   });
 
   const updateProfession = useMutation({
     mutationFn: ({ id, ...payload }: { id: number; name?: string }) =>
       client.patch(`/admin/config/professions/${id}`, payload).then((r) => r.data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'professions'] }); notify.success('Profession updated'); setEditing(null); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'professions'] }); notify.success('Job title updated'); setEditing(null); },
     onError: (err: any) => notify.apiError(err, 'Failed to update profession'),
   });
 
   const deleteProfession = useMutation({
     mutationFn: (id: number) => client.delete(`/admin/config/professions/${id}`).then((r) => r.data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'professions'] }); notify.success('Profession deleted'); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'professions'] }); notify.success('Job title deleted'); },
     onError: (err: any) => notify.apiError(err, 'Failed to delete profession'),
   });
 
@@ -445,7 +445,7 @@ export function TypesPage() {
   const canAdd = activeTab !== 'zone';
   const canDelete = true;
   const isSimpleList = activeTab === 'profession';
-  const addLabel = activeTab === 'department' ? 'Add Department' : activeTab === 'profession' ? 'Add Profession' : activeTab === 'service' ? 'Add Category' : 'Add Type';
+  const addLabel = activeTab === 'department' ? 'Add Department' : activeTab === 'profession' ? 'Add Job Title' : activeTab === 'service' ? 'Add Category' : 'Add Type';
 
   // -----------------------------------------------------------------------
   // Render
@@ -599,7 +599,7 @@ export function TypesPage() {
                   <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-28">Code</th>
                 )}
                 <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">
-                  {activeTab === 'department' ? 'Department Name' : activeTab === 'profession' ? 'Profession Name' : activeTab === 'service' ? 'Category Name' : 'Name'}
+                  {activeTab === 'department' ? 'Department Name' : activeTab === 'profession' ? 'Job Title Name' : activeTab === 'service' ? 'Category Name' : 'Name'}
                 </th>
                 <th className="px-5 py-2.5 text-right text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-28">Actions</th>
               </tr>
