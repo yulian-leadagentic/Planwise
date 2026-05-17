@@ -351,6 +351,25 @@ export function ExecutionBoardPage() {
   const [serviceFilter, setServiceFilter] = useState<string>('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [expandedZones, setExpandedZones] = useState<Set<number>>(new Set());
+  // Track newly-expanded rows so we can scroll their expanded content into
+  // view — without this, expanding a row near the bottom of the viewport
+  // makes the new task cards render off-screen and the user thinks
+  // 'nothing happened'.
+  const rowRefs = useRef<Map<number, HTMLTableRowElement | null>>(new Map());
+  const prevExpandedZones = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    for (const id of expandedZones) {
+      if (prevExpandedZones.current.has(id)) continue;
+      const row = rowRefs.current.get(id);
+      if (!row) continue;
+      const rect = row.getBoundingClientRect();
+      // Only scroll if the row's bottom is below the viewport.
+      if (rect.bottom > window.innerHeight - 80) {
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+    prevExpandedZones.current = new Set(expandedZones);
+  }, [expandedZones]);
   const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
   // Due-date filters (#3.3). `dueFrom`/`dueTo` accept ISO yyyy-mm-dd
   // (matches `<input type=date>`). `onlyWithDue` hides tasks that have
@@ -512,14 +531,16 @@ export function ExecutionBoardPage() {
           nameToService.set(phaseName, { name: task.phase.name, color: task.phase.color });
         }
       }
-      // Tasks at the project root have zoneId=null. Bucket them under a
-      // synthetic per-project negative id (-projectId) so they share the
-      // same matrix shape. The flatRows builder emits a 'Project Root'
-      // virtual zone with the same id so the row renders.
-      const effectiveZoneId = task.zoneId ?? -task.projectId;
-      const key = `${effectiveZoneId}|${phaseName}`;
-      if (!matrix.has(key)) matrix.set(key, []);
-      matrix.get(key)!.push(task);
+      // Real-zone tasks key by their zoneId. Root tasks (zoneId=null)
+      // are intentionally NOT added to this matrix — they go into the
+      // dedicated rootTasksByProject map below so the synthetic
+      // 'Project Root' row has a lookup path that doesn't depend on
+      // matrix key coercion.
+      if (task.zoneId != null) {
+        const key = `${task.zoneId}|${phaseName}`;
+        if (!matrix.has(key)) matrix.set(key, []);
+        matrix.get(key)!.push(task);
+      }
     }
 
     const orderedColumns: string[] = [];
@@ -538,8 +559,32 @@ export function ExecutionBoardPage() {
     };
   }, [filteredTasks, data?.templates]);
 
+  // Dedicated per-project bucket for root tasks (zoneId=null). The
+  // 'Project Root' synthetic row pulls from here instead of the matrix
+  // so the lookup is keyed on a real projectId (number) rather than a
+  // negative-id template-string that's easy to mis-cast.
+  const rootTasksByProject = useMemo(() => {
+    const m = new Map<number, Map<string, Task[]>>();
+    for (const t of filteredTasks) {
+      if (t.zoneId != null) continue;
+      const pid = (t as any).projectId as number;
+      if (pid == null) continue;
+      const phaseName = getTaskPhaseName(t) ?? '__none__';
+      if (!m.has(pid)) m.set(pid, new Map());
+      const inner = m.get(pid)!;
+      if (!inner.has(phaseName)) inner.set(phaseName, []);
+      inner.get(phaseName)!.push(t);
+    }
+    return m;
+  }, [filteredTasks]);
+
   const getAggregatedTasks = useCallback(
     (zoneId: number, phaseName: string): Task[] => {
+      // Synthetic 'Project Root' rows use id = -projectId. Resolve from
+      // the dedicated root map.
+      if (zoneId < 0) {
+        return rootTasksByProject.get(-zoneId)?.get(phaseName) ?? [];
+      }
       const descIds = zoneDescendants.get(zoneId) ?? [zoneId];
       const result: Task[] = [];
       for (const id of descIds) {
@@ -548,7 +593,7 @@ export function ExecutionBoardPage() {
       }
       return result;
     },
-    [zoneDescendants, directMatrix],
+    [zoneDescendants, directMatrix, rootTasksByProject],
   );
 
   // Aggregate health per project
@@ -876,6 +921,7 @@ export function ExecutionBoardPage() {
                   return (
                     <tr
                       key={row.key}
+                      ref={(el) => { rowRefs.current.set(row.id, el); }}
                       className="group border-t border-slate-100 hover:bg-blue-50/50 transition-colors"
                     >
                       <td
@@ -917,7 +963,12 @@ export function ExecutionBoardPage() {
                       </td>
                       {phaseColumns.map((phaseName) => {
                         const aggTasks = getAggregatedTasks(row.id, phaseName);
-                        const directTasks = directMatrix.get(`${row.id}|${phaseName}`) ?? [];
+                        // Root rows pull directTasks from the dedicated map,
+                        // not the matrix (matrix is keyed by real zoneId only).
+                        const directTasks =
+                          row.id < 0
+                            ? rootTasksByProject.get(-row.id)?.get(phaseName) ?? []
+                            : directMatrix.get(`${row.id}|${phaseName}`) ?? [];
                         const aggHealths = aggTasks.map((t) => taskHealths.get(t.id)!).filter(Boolean);
                         return (
                           <td
@@ -951,7 +1002,10 @@ export function ExecutionBoardPage() {
                         <td className="px-2 py-1.5 align-top">
                           {(() => {
                             const aggTasks = getAggregatedTasks(row.id, '__none__');
-                            const directTasks = directMatrix.get(`${row.id}|__none__`) ?? [];
+                            const directTasks =
+                              row.id < 0
+                                ? rootTasksByProject.get(-row.id)?.get('__none__') ?? []
+                                : directMatrix.get(`${row.id}|__none__`) ?? [];
                             const aggHealths = aggTasks.map((t) => taskHealths.get(t.id)!).filter(Boolean);
                             if (aggTasks.length === 0) return null;
                             return (
