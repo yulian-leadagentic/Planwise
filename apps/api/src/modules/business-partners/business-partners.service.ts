@@ -15,6 +15,9 @@ const partnerInclude = {
   roles: { include: { roleType: true } },
   outgoingRelationships: { include: { relationshipType: true } },
   user: { select: { id: true, isActive: true, lastLoginAt: true, roleId: true } },
+  // Main Role — single primary categorization of the contact.
+  // Surfaced in the drawer header + BP list badge + relationship pickers.
+  mainRoleType: true,
 } as const;
 
 function toDisplayName(dto: { partnerType: PartnerType; firstName?: string | null; lastName?: string | null; companyName?: string | null; displayName?: string | null }): string {
@@ -213,6 +216,7 @@ export class BusinessPartnersService {
         instagramUrl: dto.instagramUrl ?? null,
         notes: dto.notes ?? null,
         source: dto.source ?? 'manual',
+        mainRoleTypeId: dto.mainRoleTypeId ?? null,
         roles:
           dto.initialRoleTypeIds && dto.initialRoleTypeIds.length > 0
             ? {
@@ -277,6 +281,11 @@ export class BusinessPartnersService {
         instagramUrl: dto.instagramUrl,
         notes: dto.notes,
         status: dto.status,
+        // Main Role — explicit-undefined vs explicit-null matters. If the
+        // caller sent the field at all (including null = "clear it"),
+        // forward it. If the field is absent from the PATCH body it
+        // stays untouched.
+        ...(dto.mainRoleTypeId !== undefined ? { mainRoleTypeId: dto.mainRoleTypeId } : {}),
         ...(displayName !== undefined ? { displayName } : {}),
       },
       include: partnerInclude,

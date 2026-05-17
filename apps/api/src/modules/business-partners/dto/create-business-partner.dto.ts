@@ -111,4 +111,14 @@ export class CreateBusinessPartnerDto {
   @IsArray()
   @IsInt({ each: true })
   initialRoleTypeIds?: number[];
+
+  /**
+   * Main Role — the contact's primary categorization (Customer / Supplier /
+   * Consultant / Internal / ...). Optional; if absent, drawer surfaces a
+   * soft prompt. Validated FK by Prisma at insert time.
+   */
+  @ApiPropertyOptional({ type: Number, nullable: true })
+  @IsOptional()
+  @IsInt()
+  mainRoleTypeId?: number | null;
 }
