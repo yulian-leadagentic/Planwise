@@ -62,6 +62,19 @@ function getColumns(
       header: 'Department',
       cell: ({ row }) => row.original.department ?? '-',
     },
+    {
+      // M5 — Seniority Level column. Renders the LEVEL NAME only (e.g.
+      // "Senior") not the id, even though the API ships {id, code, name,
+      // defaultHourlyCost, currency} — admins consume cost via the Cost
+      // tab; this column is for quick scan only.
+      id: 'seniorityLevel',
+      header: 'Seniority',
+      cell: ({ row }) => {
+        const sl = (row.original as any).seniorityLevel as { name?: string } | null | undefined;
+        if (!sl?.name) return <span className="text-slate-300">—</span>;
+        return <span className="text-sm text-slate-700">{sl.name}</span>;
+      },
+    },
   ];
 
   if (isPartners) {

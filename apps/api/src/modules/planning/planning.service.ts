@@ -73,15 +73,65 @@ export class PlanningService {
     const serviceTypes = await this.prisma.serviceType.findMany({ orderBy: { sortOrder: 'asc' } });
     const phases = await this.prisma.phase.findMany({ orderBy: { sortOrder: 'asc' } });
 
-    // Aggregate logged time per task
-    const timeAgg = await this.prisma.timeEntry.groupBy({
-      by: ['taskId'],
-      where: { projectId, deletedAt: null, taskId: { not: null } },
-      _sum: { minutes: true },
-    });
+    // Aggregate logged time per task. Filter by task ids (collected
+    // from the project's tasks above) rather than timeEntry.projectId,
+    // because that column can be NULL on entries created via the
+    // /tasks/mine QuickTimeLog and TaskDrawer paths — those flows
+    // didn't always thread the projectId through, so older rows have
+    // project_id=NULL even though the linked task belongs to a project.
+    // Resolving "is this entry on this project?" via task.id is the
+    // safe path; it makes the aggregate immune to that data gap.
+    const taskIds = tasks.map((t) => t.id);
+    const timeAgg = taskIds.length === 0
+      ? []
+      : await this.prisma.timeEntry.groupBy({
+          by: ['taskId'],
+          where: { taskId: { in: taskIds }, deletedAt: null },
+          _sum: { minutes: true },
+        });
     const loggedByTask = new Map<number, number>();
     for (const row of timeAgg) {
       if (row.taskId) loggedByTask.set(row.taskId, row._sum.minutes ?? 0);
+    }
+
+    // M5 — per-task actual cost. Walk each entry, multiply hours by the
+    // logger's SeniorityLevel.defaultHourlyCost, and sum per task. Same
+    // resolution rule as the project Labor Cost view; entries where the
+    // user has no seniority / no cost contribute 0 (we surface those gaps
+    // in the Cost tab callout, no need to repeat per-row here).
+    const entriesForCost = taskIds.length === 0
+      ? []
+      : await this.prisma.timeEntry.findMany({
+          where: { taskId: { in: taskIds }, deletedAt: null },
+          select: {
+            taskId: true,
+            minutes: true,
+            user: {
+              select: {
+                seniorityLevel: { select: { defaultHourlyCost: true, currency: true } },
+              },
+            },
+          },
+        });
+    // Per task: total cost + the currency seen on the first rateable
+    // entry. If a task has contributors in multiple currencies the
+    // numeric sum still reflects what was spent (no FX conversion); the
+    // single currency tag tracks the first one — UI can call out mixed
+    // currencies if needed but for v1 most orgs are single-currency.
+    const actualByTask = new Map<number, { cost: number; currency: string | null }>();
+    for (const e of entriesForCost) {
+      if (e.taskId == null) continue;
+      const hc = e.user.seniorityLevel?.defaultHourlyCost;
+      if (hc == null) continue;
+      const cost = (e.minutes / 60) * Number(hc);
+      const curr = e.user.seniorityLevel?.currency ?? null;
+      const prev = actualByTask.get(e.taskId);
+      if (prev) {
+        prev.cost += cost;
+        if (!prev.currency) prev.currency = curr;
+      } else {
+        actualByTask.set(e.taskId, { cost, currency: curr });
+      }
     }
 
     // Build a flat zoneId → name lookup from the zone tree. Used to
@@ -108,9 +158,14 @@ export class PlanningService {
             .map((id) => zoneNameById.get(id))
             .filter((n): n is string => !!n)
         : [];
+      const actual = actualByTask.get(t.id);
       return {
         ...t,
         loggedMinutes: loggedByTask.get(t.id) ?? 0,
+        // M5 — actual cost (logged hours x hourly cost). 0 when no
+        // rateable entries exist on the task; UI renders an em-dash.
+        actualCost: actual ? Number(actual.cost.toFixed(2)) : 0,
+        actualCostCurrency: actual?.currency ?? null,
         zoneBreadcrumb,
       };
     });

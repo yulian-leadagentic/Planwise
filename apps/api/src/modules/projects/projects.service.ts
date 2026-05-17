@@ -709,7 +709,11 @@ export class ProjectsService {
     });
 
     const entries = await this.prisma.timeEntry.findMany({
-      where: { projectId, deletedAt: null },
+      // Resolve project membership via the task, NOT entry.projectId.
+      // That column is NULL on many historical entries (QuickTimeLog /
+      // TaskDrawer paths didn't set it consistently), so filtering on
+      // it would silently drop their hours from the cost rollup.
+      where: { deletedAt: null, task: { projectId } },
       select: {
         minutes: true,
         userId: true,

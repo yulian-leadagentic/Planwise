@@ -105,17 +105,19 @@ export class ExecutionBoardService {
       }),
     ]);
 
-    // Aggregate logged time per task
-    const timeAgg = await this.prisma.timeEntry.groupBy({
-      by: ['taskId'],
-      where: {
-        projectId: { in: projectIds },
-        deletedAt: null,
-        taskId: { not: null },
-      },
-      _sum: { minutes: true },
-      _max: { date: true },
-    });
+    // Aggregate logged time per task. Filter on the task ids we just
+    // loaded rather than timeEntry.projectId — that column is NULL on
+    // historical entries logged via the My Tasks / TaskDrawer paths
+    // and would otherwise silently drop their hours from the board.
+    const taskIds = tasks.map((t: any) => t.id);
+    const timeAgg = taskIds.length === 0
+      ? []
+      : await this.prisma.timeEntry.groupBy({
+          by: ['taskId'],
+          where: { taskId: { in: taskIds }, deletedAt: null },
+          _sum: { minutes: true },
+          _max: { date: true },
+        });
     const loggedByTask = new Map<number, { minutes: number; lastDate: Date | null }>();
     for (const row of timeAgg) {
       if (row.taskId) {
