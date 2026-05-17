@@ -592,7 +592,9 @@ function useBulkCollapseSync(setCollapsed: (b: boolean) => void) {
 // The Zone column is intentionally shown in every grouping mode — when
 // grouping by Deliverable / Service / None the zone context would
 // otherwise be lost. Tasks at the project root display "Project Root".
-const TASK_GRID = 'grid grid-cols-[16px_16px_80px_1fr_180px_96px_80px_56px_64px_64px_96px_96px_96px_96px_84px] gap-x-2 items-center';
+// 16-slot grid. Slot 11 (Actual ₪) was added in M5 — sits right after
+// Amount so the budget vs actual comparison reads left-to-right.
+const TASK_GRID = 'grid grid-cols-[16px_16px_80px_1fr_180px_96px_80px_56px_64px_64px_72px_96px_96px_96px_96px_84px] gap-x-2 items-center';
 
 function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onToggleTask, onUpdate, onDeleteTask }: {
   task: any; idx: number; projectId: number; members: any[];
@@ -777,6 +779,29 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
         );
       })()}
       <InlineEditCell value={task.budgetAmount} prefix="₪" width="w-16" onSave={(v) => saveField('budgetAmount', v)} />
+      {/* M5 — Actual cost (read-only). Sum of each contributor's logged
+          minutes / 60 × their seniority hourly cost. Aggregated server-side
+          (planning.service.ts → actualCost). Red when actual exceeds the
+          budget amount; em-dash when nothing rateable has been logged. */}
+      {(() => {
+        const ac = Number(task.actualCost ?? 0);
+        const budget = Number(task.budgetAmount ?? 0);
+        const overBudget = budget > 0 && ac > budget;
+        const sym = task.actualCostCurrency === 'USD' ? '$' : task.actualCostCurrency === 'EUR' ? '€' : '₪';
+        return (
+          <span
+            className={cn(
+              'text-right text-[11px] font-mono tabular-nums font-semibold',
+              ac === 0 ? 'text-slate-300' : overBudget ? 'text-red-600' : 'text-slate-700',
+            )}
+            title={overBudget
+              ? `Over budget: ${sym}${ac.toLocaleString()} actual vs ${sym}${budget.toLocaleString()} budget`
+              : ac > 0 ? `Actual labor cost: ${sym}${ac.toLocaleString()}` : 'No rateable time logged'}
+          >
+            {ac > 0 ? `${sym}${ac.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
+          </span>
+        );
+      })()}
       {/* Estimated start date — planning forecast (distinct from actual
           startDate, which is set when work begins and lives in the drawer). */}
       <span>
@@ -2748,6 +2773,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <span className="text-right">Est. Hours</span>
               <span className="text-right">Logged</span>
               <span className="text-right">Amount</span>
+              <span className="text-right">Actual ₪</span>
               <span>Est. Start</span>
               <span>Due Date</span>
               <span>Assignees</span>
@@ -2960,6 +2986,7 @@ function ProjectRootDeliverableGroup({
             <span className="text-right">Est. Hours</span>
             <span className="text-right">Logged</span>
             <span className="text-right">Amount</span>
+            <span className="text-right">Actual ₪</span>
             <span>Est. Start</span>
             <span>Due Date</span>
             <span>Assignees</span>
