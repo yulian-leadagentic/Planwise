@@ -9,6 +9,7 @@ const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 text-s
 
 interface RelationshipType { id: number; code: string; name: string }
 interface Organization { id: number; displayName: string; companyName: string | null }
+interface RoleType { id: number; code: string; name: string; appliesToKind?: string }
 
 export function CreateContactModal({
   onClose,
@@ -48,6 +49,10 @@ export function CreateContactModal({
     instagramUrl: '',
     notes: '',
     roleInContext: '',
+    // Main Role — optional primary categorization. Empty string = "not
+    // set"; saved as null on the server. Drawer surfaces a soft prompt
+    // later if left blank here.
+    mainRoleTypeId: '' as string,
   });
 
   useEffect(() => {
@@ -71,10 +76,28 @@ export function CreateContactModal({
     queryFn: () => client.get('/admin/partner-types/relationship-types').then((r) => r.data?.data ?? r.data ?? []),
   });
 
+  // Role-types catalog for the Main Role dropdown. Filter to roles
+  // applicable to persons (or 'any') and hide 'employee' — employees
+  // are created from the Employees admin, not here.
+  const { data: roleTypesAll = [] } = useQuery<RoleType[]>({
+    queryKey: ['partner-role-types'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/admin/partner-types/role-types').then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : [];
+    }),
+  });
+  const personRoleTypes = roleTypesAll.filter((rt) => {
+    if (rt.code === 'employee') return false;
+    const kind = rt.appliesToKind ?? 'any';
+    return kind === 'any' || kind === 'person';
+  });
+
   const create = useMutation({
     mutationFn: async () => {
-      // 1) Create the person BP — no general role assigned. Their context
-      //    is defined entirely by their worker_of relationship.
+      // 1) Create the person BP. Main Role is optional; project
+      //    relationships and the worker_of edge below define the
+      //    contact's per-context responsibilities.
       const created: any = await client.post('/business-partners', {
         partnerType: 'person',
         firstName: form.firstName.trim() || undefined,
@@ -88,6 +111,7 @@ export function CreateContactModal({
         twitterUrl: form.twitterUrl.trim() || undefined,
         instagramUrl: form.instagramUrl.trim() || undefined,
         notes: form.notes.trim() || undefined,
+        mainRoleTypeId: form.mainRoleTypeId ? Number(form.mainRoleTypeId) : undefined,
       }).then((r) => r.data?.data ?? r.data);
 
       // 2) Wire the worker_of relationship to the chosen organization,
@@ -160,6 +184,27 @@ export function CreateContactModal({
               <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Last Name *</label>
               <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className={inputClass} />
             </div>
+          </div>
+
+          {/* Main Role — the contact's primary categorization. Optional;
+              if left blank the drawer will show a soft prompt later. */}
+          <div>
+            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+              Main Role <span className="text-slate-400 font-normal">(optional)</span>
+            </label>
+            <select
+              value={form.mainRoleTypeId}
+              onChange={(e) => setForm((f) => ({ ...f, mainRoleTypeId: e.target.value }))}
+              className={inputClass}
+            >
+              <option value="">— None / set later —</option>
+              {personRoleTypes.map((rt) => (
+                <option key={rt.id} value={rt.id}>{rt.name}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-slate-400">
+              Primary categorization (Customer, Supplier, Consultant…). Project-level responsibilities are set via relationships.
+            </p>
           </div>
 
           {/* Employer + role-in-context */}

@@ -7,7 +7,7 @@ import { notify } from '@/lib/notify';
 
 const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
 
-interface RoleType { id: number; code: string; name: string }
+interface RoleType { id: number; code: string; name: string; appliesToKind?: string }
 
 export function CreateOrganizationModal({
   onClose,
@@ -25,7 +25,10 @@ export function CreateOrganizationModal({
     website: '',
     address: '',
     notes: '',
-    initialRoleTypeIds: [] as number[],
+    // Main Role — optional single primary categorization. Replaces the
+    // legacy multi-chip "initialRoleTypeIds" picker. Empty = not set
+    // (drawer will surface a soft prompt later).
+    mainRoleTypeId: '' as string,
   });
 
   useEffect(() => {
@@ -40,9 +43,14 @@ export function CreateOrganizationModal({
     queryFn: () => client.get('/admin/partner-types/role-types').then((r) => r.data?.data ?? r.data ?? []),
   });
 
-  // Roles relevant for organizations
-  const orgRoleCodes = new Set(['customer', 'supplier', 'subcontractor']);
-  const applicableRoles = roleTypes.filter((rt) => orgRoleCodes.has(rt.code) || !rt.code.startsWith('employee'));
+  // Roles applicable to organizations. Filter by appliesToKind so
+  // person-only roles (e.g. 'employee') don't appear. 'employee' is
+  // also dropped explicitly: employees are managed via the People page.
+  const applicableRoles = roleTypes.filter((rt) => {
+    if (rt.code === 'employee') return false;
+    const kind = rt.appliesToKind ?? 'any';
+    return kind === 'any' || kind === 'organization';
+  });
 
   const create = useMutation({
     mutationFn: () =>
@@ -55,7 +63,7 @@ export function CreateOrganizationModal({
         website: form.website.trim() || undefined,
         address: form.address.trim() || undefined,
         notes: form.notes.trim() || undefined,
-        initialRoleTypeIds: form.initialRoleTypeIds.length > 0 ? form.initialRoleTypeIds : undefined,
+        mainRoleTypeId: form.mainRoleTypeId ? Number(form.mainRoleTypeId) : undefined,
       }).then((r) => r.data?.data ?? r.data),
     onSuccess: (created: any) => {
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });
@@ -65,15 +73,6 @@ export function CreateOrganizationModal({
     },
     onError: (err: any) => notify.apiError(err, 'Failed to create organization'),
   });
-
-  const toggleRole = (id: number) => {
-    setForm((f) => ({
-      ...f,
-      initialRoleTypeIds: f.initialRoleTypeIds.includes(id)
-        ? f.initialRoleTypeIds.filter((x) => x !== id)
-        : [...f.initialRoleTypeIds, id],
-    }));
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -133,26 +132,24 @@ export function CreateOrganizationModal({
             <input value={form.address} onChange={(e) => setForm(f => ({ ...f, address: e.target.value }))} className={inputClass} />
           </div>
 
+          {/* Main Role — single primary categorization. Optional. */}
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Roles</label>
-            <div className="flex flex-wrap gap-2">
-              {applicableRoles.map((rt) => {
-                const selected = form.initialRoleTypeIds.includes(rt.id);
-                return (
-                  <button
-                    key={rt.id}
-                    type="button"
-                    onClick={() => toggleRole(rt.id)}
-                    className={cn(
-                      'rounded-full px-3 py-1 text-[12px] font-medium border transition-colors',
-                      selected ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:border-slate-300',
-                    )}
-                  >
-                    {rt.name}
-                  </button>
-                );
-              })}
-            </div>
+            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+              Main Role <span className="text-slate-400 font-normal">(optional)</span>
+            </label>
+            <select
+              value={form.mainRoleTypeId}
+              onChange={(e) => setForm((f) => ({ ...f, mainRoleTypeId: e.target.value }))}
+              className={inputClass}
+            >
+              <option value="">— None / set later —</option>
+              {applicableRoles.map((rt) => (
+                <option key={rt.id} value={rt.id}>{rt.name}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-slate-400">
+              Primary categorization (Customer, Supplier, Subcontractor…). Project-level context lives on relationships.
+            </p>
           </div>
 
           <div>

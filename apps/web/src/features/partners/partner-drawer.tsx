@@ -104,6 +104,14 @@ interface BusinessPartnerFull {
   outgoingRelationships: Relationship[];
   incomingRelationships: IncomingRelationship[];
   user: { id: number; isActive: boolean; lastLoginAt: string | null } | null;
+  /**
+   * Main Role — single primary categorization of the contact.
+   * Optional (null on legacy BPs); drawer surfaces a soft prompt to set one.
+   * Replaces the per-BP role chips (which still exist on disk as history
+   * until M7 cleanup).
+   */
+  mainRoleTypeId: number | null;
+  mainRoleType: RoleType | null;
 }
 
 export function PartnerDrawer({
@@ -113,7 +121,10 @@ export function PartnerDrawer({
   partnerId: number;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<'details' | 'roles' | 'relationships'>('details');
+  // Tabs simplified to (details | relationships). The legacy Roles tab is
+  // gone — single Main Role lives in the header (see MainRoleHeaderField).
+  // All additional role context is expressed via Relationships.
+  const [tab, setTab] = useState<'details' | 'relationships'>('details');
   const { can, isAdmin } = usePermissions();
   const canWrite = isAdmin || can('partners', 'write');
   const canDelete = isAdmin || can('partners', 'delete');
@@ -150,11 +161,16 @@ export function PartnerDrawer({
           </button>
         </div>
 
+        {/* Main Role strip — single primary categorization. Always
+            visible (header-adjacent) so a missing value is obvious
+            and one click sets it. Sits BETWEEN the header and the
+            tab bar so it doesn't compete with tab navigation. */}
+        {bp && <MainRoleHeaderField bp={bp} canWrite={canWrite} />}
+
         {/* Tabs */}
         <div className="flex border-b border-slate-200 px-5">
           {([
             { key: 'details',      label: 'Details' },
-            { key: 'roles',        label: `Roles${bp ? ` (${bp.roles.length})` : ''}` },
             { key: 'relationships',label: `Relationships${bp ? ` (${(bp.outgoingRelationships?.length ?? 0) + (bp.incomingRelationships?.length ?? 0)})` : ''}` },
           ] as const).map((t) => (
             <button
@@ -176,14 +192,122 @@ export function PartnerDrawer({
             <div className="text-sm text-slate-400 text-center py-8">Loading...</div>
           ) : tab === 'details' ? (
             <DetailsTab bp={bp} canWrite={canWrite} canDelete={canDelete} onClose={onClose} />
-          ) : tab === 'roles' ? (
-            <RolesTab bp={bp} canWrite={canWrite} canDelete={canDelete} />
           ) : (
             <RelationshipsTab bp={bp} canWrite={canWrite} canDelete={canDelete} />
           )}
         </div>
       </div>
     </>
+  );
+}
+
+// ─── Main Role header strip ──────────────────────────────────────────────────
+//
+// Single primary categorization of the contact. Replaces the legacy
+// per-BP role chips. Three states:
+//   1. Unset + write permission  → yellow soft-prompt with inline dropdown
+//   2. Set                        → compact "Main role: Customer" pill
+//                                  (click pill → reveals dropdown for change)
+//   3. Unset + no write permission → silent (nothing rendered)
+//
+// Dropdown options are filtered by appliesToKind: a person sees roles
+// where appliesToKind in ('person','any'); an org sees ('organization','any').
+// That way "Employee" doesn't show up on an org, and "Supplier" doesn't
+// show up on a person.
+function MainRoleHeaderField({ bp, canWrite }: { bp: BusinessPartnerFull; canWrite: boolean }) {
+  const queryClient = useQueryClient();
+  const [picking, setPicking] = useState(false);
+
+  const { data: allRoleTypes = [] } = useQuery<RoleType[] & { appliesToKind?: string }[]>({
+    queryKey: ['partner-role-types'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/admin/partner-types/role-types').then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : [];
+    }),
+  });
+
+  // Filter the dropdown by the BP's kind. Catalog rows tagged 'any' are
+  // shown for both. Also drop the 'employee' role from this dropdown —
+  // the employee identity is granted by creating a User from the
+  // Employees admin, not by tagging a partner here.
+  const options = useMemo(() => {
+    return allRoleTypes.filter((rt: any) => {
+      if (rt.code === 'employee') return false;
+      const kind = rt.appliesToKind ?? 'any';
+      return kind === 'any' || kind === bp.partnerType;
+    });
+  }, [allRoleTypes, bp.partnerType]);
+
+  const setRole = useMutation({
+    mutationFn: (mainRoleTypeId: number | null) =>
+      client.patch(`/business-partners/${bp.id}`, { mainRoleTypeId }).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['business-partners'] });
+      queryClient.invalidateQueries({ queryKey: ['business-partners', bp.id] });
+      notify.success('Main role updated', { code: 'BP-MAINROLE-200' });
+      setPicking(false);
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update main role'),
+  });
+
+  // Inline dropdown view — used by both the soft-prompt and the
+  // change-role flow once a role is already set.
+  const DropdownRow = (
+    <select
+      autoFocus
+      value={bp.mainRoleTypeId ?? ''}
+      onChange={(e) => {
+        const v = e.target.value;
+        setRole.mutate(v === '' ? null : Number(v));
+      }}
+      onBlur={() => setPicking(false)}
+      className="text-[12px] rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-700 focus:border-blue-500 focus:outline-none"
+    >
+      <option value="">— None —</option>
+      {options.map((rt) => (
+        <option key={rt.id} value={rt.id}>{rt.name}</option>
+      ))}
+    </select>
+  );
+
+  // State 1 — unset and admin can write: soft prompt.
+  if (!bp.mainRoleType && canWrite) {
+    return (
+      <div className="border-b border-amber-100 bg-amber-50/60 px-5 py-2 flex items-center gap-2">
+        <span className="text-[11px] font-semibold text-amber-700">Main role not set</span>
+        {DropdownRow}
+        <span className="text-[10px] text-amber-600/80">Set the contact's primary categorization (Customer, Supplier, Consultant, ...)</span>
+      </div>
+    );
+  }
+
+  // State 3 — unset and no write permission: render nothing (the
+  // viewer can't act on it; don't clutter the header).
+  if (!bp.mainRoleType) return null;
+
+  // State 2 — set: compact pill. Click to change (write only).
+  return (
+    <div className="border-b border-slate-100 bg-slate-50/40 px-5 py-2 flex items-center gap-2">
+      <span className="text-[11px] font-semibold text-slate-500 uppercase">Main role</span>
+      {picking ? (
+        DropdownRow
+      ) : (
+        <button
+          type="button"
+          disabled={!canWrite}
+          onClick={() => canWrite && setPicking(true)}
+          className={cn(
+            'text-[12px] font-semibold rounded-full px-2.5 py-0.5',
+            'bg-blue-100 text-blue-700',
+            canWrite ? 'hover:bg-blue-200 cursor-pointer' : 'cursor-default',
+          )}
+          title={canWrite ? 'Change main role' : ''}
+        >
+          {bp.mainRoleType.name}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -408,6 +532,16 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
           </div>
         )}
 
+        {/* M4a.3 — Job Titles. Lives on the Details tab (used to live on
+            the now-removed Roles tab). Persons only; organizations don't
+            have a profession concept. Drives the "Required Job Title"
+            constraint on Project Role Types. */}
+        {bp.partnerType === 'person' && (
+          <div className="pt-2 border-t border-slate-100">
+            <JobTitlesSection bpId={bp.id} canWrite={canWrite} />
+          </div>
+        )}
+
         <div className="text-[11px] text-slate-400 pt-3 border-t border-slate-100">
           Created {formatDate(bp.createdAt)} · Updated {formatDate(bp.updatedAt)}
         </div>
@@ -514,120 +648,6 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
           <Save className="h-3 w-3" /> {update.isPending ? 'Saving...' : 'Save'}
         </button>
       </div>
-    </div>
-  );
-}
-
-// ─── Roles ───────────────────────────────────────────────────────────────────
-
-function RolesTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull; canWrite: boolean; canDelete: boolean }) {
-  const queryClient = useQueryClient();
-  const { data: allRoleTypes = [] } = useQuery<RoleType[]>({
-    queryKey: ['partner-role-types'],
-    staleTime: 10 * 60 * 1000,
-    queryFn: () => client.get('/admin/partner-types/role-types').then((r) => r.data?.data ?? r.data ?? []),
-  });
-
-  const assigned = new Set(bp.roles.map((r) => r.roleType.id));
-  // 'employee' role can only be granted by creating a User from the
-  // Employees admin (which also wires up login credentials). Hide it
-  // from the partner-drawer Add-a-role chips so admins don't tag a
-  // contact as employee here and end up with a half-set-up record.
-  const available = allRoleTypes.filter((rt) => !assigned.has(rt.id) && rt.code !== 'employee');
-
-  const addRole = useMutation({
-    mutationFn: (roleTypeId: number) =>
-      client.post(`/business-partners/${bp.id}/roles`, { roleTypeId }).then((r) => r.data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['business-partners'] });
-      notify.success('Role added', { code: 'BP-ROLE-200' });
-    },
-    onError: (err: any) => notify.apiError(err, 'Failed to add role'),
-  });
-
-  const removeRole = useMutation({
-    mutationFn: (roleId: number) =>
-      client.delete(`/business-partners/${bp.id}/roles/${roleId}`).then((r) => r.data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['business-partners'] });
-      notify.success('Role removed', { code: 'BP-ROLE-DELETE-200' });
-    },
-    onError: (err: any) => notify.apiError(err, 'Failed to remove role'),
-  });
-
-  const togglePrimary = useMutation({
-    mutationFn: ({ roleTypeId, isPrimary }: { roleTypeId: number; isPrimary: boolean }) =>
-      client.post(`/business-partners/${bp.id}/roles`, { roleTypeId, isPrimary }).then((r) => r.data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['business-partners'] }),
-    onError: (err: any) => notify.apiError(err, 'Failed to update'),
-  });
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <p className="text-[11px] font-semibold text-slate-400 uppercase mb-2">Current roles</p>
-        {bp.roles.length === 0 ? (
-          <p className="text-[12px] text-slate-400 italic">No roles assigned.</p>
-        ) : (
-          <div className="space-y-1.5">
-            {bp.roles.map((r) => (
-              <div key={r.id} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
-                <Briefcase className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                <span className="text-[13px] font-medium text-slate-800 flex-1">{r.roleType.name}</span>
-                {canWrite && (
-                  <button
-                    onClick={() => togglePrimary.mutate({ roleTypeId: r.roleType.id, isPrimary: !r.isPrimary })}
-                    className={cn(
-                      'rounded-full px-2 py-0.5 text-[10px] font-semibold border transition-colors',
-                      r.isPrimary
-                        ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
-                        : 'border-slate-200 text-slate-500 hover:border-slate-300',
-                    )}
-                  >
-                    {r.isPrimary ? 'Primary' : 'Set primary'}
-                  </button>
-                )}
-                {canDelete && (
-                  <button
-                    onClick={() => { if (confirm(`Remove role "${r.roleType.name}"?`)) removeRole.mutate(r.id); }}
-                    className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-600"
-                    title="Remove role"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {canWrite && available.length > 0 && (
-        <div>
-          <p className="text-[11px] font-semibold text-slate-400 uppercase mb-2">Add a role</p>
-          <div className="flex flex-wrap gap-2">
-            {available.map((rt) => (
-              <button
-                key={rt.id}
-                onClick={() => addRole.mutate(rt.id)}
-                disabled={addRole.isPending}
-                className="rounded-full border border-slate-200 bg-white hover:border-blue-400 hover:bg-blue-50 text-slate-700 hover:text-blue-700 text-[12px] font-medium px-3 py-1 flex items-center gap-1"
-              >
-                <Plus className="h-3 w-3" />
-                {rt.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* M4a.3 — Job Titles. Only meaningful for persons (organizations
-          don't have a "profession") but we render unconditionally so it's
-          discoverable. Drives the Required Job Title constraint on Project
-          Role Types. */}
-      {bp.partnerType === 'person' && (
-        <JobTitlesSection bpId={bp.id} canWrite={canWrite} />
-      )}
     </div>
   );
 }
@@ -908,14 +928,13 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
         <AddRelationshipModal
           partnerId={bp.id}
           partnerKind={bp.partnerType}
-          partnerRoleCodes={bp.roles.map((r) => r.roleType.code)}
-          partnerRoleCategories={Array.from(
-            new Set(
-              bp.roles
-                .map((r) => r.roleType.category)
-                .filter((c): c is string => !!c),
-            ),
-          )}
+          // Main Role is the source-of-truth now. The relationship-type
+          // picker filters by `partnerRoleCodes` / `partnerRoleCategories`
+          // so that a "Customer" rel-type only shows up when the BP's
+          // Main Role is in its restricted set. Legacy roles array would
+          // produce false positives.
+          partnerRoleCodes={bp.mainRoleType ? [bp.mainRoleType.code] : []}
+          partnerRoleCategories={bp.mainRoleType?.category ? [bp.mainRoleType.category] : []}
           onClose={() => setShowAdd(false)}
         />
       )}

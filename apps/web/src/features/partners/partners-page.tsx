@@ -33,7 +33,18 @@ export interface BusinessPartner {
   mobile: string | null;
   status: string;
   source: string;
+  /**
+   * Legacy multi-role chips — still served by the API for now but no
+   * longer rendered in the BP list. Source-of-truth is mainRoleType.
+   * Will be removed in M7.
+   */
   roles: PartnerRoleSummary[];
+  /**
+   * Main Role — single primary categorization. Replaces the chips
+   * column. Nullable on legacy BPs (drawer surfaces a soft prompt).
+   */
+  mainRoleTypeId: number | null;
+  mainRoleType: { id: number; code: string; name: string; category?: string | null } | null;
   outgoingRelationships: Array<{ targetType: string; targetId: number; relationshipType: { code: string; name: string } }>;
   user: { id: number; isActive: boolean; lastLoginAt: string | null } | null;
   createdAt: string;
@@ -242,7 +253,7 @@ function OrganizationsList({ partners, onSelect }: { partners: BusinessPartner[]
         <thead>
           <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
             <th className="px-4 py-2 text-left font-semibold">Organization</th>
-            <th className="px-4 py-2 text-left font-semibold">Roles</th>
+            <th className="px-4 py-2 text-left font-semibold">Main Role</th>
             <th className="px-4 py-2 text-left font-semibold">Email</th>
             <th className="px-4 py-2 text-left font-semibold w-32">Phone</th>
             <th className="px-4 py-2 text-center font-semibold w-20">Status</th>
@@ -260,7 +271,7 @@ function OrganizationsList({ partners, onSelect }: { partners: BusinessPartner[]
                 </div>
               </td>
               <td className="px-4 py-2.5">
-                <RoleChips roles={bp.roles} />
+                <MainRoleBadge mainRole={bp.mainRoleType} />
               </td>
               <td className="px-4 py-2.5 text-slate-600 text-[12px]">{bp.email || '—'}</td>
               <td className="px-4 py-2.5 text-slate-600 text-[12px]">{bp.phone || '—'}</td>
@@ -342,7 +353,7 @@ function ContactsList({
           <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
             <th className="px-4 py-2 text-left font-semibold">Name</th>
             <th className="px-4 py-2 text-left font-semibold">Employer</th>
-            <th className="px-4 py-2 text-left font-semibold">Roles</th>
+            <th className="px-4 py-2 text-left font-semibold">Main Role</th>
             <th className="px-4 py-2 text-left font-semibold">Email</th>
             <th className="px-4 py-2 text-left font-semibold w-32">Phone</th>
             <th className="px-4 py-2 text-center font-semibold w-20">Status</th>
@@ -368,7 +379,7 @@ function ContactsList({
                   </div>
                 </td>
                 <td className="px-4 py-2.5 text-slate-600 text-[12px]">{employerName || '—'}</td>
-                <td className="px-4 py-2.5"><RoleChips roles={bp.roles} /></td>
+                <td className="px-4 py-2.5"><MainRoleBadge mainRole={bp.mainRoleType} /></td>
                 <td className="px-4 py-2.5 text-slate-600 text-[12px]">{bp.email || '—'}</td>
                 <td className="px-4 py-2.5 text-slate-600 text-[12px]">{bp.phone || bp.mobile || '—'}</td>
                 <td className="px-4 py-2.5 text-center"><StatusBadge status={bp.status} /></td>
@@ -383,22 +394,25 @@ function ContactsList({
 
 // ─── Tiny helpers ────────────────────────────────────────────────────────────
 
-function RoleChips({ roles }: { roles: BusinessPartner['roles'] }) {
-  if (roles.length === 0) return <span className="text-[11px] text-slate-400 italic">none</span>;
+/**
+ * Renders the BP's Main Role as a single colored badge. Replaces the
+ * legacy multi-role chips column. When unset, shows a muted "not set"
+ * label so admins notice and can fix via the drawer's soft prompt.
+ */
+function MainRoleBadge({
+  mainRole,
+}: {
+  mainRole: BusinessPartner['mainRoleType'];
+}) {
+  if (!mainRole) {
+    return (
+      <span className="text-[11px] text-slate-400 italic">not set</span>
+    );
+  }
   return (
-    <div className="flex flex-wrap gap-1">
-      {roles.map((r) => (
-        <span
-          key={r.id}
-          className={cn(
-            'rounded-full px-2 py-0.5 text-[10px] font-semibold',
-            r.isPrimary ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600',
-          )}
-        >
-          {r.roleType.name}
-        </span>
-      ))}
-    </div>
+    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+      {mainRole.name}
+    </span>
   );
 }
 

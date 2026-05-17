@@ -29,7 +29,9 @@ export function CreatePartnerModal({
     website: '',
     address: '',
     notes: '',
-    initialRoleTypeIds: [] as number[],
+    // Main Role — optional single categorization. Replaces the
+    // legacy multi-chip initialRoleTypeIds picker.
+    mainRoleTypeId: '' as string,
   });
 
   // Lock background scroll while open
@@ -39,10 +41,18 @@ export function CreatePartnerModal({
     return () => { document.body.style.overflow = original; };
   }, []);
 
-  const { data: roleTypes = [] } = useQuery<Array<{ id: number; code: string; name: string }>>({
+  const { data: roleTypes = [] } = useQuery<Array<{ id: number; code: string; name: string; appliesToKind?: string }>>({
     queryKey: ['partner-role-types'],
     staleTime: 10 * 60 * 1000,
     queryFn: () => client.get('/admin/partner-types/role-types').then((r) => r.data?.data ?? r.data ?? []),
+  });
+  // Filter the Main Role dropdown by the chosen partnerType so the
+  // catalog's appliesToKind constraint is respected. Drop 'employee' —
+  // employees are managed from the People page.
+  const applicableRoles = roleTypes.filter((rt) => {
+    if (rt.code === 'employee') return false;
+    const kind = rt.appliesToKind ?? 'any';
+    return kind === 'any' || kind === partnerType;
   });
 
   const create = useMutation({
@@ -59,7 +69,7 @@ export function CreatePartnerModal({
         website: form.website.trim() || undefined,
         address: form.address.trim() || undefined,
         notes: form.notes.trim() || undefined,
-        initialRoleTypeIds: form.initialRoleTypeIds.length > 0 ? form.initialRoleTypeIds : undefined,
+        mainRoleTypeId: form.mainRoleTypeId ? Number(form.mainRoleTypeId) : undefined,
       }).then((r) => r.data?.data ?? r.data),
     onSuccess: (created: any) => {
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });
@@ -68,15 +78,6 @@ export function CreatePartnerModal({
     },
     onError: (err: any) => notify.apiError(err, 'Failed to create partner'),
   });
-
-  const toggleRole = (id: number) => {
-    setForm((f) => ({
-      ...f,
-      initialRoleTypeIds: f.initialRoleTypeIds.includes(id)
-        ? f.initialRoleTypeIds.filter((x) => x !== id)
-        : [...f.initialRoleTypeIds, id],
-    }));
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -181,29 +182,24 @@ export function CreatePartnerModal({
             </div>
           </div>
 
-          {/* Roles */}
+          {/* Main Role — single primary categorization. Optional. */}
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Roles (optional)</label>
-            <div className="flex flex-wrap gap-2">
-              {roleTypes.map((rt) => {
-                const selected = form.initialRoleTypeIds.includes(rt.id);
-                return (
-                  <button
-                    key={rt.id}
-                    type="button"
-                    onClick={() => toggleRole(rt.id)}
-                    className={cn(
-                      'rounded-full px-3 py-1 text-[12px] font-medium border transition-colors',
-                      selected
-                        ? 'border-blue-500 bg-blue-50 text-blue-700'
-                        : 'border-slate-200 text-slate-600 hover:border-slate-300',
-                    )}
-                  >
-                    {rt.name}
-                  </button>
-                );
-              })}
-            </div>
+            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+              Main Role <span className="text-slate-400 font-normal">(optional)</span>
+            </label>
+            <select
+              value={form.mainRoleTypeId}
+              onChange={(e) => setForm((f) => ({ ...f, mainRoleTypeId: e.target.value }))}
+              className={inputClass}
+            >
+              <option value="">— None / set later —</option>
+              {applicableRoles.map((rt) => (
+                <option key={rt.id} value={rt.id}>{rt.name}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-slate-400">
+              Primary categorization. Project-level responsibilities are set via relationships.
+            </p>
           </div>
 
           {/* Notes */}
