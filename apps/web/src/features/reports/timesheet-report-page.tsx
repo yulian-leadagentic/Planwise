@@ -12,15 +12,16 @@
  * Export: CSV today; PDF/XLSX queued as a follow-up.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Download } from 'lucide-react';
+import { Download, ChevronDown, FileSpreadsheet, FileText, Printer } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { UserSelect } from '@/components/shared/user-select';
 import { ProjectSelect } from '@/components/shared/project-select';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
+import { notify } from '@/lib/notify';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -244,29 +245,140 @@ export function TimesheetReportPage() {
     }));
   }, [rows, groupBy]);
 
-  const handleExport = () => {
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setExportMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
+
+  const handleExportCsv = () => {
     const stamp = new Date().toISOString().slice(0, 10);
     downloadCsv(`timesheet-${from}-to-${to}-${stamp}.csv`, rows);
+    setExportMenuOpen(false);
+  };
+
+  /**
+   * XLSX export — hits the backend /reports/export?format=excel endpoint.
+   * Server-side ExcelJS renders a workbook with proper column widths,
+   * header styling, currency-formatted cells, and a totals footer that
+   * stays correct when the user pivots on the data inside Excel.
+   */
+  const handleExportExcel = async () => {
+    try {
+      const params = new URLSearchParams({
+        type: 'timesheet-detailed',
+        format: 'excel',
+        from, to,
+        ...(userId ? { userId: String(userId) } : {}),
+        ...(projectId ? { projectId: String(projectId) } : {}),
+      });
+      const resp = await client.get(`/reports/export?${params.toString()}`, {
+        responseType: 'blob',
+      });
+      const blob = new Blob([resp.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const stamp = new Date().toISOString().slice(0, 10);
+      a.download = `timesheet-${from}-to-${to}-${stamp}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setExportMenuOpen(false);
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to export Excel');
+    }
+  };
+
+  /**
+   * "Print to PDF" — opens the browser print dialog. The user picks
+   * "Save as PDF" as the destination. A dedicated `@media print`
+   * stylesheet (in this component) hides the chrome and renders the
+   * table edge-to-edge. This route handles Hebrew / RTL natively via
+   * the browser, no font bundling needed on the server.
+   */
+  const handlePrintPdf = () => {
+    setExportMenuOpen(false);
+    // Defer so the menu closes before the print dialog (otherwise
+    // the open menu paints into the PDF).
+    setTimeout(() => window.print(), 50);
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 timesheet-report-root">
+      {/* Print stylesheet — applied only during window.print(). Hides
+          page chrome (sidebar, header, filters, export button), forces
+          landscape, shrinks font, and keeps the table header on every
+          page. Scoped via .timesheet-report-root so it never affects
+          other screens. */}
+      <style>{`
+        @media print {
+          @page { size: landscape; margin: 12mm; }
+          body * { visibility: hidden; }
+          .timesheet-report-root, .timesheet-report-root * { visibility: visible; }
+          .timesheet-report-root { position: absolute; left: 0; top: 0; width: 100%; }
+          .no-print { display: none !important; }
+          .timesheet-report-root table { font-size: 10px; }
+          .timesheet-report-root thead { display: table-header-group; }
+          .timesheet-report-root tr { page-break-inside: avoid; }
+        }
+      `}</style>
       <PageHeader
         title="Timesheet Report"
         description="Row-level time entries with cost — filterable by employee, project, and date range"
         actions={
-          <button
-            onClick={handleExport}
-            disabled={rows.length === 0}
-            className="flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
-          >
-            <Download className="h-4 w-4" /> Export CSV
-          </button>
+          <div className="relative" ref={exportMenuRef}>
+            <button
+              type="button"
+              onClick={() => setExportMenuOpen((o) => !o)}
+              disabled={rows.length === 0}
+              className="flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
+            >
+              <Download className="h-4 w-4" /> Export
+              <ChevronDown className="h-3 w-3" />
+            </button>
+            {exportMenuOpen && (
+              <div className="absolute right-0 top-full z-50 mt-1 w-44 rounded-md border border-border bg-popover shadow-lg">
+                <button
+                  type="button"
+                  onClick={handleExportCsv}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left"
+                >
+                  <FileText className="h-4 w-4 text-slate-500" /> CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportExcel}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left"
+                >
+                  <FileSpreadsheet className="h-4 w-4 text-emerald-600" /> Excel (.xlsx)
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePrintPdf}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left"
+                >
+                  <Printer className="h-4 w-4 text-red-600" /> Print / PDF
+                </button>
+              </div>
+            )}
+          </div>
         }
       />
 
-      {/* Filters row */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+      {/* Filters row — hidden when printing so the PDF shows just
+          the summary bar + table (filters are not data, they're
+          controls). */}
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-3 no-print">
         <div>
           <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
             Employee
