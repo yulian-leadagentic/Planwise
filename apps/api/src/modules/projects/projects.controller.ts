@@ -58,6 +58,18 @@ export class ProjectsController {
     return this.projectsService.getBudgetSummary(id);
   }
 
+  // M5 — Labor cost rollup. Same permission as budget-summary (both are
+  // financial views of the same project). Returns per-user breakdown,
+  // per-currency totals, and a separate "unrateable" bucket for users
+  // whose seniority isn't set / has no hourly cost — surfaced so admins
+  // see the data gap rather than silently zero-bucketed.
+  @Get(':id/labor-cost')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'Labor cost rollup from logged time × seniority hourly cost' })
+  getLaborCost(@Param('id', ParseIntPipe) id: number) {
+    return this.projectsService.getLaborCost(id);
+  }
+
   @Patch(':id')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Update a project' })
