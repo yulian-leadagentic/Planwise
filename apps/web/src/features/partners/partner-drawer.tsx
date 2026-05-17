@@ -529,7 +529,11 @@ function RolesTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull; canWri
   });
 
   const assigned = new Set(bp.roles.map((r) => r.roleType.id));
-  const available = allRoleTypes.filter((rt) => !assigned.has(rt.id));
+  // 'employee' role can only be granted by creating a User from the
+  // Employees admin (which also wires up login credentials). Hide it
+  // from the partner-drawer Add-a-role chips so admins don't tag a
+  // contact as employee here and end up with a half-set-up record.
+  const available = allRoleTypes.filter((rt) => !assigned.has(rt.id) && rt.code !== 'employee');
 
   const addRole = useMutation({
     mutationFn: (roleTypeId: number) =>
