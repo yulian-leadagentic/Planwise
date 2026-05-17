@@ -176,6 +176,10 @@ export function PeoplePage() {
   const { peopleTab, peopleSearch, setPeopleFilters } = useFilterStore();
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ ...emptyPerson });
+  // Picker for "Link to existing partner" — replaces the legacy <select>
+  // with a searchable list modal so admins can scan the full partner roster.
+  const [partnerPickerOpen, setPartnerPickerOpen] = useState(false);
+  const [partnerPickerSearch, setPartnerPickerSearch] = useState('');
 
   const { data: roles = [] } = useQuery({
     queryKey: ['roles'],
@@ -354,7 +358,7 @@ export function PeoplePage() {
 
   const tabs = [
     { key: 'employees' as const, label: 'Employees' },
-    { key: 'partners' as const, label: 'Partners' },
+    { key: 'partners' as const, label: 'External Employees' },
   ];
 
   return (
@@ -391,14 +395,14 @@ export function PeoplePage() {
       <FilterBar
         search={peopleSearch}
         onSearchChange={(v) => setPeopleFilters({ peopleSearch: v })}
-        searchPlaceholder={`Search ${peopleTab}...`}
+        searchPlaceholder={isPartners ? 'Search external employees...' : 'Search employees...'}
       />
 
       {!isLoading && users.length === 0 ? (
         <EmptyState
           icon={Users}
-          title={`No ${peopleTab} found`}
-          description={`Add your first ${peopleTab === 'employees' ? 'employee' : 'partner'} to get started`}
+          title={isPartners ? 'No external employees found' : 'No employees found'}
+          description={`Add your first ${isPartners ? 'external employee' : 'employee'} to get started`}
         />
       ) : (
         <DataTable
@@ -444,7 +448,7 @@ export function PeoplePage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={() => setShowCreate(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-[480px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-              <h2 className="text-base font-bold text-slate-900">Add {peopleTab === 'partners' ? 'Partner' : 'Employee'}</h2>
+              <h2 className="text-base font-bold text-slate-900">Add {isPartners ? 'External Employee' : 'Employee'}</h2>
               <button onClick={() => setShowCreate(false)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
                 <X className="h-4 w-4" />
               </button>
@@ -455,22 +459,45 @@ export function PeoplePage() {
                   so the user doesn't retype anything. Defaults to "Create
                   new" — same behaviour as before. Only person BPs that
                   don't already have a user account are shown. */}
+              {/* Linked-partner picker. The button opens a searchable modal
+                  (partnerPickerOpen) showing the full list of person BPs
+                  without a user account. Clicking a row prefills the form
+                  via handleLinkExistingBp(). The "Clear" button drops the
+                  link and reverts to "Create new" behaviour. */}
               <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
                 <label className="text-[12px] font-semibold text-slate-700 mb-1 block">Link to existing partner</label>
-                <select
-                  value={form.businessPartnerId === '' ? '' : String(form.businessPartnerId)}
-                  onChange={(e) => handleLinkExistingBp(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
-                >
-                  <option value="">— Create a new partner record —</option>
-                  {linkableBps.map((bp: any) => (
-                    <option key={bp.id} value={bp.id}>
-                      {bp.displayName}
-                      {bp.email ? ` · ${bp.email}` : ''}
-                      {bp.companyName ? ` · ${bp.companyName}` : ''}
-                    </option>
-                  ))}
-                </select>
+                {form.businessPartnerId === '' ? (
+                  <button
+                    type="button"
+                    onClick={() => { setPartnerPickerSearch(''); setPartnerPickerOpen(true); }}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-left text-slate-500 hover:border-blue-400 focus:border-blue-500 focus:outline-none"
+                  >
+                    — Create a new partner record — <span className="text-blue-600 underline ml-1">pick from list</span>
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setPartnerPickerSearch(''); setPartnerPickerOpen(true); }}
+                      className="flex-1 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-left text-slate-700 hover:border-blue-400"
+                    >
+                      {(() => {
+                        const bp = linkableBps.find((b: any) => b.id === form.businessPartnerId);
+                        if (!bp) return `Partner #${form.businessPartnerId}`;
+                        const tail = bp.email ? ` · ${bp.email}` : bp.companyName ? ` · ${bp.companyName}` : '';
+                        return `${bp.displayName}${tail}`;
+                      })()}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleLinkExistingBp('')}
+                      className="px-2 py-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-500 hover:text-slate-700"
+                      title="Clear link"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
                 <p className="mt-1 text-[11px] text-slate-500">
                   Pick someone already in <strong>Partners → Contacts</strong> to give them
                   app access without duplicating the contact record.
@@ -652,6 +679,86 @@ export function PeoplePage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Partner picker — opens from the "Link to existing partner" button
+          in the create modal. Stacked above the create modal (z-60) so
+          clicks here don't dismiss the form behind it. */}
+      {partnerPickerOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/35 backdrop-blur-sm"
+          onClick={() => setPartnerPickerOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-[520px] max-w-[92vw] max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <h2 className="text-base font-bold text-slate-900">Select a partner</h2>
+              <button
+                type="button"
+                onClick={() => setPartnerPickerOpen(false)}
+                className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-4 border-b border-slate-100">
+              <input
+                autoFocus
+                value={partnerPickerSearch}
+                onChange={(e) => setPartnerPickerSearch(e.target.value)}
+                placeholder="Search by name, email, or company..."
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+              />
+              <p className="mt-1.5 text-[11px] text-slate-500">
+                Only contacts without an existing login are shown.
+              </p>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {(() => {
+                const q = partnerPickerSearch.trim().toLowerCase();
+                const filtered = q
+                  ? linkableBps.filter((bp: any) => {
+                      const haystack = `${bp.displayName ?? ''} ${bp.email ?? ''} ${bp.companyName ?? ''}`.toLowerCase();
+                      return haystack.includes(q);
+                    })
+                  : linkableBps;
+                if (filtered.length === 0) {
+                  return (
+                    <p className="px-5 py-6 text-center text-sm text-slate-500">
+                      {linkableBps.length === 0
+                        ? 'No linkable partners — every person already has a login.'
+                        : 'No matches for that search.'}
+                    </p>
+                  );
+                }
+                return (
+                  <ul className="divide-y divide-slate-100">
+                    {filtered.map((bp: any) => (
+                      <li key={bp.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleLinkExistingBp(String(bp.id));
+                            setPartnerPickerOpen(false);
+                          }}
+                          className="w-full text-left px-5 py-3 hover:bg-slate-50"
+                        >
+                          <p className="text-sm font-medium text-slate-900">{bp.displayName}</p>
+                          <p className="text-xs text-slate-500">
+                            {bp.email ?? '—'}
+                            {bp.companyName ? ` · ${bp.companyName}` : ''}
+                          </p>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                );
+              })()}
+            </div>
           </div>
         </div>
       )}
