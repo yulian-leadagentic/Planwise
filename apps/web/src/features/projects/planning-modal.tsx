@@ -2411,6 +2411,9 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                 <th className={cn(thClass, 'w-14 text-right')} onClick={() => handleSort('hours')}>Est. Hours{sortIcon('hours')}</th>
                 <th className={cn(thClass, 'w-16 text-right')}>Logged</th>
                 <th className={cn(thClass, 'w-20 text-right')} onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
+                {/* M5 — Actual cost (logged hours x hourly cost). Read-only;
+                    sums each contributor's time x their seniority rate. */}
+                <th className={cn(thClass, 'w-24 text-right')}>Actual ₪</th>
                 <th className={cn(thClass, 'w-24')}>Due Date</th>
                 <th className={cn(thClass, 'w-28')}>Assignee</th>
                 <th className={cn(thClass, 'w-24')}>Status</th>
@@ -2455,6 +2458,24 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                       );
                     })()}
                     <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-slate-700">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</td>
+                    {/* M5 — Actual cost. Computed server-side from each
+                        contributor's logged time x their seniority hourly
+                        cost (planning.service.ts → actualCost). Em-dash
+                        when no rateable time has been logged on this task. */}
+                    {(() => {
+                      const ac = Number(task.actualCost ?? 0);
+                      const budget = Number(task.budgetAmount ?? 0);
+                      const overBudget = budget > 0 && ac > budget;
+                      const sym = task.actualCostCurrency === 'USD' ? '$' : task.actualCostCurrency === 'EUR' ? '€' : '₪';
+                      return (
+                        <td className={cn(
+                          'px-3 py-2 text-right font-mono text-xs font-semibold',
+                          ac === 0 ? 'text-slate-300' : overBudget ? 'text-red-600' : 'text-slate-700',
+                        )} title={overBudget ? `Over budget (${sym}${ac.toLocaleString()} actual vs ${sym}${budget.toLocaleString()} budget)` : undefined}>
+                          {ac > 0 ? `${sym}${ac.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '-'}
+                        </td>
+                      );
+                    })()}
                     <td className="px-3 py-2"><input type="date" value={dueDate} className="w-full px-1 py-0.5 rounded border border-slate-200 text-[10px] text-slate-600 bg-transparent focus:outline-none focus:ring-1 focus:ring-blue-400" /></td>
                     <td className="px-3 py-2">
                       <AssigneePicker task={task} members={members} projectId={projectId} onUpdate={onUpdate} />

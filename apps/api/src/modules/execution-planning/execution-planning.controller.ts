@@ -201,7 +201,17 @@ export class ExecutionPlanningController {
     const budgetData = await Promise.all(activeProjects.map(async (p: any) => {
       const [taskBudget, timeLogged] = await Promise.all([
         prisma.task.aggregate({ where: { projectId: p.id, deletedAt: null, isArchived: false }, _sum: { budgetAmount: true, budgetHours: true }, _count: true }),
-        prisma.timeEntry.aggregate({ where: { projectId: p.id, deletedAt: null }, _sum: { minutes: true } }),
+        // Resolve "logged on this project" via task.projectId, not
+        // entry.projectId — the latter is NULL on many historical rows
+        // (QuickTimeLog / TaskDrawer paths didn't always set it) and
+        // would understate the project's true logged time.
+        prisma.timeEntry.aggregate({
+          where: {
+            deletedAt: null,
+            task: { projectId: p.id },
+          },
+          _sum: { minutes: true },
+        }),
       ]);
       return { projectId: p.id, budgetAmount: Number(taskBudget._sum.budgetAmount ?? 0), budgetHours: Number(taskBudget._sum.budgetHours ?? 0), loggedMinutes: Number(timeLogged._sum.minutes ?? 0) };
     }));

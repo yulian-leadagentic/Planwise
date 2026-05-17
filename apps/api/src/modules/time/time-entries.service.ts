@@ -13,11 +13,26 @@ export class TimeEntriesService {
     const dateParts = dto.date.split('-').map(Number);
     const localDate = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
 
+    // Auto-derive projectId from the task when the caller didn't pass it
+    // (QuickTimeLog / TaskDrawer call sites historically did this
+    // inconsistently — leaving a column that aggregations rely on
+    // half-empty). Belt-and-suspenders: aggregations now also resolve
+    // project membership via task.projectId, but keeping this column
+    // populated keeps the data clean for any future direct queries.
+    let projectId = dto.projectId;
+    if (!projectId && dto.taskId) {
+      const t = await this.prisma.task.findUnique({
+        where: { id: dto.taskId },
+        select: { projectId: true },
+      });
+      if (t) projectId = t.projectId;
+    }
+
     const entry = await this.prisma.timeEntry.create({
       data: {
         userId,
         timeClockId: dto.timeClockId,
-        projectId: dto.projectId,
+        projectId,
         taskId: dto.taskId,
         date: localDate,
         startTime: dto.startTime ?? null,
@@ -82,12 +97,31 @@ export class TimeEntriesService {
   }
 
   async batchCreate(userId: number, entries: CreateTimeEntryDto[]) {
+    // Pre-resolve task -> projectId for any entry that has a taskId but
+    // no explicit projectId, so the batch creates have project_id
+    // populated. Same belt-and-suspenders rationale as create().
+    const taskIdsNeedingLookup = Array.from(new Set(
+      entries
+        .filter((e) => e.taskId && !e.projectId)
+        .map((e) => e.taskId as number),
+    ));
+    const taskProjectMap = new Map<number, number>();
+    if (taskIdsNeedingLookup.length > 0) {
+      const tasks = await this.prisma.task.findMany({
+        where: { id: { in: taskIdsNeedingLookup } },
+        select: { id: true, projectId: true },
+      });
+      for (const t of tasks) taskProjectMap.set(t.id, t.projectId);
+    }
+
     const data = entries.map((dto) => {
       const dp = dto.date.split('-').map(Number);
+      const resolvedProjectId =
+        dto.projectId ?? (dto.taskId ? taskProjectMap.get(dto.taskId) ?? null : null);
       return {
         userId,
         timeClockId: dto.timeClockId ?? null,
-        projectId: dto.projectId ?? null,
+        projectId: resolvedProjectId,
         taskId: dto.taskId ?? null,
         date: new Date(dp[0], dp[1] - 1, dp[2]),
         minutes: dto.minutes,
