@@ -11,6 +11,13 @@ export interface TaskLike {
   zoneId: number | null;
   description?: string | null;
   serviceType?: { name: string } | null;
+  /**
+   * The Phase relation (DB) — surfaced in the UI as the column label
+   * when no ServiceType is set. Lets root tasks (typically created
+   * with a phase but no serviceType) land in the right matrix column
+   * instead of getting dumped into "No Deliverable".
+   */
+  phase?: { name: string } | null;
 }
 
 export interface ZoneNodeLike {
@@ -20,14 +27,19 @@ export interface ZoneNodeLike {
 
 /**
  * Resolves the phase/milestone column a task belongs to. Priority:
- *  1. task.serviceType.name (DB-linked)
+ *  1. task.serviceType.name (DB-linked, primary path for catalogued tasks)
  *  2. [SERVICE:...] marker inside task.description (legacy/template flow)
- *  3. null → placed in the "No Phase" column
+ *  3. task.phase.name (DB-linked Phase — root tasks typically only have
+ *     this populated; without this fallback they'd silently end up in
+ *     the "No Deliverable" column even when a phase is set)
+ *  4. null → placed in the "No Deliverable" column
  */
 export function getTaskPhaseName(task: TaskLike): string | null {
   if (task.serviceType?.name) return task.serviceType.name;
   const m = task.description?.match(SERVICE_RE);
-  return m ? m[1] : null;
+  if (m) return m[1];
+  if (task.phase?.name) return task.phase.name;
+  return null;
 }
 
 /**

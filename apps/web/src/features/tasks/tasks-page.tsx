@@ -406,7 +406,12 @@ export function TasksPage() {
                         <h3 className="mt-0.5 truncate text-sm font-medium">{task.name}</h3>
                         <p className="mt-0.5 truncate text-xs text-muted-foreground">
                           {task.project?.name ?? ''}
-                          {task.zone ? ` / ${task.zone.name}` : ''}
+                          {/* zone breadcrumb if present, else explicit
+                              "Project Root" marker so root tasks (with
+                              zoneId=null) aren't silently anonymous. */}
+                          {task.zone
+                            ? ` / ${task.zone.name}`
+                            : ' / Project Root'}
                         </p>
                       </div>
                       <PriorityBadge priority={task.priority} />

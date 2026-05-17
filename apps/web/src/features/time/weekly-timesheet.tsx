@@ -188,12 +188,27 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
               <select value={taskId} onChange={(e) => { setTaskId(e.target.value); const t = filteredTasks.find((tk: any) => String(tk.id) === e.target.value); if (t) setTaskStatus(t.status || 'in_progress'); }}
                 className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
                 <option value="">— Select task —</option>
-                {filteredTasks.map((t: any) => (
-                  <option key={t.id} value={t.id}>
-                    {t.code ? `${t.code} - ` : ''}{t.name}
-                    {t.zone?.name ? ` (${t.zone.name})` : ''}
-                  </option>
-                ))}
+                {filteredTasks.map((t: any) => {
+                  // Suffix the option label with a context hint so the user
+                  // can tell what bucket the task lives in. Priority:
+                  //   1. zone name (zoned task)
+                  //   2. phase / serviceType name (root task with a phase)
+                  //   3. "Project Root" (zoneId=null, no phase either)
+                  // Without this fallback, root tasks rendered as just
+                  // "code - name" and were hard to distinguish.
+                  const suffix = t.zone?.name
+                    ? ` (${t.zone.name})`
+                    : t.phase?.name
+                      ? ` · ${t.phase.name}`
+                      : t.serviceType?.name
+                        ? ` · ${t.serviceType.name}`
+                        : ' · Project Root';
+                  return (
+                    <option key={t.id} value={t.id}>
+                      {t.code ? `${t.code} - ` : ''}{t.name}{suffix}
+                    </option>
+                  );
+                })}
               </select>
             )}
           </div>
