@@ -147,6 +147,64 @@ export class TimeClockService {
     };
   }
 
+  /**
+   * Team-wide "today" dashboard powering /admin/clock-dashboard.
+   * Returns the four buckets the UI renders: who's currently clocked in,
+   * who has a schedule today but hasn't clocked in yet, who clocked in
+   * late, and who is on leave/sick/absent for the day.
+   *
+   * Kept intentionally simple: a single pass per bucket, no joins more
+   * than one level deep, no overtime/break math (the page only shows
+   * names + state). Late = TimeClock.isLate flag on a clocked_in record.
+   * On leave = TimeClock with status in (absent|leave|sick).
+   */
+  async getTeamDashboardToday() {
+    const today = startOfDay(new Date());
+    const todayEnd = endOfDay(new Date());
+    const dayOfWeek = new Date().getDay();
+
+    const userSelect = {
+      id: true,
+      firstName: true,
+      lastName: true,
+      avatarUrl: true,
+    } as const;
+
+    // Records for today, joined with user — one query, partitioned in JS.
+    const records = await this.prisma.timeClock.findMany({
+      where: { date: { gte: today, lte: todayEnd } },
+      include: { user: { select: userSelect } },
+      orderBy: { clockIn: 'asc' },
+    });
+
+    const clockedIn = records.filter(
+      (r) => r.status === 'clocked_in' && r.clockOut === null,
+    );
+    const late = records.filter((r) => r.isLate && r.lateMinutes > 0);
+    const onLeave = records.filter(
+      (r) => r.status === 'absent' || r.status === 'leave' || r.status === 'sick',
+    );
+
+    // "Not yet" = users with an active schedule for this day-of-week
+    // who don't have any TimeClock row today.
+    const schedulesToday = await this.prisma.workSchedule.findMany({
+      where: {
+        dayOfWeek,
+        isActive: true,
+        effectiveFrom: { lte: new Date() },
+        OR: [{ effectiveUntil: null }, { effectiveUntil: { gte: new Date() } }],
+        user: { isActive: true },
+      },
+      include: { user: { select: userSelect } },
+    });
+    const userIdsWithRecord = new Set(records.map((r) => r.userId));
+    const notYet = schedulesToday
+      .filter((s) => !userIdsWithRecord.has(s.userId))
+      .map((s) => ({ user: s.user, expectedShiftStart: s.shiftStart }));
+
+    return { clockedIn, notYet, late, onLeave };
+  }
+
   async getDashboardToday(userId: number) {
     const today = startOfDay(new Date());
     const todayEnd = endOfDay(new Date());
