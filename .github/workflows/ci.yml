@@ -29,7 +29,13 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Generate Prisma client
-        run: pnpm --filter api prisma generate
+        # `pnpm --filter api prisma generate` (without `exec`) is parsed as
+        # "run the `prisma` SCRIPT in apps/api/package.json with the argument
+        # `generate`". apps/api has no such script, so pnpm prints
+        # "None of the selected packages has a "prisma" script" and exits 0
+        # — the step silently no-ops and the generated client is missing
+        # when tests run. `exec` invokes the prisma CLI binary directly.
+        run: pnpm --filter api exec prisma generate
 
       # TEMP: API tsc has accumulated ~50 pre-existing errors unrelated to
       # current PRs (mismatched DTO fields, stale Prisma type references,
