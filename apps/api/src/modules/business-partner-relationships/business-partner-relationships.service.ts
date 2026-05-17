@@ -206,10 +206,11 @@ export class BusinessPartnerRelationshipsService {
     }
 
     // ─── 5b. SIDE-B (target) role validation ─────────────────────────
-    // Only meaningful when the target is itself a BP. 'project' / 'department'
-    // / 'team' targets aren't BPs and so never have a Main Role.
-    const targetIsBp = dto.targetType === 'organization' || dto.targetType === 'person';
-    if (targetIsBp) {
+    // Only meaningful when the target is itself a BP. The current
+    // RelationshipTarget enum makes 'organization' the only BP-typed
+    // option — 'project' / 'department' / 'team' aren't BPs and so
+    // never have a Main Role. (M2 may add 'person'; revisit then.)
+    if (dto.targetType === 'organization') {
       const sideBTargets = (relType as any).sideBTargets as SideTarget[] | null;
       const legacyRequired = (relType as any).requiredTargetRoleCode as string | null;
 
