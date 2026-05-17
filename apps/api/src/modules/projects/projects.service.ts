@@ -681,4 +681,178 @@ export class ProjectsService {
       },
     };
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // M5 — Project labor cost
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Sums logged time on a project and resolves an hourly cost per user
+   * from their assigned SeniorityLevel.defaultHourlyCost.
+   *
+   * Resolution rule (intentionally simple for v1):
+   *   cost = sum(timeEntry.minutes / 60 * user.seniorityLevel.defaultHourlyCost)
+   *
+   * Users whose cost can't be resolved (no seniority, or seniority has no
+   * defaultHourlyCost) are split out into `unrateable` so admins see the
+   * gap and can fix the assignments — not silently bucketed at 0 which
+   * would understate the project's true cost.
+   *
+   * Costs are grouped per-currency. We deliberately do NOT FX-convert
+   * (no rate table, no policy decision), so a mixed-currency project
+   * surfaces both totals separately.
+   */
+  async getLaborCost(projectId: number) {
+    await this.prisma.project.findFirstOrThrow({
+      where: { id: projectId, deletedAt: null },
+      select: { id: true },
+    });
+
+    const entries = await this.prisma.timeEntry.findMany({
+      where: { projectId, deletedAt: null },
+      select: {
+        minutes: true,
+        userId: true,
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            avatarUrl: true,
+            position: true,
+            seniorityLevel: {
+              select: {
+                id: true,
+                name: true,
+                defaultHourlyCost: true,
+                currency: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Bucket minutes by user. One pass through the entries; no DB
+    // calls in the loop. Sets the per-user seniority snapshot the first
+    // time we see them (it's the same user across all entries).
+    interface UserBucket {
+      user: {
+        id: number;
+        firstName: string;
+        lastName: string;
+        avatarUrl: string | null;
+        position: string | null;
+      };
+      seniorityLevel: { id: number; name: string; defaultHourlyCost: any; currency: string | null } | null;
+      minutes: number;
+    }
+    const byUserId = new Map<number, UserBucket>();
+    for (const e of entries) {
+      let b = byUserId.get(e.userId);
+      if (!b) {
+        b = {
+          user: {
+            id: e.user.id,
+            firstName: e.user.firstName,
+            lastName: e.user.lastName,
+            avatarUrl: e.user.avatarUrl,
+            position: e.user.position,
+          },
+          seniorityLevel: e.user.seniorityLevel ?? null,
+          minutes: 0,
+        };
+        byUserId.set(e.userId, b);
+      }
+      b.minutes += e.minutes;
+    }
+
+    const byUser: Array<{
+      user: UserBucket['user'];
+      seniorityLevel: { id: number; name: string } | null;
+      hours: number;
+      hourlyCost: number;
+      currency: string;
+      cost: number;
+    }> = [];
+    const unrateable: Array<{
+      user: UserBucket['user'];
+      hours: number;
+      reason: string;
+    }> = [];
+    // Per-currency totals. Map keys are 3-letter currency codes
+    // (or 'UNK' when a seniority has no currency set).
+    const totalsByCurrency = new Map<string, { hours: number; cost: number; userCount: number }>();
+    let totalUnrateableHours = 0;
+
+    for (const b of byUserId.values()) {
+      const hours = b.minutes / 60;
+      if (!b.seniorityLevel) {
+        unrateable.push({ user: b.user, hours, reason: 'No seniority level assigned' });
+        totalUnrateableHours += hours;
+        continue;
+      }
+      if (b.seniorityLevel.defaultHourlyCost == null) {
+        unrateable.push({
+          user: b.user,
+          hours,
+          reason: `Seniority "${b.seniorityLevel.name}" has no hourly cost configured`,
+        });
+        totalUnrateableHours += hours;
+        continue;
+      }
+      const hourlyCost = Number(b.seniorityLevel.defaultHourlyCost);
+      // Currency on the SeniorityLevel is optional (column is nullable);
+      // when missing we still surface the cost number but tag it 'UNK'
+      // so the UI can flag the data gap without dropping the row.
+      const currency = b.seniorityLevel.currency || 'UNK';
+      const cost = hours * hourlyCost;
+      byUser.push({
+        user: b.user,
+        seniorityLevel: { id: b.seniorityLevel.id, name: b.seniorityLevel.name },
+        hours,
+        hourlyCost,
+        currency,
+        cost,
+      });
+      const cur = totalsByCurrency.get(currency) ?? { hours: 0, cost: 0, userCount: 0 };
+      cur.hours += hours;
+      cur.cost += cost;
+      cur.userCount += 1;
+      totalsByCurrency.set(currency, cur);
+    }
+
+    // Sort byUser descending by cost so the most expensive contributors
+    // float to the top of the breakdown table — that's typically what
+    // the project manager wants to see first.
+    byUser.sort((a, b) => b.cost - a.cost);
+
+    return {
+      projectId,
+      totals: {
+        // Per-currency aggregates rather than a single number, because
+        // FX conversion is a separate decision we're not making here.
+        byCurrency: Array.from(totalsByCurrency.entries()).map(([currency, t]) => ({
+          currency,
+          totalHours: +t.hours.toFixed(2),
+          totalCost: +t.cost.toFixed(2),
+          userCount: t.userCount,
+        })),
+        // Grand total of logged hours — sums every contributor, rated or
+        // not, so the UI can show "X hours logged total, Y$ resolved".
+        totalLoggedHours: +(byUser.reduce((s, u) => s + u.hours, 0) + totalUnrateableHours).toFixed(2),
+        unrateableHours: +totalUnrateableHours.toFixed(2),
+        unrateableUserCount: unrateable.length,
+      },
+      byUser: byUser.map((u) => ({
+        ...u,
+        hours: +u.hours.toFixed(2),
+        cost: +u.cost.toFixed(2),
+      })),
+      unrateable: unrateable.map((u) => ({
+        ...u,
+        hours: +u.hours.toFixed(2),
+      })),
+    };
+  }
 }

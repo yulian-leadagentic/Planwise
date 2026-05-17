@@ -13,6 +13,9 @@ import { PageSkeleton } from '@/components/shared/loading-skeleton';
 // Lazy-load DnD-heavy components
 const PlanningTab = lazy(() => import('./planning-modal').then(m => ({ default: m.PlanningTab })));
 const KanbanBoard = lazy(() => import('@/features/tasks/kanban-board').then(m => ({ default: m.KanbanBoard })));
+// M5 — Labor cost tab. Lazy too so the project page doesn't pay for it
+// on every load; most users open Planning first and never touch Cost.
+const LaborCostTab = lazy(() => import('./labor-cost-tab').then(m => ({ default: m.LaborCostTab })));
 import { useProject, useProjectMembers, useAddProjectMember, useRemoveProjectMember } from '@/hooks/use-projects';
 import { useAuthStore } from '@/stores/auth.store';
 import { PresenceIndicator } from '@/components/shared/presence-indicator';
@@ -21,7 +24,7 @@ import { notify } from '@/lib/notify';
 import client from '@/api/client';
 import { formatDate } from '@/lib/date-utils';
 
-type Tab = 'planning' | 'kanban' | 'team' | 'files' | 'discussion' | 'activity';
+type Tab = 'planning' | 'kanban' | 'team' | 'cost' | 'files' | 'discussion' | 'activity';
 
 interface User {
   id: number;
@@ -78,6 +81,10 @@ export function ProjectDetailPage() {
     { key: 'planning', label: 'Planning' },
     { key: 'kanban', label: 'Kanban' },
     { key: 'team', label: 'Team' },
+    // M5 — labor cost rollup (logged hours x seniority hourly cost).
+    // Same permission level as the existing budget view; ProjectsService
+    // gates with `projects:read`.
+    { key: 'cost', label: 'Cost' },
     { key: 'files', label: 'Files' },
     { key: 'discussion', label: 'Discussion' },
     { key: 'activity', label: 'Activity' },
@@ -221,6 +228,7 @@ export function ProjectDetailPage() {
       <div className="px-5 py-6">
         {tab === 'planning' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading planning...</div>}><PlanningTab projectId={projectId} /></Suspense>}
         {tab === 'kanban' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading board...</div>}><KanbanBoard projectId={projectId} /></Suspense>}
+        {tab === 'cost' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading labor cost...</div>}><LaborCostTab projectId={projectId} /></Suspense>}
         {tab === 'files' && <FilesTab projectId={projectId} />}
         {tab === 'activity' && <ActivityFeed projectId={projectId} />}
         {tab === 'discussion' && (
