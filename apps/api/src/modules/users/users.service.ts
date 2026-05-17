@@ -230,6 +230,8 @@ export class UsersService {
           dailyStandardHours: true,
           employmentDate: true,
           employmentEndDate: true,
+          seniorityLevelId: true,
+          seniorityLevel: { select: { id: true, code: true, name: true, defaultHourlyCost: true, currency: true } },
           isActive: true,
           lastLoginAt: true,
           createdAt: true,

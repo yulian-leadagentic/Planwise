@@ -11,6 +11,7 @@ import {
   Req,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { Prisma } from '@prisma/client';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -331,13 +332,26 @@ export class ConfigController {
 
   @Post('seniority-levels')
   @RequirePermissions({ module: 'admin', action: 'write' })
-  async createSeniorityLevel(@Body() body: { code: string; name: string; sortOrder?: number }) {
+  async createSeniorityLevel(
+    @Body() body: {
+      code: string;
+      name: string;
+      sortOrder?: number;
+      defaultHourlyCost?: number | string | null;
+      currency?: string | null;
+    },
+  ) {
     const count = await this.prisma.seniorityLevel.count();
     return this.prisma.seniorityLevel.create({
       data: {
         code: body.code.trim(),
         name: body.name.trim(),
         sortOrder: body.sortOrder ?? (count + 1) * 10,
+        defaultHourlyCost:
+          body.defaultHourlyCost == null || body.defaultHourlyCost === ''
+            ? null
+            : new Prisma.Decimal(body.defaultHourlyCost as any),
+        currency: body.currency?.trim().toUpperCase() || null,
       },
     });
   }
@@ -346,7 +360,14 @@ export class ConfigController {
   @RequirePermissions({ module: 'admin', action: 'write' })
   async updateSeniorityLevel(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { code?: string; name?: string; sortOrder?: number; isActive?: boolean },
+    @Body() body: {
+      code?: string;
+      name?: string;
+      sortOrder?: number;
+      isActive?: boolean;
+      defaultHourlyCost?: number | string | null;
+      currency?: string | null;
+    },
   ) {
     return this.prisma.seniorityLevel.update({
       where: { id },
@@ -355,6 +376,14 @@ export class ConfigController {
         name: body.name?.trim(),
         sortOrder: body.sortOrder,
         isActive: body.isActive,
+        defaultHourlyCost:
+          body.defaultHourlyCost === undefined
+            ? undefined
+            : body.defaultHourlyCost === null || body.defaultHourlyCost === ''
+              ? null
+              : new Prisma.Decimal(body.defaultHourlyCost as any),
+        currency:
+          body.currency === undefined ? undefined : (body.currency?.trim().toUpperCase() || null),
       },
     });
   }

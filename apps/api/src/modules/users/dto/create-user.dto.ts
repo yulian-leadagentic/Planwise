@@ -89,6 +89,12 @@ export class CreateUserDto {
   @Type(() => Number)
   dailyStandardHours?: number;
 
+  @ApiPropertyOptional({ description: 'SeniorityLevel.id; drives default hourly cost for project labor calc' })
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  seniorityLevelId?: number;
+
   @ApiPropertyOptional({ description: 'ISO date — yyyy-mm-dd' })
   @IsOptional()
   @IsDateString()

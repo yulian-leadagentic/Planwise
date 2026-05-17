@@ -103,7 +103,7 @@ export function PartnerTypesPage() {
 
       <div className="flex gap-1 border-b border-border">
         {([
-          { key: 'role-types', label: 'Role Types' },
+          { key: 'role-types', label: 'BP Types' },
           { key: 'relationship-types', label: 'Relationship Types' },
           { key: 'categories', label: 'Categories' },
         ] as const).map((t) => (
