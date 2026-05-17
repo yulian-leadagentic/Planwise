@@ -34,6 +34,7 @@ interface Row {
   project: { id: number; name: string; number: string | null; displayName: string } | null;
   zone: { id: number; name: string; breadcrumb: string[] } | null;
   deliverable: { id: number; name: string } | null;
+  service: { id: number; name: string } | null;
   assignmentName: string | null;
   description: string | null;
   cost: number | null;
@@ -153,7 +154,7 @@ function csvCell(v: string | number | null | undefined): string {
 function downloadCsv(filename: string, rows: Row[]) {
   const header = [
     'Date', 'From', 'To', 'Hours', 'Employee', 'Project', 'Zone',
-    'Subprojects', 'Assignment Name', 'Description', 'Cost', 'Currency',
+    'Service', 'Deliverable', 'Assignment Name', 'Description', 'Cost', 'Currency',
   ];
   const lines = [header.map(csvCell).join(',')];
   for (const r of rows) {
@@ -165,6 +166,7 @@ function downloadCsv(filename: string, rows: Row[]) {
       r.user.displayName,
       r.project?.displayName ?? '',
       r.zone?.breadcrumb.join(' > ') ?? r.zone?.name ?? '',
+      r.service?.name ?? '',
       r.deliverable?.name ?? '',
       r.assignmentName ?? '',
       r.description ?? '',
@@ -250,7 +252,7 @@ export function TimesheetReportPage() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Employee Timesheets"
+        title="Timesheet Report"
         description="Row-level time entries with cost — filterable by employee, project, and date range"
         actions={
           <button
@@ -338,7 +340,7 @@ export function TimesheetReportPage() {
 
       {/* Table */}
       {isLoading ? (
-        <TableSkeleton rows={10} cols={11} />
+        <TableSkeleton rows={10} cols={12} />
       ) : rows.length === 0 ? (
         <p className="py-12 text-center text-sm text-muted-foreground">
           No time entries match these filters.
@@ -355,7 +357,8 @@ export function TimesheetReportPage() {
                 <th className="px-3 py-2 text-left font-semibold">Employee</th>
                 <th className="px-3 py-2 text-left font-semibold">Project</th>
                 <th className="px-3 py-2 text-left font-semibold">Zones</th>
-                <th className="px-3 py-2 text-left font-semibold">Subprojects</th>
+                <th className="px-3 py-2 text-left font-semibold">Service</th>
+                <th className="px-3 py-2 text-left font-semibold">Deliverable</th>
                 <th className="px-3 py-2 text-left font-semibold">Assignment Name</th>
                 <th className="px-3 py-2 text-left font-semibold">Description</th>
                 <th className="px-3 py-2 text-right font-semibold">Cost</th>
@@ -398,7 +401,7 @@ function GroupBlock({ group, showHeader }: { group: Group; showHeader: boolean }
       {showHeader && (
         <tr className="bg-slate-100/80">
           <td
-            colSpan={11}
+            colSpan={12}
             className="px-3 py-1.5 text-[12px] font-bold text-slate-700 border-t border-slate-200"
           >
             {group.label}
@@ -436,6 +439,9 @@ function RowLine({ row }: { row: Row }) {
       </td>
       <td className="px-3 py-2 text-[12px] text-slate-600 max-w-[200px]" title={row.zone?.breadcrumb.join(' › ')}>
         {row.zone ? (row.zone.breadcrumb.length > 0 ? row.zone.breadcrumb.join(' › ') : row.zone.name) : <span className="italic text-slate-400">Project Root</span>}
+      </td>
+      <td className="px-3 py-2 text-[12px] text-slate-600 max-w-[180px] truncate" title={row.service?.name ?? ''}>
+        {row.service?.name ?? '—'}
       </td>
       <td className="px-3 py-2 text-[12px] text-slate-600 max-w-[200px] truncate" title={row.deliverable?.name ?? ''}>
         {row.deliverable?.name ?? '—'}

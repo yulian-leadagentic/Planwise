@@ -65,6 +65,11 @@ export class ReportsService {
             project: { select: { id: true, name: true, number: true } },
             zone: { select: { id: true, name: true, path: true } },
             deliverableTemplate: { select: { id: true, name: true } },
+            // M5-fix — "Service" column on the legacy report maps to
+            // the Phase relation (DB) which is exposed in the UI as
+            // "Service" everywhere else. Sits one level above
+            // Deliverable in the work-discipline hierarchy.
+            phase: { select: { id: true, name: true } },
           },
         },
       },
@@ -155,10 +160,15 @@ export class ReportsService {
               breadcrumb: zoneBreadcrumb,
             }
           : null,
-        // "Subprojects" column in the legacy report -> deliverable
-        // template name in Planwise terms (per user's mapping choice).
+        // Deliverable + Service: two grouping axes for the work, both
+        // rendered as their own columns. Deliverable = the specific
+        // deliverable template (the "what"). Service = the parent
+        // phase (the broader category).
         deliverable: e.task?.deliverableTemplate
           ? { id: e.task.deliverableTemplate.id, name: e.task.deliverableTemplate.name }
+          : null,
+        service: e.task?.phase
+          ? { id: e.task.phase.id, name: e.task.phase.name }
           : null,
         // "Assignment Name" column -> task name.
         assignmentName: e.task?.name ?? null,
