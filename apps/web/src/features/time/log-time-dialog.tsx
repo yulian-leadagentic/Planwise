@@ -232,11 +232,16 @@ export function LogTimeDialog({
                           <ListChecks className="h-3.5 w-3.5 text-muted-foreground" />
                           <div className="min-w-0 text-left">
                             <span className="truncate">{t.name}</span>
-                            {t.zone && (
-                              <span className="ml-1.5 text-xs text-muted-foreground">
-                                {t.zone.name}
-                              </span>
-                            )}
+                            {/* Context hint: zone, else phase/serviceType,
+                                else explicit "Project Root" marker so
+                                zone-less tasks aren't silently anonymous
+                                in the picker. */}
+                            <span className="ml-1.5 text-xs text-muted-foreground">
+                              {t.zone?.name
+                                ?? t.phase?.name
+                                ?? t.serviceType?.name
+                                ?? 'Project Root'}
+                            </span>
                           </div>
                         </button>
                       ))

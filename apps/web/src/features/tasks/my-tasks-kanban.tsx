@@ -179,14 +179,21 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
 
         {/* Zone breadcrumb — walks the zone tree. Falls back to just the
             leaf zone name when the breadcrumb hasn't been computed yet
-            (older API responses or transitional state). */}
+            (older API responses or transitional state). For root tasks
+            (no zone) we surface "Project Root" + phase so the card isn't
+            silently context-less. */}
         {Array.isArray((task as any).zoneBreadcrumb) && (task as any).zoneBreadcrumb.length > 0 ? (
           <p className="text-[10px] text-slate-500 truncate" title={(task as any).zoneBreadcrumb.join(' > ')}>
             {(task as any).zoneBreadcrumb.join(' › ')}
           </p>
         ) : zoneName ? (
           <p className="text-[10px] text-slate-500 truncate">{zoneName}</p>
-        ) : null}
+        ) : (
+          <p className="text-[10px] text-slate-400 italic truncate">
+            Project Root
+            {task.phase?.name ? ` · ${task.phase.name}` : task.serviceType?.name ? ` · ${task.serviceType.name}` : ''}
+          </p>
+        )}
 
         {/* Kanban stage pill — progress bar removed per spec ("the progress
             bar on the card is unnecessary"). */}
@@ -368,7 +375,17 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
             <span className={cn('text-[10px] font-semibold rounded px-1.5 py-0.5 shrink-0', statusColor)}>{statusLabel}</span>
           </div>
           <p className="text-[13px] font-medium text-slate-800 truncate mt-0.5">{task.name}</p>
-          {zoneName && <p className="text-[10px] text-slate-500 truncate">{zoneName}</p>}
+          {/* Context line: zone if present, else "Project Root" + phase so
+              the row isn't silently bucket-less. Same convention as the
+              kanban card and the timesheet picker. */}
+          {zoneName ? (
+            <p className="text-[10px] text-slate-500 truncate">{zoneName}</p>
+          ) : (
+            <p className="text-[10px] text-slate-400 italic truncate">
+              Project Root
+              {task.phase?.name ? ` · ${task.phase.name}` : task.serviceType?.name ? ` · ${task.serviceType.name}` : ''}
+            </p>
+          )}
         </button>
 
         {/* Due date column */}
@@ -575,7 +592,11 @@ export function MyTasksKanbanPage() {
   const phaseOptions = useMemo(() => {
     const names = new Set<string>();
     for (const t of allTasks) {
-      const name = t.serviceType?.name || t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1];
+      // Phase-name resolution matches execution-board getTaskPhaseName:
+      // serviceType -> [SERVICE:...] marker -> task.phase.name. Without the
+      // phase.name fallback, root tasks (which usually have only a phase
+      // set, no serviceType) wouldn't expose their phase in this filter.
+      const name = t.serviceType?.name || t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || t.phase?.name;
       if (name) names.add(name);
     }
     return Array.from(names).sort();
@@ -587,7 +608,7 @@ export function MyTasksKanbanPage() {
       if (filterProjectId && t.project?.id !== filterProjectId) return false;
       if (filterServiceId && t.phaseId !== filterServiceId) return false;
       if (filterPhaseName) {
-        const n = t.serviceType?.name || t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1];
+        const n = t.serviceType?.name || t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || t.phase?.name;
         if (n !== filterPhaseName) return false;
       }
       return true;
