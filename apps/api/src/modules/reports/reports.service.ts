@@ -530,6 +530,19 @@ export class ReportsService {
   }
 
   async exportReport(type: string, format: 'excel' | 'pdf', query: ReportQueryDto): Promise<Buffer> {
+    // The detailed timesheet is the customer-facing export — it gets
+    // a purpose-built Excel layout with proper columns, currency
+    // formatting, and a totals footer. Other types fall through to
+    // the generic "dump every scalar field" path below.
+    if (type === 'timesheet-detailed') {
+      const data = await this.timesheetDetailed(query);
+      if (format === 'excel') return this.generateTimesheetDetailedExcel(data);
+      // PDF is intentionally not implemented server-side for this
+      // type — the frontend uses window.print() so the browser handles
+      // Hebrew/RTL natively. Reaching this branch is a misuse.
+      throw new Error('PDF export for timesheet-detailed is handled client-side via window.print()');
+    }
+
     // Get report data based on type
     let data: any;
     switch (type) {
@@ -557,6 +570,109 @@ export class ReportsService {
     } else {
       return this.generatePdf(type, data);
     }
+  }
+
+  /**
+   * Purpose-built XLSX for the Employee Timesheets report. Mirrors
+   * the table the user sees on /reports/timesheet: 13 columns +
+   * frozen header row + a totals footer with per-currency aggregates.
+   * UTF-8 is preserved end-to-end so Hebrew names / project labels
+   * round-trip cleanly into Excel.
+   */
+  private async generateTimesheetDetailedExcel(
+    data: Awaited<ReturnType<typeof this.timesheetDetailed>>,
+  ): Promise<Buffer> {
+    const ExcelJS = await import('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Planwise';
+    workbook.created = new Date();
+
+    const sheet = workbook.addWorksheet('Timesheet', {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
+
+    // Column widths roughly match the on-screen table.
+    sheet.columns = [
+      { header: 'Date', key: 'date', width: 12 },
+      { header: 'From', key: 'from', width: 8 },
+      { header: 'To', key: 'to', width: 8 },
+      { header: 'Hours', key: 'hours', width: 8 },
+      { header: 'Employee', key: 'employee', width: 22 },
+      { header: 'Project', key: 'project', width: 32 },
+      { header: 'Zone', key: 'zone', width: 32 },
+      { header: 'Service', key: 'service', width: 22 },
+      { header: 'Deliverable', key: 'deliverable', width: 26 },
+      { header: 'Assignment Name', key: 'assignment', width: 30 },
+      { header: 'Description', key: 'description', width: 30 },
+      { header: 'Cost', key: 'cost', width: 12 },
+      { header: 'Currency', key: 'currency', width: 10 },
+    ];
+
+    // Bold blue header row matching the in-app summary bar color.
+    const headerRow = sheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerRow.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF3B82F6' }, // tailwind blue-500
+    };
+    headerRow.alignment = { vertical: 'middle' };
+
+    for (const r of data.rows) {
+      sheet.addRow({
+        date: r.date,
+        from: r.startTime ?? '',
+        to: r.endTime ?? '',
+        hours: r.hours,
+        employee: r.user.displayName,
+        project: r.project?.displayName ?? '',
+        zone: r.zone ? (r.zone.breadcrumb.length > 0 ? r.zone.breadcrumb.join(' > ') : r.zone.name) : 'Project Root',
+        service: r.service?.name ?? '',
+        deliverable: r.deliverable?.name ?? '',
+        assignment: r.assignmentName ?? '',
+        description: r.description ?? '',
+        cost: r.cost ?? '',
+        currency: r.currency ?? '',
+      });
+    }
+
+    // Number format on the cost + hours columns so the workbook
+    // sums correctly when the user adds their own totals.
+    sheet.getColumn('hours').numFmt = '0.00';
+    sheet.getColumn('cost').numFmt = '#,##0.00';
+
+    // Totals footer — one row per currency for the cost; one
+    // grand-total row for hours. Bold + light grey background so
+    // it's visually separated from the data.
+    if (data.rows.length > 0) {
+      sheet.addRow({});
+      const totalRow = sheet.addRow({
+        employee: 'Total',
+        hours: data.totals.totalHours,
+      });
+      totalRow.font = { bold: true };
+      totalRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE2E8F0' }, // slate-200
+      };
+      for (const c of data.totals.byCurrency) {
+        const r = sheet.addRow({
+          employee: `Total (${c.currency})`,
+          hours: c.totalHours,
+          cost: c.totalCost,
+          currency: c.currency,
+        });
+        r.font = { bold: true };
+        r.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFE2E8F0' },
+        };
+      }
+    }
+
+    return Buffer.from(await workbook.xlsx.writeBuffer());
   }
 
   private async generateExcel(type: string, data: any[]): Promise<Buffer> {
