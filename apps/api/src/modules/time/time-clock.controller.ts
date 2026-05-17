@@ -54,6 +54,15 @@ export class TimeClockController {
     return this.timeClockService.getDashboardToday(user.id);
   }
 
+  // Team-wide today view for /admin/clock-dashboard. Distinct from /today
+  // (which returns the caller's own record). Requires team read on time.
+  @Get('team-today')
+  @RequirePermissions({ module: 'time', action: 'read' })
+  @ApiOperation({ summary: 'Team attendance overview for today (admin)' })
+  getTeamDashboardToday() {
+    return this.timeClockService.getTeamDashboardToday();
+  }
+
   @Get('history')
   @RequirePermissions({ module: 'time', action: 'read' })
   @ApiOperation({ summary: 'Get clock history for user' })

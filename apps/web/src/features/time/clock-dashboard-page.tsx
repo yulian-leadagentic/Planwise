@@ -12,6 +12,14 @@ export function ClockDashboardPage() {
   if (isLoading) return <PageSkeleton />;
   if (!dashboard) return null;
 
+  // Defensive fallbacks: tolerate a backend response that's missing
+  // a bucket (older API, partial deploy, mock data) instead of crashing
+  // with "Cannot read properties of undefined (reading 'length')".
+  const clockedIn = clockedIn ?? [];
+  const notYet = notYet ?? [];
+  const late = late ?? [];
+  const onLeave = onLeave ?? [];
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -27,14 +35,14 @@ export function ClockDashboardPage() {
               <Clock className="h-4 w-4 text-green-600" />
             </div>
             <h3 className="font-medium">
-              Clocked In ({dashboard.clockedIn.length})
+              Clocked In ({clockedIn.length})
             </h3>
           </div>
           <div className="space-y-2">
-            {dashboard.clockedIn.length === 0 ? (
+            {clockedIn.length === 0 ? (
               <p className="py-4 text-center text-sm text-muted-foreground">No one clocked in yet</p>
             ) : (
-              dashboard.clockedIn.map((record) => (
+              clockedIn.map((record) => (
                 <div key={record.id} className="flex items-center gap-3 rounded-md bg-green-50 p-2 dark:bg-green-900/10">
                   <UserAvatar
                     firstName={record.user.firstName}
@@ -65,14 +73,14 @@ export function ClockDashboardPage() {
               <LogOut className="h-4 w-4 text-gray-600" />
             </div>
             <h3 className="font-medium">
-              Not Yet ({dashboard.notYet.length})
+              Not Yet ({notYet.length})
             </h3>
           </div>
           <div className="space-y-2">
-            {dashboard.notYet.length === 0 ? (
+            {notYet.length === 0 ? (
               <p className="py-4 text-center text-sm text-muted-foreground">Everyone is clocked in</p>
             ) : (
-              dashboard.notYet.map((item) => (
+              notYet.map((item) => (
                 <div key={item.user.id} className="flex items-center gap-3 rounded-md bg-muted/50 p-2">
                   <UserAvatar firstName={item.user.firstName} lastName={item.user.lastName} size="sm" />
                   <div className="flex-1">
@@ -96,14 +104,14 @@ export function ClockDashboardPage() {
               <AlertTriangle className="h-4 w-4 text-orange-600" />
             </div>
             <h3 className="font-medium">
-              Late ({dashboard.late.length})
+              Late ({late.length})
             </h3>
           </div>
           <div className="space-y-2">
-            {dashboard.late.length === 0 ? (
+            {late.length === 0 ? (
               <p className="py-4 text-center text-sm text-muted-foreground">No one is late today</p>
             ) : (
-              dashboard.late.map((record) => (
+              late.map((record) => (
                 <div key={record.id} className="flex items-center gap-3 rounded-md bg-orange-50 p-2 dark:bg-orange-900/10">
                   <UserAvatar firstName={record.user.firstName} lastName={record.user.lastName} size="sm" />
                   <div className="flex-1">
@@ -127,14 +135,14 @@ export function ClockDashboardPage() {
               <Palmtree className="h-4 w-4 text-blue-600" />
             </div>
             <h3 className="font-medium">
-              On Leave ({dashboard.onLeave.length})
+              On Leave ({onLeave.length})
             </h3>
           </div>
           <div className="space-y-2">
-            {dashboard.onLeave.length === 0 ? (
+            {onLeave.length === 0 ? (
               <p className="py-4 text-center text-sm text-muted-foreground">No one on leave</p>
             ) : (
-              dashboard.onLeave.map((record) => (
+              onLeave.map((record) => (
                 <div key={record.id} className="flex items-center gap-3 rounded-md bg-blue-50 p-2 dark:bg-blue-900/10">
                   <UserAvatar firstName={record.user.firstName} lastName={record.user.lastName} size="sm" />
                   <div className="flex-1">

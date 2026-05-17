@@ -124,7 +124,9 @@ export const timeApi = {
   deleteCalendarDay: (id: number) =>
     client.delete(`/calendar/${id}`).then((r) => r.data),
 
-  // Team clock dashboard — backend: GET /time-clock/today
+  // Team clock dashboard — backend: GET /time-clock/team-today
+  // (the /today endpoint is the CALLER's own record; team-today is the
+  // four-bucket team view rendered on /admin/clock-dashboard).
   teamDashboard: () =>
-    client.get<ApiResponse<TeamClockDashboard>>('/time-clock/today').then((r) => r.data.data),
+    client.get<ApiResponse<TeamClockDashboard>>('/time-clock/team-today').then((r) => r.data.data),
 };
