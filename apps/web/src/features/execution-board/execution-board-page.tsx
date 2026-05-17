@@ -43,7 +43,9 @@ interface Task {
   endDate: string | null;
   loggedMinutes: number;
   lastActivityDate: string | null;
-  zoneId: number;
+  /** Nullable — a task may live at the project root with no parent zone. */
+  zoneId: number | null;
+  projectId: number;
   serviceTypeId: number | null;
   phaseId: number | null;
   serviceType: { id: number; name: string; code: string | null; color: string | null } | null;
@@ -510,7 +512,12 @@ export function ExecutionBoardPage() {
           nameToService.set(phaseName, { name: task.phase.name, color: task.phase.color });
         }
       }
-      const key = `${task.zoneId}|${phaseName}`;
+      // Tasks at the project root have zoneId=null. Bucket them under a
+      // synthetic per-project negative id (-projectId) so they share the
+      // same matrix shape. The flatRows builder emits a 'Project Root'
+      // virtual zone with the same id so the row renders.
+      const effectiveZoneId = task.zoneId ?? -task.projectId;
+      const key = `${effectiveZoneId}|${phaseName}`;
       if (!matrix.has(key)) matrix.set(key, []);
       matrix.get(key)!.push(task);
     }
@@ -550,32 +557,51 @@ export function ExecutionBoardPage() {
     for (const task of data?.tasks ?? []) {
       const h = taskHealths.get(task.id);
       if (!h) continue;
-      // Find project via zone
-      for (const project of data?.projects ?? []) {
-        const descIds = data?.zones[project.id]
-          ? new Set(
-              (function all(nodes: ZoneNode[]): number[] {
-                const ids: number[] = [];
-                for (const n of nodes) {
-                  ids.push(n.id);
-                  ids.push(...all(n.children ?? []));
-                }
-                return ids;
-              })(data.zones[project.id] ?? []),
-            )
-          : new Set<number>();
-        if (descIds.has(task.zoneId)) {
-          const cur = map.get(project.id) ?? { critical: 0, warning: 0, ok: 0 };
-          if (h.level === 'critical') cur.critical++;
-          else if (h.level === 'warning') cur.warning++;
-          else cur.ok++;
-          map.set(project.id, cur);
-          break;
+      // Project resolution: root tasks (zoneId=null) attribute directly
+      // to task.projectId; zone-scoped tasks resolve via zone-descendants.
+      let resolvedProjectId: number | null = null;
+      if (task.zoneId == null) {
+        resolvedProjectId = task.projectId;
+      } else {
+        for (const project of data?.projects ?? []) {
+          const descIds = data?.zones[project.id]
+            ? new Set(
+                (function all(nodes: ZoneNode[]): number[] {
+                  const ids: number[] = [];
+                  for (const n of nodes) {
+                    ids.push(n.id);
+                    ids.push(...all(n.children ?? []));
+                  }
+                  return ids;
+                })(data.zones[project.id] ?? []),
+              )
+            : new Set<number>();
+          if (descIds.has(task.zoneId)) {
+            resolvedProjectId = project.id;
+            break;
+          }
         }
       }
+      if (resolvedProjectId == null) continue;
+      const cur = map.get(resolvedProjectId) ?? { critical: 0, warning: 0, ok: 0 };
+      if (h.level === 'critical') cur.critical++;
+      else if (h.level === 'warning') cur.warning++;
+      else cur.ok++;
+      map.set(resolvedProjectId, cur);
     }
     return map;
   }, [data, taskHealths]);
+
+  // Set of project ids that have at least one task at the project root
+  // (no parent zone). Drives whether we inject the synthetic 'Project
+  // Root' bucket row for that project.
+  const projectsWithRootTasks = useMemo(() => {
+    const s = new Set<number>();
+    for (const t of filteredTasks) {
+      if (t.zoneId == null) s.add(t.projectId);
+    }
+    return s;
+  }, [filteredTasks]);
 
   const flatRows = useMemo(() => {
     if (!data) return [];
@@ -603,8 +629,26 @@ export function ExecutionBoardPage() {
       }
     }
 
+    /** Synthetic 'Project Root' row for tasks with zoneId=null. The id is
+     *  -projectId so it doesn't collide with real zones and matches the
+     *  key used in directMatrix. */
+    function pushRootBucket(projectIdCtx: number, depth: number) {
+      result.push({
+        type: 'zone',
+        id: -projectIdCtx,
+        key: `root-${projectIdCtx}`,
+        name: 'Project Root',
+        depth,
+        hasChildren: false,
+        isTopLevelZone: true,
+        projectId: projectIdCtx,
+        zoneType: 'root',
+      });
+    }
+
     for (const project of data.projects) {
       const zoneTree = data.zones[project.id] ?? [];
+      const hasRoot = projectsWithRootTasks.has(project.id);
       if (showProjects) {
         const pKey = `project-${project.id}`;
         result.push({
@@ -614,18 +658,20 @@ export function ExecutionBoardPage() {
           name: project.name,
           number: project.number,
           depth: 0,
-          hasChildren: zoneTree.length > 0,
+          hasChildren: zoneTree.length > 0 || hasRoot,
         });
         if (expandedIds.has(pKey)) {
+          if (hasRoot) pushRootBucket(project.id, 1);
           walkZones(zoneTree, 1, project.id, /* isTopLevel */ true);
         }
       } else {
+        if (hasRoot) pushRootBucket(project.id, 0);
         walkZones(zoneTree, 0, project.id, /* isTopLevel */ true);
       }
     }
 
     return result;
-  }, [data, projectId, expandedIds]);
+  }, [data, projectId, expandedIds, projectsWithRootTasks]);
 
   if (isLoading) return <PageSkeleton />;
 

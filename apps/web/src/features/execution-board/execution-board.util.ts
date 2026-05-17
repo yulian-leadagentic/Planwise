@@ -7,7 +7,8 @@ const SERVICE_RE = /^\[SERVICE:(.+)\]$/;
 
 export interface TaskLike {
   id: number;
-  zoneId: number;
+  /** Nullable — task may live at the project root (no parent zone). */
+  zoneId: number | null;
   description?: string | null;
   serviceType?: { name: string } | null;
 }
