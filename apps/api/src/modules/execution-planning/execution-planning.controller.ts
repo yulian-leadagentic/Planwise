@@ -232,7 +232,11 @@ export class ExecutionPlanningController {
         leader: p.leader, department: p.department,
         progress: progressPct, budget, budgetUsed, budgetPct, daysLeft, riskFactors,
         overdueTasks: projectOverdue.map((t: any) => ({
-          id: t.id, code: t.code, name: t.name, zone: t.zone?.name,
+          id: t.id, code: t.code, name: t.name,
+          // Root tasks (zoneId=null) have no zone relation. Surface
+          // "Project Root" so the dashboard doesn't render "undefined ·
+          // 4h left" or worse "null · ..." for them.
+          zone: t.zone?.name ?? 'Project Root',
           assignee: t.assignees?.[0]?.user ?? null,
           hoursLeft: Number(t.budgetHours ?? 0),
           daysOverdue: Math.round((now.getTime() - new Date(t.endDate).getTime()) / 86400000),

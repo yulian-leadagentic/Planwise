@@ -375,7 +375,18 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
       <AssigneeManager taskId={task.id} assignees={task.assignees} />
 
       <div className="grid grid-cols-2 gap-3 text-[12px]">
-        {task.zone && <div><span className="text-slate-400">Zone:</span> <span className="text-slate-700 font-medium">{task.zone.name}</span></div>}
+        {/* Zone row: name for zoned tasks, explicit "Project Root" for
+            zoneId=null tasks so the drawer doesn't silently hide the
+            zone information (which made it look like a field was just
+            missing rather than intentionally unscoped). */}
+        <div>
+          <span className="text-slate-400">Zone:</span>{' '}
+          {task.zone ? (
+            <span className="text-slate-700 font-medium">{task.zone.name}</span>
+          ) : (
+            <span className="text-slate-500 italic">Project Root</span>
+          )}
+        </div>
         {task.phase && <div><span className="text-slate-400">Service:</span> <span className="text-slate-700 font-medium">{task.phase.name}</span></div>}
         {task.serviceType && <div><span className="text-slate-400">Deliverable:</span> <span className="text-slate-700 font-medium">{task.serviceType.name}</span></div>}
       </div>
