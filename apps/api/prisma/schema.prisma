@@ -1367,6 +1367,15 @@ model BusinessPartner {
   source       PartnerSource  @default(manual)
   notes        String?        @db.Text
 
+  // Main Role — the single primary categorization of the contact
+  // (Customer / Supplier / Consultant / Internal / ...). Optional so
+  // legacy data doesn't break; the drawer surfaces a soft prompt when
+  // null. Additional role contexts live on relationships, not here.
+  // ON DELETE SET NULL — deleting a role-type unbinds it from BPs
+  // rather than orphaning them.
+  mainRoleTypeId Int?          @map("main_role_type_id")
+  mainRoleType   PartnerRoleType? @relation("BusinessPartnerMainRole", fields: [mainRoleTypeId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+
   createdAt    DateTime       @default(now()) @map("created_at")
   updatedAt    DateTime       @updatedAt      @map("updated_at")
   deletedAt    DateTime?      @map("deleted_at")
@@ -1386,6 +1395,7 @@ model BusinessPartner {
   @@index([status])
   @@index([companyName])
   @@index([deletedAt])
+  @@index([mainRoleTypeId])
   @@map("business_partners")
 }
 
@@ -1436,7 +1446,8 @@ model PartnerRoleType {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt      @map("updated_at")
 
-  roles BusinessPartnerRole[]
+  roles          BusinessPartnerRole[]
+  mainOfPartners BusinessPartner[]     @relation("BusinessPartnerMainRole")
 
   @@index([category])
   @@map("partner_role_types")
