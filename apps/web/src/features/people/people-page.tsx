@@ -166,6 +166,8 @@ const emptyPerson = {
   employmentDate: '',
   employmentEndDate: '',
   dailyStandardHours: '',
+  // M5a — seniority drives default hourly cost (via SeniorityLevel catalog).
+  seniorityLevelId: '' as number | '',
   businessPartnerId: '' as number | '',
 };
 
@@ -191,6 +193,17 @@ export function PeoplePage() {
     queryKey: ['admin', 'professions'],
     staleTime: 10 * 60 * 1000,
     queryFn: () => client.get('/admin/config/professions').then((r) => { const d = r.data?.data ?? r.data; return Array.isArray(d) ? d : []; }),
+  });
+
+  // M5a — seniority catalog for the Employee form's level dropdown.
+  const { data: seniorityLevels = [] } = useQuery<any[]>({
+    queryKey: ['admin', 'seniority-levels'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/config/seniority-levels').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
   });
 
   // M1.1 — EMPLOYEE entity-kind assignment. Drives the Code field on the
@@ -260,6 +273,12 @@ export function PeoplePage() {
     // The DTO rejects a supplied code in auto mode.
     if (!employeeRange || employeeRange.mode === 'auto' || !form.code.trim()) {
       delete payload.code;
+    }
+    // M5a — coerce empty string to undefined so the int validator passes.
+    if (form.seniorityLevelId === '' || form.seniorityLevelId == null) {
+      delete payload.seniorityLevelId;
+    } else {
+      payload.seniorityLevelId = Number(form.seniorityLevelId);
     }
     // Only send businessPartnerId when the user explicitly picked one.
     // Empty string would otherwise be sent as the literal "" — server-side
@@ -549,6 +568,41 @@ export function PeoplePage() {
                   </select>
                 </div>
               </div>
+              {/* M5a — Seniority Level (drives default hourly cost). */}
+              <div>
+                <label
+                  className="text-[13px] font-semibold text-slate-700 mb-1.5 block"
+                  title="Determines the employee's default hourly cost for project labor calculations. Manage the catalog at /admin/seniority-levels."
+                >
+                  Seniority Level
+                  {(() => {
+                    const sel = seniorityLevels.find((s: any) => String(s.id) === String(form.seniorityLevelId));
+                    return sel && sel.defaultHourlyCost != null ? (
+                      <span className="ml-2 text-[11px] font-normal text-slate-500">
+                        → {sel.defaultHourlyCost}{sel.currency ? ` ${sel.currency}` : ''}/h
+                      </span>
+                    ) : null;
+                  })()}
+                </label>
+                <select
+                  value={form.seniorityLevelId}
+                  onChange={(e) => setForm((f) => ({ ...f, seniorityLevelId: e.target.value === '' ? '' : Number(e.target.value) }))}
+                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="">— Pick a seniority level —</option>
+                  {seniorityLevels.map((s: any) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}{s.defaultHourlyCost != null ? ` — ${s.defaultHourlyCost}${s.currency ? ` ${s.currency}` : ''}/h` : ''}
+                    </option>
+                  ))}
+                </select>
+                {seniorityLevels.length === 0 && (
+                  <p className="text-[11px] text-amber-700 mt-1">
+                    No seniority levels defined yet. Add some in <a className="text-blue-600 hover:underline" href="/admin/seniority-levels" target="_blank" rel="noreferrer">/admin/seniority-levels</a>.
+                  </p>
+                )}
+              </div>
+
               {/* M4a.4 — Employment fields */}
               <div className="grid grid-cols-3 gap-4">
                 <div>
@@ -608,6 +662,7 @@ export function PeoplePage() {
           roles={roles}
           departments={departments}
           professions={professions}
+          seniorityLevels={seniorityLevels}
           onClose={() => setEditingUser(null)}
         />
       )}
@@ -629,12 +684,14 @@ function EditPersonModal({
   roles,
   departments,
   professions,
+  seniorityLevels,
   onClose,
 }: {
   user: UserListItem;
   roles: any[];
   departments: any[];
   professions: any[];
+  seniorityLevels: any[];
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -658,6 +715,7 @@ function EditPersonModal({
     employmentEndDate: toDateInput((user as any).employmentEndDate),
     dailyStandardHours:
       (user as any).dailyStandardHours != null ? String((user as any).dailyStandardHours) : '',
+    seniorityLevelId: ((user as any).seniorityLevelId ?? '') as number | '',
     isActive: user.isActive,
   });
 
@@ -697,6 +755,10 @@ function EditPersonModal({
       employmentDate: form.employmentDate || undefined,
       employmentEndDate: form.employmentEndDate || undefined,
       dailyStandardHours: form.dailyStandardHours ? Number(form.dailyStandardHours) : undefined,
+      seniorityLevelId:
+        form.seniorityLevelId === '' || form.seniorityLevelId == null
+          ? null
+          : Number(form.seniorityLevelId),
       isActive: form.isActive,
     });
   };
@@ -760,6 +822,35 @@ function EditPersonModal({
                 {departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
               </select>
             </div>
+          </div>
+          {/* M5a — Seniority Level */}
+          <div>
+            <label
+              className="text-[13px] font-semibold text-slate-700 mb-1.5 block"
+              title="Determines the employee's default hourly cost for project labor calculations. Manage the catalog at /admin/seniority-levels."
+            >
+              Seniority Level
+              {(() => {
+                const sel = seniorityLevels.find((s: any) => String(s.id) === String(form.seniorityLevelId));
+                return sel && sel.defaultHourlyCost != null ? (
+                  <span className="ml-2 text-[11px] font-normal text-slate-500">
+                    → {sel.defaultHourlyCost}{sel.currency ? ` ${sel.currency}` : ''}/h
+                  </span>
+                ) : null;
+              })()}
+            </label>
+            <select
+              value={form.seniorityLevelId}
+              onChange={(e) => setForm((f) => ({ ...f, seniorityLevelId: e.target.value === '' ? '' : Number(e.target.value) }))}
+              className={inputClass}
+            >
+              <option value="">— Pick a seniority level —</option>
+              {seniorityLevels.map((s: any) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}{s.defaultHourlyCost != null ? ` — ${s.defaultHourlyCost}${s.currency ? ` ${s.currency}` : ''}/h` : ''}
+                </option>
+              ))}
+            </select>
           </div>
           {/* M4a.4 — Employment fields */}
           <div className="grid grid-cols-3 gap-4">

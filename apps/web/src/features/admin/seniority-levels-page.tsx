@@ -15,6 +15,8 @@ type SeniorityRow = {
   name: string;
   sortOrder: number;
   isActive: boolean;
+  defaultHourlyCost: string | number | null;
+  currency: string | null;
 };
 
 type FormState = {
@@ -22,9 +24,18 @@ type FormState = {
   name: string;
   sortOrder: number;
   isActive: boolean;
+  defaultHourlyCost: string;
+  currency: string;
 };
 
-const emptyForm: FormState = { code: '', name: '', sortOrder: 0, isActive: true };
+const emptyForm: FormState = {
+  code: '',
+  name: '',
+  sortOrder: 0,
+  isActive: true,
+  defaultHourlyCost: '',
+  currency: '',
+};
 
 export function SeniorityLevelsPage() {
   const queryClient = useQueryClient();
@@ -41,6 +52,17 @@ export function SeniorityLevelsPage() {
       }),
   });
 
+  // Currency catalog for the cost-field unit picker.
+  const { data: currencies = [] } = useQuery<Array<{ code: string; name: string; symbol: string | null }>>({
+    queryKey: ['admin', 'currencies'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/config/currencies').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+
   const createMutation = useMutation({
     mutationFn: (payload: FormState) =>
       client
@@ -48,6 +70,8 @@ export function SeniorityLevelsPage() {
           code: payload.code,
           name: payload.name,
           sortOrder: payload.sortOrder,
+          defaultHourlyCost: payload.defaultHourlyCost === '' ? null : payload.defaultHourlyCost,
+          currency: payload.currency || null,
         })
         .then((r) => r.data),
     onSuccess: () => {
@@ -67,6 +91,8 @@ export function SeniorityLevelsPage() {
           name: payload.name,
           sortOrder: payload.sortOrder,
           isActive: payload.isActive,
+          defaultHourlyCost: payload.defaultHourlyCost === '' ? null : payload.defaultHourlyCost,
+          currency: payload.currency || null,
         })
         .then((r) => r.data),
     onSuccess: () => {
@@ -95,6 +121,8 @@ export function SeniorityLevelsPage() {
       name: row.name,
       sortOrder: row.sortOrder,
       isActive: row.isActive,
+      defaultHourlyCost: row.defaultHourlyCost != null ? String(row.defaultHourlyCost) : '',
+      currency: row.currency ?? '',
     });
   };
 
@@ -128,6 +156,7 @@ export function SeniorityLevelsPage() {
           onSave={() => createMutation.mutate(form)}
           onCancel={() => setShowCreate(false)}
           saving={createMutation.isPending}
+          currencies={currencies}
         />
       )}
 
@@ -146,7 +175,18 @@ export function SeniorityLevelsPage() {
               <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
                 <th className="px-4 py-3 font-medium w-32">Code</th>
                 <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium w-24">Order</th>
+                <th
+                  className="px-4 py-3 font-medium w-40"
+                  title="Default hourly cost used by project labor calculations. Currency from the catalog."
+                >
+                  Hourly Cost
+                </th>
+                <th
+                  className="px-4 py-3 font-medium w-20"
+                  title="Display order for the list — lower number shows first (Junior=10, Mid=20, Senior=30, …)."
+                >
+                  Order
+                </th>
                 <th className="px-4 py-3 font-medium w-24">Status</th>
                 <th className="px-4 py-3 font-medium w-32 text-right">Actions</th>
               </tr>
@@ -157,7 +197,7 @@ export function SeniorityLevelsPage() {
                 if (isEditing) {
                   return (
                     <tr key={row.id} className="border-b border-border bg-muted/20">
-                      <td colSpan={5} className="p-4">
+                      <td colSpan={6} className="p-4">
                         <FormCard
                           mode="edit"
                           form={form}
@@ -165,6 +205,7 @@ export function SeniorityLevelsPage() {
                           onSave={() => updateMutation.mutate({ id: row.id, ...form })}
                           onCancel={() => setEditingId(null)}
                           saving={updateMutation.isPending}
+                          currencies={currencies}
                         />
                       </td>
                     </tr>
@@ -174,6 +215,17 @@ export function SeniorityLevelsPage() {
                   <tr key={row.id} className="border-b border-border last:border-0 hover:bg-muted/30">
                     <td className="px-4 py-3 font-mono text-xs">{row.code}</td>
                     <td className="px-4 py-3 font-medium">{row.name}</td>
+                    <td className="px-4 py-3">
+                      {row.defaultHourlyCost != null ? (
+                        <span className="font-mono text-sm text-slate-800">
+                          {row.defaultHourlyCost}
+                          {row.currency ? <span className="ml-1 text-[11px] text-slate-400">{row.currency}</span> : null}
+                          <span className="ml-1 text-[11px] text-slate-400">/h</span>
+                        </span>
+                      ) : (
+                        <span className="text-xs italic text-slate-400">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-muted-foreground">{row.sortOrder}</td>
                     <td className="px-4 py-3">
                       {row.isActive ? (
@@ -220,6 +272,7 @@ function FormCard({
   onSave,
   onCancel,
   saving,
+  currencies,
 }: {
   mode: 'create' | 'edit';
   form: FormState;
@@ -227,6 +280,7 @@ function FormCard({
   onSave: () => void;
   onCancel: () => void;
   saving: boolean;
+  currencies: Array<{ code: string; name: string; symbol: string | null }>;
 }) {
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm({ ...form, [key]: value });
@@ -257,13 +311,50 @@ function FormCard({
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-muted-foreground">Sort order</label>
+          <label
+            className="mb-1 block text-xs font-medium text-muted-foreground"
+            title="Display order in lists (low → high). Use 10 / 20 / 30 / … so you can insert new levels between existing ones (e.g. add Mid-Senior=25 between Mid=20 and Senior=30) without reshuffling the rest."
+          >
+            Sort order
+          </label>
           <input
             type="number"
             value={form.sortOrder}
             onChange={(e) => update('sortOrder', Number(e.target.value))}
             className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
           />
+        </div>
+        <div>
+          <label
+            className="mb-1 block text-xs font-medium text-muted-foreground"
+            title="Default hourly cost for employees at this seniority level. Used by project labor-cost calculations: cost = logged hours × rate. Leave blank if this level has no fixed cost."
+          >
+            Hourly Cost
+          </label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={form.defaultHourlyCost}
+            onChange={(e) => update('defaultHourlyCost', e.target.value)}
+            placeholder="e.g. 80.00"
+            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm font-mono"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">Currency</label>
+          <select
+            value={form.currency}
+            onChange={(e) => update('currency', e.target.value)}
+            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+          >
+            <option value="">— Pick currency —</option>
+            {currencies.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.code}{c.symbol ? ` (${c.symbol})` : ''} — {c.name}
+              </option>
+            ))}
+          </select>
         </div>
         {mode === 'edit' && (
           <div className="sm:col-span-2">

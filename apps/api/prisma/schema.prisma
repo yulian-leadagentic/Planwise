@@ -227,6 +227,11 @@ model User {
   employmentDate DateTime? @map("employment_date") @db.Date
   employmentEndDate DateTime? @map("employment_end_date") @db.Date
   employeeCategory String? @map("employee_category")
+  /// Employee seniority level. Used to look up the default hourly cost
+  /// for project labor calculations. Nullable for backward compat and for
+  /// non-employee users who have no cost concept.
+  seniorityLevelId Int? @map("seniority_level_id")
+  seniorityLevel   SeniorityLevel? @relation("UserSeniorityLevel", fields: [seniorityLevelId], references: [id], onDelete: SetNull)
   website      String?
   otpCode      String?   @map("otp_code")
   otpExpiresAt DateTime? @map("otp_expires_at")
@@ -1656,10 +1661,21 @@ model SeniorityLevel {
   id        Int      @id @default(autoincrement())
   code      String   @unique @db.VarChar(50)
   name      String   @db.VarChar(100)
+  /// Default hourly cost for an employee at this seniority level. Used by
+  /// project labor-cost calculations: cost = logged_minutes / 60 *
+  /// employee.seniorityLevel.defaultHourlyCost. Nullable — admin fills
+  /// in per organisation. Can be refined to a profession × seniority
+  /// matrix later (M5 follow-up).
+  defaultHourlyCost Decimal? @map("default_hourly_cost") @db.Decimal(10, 2)
+  /// ISO-4217 currency code (FK currencies.code). When NULL, costs are
+  /// treated as unitless on this seniority level.
+  currency  String?  @db.VarChar(3)
   sortOrder Int      @default(0) @map("sort_order")
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt      @map("updated_at")
+
+  employees User[]   @relation("UserSeniorityLevel")
 
   @@map("seniority_levels")
 }
