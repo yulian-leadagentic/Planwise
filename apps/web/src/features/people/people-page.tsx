@@ -169,6 +169,10 @@ const emptyPerson = {
   // M5a — seniority drives default hourly cost (via SeniorityLevel catalog).
   seniorityLevelId: '' as number | '',
   businessPartnerId: '' as number | '',
+  // External Employees only — id of the organization (customer / supplier
+  // / etc.) this person works at. Server-side this triggers an
+  // employee_of relationship between the new person BP and the org.
+  employerOrgId: '' as number | '',
 };
 
 export function PeoplePage() {
@@ -176,10 +180,17 @@ export function PeoplePage() {
   const { peopleTab, peopleSearch, setPeopleFilters } = useFilterStore();
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ ...emptyPerson });
-  // Picker for "Link to existing partner" — replaces the legacy <select>
-  // with a searchable list modal so admins can scan the full partner roster.
+  // Picker for "Link to existing partner" — opens a searchable list of
+  // person BPs without a User account (dedupe path for the create flow).
   const [partnerPickerOpen, setPartnerPickerOpen] = useState(false);
   const [partnerPickerSearch, setPartnerPickerSearch] = useState('');
+  // External Employees only — picker that selects the EMPLOYER organization
+  // (customer / supplier / etc.) the new person works at. Separate from
+  // the person dedupe picker above — the user kept asking "where do I
+  // pick the customer this contact is from", and a person picker is the
+  // wrong answer.
+  const [employerPickerOpen, setEmployerPickerOpen] = useState(false);
+  const [employerPickerSearch, setEmployerPickerSearch] = useState('');
 
   const { data: roles = [] } = useQuery({
     queryKey: ['roles'],
@@ -243,6 +254,23 @@ export function PeoplePage() {
         }),
   });
 
+  // All organization-type BPs — populates the "Employer organization"
+  // picker on the External Employees tab. The picker passes the chosen
+  // org id through to /users as employerOrgId; the backend then creates
+  // the employee_of relationship automatically.
+  const { data: employerOrgs = [] } = useQuery<any[]>({
+    queryKey: ['business-partners', 'organizations'],
+    enabled: showCreate,
+    staleTime: 60 * 1000,
+    queryFn: () =>
+      client
+        .get('/business-partners', { params: { partnerType: 'organization', perPage: 500 } })
+        .then((r) => {
+          const raw = r.data?.data ?? r.data;
+          return Array.isArray(raw) ? raw : (raw?.data ?? []);
+        }),
+  });
+
   const createUser = useMutation({
     mutationFn: (data: any) => client.post('/users', data).then((r) => r.data),
     onSuccess: () => {
@@ -291,6 +319,15 @@ export function PeoplePage() {
       delete payload.businessPartnerId;
     } else {
       payload.businessPartnerId = Number(form.businessPartnerId);
+    }
+    // employerOrgId is only meaningful for External Employees (partners
+    // tab). For the regular Employees tab we don't surface the field at
+    // all, but defensively coerce empty -> undefined so it's never sent
+    // as "" (validator rejects non-int).
+    if (form.employerOrgId === '' || form.employerOrgId == null) {
+      delete payload.employerOrgId;
+    } else {
+      payload.employerOrgId = Number(form.employerOrgId);
     }
     createUser.mutate(payload);
   };
@@ -454,18 +491,65 @@ export function PeoplePage() {
               </button>
             </div>
             <form onSubmit={handleCreateSubmit} className="p-5 space-y-4">
+              {/* External Employees only: Employer Organization picker.
+                  The form intent on this tab is "this person works at
+                  one of our customer/supplier orgs" so the org IS the
+                  primary context — not a dedupe path. On submit the
+                  backend creates the employee_of relationship between
+                  the new person BP and the chosen org automatically
+                  (see UsersService.create #3). */}
+              {isPartners && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3">
+                  <label className="text-[12px] font-semibold text-slate-700 mb-1 block">
+                    Employer Organization <span className="text-slate-400 font-normal">(customer / supplier they work at)</span>
+                  </label>
+                  {form.employerOrgId === '' ? (
+                    <button
+                      type="button"
+                      onClick={() => { setEmployerPickerSearch(''); setEmployerPickerOpen(true); }}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-left text-slate-500 hover:border-blue-400 focus:border-blue-500 focus:outline-none"
+                    >
+                      — Pick an organization — <span className="text-blue-600 underline ml-1">browse list</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { setEmployerPickerSearch(''); setEmployerPickerOpen(true); }}
+                        className="flex-1 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-left text-slate-700 hover:border-blue-400"
+                      >
+                        {(() => {
+                          const org = employerOrgs.find((o: any) => o.id === form.employerOrgId);
+                          if (!org) return `Organization #${form.employerOrgId}`;
+                          const tail = org.mainRoleType?.name ? ` · ${org.mainRoleType.name}` : '';
+                          return `${org.displayName}${tail}`;
+                        })()}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setForm((f) => ({ ...f, employerOrgId: '' }))}
+                        className="px-2 py-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-500 hover:text-slate-700"
+                        title="Clear"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  )}
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Wires up an <code>employee_of</code> relationship — defines what context this contact works in.
+                  </p>
+                </div>
+              )}
+
               {/* Optional: link this login to an existing person BP. When a
                   partner is picked, the identity fields below are prefilled
                   so the user doesn't retype anything. Defaults to "Create
                   new" — same behaviour as before. Only person BPs that
-                  don't already have a user account are shown. */}
-              {/* Linked-partner picker. The button opens a searchable modal
-                  (partnerPickerOpen) showing the full list of person BPs
-                  without a user account. Clicking a row prefills the form
-                  via handleLinkExistingBp(). The "Clear" button drops the
-                  link and reverts to "Create new" behaviour. */}
+                  don't already have a user account are shown.
+                  This is a DEDUPE path — separate from the Employer org
+                  picker above (which is about org context, not identity). */}
               <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-                <label className="text-[12px] font-semibold text-slate-700 mb-1 block">Link to existing partner</label>
+                <label className="text-[12px] font-semibold text-slate-700 mb-1 block">Link to existing person record <span className="text-slate-400 font-normal">(optional — avoids duplicates)</span></label>
                 {form.businessPartnerId === '' ? (
                   <button
                     type="button"
@@ -751,6 +835,89 @@ export function PeoplePage() {
                           <p className="text-xs text-slate-500">
                             {bp.email ?? '—'}
                             {bp.companyName ? ` · ${bp.companyName}` : ''}
+                          </p>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Employer organization picker — opens from "Employer Organization"
+          on the External Employees form. Lists ALL organization-type BPs
+          (customers, suppliers, subcontractors, etc.) so admins can pick
+          which org the new contact works at. Searchable; same stacking
+          rules as the person picker above (z-60 over the create modal). */}
+      {employerPickerOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/35 backdrop-blur-sm"
+          onClick={() => setEmployerPickerOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-[520px] max-w-[92vw] max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <h2 className="text-base font-bold text-slate-900">Select an organization</h2>
+              <button
+                type="button"
+                onClick={() => setEmployerPickerOpen(false)}
+                className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-4 border-b border-slate-100">
+              <input
+                autoFocus
+                value={employerPickerSearch}
+                onChange={(e) => setEmployerPickerSearch(e.target.value)}
+                placeholder="Search by name, tax ID, or email..."
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+              />
+              <p className="mt-1.5 text-[11px] text-slate-500">
+                Customers, suppliers, subcontractors — every organization in the system.
+              </p>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {(() => {
+                const q = employerPickerSearch.trim().toLowerCase();
+                const filtered = q
+                  ? employerOrgs.filter((o: any) => {
+                      const haystack = `${o.displayName ?? ''} ${o.taxId ?? ''} ${o.email ?? ''} ${o.companyName ?? ''}`.toLowerCase();
+                      return haystack.includes(q);
+                    })
+                  : employerOrgs;
+                if (filtered.length === 0) {
+                  return (
+                    <p className="px-5 py-6 text-center text-sm text-slate-500">
+                      {employerOrgs.length === 0
+                        ? 'No organizations yet — add one from Partners → Organizations first.'
+                        : 'No matches for that search.'}
+                    </p>
+                  );
+                }
+                return (
+                  <ul className="divide-y divide-slate-100">
+                    {filtered.map((org: any) => (
+                      <li key={org.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setForm((f) => ({ ...f, employerOrgId: org.id }));
+                            setEmployerPickerOpen(false);
+                          }}
+                          className="w-full text-left px-5 py-3 hover:bg-slate-50"
+                        >
+                          <p className="text-sm font-medium text-slate-900">{org.displayName}</p>
+                          <p className="text-xs text-slate-500">
+                            {org.mainRoleType?.name ?? 'No main role'}
+                            {org.taxId ? ` · Tax ID: ${org.taxId}` : ''}
+                            {org.email ? ` · ${org.email}` : ''}
                           </p>
                         </button>
                       </li>
