@@ -15,6 +15,17 @@ import { ReportQueryDto } from './dto/report-query.dto';
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
+  // Detailed (row-level) Employee Timesheets — replaces the legacy
+  // aggregate report on the Reports page. Returns one row per
+  // TimeEntry + per-currency totals. UI handles grouping client-side
+  // (no Group / Day / Week / Month / Employee / Project / Zone).
+  @Get('timesheet/detailed')
+  @RequirePermissions({ module: 'reports', action: 'read' })
+  @ApiOperation({ summary: 'Detailed Employee Timesheets (one row per entry)' })
+  timesheetDetailed(@Query() query: ReportQueryDto) {
+    return this.reportsService.timesheetDetailed(query);
+  }
+
   @Get('timesheet/by-project')
   @RequirePermissions({ module: 'reports', action: 'read' })
   @ApiOperation({ summary: 'Timesheet report grouped by project' })

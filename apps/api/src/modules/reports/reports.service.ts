@@ -14,6 +14,175 @@ export class ReportsService {
     return { from, to };
   }
 
+  /**
+   * Detailed employee timesheet — one row per TimeEntry. Mirrors the
+   * legacy "Employee Timesheets" report the customer is migrating from.
+   * Filters: userId, projectId, from, to (all optional).
+   *
+   * Each row carries: date, start/end time, hours, employee, project,
+   * zone breadcrumb, deliverable name, task name, note, cost + currency.
+   * Cost = hours x user.seniorityLevel.defaultHourlyCost (M5 resolver).
+   * Entries whose contributor has no resolved rate get cost=null +
+   * currency=null so the UI can render an em-dash instead of fake 0s.
+   *
+   * Totals: per-currency aggregates (no FX conversion — same rule
+   * as the M5 labor-cost endpoint).
+   */
+  async timesheetDetailed(query: ReportQueryDto) {
+    const { from, to } = this.getDateRange(query);
+
+    const entries = await this.prisma.timeEntry.findMany({
+      where: {
+        deletedAt: null,
+        date: { gte: from, lte: to },
+        ...(query.userId ? { userId: Number(query.userId) } : {}),
+        // Resolve project via the task — entry.projectId is NULL on many
+        // historical rows (QuickTimeLog / TaskDrawer didn't always set
+        // it), and filtering on it would silently drop those entries.
+        ...(query.projectId ? { task: { projectId: Number(query.projectId) } } : {}),
+      },
+      orderBy: [{ date: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        date: true,
+        startTime: true,
+        endTime: true,
+        minutes: true,
+        note: true,
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            seniorityLevel: { select: { defaultHourlyCost: true, currency: true, name: true } },
+          },
+        },
+        task: {
+          select: {
+            id: true,
+            name: true,
+            projectId: true,
+            project: { select: { id: true, name: true, number: true } },
+            zone: { select: { id: true, name: true, path: true } },
+            deliverableTemplate: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+
+    // Pre-resolve every referenced zone id (including ancestors) so we
+    // can render full breadcrumbs like "Building 1 > Floor 2 > Unit A".
+    // Walking task.zone.path one-by-one would lookup the same parent
+    // zone many times; batch it instead.
+    const ancestorIds = new Set<number>();
+    for (const e of entries) {
+      const path = e.task?.zone?.path;
+      if (!path) continue;
+      for (const seg of path.split('/').filter(Boolean)) {
+        const n = Number(seg);
+        if (Number.isFinite(n)) ancestorIds.add(n);
+      }
+    }
+    const zoneNameById = new Map<number, string>();
+    if (ancestorIds.size > 0) {
+      const rows = await this.prisma.zone.findMany({
+        where: { id: { in: Array.from(ancestorIds) } },
+        select: { id: true, name: true },
+      });
+      for (const z of rows) zoneNameById.set(z.id, z.name);
+    }
+
+    // Per-currency totals + flat row list.
+    const totalsByCurrency = new Map<string, { totalHours: number; totalCost: number }>();
+    let totalHours = 0;
+
+    const rows = entries.map((e) => {
+      const hours = e.minutes / 60;
+      totalHours += hours;
+
+      const sl = e.user.seniorityLevel;
+      let cost: number | null = null;
+      let currency: string | null = null;
+      if (sl?.defaultHourlyCost != null) {
+        cost = +(hours * Number(sl.defaultHourlyCost)).toFixed(2);
+        currency = sl.currency ?? 'UNK';
+        const agg = totalsByCurrency.get(currency) ?? { totalHours: 0, totalCost: 0 };
+        agg.totalHours += hours;
+        agg.totalCost += cost;
+        totalsByCurrency.set(currency, agg);
+      }
+
+      const zonePath = e.task?.zone?.path ?? '';
+      const zoneBreadcrumb = zonePath
+        ? zonePath
+            .split('/')
+            .map((s) => Number(s))
+            .filter((n) => Number.isFinite(n))
+            .map((id) => zoneNameById.get(id))
+            .filter((n): n is string => !!n)
+        : [];
+
+      return {
+        id: e.id,
+        date: e.date.toISOString().slice(0, 10),
+        startTime: e.startTime ?? null,
+        endTime: e.endTime ?? null,
+        hours: +hours.toFixed(2),
+        // Flatten the user shape so the UI doesn't have to dig two
+        // levels deep for the most-used display fields.
+        user: {
+          id: e.user.id,
+          firstName: e.user.firstName,
+          lastName: e.user.lastName,
+          displayName: `${e.user.firstName ?? ''} ${e.user.lastName ?? ''}`.trim(),
+        },
+        project: e.task?.project
+          ? {
+              id: e.task.project.id,
+              name: e.task.project.name,
+              number: e.task.project.number ?? null,
+              // Pre-formatted "Number - Name" matches what the customer's
+              // legacy report shows; UI can use it as-is.
+              displayName: e.task.project.number
+                ? `${e.task.project.name} - ${e.task.project.number}`
+                : e.task.project.name,
+            }
+          : null,
+        zone: e.task?.zone
+          ? {
+              id: e.task.zone.id,
+              name: e.task.zone.name,
+              breadcrumb: zoneBreadcrumb,
+            }
+          : null,
+        // "Subprojects" column in the legacy report -> deliverable
+        // template name in Planwise terms (per user's mapping choice).
+        deliverable: e.task?.deliverableTemplate
+          ? { id: e.task.deliverableTemplate.id, name: e.task.deliverableTemplate.name }
+          : null,
+        // "Assignment Name" column -> task name.
+        assignmentName: e.task?.name ?? null,
+        description: e.note ?? null,
+        cost,
+        currency,
+        seniorityLevelName: sl?.name ?? null,
+      };
+    });
+
+    return {
+      rows,
+      totals: {
+        totalHours: +totalHours.toFixed(2),
+        rowCount: rows.length,
+        byCurrency: Array.from(totalsByCurrency.entries()).map(([currency, t]) => ({
+          currency,
+          totalHours: +t.totalHours.toFixed(2),
+          totalCost: +t.totalCost.toFixed(2),
+        })),
+      },
+    };
+  }
+
   async timesheetByProject(query: ReportQueryDto) {
     const { from, to } = this.getDateRange(query);
 
