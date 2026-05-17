@@ -22,6 +22,85 @@ function activeWhere(now = new Date()): Prisma.BusinessPartnerRelationshipWhereI
   return { validFrom: { lte: now }, validTo: { gt: now } };
 }
 
+/**
+ * Shape of one entry inside `partner_relationship_types.side_a_targets` /
+ * `side_b_targets` (JSON column). Documented at the schema definition.
+ */
+interface SideTarget {
+  kind: 'person' | 'organization' | 'project' | 'any';
+  roleCodes?: string[];
+  categoryCodes?: string[];
+}
+
+interface PartnerForValidation {
+  partnerType: string;
+  mainRoleType: { code: string; category: string | null } | null;
+  roles: Array<{ roleType: { code: string; category: string | null } }>;
+}
+
+/**
+ * Resolves a partner's role for validation, preferring the new Main Role
+ * (single FK) and falling back to the legacy multi-role chips for
+ * partial-data BPs. Returns role codes + role categories in two arrays
+ * so SideTarget rules can check either dimension.
+ */
+function partnerRolesForValidation(bp: PartnerForValidation): {
+  codes: string[];
+  categories: string[];
+} {
+  if (bp.mainRoleType?.code) {
+    return {
+      codes: [bp.mainRoleType.code],
+      categories: bp.mainRoleType.category ? [bp.mainRoleType.category] : [],
+    };
+  }
+  // Legacy chip fallback — kept until the data migration to Main Role is
+  // complete (some BPs may still have NULL main_role_type_id).
+  return {
+    codes: bp.roles.map((r) => r.roleType.code),
+    categories: Array.from(
+      new Set(
+        bp.roles
+          .map((r) => r.roleType.category)
+          .filter((c): c is string => !!c),
+      ),
+    ),
+  };
+}
+
+/**
+ * Validates a partner against a SideTarget[] (JSON). The partner matches
+ * if at least ONE entry passes ALL of: kind matches, roleCodes empty or
+ * the partner holds one, categoryCodes empty or the partner holds one.
+ *
+ * Returns the matching entries' merged expected codes so the error
+ * message can be specific ("must hold one of [supplier, customer]").
+ */
+function checkSideTargets(
+  bp: PartnerForValidation,
+  targets: SideTarget[] | null | undefined,
+  actualKind: string,
+): { ok: boolean; expectedCodes: string[]; expectedCategories: string[] } {
+  if (!targets || targets.length === 0) return { ok: true, expectedCodes: [], expectedCategories: [] };
+
+  const { codes, categories } = partnerRolesForValidation(bp);
+  const kindMatched = targets.filter((t) => t.kind === 'any' || t.kind === actualKind);
+  if (kindMatched.length === 0) {
+    return { ok: false, expectedCodes: [], expectedCategories: [] };
+  }
+
+  for (const t of kindMatched) {
+    const roleOk = !t.roleCodes?.length || t.roleCodes.some((rc) => codes.includes(rc));
+    const catOk = !t.categoryCodes?.length || t.categoryCodes.some((cc) => categories.includes(cc));
+    if (roleOk && catOk) return { ok: true, expectedCodes: [], expectedCategories: [] };
+  }
+
+  // No match — collect what was expected for the error message.
+  const expectedCodes = Array.from(new Set(kindMatched.flatMap((t) => t.roleCodes ?? [])));
+  const expectedCategories = Array.from(new Set(kindMatched.flatMap((t) => t.categoryCodes ?? [])));
+  return { ok: false, expectedCodes, expectedCategories };
+}
+
 @Injectable()
 export class BusinessPartnerRelationshipsService {
   constructor(private prisma: PrismaService) {}
@@ -58,9 +137,15 @@ export class BusinessPartnerRelationshipsService {
    */
   async create(dto: CreateRelationshipDto) {
     // 1. Source partner must exist and not be soft-deleted.
+    // mainRoleType is loaded for the new role-validation path
+    // (see partnerRolesForValidation). Legacy `roles` chips are loaded
+    // too as the fallback when main role isn't set.
     const source = await this.prisma.businessPartner.findFirst({
       where: { id: dto.sourcePartnerId, deletedAt: null },
-      include: { roles: { include: { roleType: true } } },
+      include: {
+        roles: { include: { roleType: true } },
+        mainRoleType: true,
+      },
     });
     if (!source) throw new NotFoundException('Source partner not found');
 
@@ -92,9 +177,27 @@ export class BusinessPartnerRelationshipsService {
       }
     }
 
-    // 5. Source must hold the required role, if specified.
-    if (relType.requiredSourceRoleCode) {
-      const codes = source.roles.map((r) => r.roleType.code);
+    // ─── 5. SIDE-A (source) role validation ──────────────────────────
+    // Prefer the structured sideATargets JSON (set via the admin Relationship
+    // Type editor). When absent, fall back to the legacy requiredSourceRoleCode.
+    // Either way the partner's Main Role is what we check against — that's
+    // the single source of truth for "what role does this contact hold"
+    // post the Roles -> Main Role simplification.
+    const sideATargets = (relType as any).sideATargets as SideTarget[] | null;
+    if (sideATargets && sideATargets.length > 0) {
+      const r = checkSideTargets(source, sideATargets, source.partnerType);
+      if (!r.ok) {
+        const expected = [
+          r.expectedCodes.length ? `main role ∈ {${r.expectedCodes.join(', ')}}` : null,
+          r.expectedCategories.length ? `category ∈ {${r.expectedCategories.join(', ')}}` : null,
+        ].filter(Boolean).join(' or ');
+        const actual = source.mainRoleType?.code ?? '(none)';
+        throw new BadRequestException(
+          `Relationship "${relType.code}" requires the source partner to have ${expected || 'a matching role'}. This partner's main role is "${actual}".`,
+        );
+      }
+    } else if (relType.requiredSourceRoleCode) {
+      const { codes } = partnerRolesForValidation(source);
       if (!codes.includes(relType.requiredSourceRoleCode)) {
         throw new BadRequestException(
           `Relationship "${relType.code}" requires the source to hold role "${relType.requiredSourceRoleCode}". This partner holds: {${codes.join(', ') || 'none'}}.`,
@@ -102,20 +205,44 @@ export class BusinessPartnerRelationshipsService {
       }
     }
 
-    // 5b. Target BP must hold the required role, if specified. Only meaningful
-    // when the target is itself a BP (targetType === 'organization' here —
-    // 'project'/'department'/'team' targets aren't BPs and so never have roles).
-    if ((relType as any).requiredTargetRoleCode && dto.targetType === 'organization') {
-      const targetBp = await this.prisma.businessPartner.findFirst({
-        where: { id: dto.targetId, deletedAt: null },
-        include: { roles: { include: { roleType: true } } },
-      });
-      const targetCodes = (targetBp?.roles ?? []).map((r: any) => r.roleType.code);
-      const required = (relType as any).requiredTargetRoleCode as string;
-      if (!targetCodes.includes(required)) {
-        throw new BadRequestException(
-          `Relationship "${relType.code}" requires the target organization to hold role "${required}". This organization holds: {${targetCodes.join(', ') || 'none'}}.`,
-        );
+    // ─── 5b. SIDE-B (target) role validation ─────────────────────────
+    // Only meaningful when the target is itself a BP. 'project' / 'department'
+    // / 'team' targets aren't BPs and so never have a Main Role.
+    const targetIsBp = dto.targetType === 'organization' || dto.targetType === 'person';
+    if (targetIsBp) {
+      const sideBTargets = (relType as any).sideBTargets as SideTarget[] | null;
+      const legacyRequired = (relType as any).requiredTargetRoleCode as string | null;
+
+      if ((sideBTargets && sideBTargets.length > 0) || legacyRequired) {
+        const targetBp = await this.prisma.businessPartner.findFirst({
+          where: { id: dto.targetId, deletedAt: null },
+          include: {
+            roles: { include: { roleType: true } },
+            mainRoleType: true,
+          },
+        });
+        if (!targetBp) throw new NotFoundException('Target partner not found');
+
+        if (sideBTargets && sideBTargets.length > 0) {
+          const r = checkSideTargets(targetBp, sideBTargets, dto.targetType);
+          if (!r.ok) {
+            const expected = [
+              r.expectedCodes.length ? `main role ∈ {${r.expectedCodes.join(', ')}}` : null,
+              r.expectedCategories.length ? `category ∈ {${r.expectedCategories.join(', ')}}` : null,
+            ].filter(Boolean).join(' or ');
+            const actual = targetBp.mainRoleType?.code ?? '(none)';
+            throw new BadRequestException(
+              `Relationship "${relType.code}" requires the target ${dto.targetType} to have ${expected || 'a matching role'}. This partner's main role is "${actual}".`,
+            );
+          }
+        } else if (legacyRequired) {
+          const { codes } = partnerRolesForValidation(targetBp);
+          if (!codes.includes(legacyRequired)) {
+            throw new BadRequestException(
+              `Relationship "${relType.code}" requires the target ${dto.targetType} to hold role "${legacyRequired}". This partner holds: {${codes.join(', ') || 'none'}}.`,
+            );
+          }
+        }
       }
     }
 
