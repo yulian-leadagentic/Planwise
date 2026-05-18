@@ -337,19 +337,84 @@ export function TimesheetReportPage() {
     <div className="space-y-5 timesheet-report-root">
       {/* Print stylesheet — applied only during window.print(). Hides
           page chrome (sidebar, header, filters, export button), forces
-          landscape, shrinks font, and keeps the table header on every
-          page. Scoped via .timesheet-report-root so it never affects
-          other screens. */}
+          landscape A4 with minimal margins, shrinks the font, and lets
+          long cells wrap (the on-screen `truncate` + `max-w-*` classes
+          would otherwise chop content in the PDF). table-layout: fixed
+          divides width evenly so a single long Description doesn't
+          starve the other columns. Scoped via .timesheet-report-root
+          so it never bleeds into other screens. */}
       <style>{`
         @media print {
-          @page { size: landscape; margin: 12mm; }
+          @page { size: A4 landscape; margin: 8mm; }
           body * { visibility: hidden; }
           .timesheet-report-root, .timesheet-report-root * { visibility: visible; }
           .timesheet-report-root { position: absolute; left: 0; top: 0; width: 100%; }
           .no-print { display: none !important; }
-          .timesheet-report-root table { font-size: 10px; }
+
+          /* Compact the table for print — 13 columns in landscape A4
+             needs every pixel. */
+          .timesheet-report-root table {
+            font-size: 8px;
+            width: 100%;
+            table-layout: fixed;
+            border-collapse: collapse;
+          }
+          .timesheet-report-root th,
+          .timesheet-report-root td {
+            padding: 3px 4px !important;
+            border: 0.5px solid #e2e8f0;
+            white-space: normal !important;     /* override on-screen nowrap */
+            overflow: visible !important;       /* override truncate */
+            text-overflow: clip !important;
+            max-width: none !important;         /* drop the 200px caps */
+            word-break: break-word;
+            vertical-align: top;
+          }
+          /* Per-column widths — sum to ~100%. Narrow for date/time
+             columns, wider for project/zone/assignment/description
+             where the text matters most. */
+          .timesheet-report-root th:nth-child(1),
+          .timesheet-report-root td:nth-child(1)  { width: 6.5%; }   /* Date */
+          .timesheet-report-root th:nth-child(2),
+          .timesheet-report-root td:nth-child(2)  { width: 4.5%; }   /* From */
+          .timesheet-report-root th:nth-child(3),
+          .timesheet-report-root td:nth-child(3)  { width: 4.5%; }   /* To */
+          .timesheet-report-root th:nth-child(4),
+          .timesheet-report-root td:nth-child(4)  { width: 4.5%; }   /* Hours */
+          .timesheet-report-root th:nth-child(5),
+          .timesheet-report-root td:nth-child(5)  { width: 9%; }     /* Employee */
+          .timesheet-report-root th:nth-child(6),
+          .timesheet-report-root td:nth-child(6)  { width: 13%; }    /* Project */
+          .timesheet-report-root th:nth-child(7),
+          .timesheet-report-root td:nth-child(7)  { width: 12%; }    /* Zones */
+          .timesheet-report-root th:nth-child(8),
+          .timesheet-report-root td:nth-child(8)  { width: 9%; }     /* Service */
+          .timesheet-report-root th:nth-child(9),
+          .timesheet-report-root td:nth-child(9)  { width: 10%; }    /* Deliverable */
+          .timesheet-report-root th:nth-child(10),
+          .timesheet-report-root td:nth-child(10) { width: 11%; }    /* Assignment */
+          .timesheet-report-root th:nth-child(11),
+          .timesheet-report-root td:nth-child(11) { width: 10%; }    /* Description */
+          .timesheet-report-root th:nth-child(12),
+          .timesheet-report-root td:nth-child(12) { width: 6%; }     /* Cost */
+
+          /* Keep header on every page, prevent rows from breaking */
           .timesheet-report-root thead { display: table-header-group; }
-          .timesheet-report-root tr { page-break-inside: avoid; }
+          .timesheet-report-root tfoot { display: table-footer-group; }
+          .timesheet-report-root tr    { page-break-inside: avoid; }
+          .timesheet-report-root th    { background-color: #3b82f6 !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          /* Summary bar — print as light grey so it's visible without
+             ink-saturating the page. Drops the on-screen blue. */
+          .timesheet-report-root .summary-bar {
+            background-color: #f1f5f9 !important;
+            color: #0f172a !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+            border: 1px solid #cbd5e1;
+            padding: 6px 10px !important;
+            margin-bottom: 6px;
+            font-size: 10px;
+          }
         }
       `}</style>
       <PageHeader
@@ -450,9 +515,12 @@ export function TimesheetReportPage() {
       </div>
 
       {/* Summary bar — mirrors the legacy report header. Per-currency
-          totals so a mixed-currency org sees both sums separately. */}
+          totals so a mixed-currency org sees both sums separately. The
+          summary-bar class is targeted by the @media print rules above
+          to re-tone the blue background to grey for ink-friendly
+          printing. */}
       {totals && (
-        <div className="rounded-md bg-blue-500 text-white px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+        <div className="summary-bar rounded-md bg-blue-500 text-white px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
           <span className="font-semibold">
             Total Hours: <span className="tabular-nums">{totals.totalHours.toFixed(2)}</span>
           </span>
