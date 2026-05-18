@@ -1,3 +1,8 @@
+/* Build tag: 2026-05-18 — force Railway web service rebuild so the
+ * staging bundle picks up the M5 + Timesheet Report changes. The
+ * preceding empty-commit retrigger was correctly built but Railway's
+ * artifact cache served the prior bundle, so the new code wasn't
+ * actually shipped. Touching this file invalidates that cache. */
 /**
  * Employee Timesheets report — row-level view that mirrors the customer's
  * legacy report so users moving from the old system see familiar layout
