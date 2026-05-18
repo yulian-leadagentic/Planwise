@@ -387,6 +387,15 @@ function TeamTab({
     .filter((rt) => rt.code !== 'customer' && rt.code !== 'participant')
     .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
 
+  // Split dynamic roles into two buckets so the Team tab can show the
+  // "obligatory" (isPrimaryRequired) ones at the top of the page — they
+  // need to be staffed for the project to be considered complete — and
+  // push everything else below the Customer section. Matches the user's
+  // requested ordering: Obligatory -> Project Team -> Customer ->
+  // Customer Contacts -> Other roles.
+  const obligatoryRoles = dynamicRoles.filter((rt) => rt.isPrimaryRequired);
+  const otherRoles = dynamicRoles.filter((rt) => !rt.isPrimaryRequired);
+
   const softEnd = useMutation({
     mutationFn: (relationshipId: number) =>
       client.delete(`/business-partner-relationships/${relationshipId}`).then((r) => r.data),
@@ -441,7 +450,90 @@ function TeamTab({
         </p>
       </div>
 
-      {/* Section 1 — Customer (locked, hardcoded). */}
+      {/* Section ordering — per user request:
+            1. Obligatory roles (isPrimaryRequired)
+            2. Project Team (internal members)
+            3. Customer
+            4. Customer Contacts
+            5. Other roles (non-required)
+          The obligatory bucket floats to the top because those are the
+          roles that MUST be staffed for the project to be considered
+          complete — they need to be the first thing the admin sees. */}
+
+      {/* Section 1 — Obligatory role assignments. Rendered first so a
+          missing one is immediately visible. Emerald (action) accent
+          to mirror the rest of the dynamic role sections. */}
+      {obligatoryRoles.map((rt) => {
+        const assignments = team.roleAssignments.filter((a) => a.role.id === rt.id);
+        return (
+          <Section
+            key={`obligatory-${rt.id}`}
+            label={rt.name}
+            count={assignments.length}
+            accent="emerald"
+            action={(
+              <button
+                onClick={() => setRoleAssignmentTarget(rt)}
+                className="flex items-center gap-1.5 rounded-md bg-white border border-amber-300 bg-amber-50 hover:border-amber-400 px-3 py-1.5 text-xs font-semibold text-amber-800 transition-colors"
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                Add {rt.name}
+              </button>
+            )}
+          >
+            {assignments.length === 0 ? (
+              <p className="text-[12px] text-amber-700 italic">
+                <strong>Required.</strong> No {rt.name.toLowerCase()} on this project yet.
+                {rt.allowedPartnerKind !== 'any' && ` Allowed: ${rt.allowedPartnerKind} only.`}
+                {rt.requiredPartnerRoleCode && ` Must hold role "${rt.requiredPartnerRoleCode}".`}
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {assignments.map((a) => (
+                  <RoleAssignmentRow
+                    key={a.id}
+                    assignment={a}
+                    onRemove={() => {
+                      if (confirm(`Remove ${a.party.displayName} as ${rt.name}?`)) {
+                        removeRoleAssignment.mutate(a.id);
+                      }
+                    }}
+                    onOpenProfile={setFocusedPartnerId}
+                  />
+                ))}
+              </div>
+            )}
+          </Section>
+        );
+      })}
+
+      {/* Section 2 — Project Team (internal employees with User accounts). */}
+      <Section
+        label="Project Team"
+        count={team.projectTeam.length}
+        accent="blue"
+        action={(
+          <button
+            onClick={() => onToggleAddMember(true)}
+            className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Add Team Member
+          </button>
+        )}
+      >
+        {team.projectTeam.length === 0 ? (
+          <p className="text-[12px] text-slate-400 italic">No internal members yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {team.projectTeam.map((row) => (
+              <PersonRow key={row.relationshipId} row={row} onRemove={() => removeMyTeam(row)} accent="blue" onOpenProfile={setFocusedPartnerId} />
+            ))}
+          </div>
+        )}
+      </Section>
+
+      {/* Section 3 — Customer (locked, hardcoded). */}
       <Section label="Customer" count={team.customer ? 1 : 0} accent="indigo">
         {team.customer ? (
           <OrgRow
@@ -456,7 +548,7 @@ function TeamTab({
         )}
       </Section>
 
-      {/* Section 2 — Customer Contacts (org-level: anyone with an active
+      {/* Section 4 — Customer Contacts (org-level: anyone with an active
           rel pointing at the customer org). Shared across every project
           of this customer; not project-scoped. */}
       <Section
@@ -492,36 +584,10 @@ function TeamTab({
         )}
       </Section>
 
-      {/* Section 3 — Project Team (internal employees with User accounts). */}
-      <Section
-        label="Project Team"
-        count={team.projectTeam.length}
-        accent="blue"
-        action={(
-          <button
-            onClick={() => onToggleAddMember(true)}
-            className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
-          >
-            <UserPlus className="h-3.5 w-3.5" />
-            Add Team Member
-          </button>
-        )}
-      >
-        {team.projectTeam.length === 0 ? (
-          <p className="text-[12px] text-slate-400 italic">No internal members yet.</p>
-        ) : (
-          <div className="space-y-2">
-            {team.projectTeam.map((row) => (
-              <PersonRow key={row.relationshipId} row={row} onRemove={() => removeMyTeam(row)} accent="blue" onOpenProfile={setFocusedPartnerId} />
-            ))}
-          </div>
-        )}
-      </Section>
-
-      {/* Sections 4+ — Dynamic per ProjectRoleType (Supplier, Architect, …).
-          Adding a new project_role_type in admin makes a new section appear
-          here automatically. */}
-      {dynamicRoles.map((rt) => {
+      {/* Sections 5+ — Other (non-required) ProjectRoleTypes. Adding a
+          new project_role_type in admin makes a new section appear here
+          automatically. */}
+      {otherRoles.map((rt) => {
         const assignments = team.roleAssignments.filter((a) => a.role.id === rt.id);
         return (
           <Section
