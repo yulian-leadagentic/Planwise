@@ -454,22 +454,31 @@ export function ExecutionBoardPage() {
   }, [data?.templates]);
 
   // The dropdown filters by DELIVERABLE — the small pill below each column
-  // header (e.g. "ניהול מודל", "BIM תכנון"), not the column header itself.
-  // Each template links a service-name → a phase (= deliverable), so we
-  // walk the templates that have tasks and collect their distinct phase
-  // names. Computed from unfiltered tasks so the list doesn't shrink as
-  // the user picks.
+  // header. A task's deliverable resolves in two paths (matches the
+  // column-builder logic below in `phaseColumns`):
+  //   1. Template path — task.serviceType.name -> template.name ->
+  //      template.phase.name. Canonical for catalogued tasks.
+  //   2. Direct fallback — task.phase.name. Used for tasks created
+  //      without going through a template (typical for root tasks
+  //      like "BIM Management"); previously the dropdown ignored
+  //      these and silently dropped their deliverables even though
+  //      the column was rendered on the board.
+  // Computed from unfiltered tasks so the list doesn't shrink as the
+  // user picks a value.
   const availableServices = useMemo(() => {
     const allTasks = data?.tasks ?? [];
     const templates = data?.templates ?? [];
     const serviceNamesWithTasks = new Set<string>();
+    const directPhaseNamesWithTasks = new Set<string>();
     for (const t of allTasks) {
       const n = getTaskPhaseName(t);
       if (n) serviceNamesWithTasks.add(n);
+      if (t.phase?.name) directPhaseNamesWithTasks.add(t.phase.name);
     }
-    // For each template that matches an in-scope service, collect the
-    // template's linked phase (deliverable) name. Preserve the
-    // configuration order so the dropdown follows the column ordering.
+
+    // Path 1: template-driven order. For each template whose name is
+    // in use, emit the linked phase name in catalog order so the
+    // dropdown lines up with the column ordering.
     const ordered: string[] = [];
     const seen = new Set<string>();
     for (const tpl of templates) {
@@ -480,6 +489,18 @@ export function ExecutionBoardPage() {
         ordered.push(phaseName);
       }
     }
+
+    // Path 2: append any task.phase.name we saw on tasks that wasn't
+    // already covered by path 1. Sorted for stability (no catalog
+    // order to follow on this path).
+    const directOnly = Array.from(directPhaseNamesWithTasks)
+      .filter((n) => !seen.has(n))
+      .sort((a, b) => a.localeCompare(b));
+    for (const n of directOnly) {
+      seen.add(n);
+      ordered.push(n);
+    }
+
     return ordered;
   }, [data?.tasks, data?.templates]);
 
@@ -496,12 +517,14 @@ export function ExecutionBoardPage() {
         if (dueTo && d > dueTo) return false;
       }
       if (serviceFilter) {
-        // serviceFilter is a deliverable (phase) name. Map the task's
-        // service-name to its linked deliverable via the templates lookup;
-        // keep only tasks whose deliverable matches.
+        // serviceFilter is a deliverable (phase) name. Resolve the task's
+        // deliverable via the templates lookup first; fall back to
+        // task.phase.name for tasks that weren't created via a template
+        // (matches the new dual-source availableServices dropdown above
+        // and the column-builder fallback below).
         const serviceName = getTaskPhaseName(t);
         if (!serviceName) return false;
-        const deliverable = serviceNameToDeliverable.get(serviceName);
+        const deliverable = serviceNameToDeliverable.get(serviceName) ?? t.phase?.name ?? null;
         if (deliverable !== serviceFilter) return false;
       }
       return true;
