@@ -121,6 +121,12 @@ export class ProjectsService {
           roleInContext: 'Project Leader',
         });
       } catch { /* best-effort write-through */ }
+      // Also sync the team_leader Project Role assignment — the new
+      // relation-based model that replaces Project.leaderId. Dual-write
+      // keeps old read paths (which still consult leaderId) working
+      // while new read paths use the relation. leaderId gets dropped
+      // in M7 cleanup once all reads are migrated.
+      await this.syncTeamLeaderRole(project.id, dto.leaderId);
     }
 
     // Create ProjectMember records for each member ID
@@ -195,6 +201,31 @@ export class ProjectsService {
           creator: { select: { id: true, firstName: true, lastName: true } },
           leader: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
           _count: { select: { members: true, labels: true, tasks: true, zones: true } },
+          // Project Role assignments — surfaces the people-by-role so
+          // the list page can render configurable columns (one per
+          // ProjectRoleType the admin opts in to). Filtered to active
+          // assignments so ended/historical rows don't clutter the
+          // list. Minimal party fields kept to bound payload size.
+          // The relation is named `partnerRoles` on the Project model
+          // (the inverse side `projectPartnerRoles` lives on
+          // BusinessPartner — easy to mix up).
+          partnerRoles: {
+            where: { status: 'active' },
+            select: {
+              id: true,
+              roleId: true,
+              isPrimary: true,
+              titleInProject: true,
+              party: {
+                select: {
+                  id: true,
+                  displayName: true,
+                  partnerType: true,
+                  user: { select: { id: true, avatarUrl: true } },
+                },
+              },
+            },
+          },
         },
       }),
       this.prisma.project.count({ where }),
@@ -261,6 +292,12 @@ export class ProjectsService {
         create: { projectId: id, userId: dto.leaderId, role: 'Project Leader' },
         update: { role: 'Project Leader' },
       });
+      // Dual-write to the new team_leader Project Role assignment.
+      // See syncTeamLeaderRole() docstring for the rationale.
+      await this.syncTeamLeaderRole(id, dto.leaderId);
+    } else if (dto.leaderId === null) {
+      // Leader explicitly cleared — end any active team_leader role.
+      await this.syncTeamLeaderRole(id, null);
     }
 
     // Sync team members if provided: add new ones, remove ones no longer in the list
@@ -858,5 +895,68 @@ export class ProjectsService {
         hours: +u.hours.toFixed(2),
       })),
     };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Team Leader → ProjectPartnerRole sync
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Mirrors `Project.leaderId` onto the team_leader ProjectPartnerRole.
+   * Called from create() and update() whenever the leader changes.
+   *
+   * Why dual-write: the new model treats Team Leader as just another
+   * Project Role Type (alongside BIM Leader, Architect, …). The legacy
+   * leaderId column will be dropped in M7 once every read path is
+   * migrated; until then we keep both representations in sync so old
+   * and new reads agree.
+   *
+   * Behavior:
+   *   - leaderUserId set    → end any active team_leader role, then
+   *                           create a fresh one for the new user
+   *   - leaderUserId null   → end any active team_leader role only
+   *
+   * Skips silently when the user has no linked BusinessPartner — the
+   * relation requires a party_id (BP), not a user_id.
+   */
+  private async syncTeamLeaderRole(projectId: number, leaderUserId: number | null): Promise<void> {
+    const teamLeaderRole = await this.prisma.projectRoleType.findUnique({
+      where: { code: 'team_leader' },
+      select: { id: true },
+    });
+    if (!teamLeaderRole) return; // role-type catalog hasn't been seeded yet
+
+    const now = new Date();
+
+    // End any currently-active team_leader assignment(s). Hard-delete
+    // rather than soft-end so the unique constraint
+    // (projectId, partyId, roleId, validFrom) doesn't collide with the
+    // new row we're about to insert.
+    await this.prisma.projectPartnerRole.deleteMany({
+      where: {
+        projectId,
+        roleId: teamLeaderRole.id,
+        status: 'active',
+      },
+    });
+
+    if (leaderUserId == null) return;
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: leaderUserId },
+      select: { businessPartnerId: true },
+    });
+    if (!user?.businessPartnerId) return; // user has no linked BP → can't be a party
+
+    await this.prisma.projectPartnerRole.create({
+      data: {
+        projectId,
+        partyId: user.businessPartnerId,
+        roleId: teamLeaderRole.id,
+        isPrimary: true,
+        validFrom: now,
+        status: 'active',
+      },
+    });
   }
 }
