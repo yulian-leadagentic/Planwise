@@ -2,8 +2,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ArrowLeft, Loader2, X, Search, UserCircle, Users } from 'lucide-react';
-import { useEffect, useState, useMemo } from 'react';
+import { ArrowLeft, Loader2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import client from '@/api/client';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
@@ -26,13 +26,6 @@ const projectSchema = z.object({
 });
 
 type ProjectFormData = z.infer<typeof projectSchema>;
-
-interface User {
-  id: number;
-  firstName: string;
-  lastName: string;
-  email: string;
-}
 
 const inputClass =
   'w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
@@ -98,35 +91,21 @@ export function ProjectFormPage() {
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
 
-  const { data: users } = useQuery<User[]>({
-    queryKey: ['users', 'active'],
-    queryFn: () =>
-      client.get('/users?isActive=true').then((r) => {
-        const d = r.data.data ?? r.data;
-        const list = d.data ?? d;
-        return Array.isArray(list) ? list.filter((u: any) => u.isActive !== false) : [];
-      }),
-  });
+  // The `users` active-users query was here. Removed when the legacy
+  // Project Leader dropdown was deleted — its only consumer. Team
+  // Leader is now a ProjectRoleType, picked via RequiredRolePicker (or
+  // from the Team tab post-create).
 
-  const [memberIds, setMemberIds] = useState<number[]>([]);
-  const [memberSearch, setMemberSearch] = useState('');
-  const [memberDropdownOpen, setMemberDropdownOpen] = useState(false);
-  const [showTeamTemplatePicker, setShowTeamTemplatePicker] = useState(false);
+  // Team-member state + Team-template picker were here. Both removed
+  // when team management moved to the Team tab. The project create
+  // form no longer touches team membership — projects start empty and
+  // members get added afterwards from the project detail page.
+
   // Optional quick link — Google Drive / network share / etc. Saved as a
   // ProjectFile of kind=link after the project is created/updated, so it's
   // visible in the existing Files tab.
   const [quickLinkUrl, setQuickLinkUrl] = useState('');
   const [quickLinkName, setQuickLinkName] = useState('');
-
-  // Fetch team templates for the picker
-  const { data: teamTemplates = [] } = useQuery<any[]>({
-    queryKey: ['team-templates'],
-    queryFn: () =>
-      client.get('/admin/config/team-templates').then((r) => {
-        const d = r.data.data ?? r.data;
-        return Array.isArray(d) ? d : [];
-      }),
-  });
 
   // Default end date is "open-ended" — projects without a known finish date
   // get 9999-12-31, matching how SAP-style time-bounded relationships use a
@@ -176,24 +155,10 @@ export function ProjectFormPage() {
         endDate: toDateInput(project.endDate) || DEFAULT_OPEN_END_DATE,
         leaderId: (project as any).leaderId ?? undefined,
       });
-      if ((project as any).members) {
-        const ids = ((project as any).members as any[])
-          .filter((m: any) => m.role !== 'Project Leader')
-          .map((m: any) => m.userId ?? m.id);
-        setMemberIds(ids);
-      }
+      // Member loading was here. Team is managed only from the Team
+      // tab now — no need to seed the form with the existing list.
     }
   }, [project, isEdit, reset, existingCustomerRel]);
-
-  const filteredMemberUsers = useMemo(() => {
-    if (!users) return [];
-    return users.filter((u) => {
-      if (memberIds.includes(u.id)) return false;
-      if (!memberSearch) return true;
-      const full = `${u.firstName} ${u.lastName} ${u.email}`.toLowerCase();
-      return full.includes(memberSearch.toLowerCase());
-    });
-  }, [users, memberIds, memberSearch]);
 
   if (isEdit && projectLoading) return <PageSkeleton />;
 
@@ -223,7 +188,11 @@ export function ProjectFormPage() {
   };
 
   const onSubmit = (data: ProjectFormData) => {
-    const payload: any = { ...data, memberIds };
+    // memberIds intentionally NOT spread in — team management moved
+    // to the Team tab. Project starts with no members; admins add
+    // them after the project is created via the dedicated UI which
+    // supports Project Role Types.
+    const payload: any = { ...data };
 
     // Empty date strings would fail the API's @IsDateString() validator
     // and surface as cryptic "startDate must be a valid ISO 8601 date
@@ -317,39 +286,6 @@ export function ProjectFormPage() {
   };
 
   const isPending = createProject.isPending || updateProject.isPending;
-
-  const addMember = (userId: number) => {
-    setMemberIds((prev) => [...prev, userId]);
-    setMemberSearch('');
-    setMemberDropdownOpen(false);
-  };
-
-  const removeMember = (userId: number) => {
-    setMemberIds((prev) => prev.filter((id) => id !== userId));
-  };
-
-  const applyTeamTemplate = (templateId: number) => {
-    const template = teamTemplates.find((t) => t.id === templateId);
-    if (!template) return;
-    const templateMemberIds: number[] = (template.members || [])
-      .map((m: any) => m.userId ?? m.user?.id)
-      .filter((id: any): id is number => typeof id === 'number');
-    setMemberIds((prev) => {
-      const next = new Set(prev);
-      templateMemberIds.forEach((id) => next.add(id));
-      return Array.from(next);
-    });
-    setShowTeamTemplatePicker(false);
-    notify.success(
-      `Loaded ${templateMemberIds.length} member${templateMemberIds.length !== 1 ? 's' : ''} from "${template.name}"`,
-      { code: 'TEAM-LOAD-200' },
-    );
-  };
-
-  const getUserName = (userId: number) => {
-    const u = users?.find((u) => u.id === userId);
-    return u ? `${u.firstName} ${u.lastName}` : `User ${userId}`;
-  };
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -487,19 +423,10 @@ export function ProjectFormPage() {
                   </p>
                 </div>
 
-                {/* M4a.2 — Required project-role pickers (e.g. Project Lead).
-                    One field per ProjectRoleType where isPrimaryRequired=true
-                    (excluding 'customer', which has its own picker above). */}
-                {!isEdit && requiredRoles.map((rt: any) => (
-                  <RequiredRolePicker
-                    key={rt.id}
-                    role={rt}
-                    value={requiredRoleSelections[rt.id] ?? null}
-                    onChange={(v) =>
-                      setRequiredRoleSelections((prev) => ({ ...prev, [rt.id]: v }))
-                    }
-                  />
-                ))}
+                {/* Required project-role pickers used to live here. They
+                    moved to the TEAM section so all people-on-the-project
+                    fields (Project Leader + BIM Leader / Architect /
+                    Engineer / etc.) sit in one place — per user request. */}
 
                 {/* Status */}
                 <div>
@@ -565,96 +492,35 @@ export function ProjectFormPage() {
               <h2 className={sectionHeadingClass}>TEAM</h2>
 
               <div className="mt-4 flex flex-col gap-4">
-                {/* Project Leader */}
-                <div>
-                  <label className={labelClass}>Project Leader</label>
-                  <select {...register('leaderId')} className={inputClass}>
-                    <option value="">Select leader</option>
-                    {(users ?? []).map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.firstName} {u.lastName} - {u.email}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {/* The legacy "Project Leader" dropdown was removed —
+                    Team Leader is now just another Project Role Type
+                    (system-seeded as `team_leader`). To require it on
+                    every project, mark it isPrimaryRequired=true in
+                    Admin → Project Role Types and it'll show up as one
+                    of the RequiredRolePicker fields below. */}
 
-                {/* Team Members */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className={labelClass + ' mb-0'}>Team Members</label>
-                    <button
-                      type="button"
-                      onClick={() => setShowTeamTemplatePicker(true)}
-                      className="flex items-center gap-1.5 text-[12px] font-semibold text-blue-600 hover:text-blue-700"
-                    >
-                      <Users className="h-3.5 w-3.5" />
-                      Add from Team Template
-                    </button>
-                  </div>
+                {/* Required project-role pickers — one field per
+                    ProjectRoleType where isPrimaryRequired=true (excluding
+                    'customer', which has its own picker above). The TEAM
+                    section gathers all people-on-the-project fields so
+                    BIM Leader / Architect / etc. sit together. */}
+                {!isEdit && requiredRoles.map((rt: any) => (
+                  <RequiredRolePicker
+                    key={rt.id}
+                    role={rt}
+                    value={requiredRoleSelections[rt.id] ?? null}
+                    onChange={(v) =>
+                      setRequiredRoleSelections((prev) => ({ ...prev, [rt.id]: v }))
+                    }
+                  />
+                ))}
 
-                  {/* Selected member pills */}
-                  {memberIds.length > 0 && (
-                    <div className="flex flex-wrap gap-2 mb-2">
-                      {memberIds.map((mid) => (
-                        <span
-                          key={mid}
-                          className="inline-flex items-center gap-1.5 bg-slate-100 text-slate-700 text-[13px] font-semibold px-2.5 py-1 rounded-lg"
-                        >
-                          <UserCircle className="h-4 w-4 text-slate-400" />
-                          {getUserName(mid)}
-                          <button
-                            type="button"
-                            onClick={() => removeMember(mid)}
-                            className="ml-0.5 text-slate-400 hover:text-slate-600"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Member search input */}
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                    <input
-                      type="text"
-                      placeholder="Add team members..."
-                      value={memberSearch}
-                      onChange={(e) => {
-                        setMemberSearch(e.target.value);
-                        setMemberDropdownOpen(true);
-                      }}
-                      onFocus={() => setMemberDropdownOpen(true)}
-                      onBlur={() => {
-                        // Delay to allow click on option
-                        setTimeout(() => setMemberDropdownOpen(false), 200);
-                      }}
-                      className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
-                    />
-
-                    {/* Dropdown */}
-                    {memberDropdownOpen && filteredMemberUsers.length > 0 && (
-                      <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto bg-white rounded-lg border border-slate-200 shadow-sm">
-                        {filteredMemberUsers.map((u) => (
-                          <button
-                            key={u.id}
-                            type="button"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => addMember(u.id)}
-                            className="w-full px-3 py-2 text-left text-[13px] text-slate-700 hover:bg-slate-50 flex items-center gap-2"
-                          >
-                            <UserCircle className="h-4 w-4 text-slate-400 shrink-0" />
-                            <span>
-                              {u.firstName} {u.lastName}
-                              <span className="text-slate-500 ml-1">- {u.email}</span>
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
+                {/* Other team members are managed from the Team tab on
+                    the project detail page — keeping the create flow
+                    focused on the required people. */}
+                <p className="text-[11px] text-slate-400 italic">
+                  Additional team members are managed from the project's <strong>Team</strong> tab after the project is created.
+                </p>
               </div>
             </div>
 
@@ -714,90 +580,9 @@ export function ProjectFormPage() {
           </div>
         </form>
 
-        {/* Team Template Picker Modal */}
-        {showTeamTemplatePicker && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-            onClick={() => setShowTeamTemplatePicker(false)}
-          >
-            <div
-              className="mx-4 flex max-h-[80vh] w-full max-w-lg flex-col rounded-[14px] border border-slate-200 bg-white shadow-xl"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-                <div className="flex items-center gap-2">
-                  <Users className="h-5 w-5 text-blue-600" />
-                  <h2 className="text-base font-semibold">Add from Team Template</h2>
-                </div>
-                <button
-                  onClick={() => setShowTeamTemplatePicker(false)}
-                  className="rounded-md p-1.5 hover:bg-slate-100"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto p-4">
-                {teamTemplates.length === 0 ? (
-                  <p className="py-8 text-center text-sm text-slate-500">
-                    No team templates available. Create one in Templates → Team Templates.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {teamTemplates.map((t) => {
-                      const memberCount = t._count?.members ?? t.members?.length ?? 0;
-                      return (
-                        <button
-                          key={t.id}
-                          type="button"
-                          onClick={() => applyTeamTemplate(t.id)}
-                          className="w-full rounded-lg border border-slate-200 bg-white p-3 text-left hover:border-blue-400 hover:bg-blue-50/40"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-semibold text-slate-900">{t.name}</p>
-                              <p className="mt-0.5 text-xs text-slate-500">
-                                {memberCount} member{memberCount !== 1 ? 's' : ''}
-                              </p>
-                              {t.members && t.members.length > 0 && (
-                                <div className="mt-2 flex flex-wrap gap-1">
-                                  {t.members.slice(0, 6).map((m: any) => {
-                                    const u = m.user ?? {};
-                                    const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || u.email || 'Unknown';
-                                    return (
-                                      <span
-                                        key={m.id}
-                                        className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600"
-                                      >
-                                        <UserCircle className="h-3 w-3 text-slate-400" />
-                                        {name}
-                                      </span>
-                                    );
-                                  })}
-                                  {t.members.length > 6 && (
-                                    <span className="text-[11px] text-slate-400">+{t.members.length - 6} more</span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
-                <button
-                  type="button"
-                  onClick={() => setShowTeamTemplatePicker(false)}
-                  className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Team Template Picker Modal was here — removed alongside
+            the Team Members inline block. Team templates can still be
+            applied from the project's Team tab where they belong. */}
       </div>
     </div>
   );
