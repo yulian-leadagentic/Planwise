@@ -52,7 +52,10 @@ interface Response {
   };
 }
 
-type GroupBy = 'none' | 'day' | 'week' | 'month' | 'employee' | 'project' | 'zone';
+type GroupBy =
+  | 'none' | 'day' | 'week' | 'month'
+  | 'employee' | 'project' | 'zone'
+  | 'service' | 'deliverable';
 
 const GROUP_OPTIONS: Array<{ value: GroupBy; label: string }> = [
   { value: 'none', label: 'No Group' },
@@ -62,6 +65,10 @@ const GROUP_OPTIONS: Array<{ value: GroupBy; label: string }> = [
   { value: 'employee', label: 'Employee' },
   { value: 'project', label: 'Project' },
   { value: 'zone', label: 'Zone' },
+  // Work-discipline axes added per user request — Service is the
+  // broader category (phase), Deliverable is the specific template.
+  { value: 'service', label: 'Service' },
+  { value: 'deliverable', label: 'Deliverable' },
 ];
 
 // ─── Helpers ────────────────────────────────────────────────────────────
@@ -135,6 +142,19 @@ function groupKeyFor(row: Row, mode: GroupBy): { key: string; label: string } {
       return {
         key: row.zone ? String(row.zone.id) : 'none',
         label: row.zone?.breadcrumb.join(' › ') || row.zone?.name || '(no zone)',
+      };
+    case 'service':
+      // Bucket all entries on tasks with no Service set under a single
+      // "(no service)" group so they're countable instead of silently
+      // missing from the breakdown.
+      return {
+        key: row.service ? String(row.service.id) : 'none',
+        label: row.service?.name ?? '(no service)',
+      };
+    case 'deliverable':
+      return {
+        key: row.deliverable ? String(row.deliverable.id) : 'none',
+        label: row.deliverable?.name ?? '(no deliverable)',
       };
     default:
       return { key: 'all', label: '' };
