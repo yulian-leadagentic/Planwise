@@ -54,7 +54,10 @@ export class ReportsService {
             id: true,
             firstName: true,
             lastName: true,
-            seniorityLevel: { select: { defaultHourlyCost: true, currency: true, name: true } },
+            // seniorityLevel removed — we resolve the date-effective
+            // level per-entry below using user_seniorities so the cost
+            // matches what was active when the work was logged, not
+            // the user's current level.
           },
         },
         task: {
@@ -97,6 +100,31 @@ export class ReportsService {
       for (const z of rows) zoneNameById.set(z.id, z.name);
     }
 
+    // Pre-load every contributor's seniority history so the per-row
+    // effective-level lookup runs in memory (no N+1).
+    const tsUserIds = Array.from(new Set(entries.map((e) => e.user.id)));
+    const tsHistories = tsUserIds.length === 0 ? [] : await this.prisma.userSeniority.findMany({
+      where: { userId: { in: tsUserIds } },
+      include: {
+        seniorityLevel: { select: { name: true, defaultHourlyCost: true, currency: true } },
+      },
+      orderBy: { startDate: 'desc' },
+    });
+    const tsHistoryByUser = new Map<number, typeof tsHistories>();
+    for (const h of tsHistories) {
+      if (!tsHistoryByUser.has(h.userId)) tsHistoryByUser.set(h.userId, []);
+      tsHistoryByUser.get(h.userId)!.push(h);
+    }
+    const tsEffectiveAt = (userId: number, date: Date) => {
+      const list = tsHistoryByUser.get(userId) ?? [];
+      for (const row of list) {
+        if (row.startDate <= date && (row.endDate === null || row.endDate >= date)) {
+          return row.seniorityLevel;
+        }
+      }
+      return null;
+    };
+
     // Per-currency totals + flat row list.
     const totalsByCurrency = new Map<string, { totalHours: number; totalCost: number }>();
     let totalHours = 0;
@@ -105,7 +133,10 @@ export class ReportsService {
       const hours = e.minutes / 60;
       totalHours += hours;
 
-      const sl = e.user.seniorityLevel;
+      // Resolve the level effective on THIS entry's date — not the
+      // user's current level. A user promoted mid-month will see two
+      // different cost rows for the same week of entries.
+      const sl = tsEffectiveAt(e.user.id, e.date);
       let cost: number | null = null;
       let currency: string | null = null;
       if (sl?.defaultHourlyCost != null) {

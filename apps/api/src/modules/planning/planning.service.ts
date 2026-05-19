@@ -94,11 +94,12 @@ export class PlanningService {
       if (row.taskId) loggedByTask.set(row.taskId, row._sum.minutes ?? 0);
     }
 
-    // M5 — per-task actual cost. Walk each entry, multiply hours by the
-    // logger's SeniorityLevel.defaultHourlyCost, and sum per task. Same
-    // resolution rule as the project Labor Cost view; entries where the
-    // user has no seniority / no cost contribute 0 (we surface those gaps
-    // in the Cost tab callout, no need to repeat per-row here).
+    // M5 — per-task actual cost using DATE-EFFECTIVE seniority.
+    // Walk each entry, look up the seniority that was active for the
+    // user on the entry's date (NOT the user's current level), and
+    // multiply hours by that level's defaultHourlyCost. Critical for
+    // mid-project promotions so hours before/after a level change bill
+    // at the correct historical rate.
     const entriesForCost = taskIds.length === 0
       ? []
       : await this.prisma.timeEntry.findMany({
@@ -106,13 +107,36 @@ export class PlanningService {
           select: {
             taskId: true,
             minutes: true,
-            user: {
-              select: {
-                seniorityLevel: { select: { defaultHourlyCost: true, currency: true } },
-              },
-            },
+            userId: true,
+            date: true,
           },
         });
+
+    // Pre-load every contributor's seniority history in one query so
+    // the per-entry effective-level lookup is in-memory.
+    const costUserIds = Array.from(new Set(entriesForCost.map((e) => e.userId)));
+    const costHistories = costUserIds.length === 0 ? [] : await this.prisma.userSeniority.findMany({
+      where: { userId: { in: costUserIds } },
+      include: {
+        seniorityLevel: { select: { defaultHourlyCost: true, currency: true } },
+      },
+      orderBy: { startDate: 'desc' },
+    });
+    const costHistoryByUser = new Map<number, typeof costHistories>();
+    for (const h of costHistories) {
+      if (!costHistoryByUser.has(h.userId)) costHistoryByUser.set(h.userId, []);
+      costHistoryByUser.get(h.userId)!.push(h);
+    }
+    const effectiveLevelAt = (userId: number, date: Date) => {
+      const list = costHistoryByUser.get(userId) ?? [];
+      for (const row of list) {
+        if (row.startDate <= date && (row.endDate === null || row.endDate >= date)) {
+          return row.seniorityLevel;
+        }
+      }
+      return null;
+    };
+
     // Per task: total cost + the currency seen on the first rateable
     // entry. If a task has contributors in multiple currencies the
     // numeric sum still reflects what was spent (no FX conversion); the
@@ -121,10 +145,11 @@ export class PlanningService {
     const actualByTask = new Map<number, { cost: number; currency: string | null }>();
     for (const e of entriesForCost) {
       if (e.taskId == null) continue;
-      const hc = e.user.seniorityLevel?.defaultHourlyCost;
+      const level = effectiveLevelAt(e.userId, e.date);
+      const hc = level?.defaultHourlyCost;
       if (hc == null) continue;
       const cost = (e.minutes / 60) * Number(hc);
-      const curr = e.user.seniorityLevel?.currency ?? null;
+      const curr = level?.currency ?? null;
       const prev = actualByTask.get(e.taskId);
       if (prev) {
         prev.cost += cost;

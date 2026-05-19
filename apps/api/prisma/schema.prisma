@@ -230,8 +230,16 @@ model User {
   /// Employee seniority level. Used to look up the default hourly cost
   /// for project labor calculations. Nullable for backward compat and for
   /// non-employee users who have no cost concept.
+  /// Source-of-truth for date-effective cost is `user_seniorities` (the
+  /// history table). This column reflects the user's CURRENT seniority
+  /// (most recent open-ended row) and is kept in sync via the service
+  /// so existing reads (employee table, edit form, etc.) keep working.
+  /// Will be dropped in a future cleanup once every reader is migrated
+  /// to date-aware lookups.
   seniorityLevelId Int? @map("seniority_level_id")
   seniorityLevel   SeniorityLevel? @relation("UserSeniorityLevel", fields: [seniorityLevelId], references: [id], onDelete: SetNull)
+  // Full history of seniority assignments per user — see UserSeniority.
+  seniorityHistory UserSeniority[] @relation("UserSeniorityHistory")
   website      String?
   otpCode      String?   @map("otp_code")
   otpExpiresAt DateTime? @map("otp_expires_at")
@@ -1687,8 +1695,53 @@ model SeniorityLevel {
   updatedAt DateTime @updatedAt      @map("updated_at")
 
   employees User[]   @relation("UserSeniorityLevel")
+  // Reverse side of UserSeniority — every historical assignment that
+  // pointed at this level. Cascade SET NULL on delete so we never
+  // orphan a row (but a level in use can't be hard-deleted from the UI
+  // anyway).
+  historicalAssignments UserSeniority[] @relation("SeniorityLevelHistory")
 
   @@map("seniority_levels")
+}
+
+/// Date-effective seniority history per user. Each row says "user X
+/// held seniority level Y from startDate until endDate (or still
+/// active if endDate is NULL)". The project labor-cost calculation
+/// looks up the row whose [startDate, endDate] covers each time
+/// entry's date, so the cost reflects the seniority that was active
+/// AT THE TIME the work was logged — not the user's current level.
+///
+/// Constraints enforced by the service (not the DB) at save time:
+///   1. startDate < endDate when both set.
+///   2. No date-range overlap with any other row for the same user.
+///   3. At most one open-ended (endDate=NULL) row per user.
+///   4. Contiguous chain: when a new open-ended row is added with
+///      startDate=S, the previous open-ended row is closed at S-1.
+///
+/// User.seniorityLevelId is kept in sync (= the level of the current
+/// open-ended row, or the most recent closed row if none open). That's
+/// the "convenience" field for read paths that don't care about
+/// historical date-aware lookups; the source of truth lives here.
+model UserSeniority {
+  id                Int       @id @default(autoincrement())
+  userId            Int       @map("user_id")
+  seniorityLevelId  Int       @map("seniority_level_id")
+  /// Inclusive — the day the assignment begins.
+  startDate         DateTime  @map("start_date") @db.Date
+  /// Inclusive — the day the assignment ends. NULL = currently active
+  /// (no planned end). At most one row per user can have endDate=NULL.
+  endDate           DateTime? @map("end_date") @db.Date
+  notes             String?   @db.Text
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  user           User           @relation("UserSeniorityHistory", fields: [userId], references: [id], onDelete: Cascade)
+  seniorityLevel SeniorityLevel @relation("SeniorityLevelHistory", fields: [seniorityLevelId], references: [id])
+
+  @@unique([userId, startDate])
+  @@index([userId, startDate])
+  @@index([userId, endDate])
+  @@map("user_seniorities")
 }
 
 // ─── M3b — Party↔Party + Project-Party-Role tables ─────────────────────────

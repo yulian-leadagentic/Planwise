@@ -725,15 +725,25 @@ export class ProjectsService {
 
   /**
    * Sums logged time on a project and resolves an hourly cost per user
-   * from their assigned SeniorityLevel.defaultHourlyCost.
+   * using DATE-EFFECTIVE seniority — the level that was active for the
+   * user on the day each TimeEntry was logged. Critical for accuracy
+   * when an employee gets promoted mid-project: hours before the
+   * promotion bill at the old rate, hours after at the new rate.
    *
-   * Resolution rule (intentionally simple for v1):
-   *   cost = sum(timeEntry.minutes / 60 * user.seniorityLevel.defaultHourlyCost)
+   * Resolution rule:
+   *   for each entry e:
+   *     level = user_seniorities row where userId=e.userId AND
+   *             startDate <= e.date <= (endDate ?? infinity)
+   *     cost += (e.minutes / 60) * level.defaultHourlyCost
    *
-   * Users whose cost can't be resolved (no seniority, or seniority has no
-   * defaultHourlyCost) are split out into `unrateable` so admins see the
-   * gap and can fix the assignments — not silently bucketed at 0 which
-   * would understate the project's true cost.
+   * The output groups by (user, level), so a user with multiple levels
+   * during the project surfaces as multiple rows ("Alice as Senior:
+   * 10h" + "Alice as Lead: 5h"). UI rendering doesn't change — same
+   * row shape as before, just more rows for promoted users.
+   *
+   * Users whose entries have no covering seniority row (or whose level
+   * has no defaultHourlyCost) land in `unrateable` so admins see the
+   * gap and can fix it via the seniority-history editor.
    *
    * Costs are grouped per-currency. We deliberately do NOT FX-convert
    * (no rate table, no policy decision), so a mixed-currency project
@@ -754,6 +764,7 @@ export class ProjectsService {
       select: {
         minutes: true,
         userId: true,
+        date: true,
         user: {
           select: {
             id: true,
@@ -761,55 +772,109 @@ export class ProjectsService {
             lastName: true,
             avatarUrl: true,
             position: true,
-            seniorityLevel: {
-              select: {
-                id: true,
-                name: true,
-                defaultHourlyCost: true,
-                currency: true,
-              },
-            },
           },
         },
       },
     });
 
-    // Bucket minutes by user. One pass through the entries; no DB
-    // calls in the loop. Sets the per-user seniority snapshot the first
-    // time we see them (it's the same user across all entries).
-    interface UserBucket {
-      user: {
-        id: number;
-        firstName: string;
-        lastName: string;
-        avatarUrl: string | null;
-        position: string | null;
-      };
-      seniorityLevel: { id: number; name: string; defaultHourlyCost: any; currency: string | null } | null;
+    // Pre-load every contributor's full seniority history in ONE query
+    // so the per-entry effective-level lookup runs entirely in memory.
+    // N+1 would explode quickly on large projects.
+    const userIds = Array.from(new Set(entries.map((e) => e.userId)));
+    const histories = userIds.length === 0 ? [] : await this.prisma.userSeniority.findMany({
+      where: { userId: { in: userIds } },
+      include: {
+        seniorityLevel: { select: { id: true, name: true, defaultHourlyCost: true, currency: true } },
+      },
+      orderBy: { startDate: 'desc' },
+    });
+    const historyByUser = new Map<number, typeof histories>();
+    for (const h of histories) {
+      if (!historyByUser.has(h.userId)) historyByUser.set(h.userId, []);
+      historyByUser.get(h.userId)!.push(h);
+    }
+
+    /** Resolve the seniority level effective for userId on date. */
+    const effectiveAt = (userId: number, date: Date) => {
+      const list = historyByUser.get(userId) ?? [];
+      // history is sorted descending by startDate; first match wins.
+      for (const row of list) {
+        if (row.startDate <= date && (row.endDate === null || row.endDate >= date)) {
+          return row.seniorityLevel;
+        }
+      }
+      return null;
+    };
+
+    // Local snapshot type. Exported as a `type` (vs interface) so
+    // TypeScript can synthesize a structural return type for
+    // getLaborCost() without requiring the type itself to be exported.
+    type UserSnapshot = {
+      id: number;
+      firstName: string;
+      lastName: string;
+      avatarUrl: string | null;
+      position: string | null;
+    };
+    const userById = new Map<number, UserSnapshot>();
+    for (const e of entries) {
+      if (!userById.has(e.userId)) {
+        userById.set(e.userId, {
+          id: e.user.id,
+          firstName: e.user.firstName,
+          lastName: e.user.lastName,
+          avatarUrl: e.user.avatarUrl,
+          position: e.user.position,
+        });
+      }
+    }
+
+    // Bucket per (userId, levelId). A user with multiple seniority
+    // periods on the same project shows as multiple rows.
+    interface RateableBucket {
+      user: UserSnapshot;
+      seniorityLevel: { id: number; name: string };
+      hourlyCost: number;
+      currency: string;
       minutes: number;
     }
-    const byUserId = new Map<number, UserBucket>();
+    const rateable = new Map<string, RateableBucket>();
+    const unrateableMinutes = new Map<number, { user: UserSnapshot; reason: string; minutes: number }>();
+
     for (const e of entries) {
-      let b = byUserId.get(e.userId);
+      const level = effectiveAt(e.userId, e.date);
+      const user = userById.get(e.userId)!;
+      if (!level) {
+        const cur = unrateableMinutes.get(e.userId) ?? { user, reason: 'No seniority history covers the entry date', minutes: 0 };
+        cur.minutes += e.minutes;
+        unrateableMinutes.set(e.userId, cur);
+        continue;
+      }
+      if (level.defaultHourlyCost == null) {
+        const cur = unrateableMinutes.get(e.userId) ?? { user, reason: `Seniority "${level.name}" has no hourly cost configured`, minutes: 0 };
+        cur.minutes += e.minutes;
+        unrateableMinutes.set(e.userId, cur);
+        continue;
+      }
+      const key = `${e.userId}|${level.id}`;
+      let b = rateable.get(key);
       if (!b) {
         b = {
-          user: {
-            id: e.user.id,
-            firstName: e.user.firstName,
-            lastName: e.user.lastName,
-            avatarUrl: e.user.avatarUrl,
-            position: e.user.position,
-          },
-          seniorityLevel: e.user.seniorityLevel ?? null,
+          user,
+          seniorityLevel: { id: level.id, name: level.name },
+          hourlyCost: Number(level.defaultHourlyCost),
+          // Currency on the SeniorityLevel is optional; tag 'UNK' so
+          // the UI can flag the data gap without dropping the row.
+          currency: level.currency || 'UNK',
           minutes: 0,
         };
-        byUserId.set(e.userId, b);
+        rateable.set(key, b);
       }
       b.minutes += e.minutes;
     }
 
     const byUser: Array<{
-      user: UserBucket['user'];
+      user: UserSnapshot;
       seniorityLevel: { id: number; name: string } | null;
       hours: number;
       hourlyCost: number;
@@ -817,50 +882,36 @@ export class ProjectsService {
       cost: number;
     }> = [];
     const unrateable: Array<{
-      user: UserBucket['user'];
+      user: UserSnapshot;
       hours: number;
       reason: string;
     }> = [];
-    // Per-currency totals. Map keys are 3-letter currency codes
-    // (or 'UNK' when a seniority has no currency set).
     const totalsByCurrency = new Map<string, { hours: number; cost: number; userCount: number }>();
     let totalUnrateableHours = 0;
 
-    for (const b of byUserId.values()) {
+    for (const b of rateable.values()) {
       const hours = b.minutes / 60;
-      if (!b.seniorityLevel) {
-        unrateable.push({ user: b.user, hours, reason: 'No seniority level assigned' });
-        totalUnrateableHours += hours;
-        continue;
-      }
-      if (b.seniorityLevel.defaultHourlyCost == null) {
-        unrateable.push({
-          user: b.user,
-          hours,
-          reason: `Seniority "${b.seniorityLevel.name}" has no hourly cost configured`,
-        });
-        totalUnrateableHours += hours;
-        continue;
-      }
-      const hourlyCost = Number(b.seniorityLevel.defaultHourlyCost);
-      // Currency on the SeniorityLevel is optional (column is nullable);
-      // when missing we still surface the cost number but tag it 'UNK'
-      // so the UI can flag the data gap without dropping the row.
-      const currency = b.seniorityLevel.currency || 'UNK';
-      const cost = hours * hourlyCost;
+      const cost = hours * b.hourlyCost;
       byUser.push({
         user: b.user,
-        seniorityLevel: { id: b.seniorityLevel.id, name: b.seniorityLevel.name },
+        seniorityLevel: b.seniorityLevel,
         hours,
-        hourlyCost,
-        currency,
+        hourlyCost: b.hourlyCost,
+        currency: b.currency,
         cost,
       });
-      const cur = totalsByCurrency.get(currency) ?? { hours: 0, cost: 0, userCount: 0 };
+      const cur = totalsByCurrency.get(b.currency) ?? { hours: 0, cost: 0, userCount: 0 };
       cur.hours += hours;
       cur.cost += cost;
+      // userCount counts distinct (user, level) pairs in this bucket —
+      // good enough for the summary (mostly matches "distinct users").
       cur.userCount += 1;
-      totalsByCurrency.set(currency, cur);
+      totalsByCurrency.set(b.currency, cur);
+    }
+    for (const u of unrateableMinutes.values()) {
+      const hours = u.minutes / 60;
+      unrateable.push({ user: u.user, hours, reason: u.reason });
+      totalUnrateableHours += hours;
     }
 
     // Sort byUser descending by cost so the most expensive contributors
