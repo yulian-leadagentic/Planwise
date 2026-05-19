@@ -27,10 +27,18 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException('Insufficient permissions');
     }
 
-    // Admin role short-circuit — matches the frontend usePermissions hook so
-    // an Admin user can never lock themselves out of a sub-module by adding a
-    // restrictive explicit entry alongside the parent grant.
-    if (user.role?.name === 'Admin' || user.roleName === 'Admin') {
+    // Admin role short-circuit — admins bypass the standard permission
+    // checks so they can never lock themselves out of a sub-module by
+    // adding a restrictive explicit entry alongside the parent grant.
+    //
+    // Exception: modules in NO_ADMIN_BYPASS are intentionally NOT
+    // bypassed — even admins must hold the explicit grant. Used today
+    // for 'finance' so an org can restrict cost/budget visibility
+    // strictly via the role-modules matrix; admins can deny themselves
+    // Finance access just by unchecking the row.
+    const NO_ADMIN_BYPASS = new Set(['finance']);
+    const allBypassable = requiredPermissions.every((p) => !NO_ADMIN_BYPASS.has(p.module));
+    if (allBypassable && (user.role?.name === 'Admin' || user.roleName === 'Admin')) {
       return true;
     }
 

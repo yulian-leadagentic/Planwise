@@ -224,9 +224,10 @@ export function TimesheetReportPage() {
   // Finance permission — controls visibility of the Cost column +
   // per-currency totals in the summary bar. Backend already strips
   // cost fields server-side for non-finance users; this just hides
-  // the now-empty column / total slots so the UI stays clean.
-  const { can, isAdmin } = usePermissions();
-  const showFinance = isAdmin || can('finance', 'read');
+  // the now-empty column / total slots so the UI stays clean. No
+  // admin bypass — admins must hold Finance:read explicitly.
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
 
   const [from, setFrom] = useState(firstOfMonth);
   const [to, setTo] = useState(lastOfMonth);

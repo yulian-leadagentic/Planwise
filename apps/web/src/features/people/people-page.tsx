@@ -702,7 +702,9 @@ export function PeoplePage() {
                   title="Determines the employee's default hourly cost for project labor calculations. Manage the catalog at /admin/seniority-levels."
                 >
                   Seniority Level
-                  {(isAdmin || can('finance', 'read')) && (() => {
+                  {/* Finance gate — no admin short-circuit; admins must
+                      hold the explicit Finance grant in /admin/roles. */}
+                  {can('finance', 'read') && (() => {
                     const sel = seniorityLevels.find((s: any) => String(s.id) === String(form.seniorityLevelId));
                     return sel && sel.defaultHourlyCost != null ? (
                       <span className="ml-2 text-[11px] font-normal text-slate-500">
@@ -720,7 +722,7 @@ export function PeoplePage() {
                   {seniorityLevels.map((s: any) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
-                      {(isAdmin || can('finance', 'read')) && s.defaultHourlyCost != null
+                      {can('finance', 'read') && s.defaultHourlyCost != null
                         ? ` — ${s.defaultHourlyCost}${s.currency ? ` ${s.currency}` : ''}/h`
                         : ''}
                     </option>
@@ -1253,12 +1255,11 @@ function SeniorityHistorySection({
   seniorityLevels: any[];
 }) {
   const queryClient = useQueryClient();
-  const { can, isAdmin } = usePermissions();
-  // Cost (hourly rate) visibility gate. Only admins or users with
-  // explicit finance:read see the rates inline; everyone else sees
-  // the seniority history as just dates + level names. Matches the
-  // backend gate on /projects/:id/labor-cost and the Cost tab.
-  const showCost = isAdmin || can('finance', 'read');
+  const { can } = usePermissions();
+  // Cost (hourly rate) visibility gate. NO admin short-circuit —
+  // finance:read must be explicitly granted to see rates, even for
+  // admins. Matches the backend gate on /projects/:id/labor-cost.
+  const showCost = can('finance', 'read');
   const [showAddForm, setShowAddForm] = useState(false);
   const [newLevelId, setNewLevelId] = useState<string>('');
   const [newStartDate, setNewStartDate] = useState<string>(new Date().toISOString().slice(0, 10));

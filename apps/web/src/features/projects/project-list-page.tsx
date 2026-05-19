@@ -73,10 +73,10 @@ export function ProjectListPage() {
   const queryClient = useQueryClient();
   const { projectSearch, projectStatus, setProjectFilters } = useFilterStore();
   // Finance permission gate — controls visibility of the Budget /
-  // Cost / Hours columns. Admins always pass; everyone else needs an
-  // explicit Finance read grant in /admin/roles.
-  const { can: canPerm, isAdmin: isAdminUser } = usePermissions();
-  const showFinance = isAdminUser || canPerm('finance', 'read');
+  // Cost / Hours columns. NO admin short-circuit: even admins need
+  // an explicit Finance read grant in /admin/roles.
+  const { can: canPerm } = usePermissions();
+  const showFinance = canPerm('finance', 'read');
   const debouncedSearch = useDebounce(projectSearch, 300);
   const [chatProjectId, setChatProjectId] = useState<number | null>(null);
   const [chatProjectName, setChatProjectName] = useState('');

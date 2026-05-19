@@ -612,8 +612,10 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
   // Finance permission gate — controls visibility of Amount + Actual ₪
   // cells. When false, the cells render an em-dash placeholder so the
   // grid layout stays column-aligned but the money is hidden.
-  const { can, isAdmin } = usePermissions();
-  const showFinance = isAdmin || can('finance', 'read');
+  // No admin short-circuit (Finance is in NO_ADMIN_BYPASS) so admins
+  // can deny themselves cost visibility just by unchecking the row.
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
 
   // Spreadsheet-style multi-edit: if this row is part of a multi-selection,
   // an inline edit propagates to ALL selected rows. If only one row is
@@ -2370,9 +2372,9 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
   // Finance permission — controls visibility of the Amount + Actual ₪
   // columns on the flat task table inside this zone group. Headers
   // and cells are conditionally rendered (real <table>, so dropping
-  // a column is safe — no layout artifacts).
-  const { can: canPerm, isAdmin: isAdminUser } = usePermissions();
-  const showFinance = isAdminUser || canPerm('finance', 'read');
+  // a column is safe — no layout artifacts). No admin short-circuit.
+  const { can: canPerm } = usePermissions();
+  const showFinance = canPerm('finance', 'read');
   const [showAddTask, setShowAddTask] = useState(false);
   const [showTaskMenu, setShowTaskMenu] = useState(false);
   const [showCatalogPicker, setShowCatalogPicker] = useState(false);

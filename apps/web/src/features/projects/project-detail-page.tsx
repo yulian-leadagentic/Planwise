@@ -67,9 +67,10 @@ export function ProjectDetailPage() {
   const currentUserId = useAuthStore((s) => s.user?.id);
   // Finance permission — gates the Cost tab visibility. Backend
   // already returns 403 on the labor-cost endpoint without it; hiding
-  // the tab matches the policy in the UI.
-  const { can, isAdmin } = usePermissions();
-  const showFinance = isAdmin || can('finance', 'read');
+  // the tab matches the policy in the UI. No admin short-circuit —
+  // see NO_ADMIN_BYPASS in RolesGuard.
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
 
   if (isLoading) return <PageSkeleton />;
   if (!project) return <p className="py-8 text-center text-slate-400">Project not found</p>;

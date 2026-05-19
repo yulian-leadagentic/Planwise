@@ -10,14 +10,15 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ReportQueryDto } from './dto/report-query.dto';
 
 /**
- * Mirrors the front-end usePermissions().can() logic so we can decide,
- * per request, whether the caller is allowed to see Finance data.
- * Admins always have access; everyone else needs canRead on a module
- * whose route is 'finance' (or '/finance') or whose name is 'finance'.
+ * Returns true iff the caller has explicit canRead on the Finance
+ * module. No admin short-circuit — Finance is one of the modules in
+ * NO_ADMIN_BYPASS (see RolesGuard), so admins must hold the explicit
+ * grant just like everyone else. Lets an org deny finance visibility
+ * to admins by simply unchecking the matrix row, without juggling
+ * additional user roles.
  */
 function canSeeFinance(user: any): boolean {
   if (!user) return false;
-  if (user.role?.name === 'Admin' || user.roleName === 'Admin') return true;
   const roleModules: any[] = user.roleModules ?? user.role?.roleModules ?? [];
   return roleModules.some((rm: any) => {
     const route = rm.module?.route || '';

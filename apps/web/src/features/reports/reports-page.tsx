@@ -76,8 +76,10 @@ const reportCards: ReportCard[] = [
 ];
 
 export function ReportsPage() {
-  const { can, isAdmin } = usePermissions();
-  const showFinance = isAdmin || can('finance', 'read');
+  // Finance perm — gates the Cost Report + Billing Forecast cards.
+  // No admin bypass; even admins need the explicit grant.
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
   // Hide finance-tagged cards entirely when the caller lacks the
   // permission — matches the backend gate on /reports/cost/* and the
   // billing-forecast endpoint.
