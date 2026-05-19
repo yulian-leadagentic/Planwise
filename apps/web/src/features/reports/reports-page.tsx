@@ -9,8 +9,19 @@ import {
   BarChart3,
 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
+import { usePermissions } from '@/hooks/use-permissions';
 
-const reportCards = [
+interface ReportCard {
+  title: string;
+  description: string;
+  icon: any;
+  href: string;
+  color: string;
+  /** When true, only users with finance:read see this card. */
+  requiresFinance?: boolean;
+}
+
+const reportCards: ReportCard[] = [
   {
     title: 'Timesheet Report',
     description: 'Hours logged by user, project, or label',
@@ -45,6 +56,7 @@ const reportCards = [
     icon: DollarSign,
     href: '/reports/cost',
     color: 'bg-emerald-100 text-emerald-700',
+    requiresFinance: true,
   },
   {
     title: 'Milestones',
@@ -59,16 +71,24 @@ const reportCards = [
     icon: BarChart3,
     href: '/reports/billing-forecast',
     color: 'bg-rose-100 text-rose-700',
+    requiresFinance: true,
   },
 ];
 
 export function ReportsPage() {
+  const { can, isAdmin } = usePermissions();
+  const showFinance = isAdmin || can('finance', 'read');
+  // Hide finance-tagged cards entirely when the caller lacks the
+  // permission — matches the backend gate on /reports/cost/* and the
+  // billing-forecast endpoint.
+  const visibleCards = reportCards.filter((c) => !c.requiresFinance || showFinance);
+
   return (
     <div className="space-y-6">
       <PageHeader title="Reports" description="View and export reports" />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {reportCards.map((card) => (
+        {visibleCards.map((card) => (
           <Link
             key={card.href}
             to={card.href}

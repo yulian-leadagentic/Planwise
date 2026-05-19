@@ -7,6 +7,7 @@ import { useProjects } from '@/hooks/use-projects';
 import { useFilterStore } from '@/stores/filter.store';
 import { useDebounce } from '@/hooks/use-debounce';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
+import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import client from '@/api/client';
@@ -71,6 +72,11 @@ export function ProjectListPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { projectSearch, projectStatus, setProjectFilters } = useFilterStore();
+  // Finance permission gate — controls visibility of the Budget /
+  // Cost / Hours columns. Admins always pass; everyone else needs an
+  // explicit Finance read grant in /admin/roles.
+  const { can: canPerm, isAdmin: isAdminUser } = usePermissions();
+  const showFinance = isAdminUser || canPerm('finance', 'read');
   const debouncedSearch = useDebounce(projectSearch, 300);
   const [chatProjectId, setChatProjectId] = useState<number | null>(null);
   const [chatProjectName, setChatProjectName] = useState('');
@@ -436,10 +442,22 @@ export function ProjectListPage() {
                   <th className="px-4 py-3 text-left font-semibold">Department</th>
                   <th className="px-4 py-3 text-left font-semibold">Status</th>
                   <th className="px-4 py-3 text-left font-semibold">Category</th>
-                  <th className="px-4 py-3 text-right font-semibold">Budget</th>
+                  {/* Finance-gated columns. Hidden entirely when the
+                      caller lacks finance:read so the table degrades
+                      to a hours/team/status view (still useful for
+                      non-finance project managers). */}
+                  {showFinance && (
+                    <>
+                      <th className="px-4 py-3 text-right font-semibold">Budget</th>
+                    </>
+                  )}
                   <th className="px-4 py-3 text-center font-semibold">Completion</th>
-                  <th className="px-4 py-3 text-right font-semibold">Cost</th>
-                  <th className="px-4 py-3 text-right font-semibold">Hours</th>
+                  {showFinance && (
+                    <>
+                      <th className="px-4 py-3 text-right font-semibold">Cost</th>
+                      <th className="px-4 py-3 text-right font-semibold">Hours</th>
+                    </>
+                  )}
                   <th className="px-4 py-3 text-center font-semibold">Chat</th>
                   <th className="px-4 py-3 text-center font-semibold w-10"></th>
                 </tr>
@@ -454,7 +472,7 @@ export function ProjectListPage() {
                     {groupBy && (
                       <tr className="bg-slate-100/80 border-y border-slate-200">
                         <td
-                          colSpan={11 + visibleRoleColumns.length}
+                          colSpan={(showFinance ? 11 : 8) + visibleRoleColumns.length}
                           className="px-4 py-2 text-[12px] font-bold text-slate-700"
                         >
                           {g.label}
@@ -529,9 +547,14 @@ export function ProjectListPage() {
                         <span className={cn('rounded-[5px] px-2 py-0.5 text-[10px] font-bold', st.bg, st.text)}>{st.label}</span>
                       </td>
                       <td className="px-4 py-3 text-slate-600">{category}</td>
-                      <td className="px-4 py-3 text-right font-mono text-slate-700">
-                        {p.budget ? `₪${Number(p.budget).toLocaleString()}` : '-'}
-                      </td>
+                      {/* Finance-gated cells — mirror the header gates
+                          so the row stays column-aligned for either
+                          permission state. */}
+                      {showFinance && (
+                        <td className="px-4 py-3 text-right font-mono text-slate-700">
+                          {p.budget ? `₪${Number(p.budget).toLocaleString()}` : '-'}
+                        </td>
+                      )}
                       <td className="px-4 py-3 text-center">
                         <div className="flex items-center justify-center gap-1.5">
                           <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden">
@@ -540,8 +563,12 @@ export function ProjectListPage() {
                           <span className="text-[11px] text-slate-500">0%</span>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-right font-mono text-slate-500">-</td>
-                      <td className="px-4 py-3 text-right font-mono text-slate-500">-</td>
+                      {showFinance && (
+                        <>
+                          <td className="px-4 py-3 text-right font-mono text-slate-500">-</td>
+                          <td className="px-4 py-3 text-right font-mono text-slate-500">-</td>
+                        </>
+                      )}
                       <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-0.5">
                           <button onClick={() => { setChatProjectId(p.id); setChatProjectName(p.name); }}

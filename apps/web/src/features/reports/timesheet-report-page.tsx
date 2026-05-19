@@ -25,6 +25,7 @@ import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { UserSelect } from '@/components/shared/user-select';
 import { ProjectSelect } from '@/components/shared/project-select';
 import client from '@/api/client';
+import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 
@@ -219,6 +220,13 @@ export function TimesheetReportPage() {
   const today = new Date();
   const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
   const lastOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+
+  // Finance permission — controls visibility of the Cost column +
+  // per-currency totals in the summary bar. Backend already strips
+  // cost fields server-side for non-finance users; this just hides
+  // the now-empty column / total slots so the UI stays clean.
+  const { can, isAdmin } = usePermissions();
+  const showFinance = isAdmin || can('finance', 'read');
 
   const [from, setFrom] = useState(firstOfMonth);
   const [to, setTo] = useState(lastOfMonth);
@@ -529,15 +537,21 @@ export function TimesheetReportPage() {
           <span className="font-semibold">
             Total Hours: <span className="tabular-nums">{totals.totalHours.toFixed(2)}</span>
           </span>
-          {totals.byCurrency.length === 0 ? (
-            <span className="text-blue-100 italic">No resolved cost (set Seniority hourly costs to populate)</span>
-          ) : (
-            totals.byCurrency.map((c) => (
-              <span key={c.currency} className="font-semibold">
-                Total Cost{totals.byCurrency.length > 1 ? ` (${c.currency})` : ''}:{' '}
-                <span className="tabular-nums">{fmtMoney(c.totalCost, c.currency)}</span>
-              </span>
-            ))
+          {/* Per-currency cost totals — hidden for non-finance users
+              (backend also strips them server-side, so the array would
+              be empty anyway; this drops the "No resolved cost" italic
+              hint that'd otherwise just confuse non-finance viewers). */}
+          {showFinance && (
+            totals.byCurrency.length === 0 ? (
+              <span className="text-blue-100 italic">No resolved cost (set Seniority hourly costs to populate)</span>
+            ) : (
+              totals.byCurrency.map((c) => (
+                <span key={c.currency} className="font-semibold">
+                  Total Cost{totals.byCurrency.length > 1 ? ` (${c.currency})` : ''}:{' '}
+                  <span className="tabular-nums">{fmtMoney(c.totalCost, c.currency)}</span>
+                </span>
+              ))
+            )
           )}
           <span className="ml-auto text-[12px] text-blue-100">{totals.rowCount} entr{totals.rowCount === 1 ? 'y' : 'ies'}</span>
         </div>
@@ -566,12 +580,14 @@ export function TimesheetReportPage() {
                 <th className="px-3 py-2 text-left font-semibold">Deliverable</th>
                 <th className="px-3 py-2 text-left font-semibold">Assignment Name</th>
                 <th className="px-3 py-2 text-left font-semibold">Description</th>
-                <th className="px-3 py-2 text-right font-semibold">Cost</th>
+                {/* Cost column hidden for non-finance users. Row cells
+                    below are conditionally rendered to stay aligned. */}
+                {showFinance && <th className="px-3 py-2 text-right font-semibold">Cost</th>}
               </tr>
             </thead>
             <tbody>
               {grouped.map((g) => (
-                <GroupBlock key={g.key} group={g} showHeader={groupBy !== 'none'} />
+                <GroupBlock key={g.key} group={g} showHeader={groupBy !== 'none'} showFinance={showFinance} />
               ))}
             </tbody>
           </table>
@@ -600,20 +616,20 @@ function subtotalsForRows(rows: Row[]): Array<{ currency: string; totalCost: num
   return Array.from(map.entries()).map(([currency, totalCost]) => ({ currency, totalCost }));
 }
 
-function GroupBlock({ group, showHeader }: { group: Group; showHeader: boolean }) {
+function GroupBlock({ group, showHeader, showFinance }: { group: Group; showHeader: boolean; showFinance: boolean }) {
   return (
     <>
       {showHeader && (
         <tr className="bg-slate-100/80">
           <td
-            colSpan={12}
+            colSpan={showFinance ? 12 : 11}
             className="px-3 py-1.5 text-[12px] font-bold text-slate-700 border-t border-slate-200"
           >
             {group.label}
             <span className="ml-3 font-normal text-slate-500">
               {group.rows.length} entr{group.rows.length === 1 ? 'y' : 'ies'} ·{' '}
               {group.hours.toFixed(2)}h
-              {group.costByCurrency.map((c) => (
+              {showFinance && group.costByCurrency.map((c) => (
                 <span key={c.currency} className="ml-2">
                   · {fmtMoney(c.totalCost, c.currency)}
                 </span>
@@ -623,13 +639,13 @@ function GroupBlock({ group, showHeader }: { group: Group; showHeader: boolean }
         </tr>
       )}
       {group.rows.map((r) => (
-        <RowLine key={r.id} row={r} />
+        <RowLine key={r.id} row={r} showFinance={showFinance} />
       ))}
     </>
   );
 }
 
-function RowLine({ row }: { row: Row }) {
+function RowLine({ row, showFinance }: { row: Row; showFinance: boolean }) {
   return (
     <tr className="border-t border-slate-100 hover:bg-blue-50/30">
       <td className="px-3 py-2 text-[12px] tabular-nums text-slate-600">{fmtDate(row.date)}</td>
@@ -657,9 +673,14 @@ function RowLine({ row }: { row: Row }) {
       <td className="px-3 py-2 text-[12px] text-slate-500 max-w-[200px] truncate" title={row.description ?? ''}>
         {row.description ?? <span className="text-slate-300">—</span>}
       </td>
-      <td className={cn('px-3 py-2 text-[12px] tabular-nums text-right font-semibold', row.cost == null ? 'text-slate-300' : 'text-slate-800')}>
-        {row.cost != null ? fmtMoney(row.cost, row.currency) : '—'}
-      </td>
+      {/* Cost cell — hidden for non-finance users. Backend also
+          strips the value (so row.cost is null), but dropping the
+          <td> entirely keeps the row aligned with the gated header. */}
+      {showFinance && (
+        <td className={cn('px-3 py-2 text-[12px] tabular-nums text-right font-semibold', row.cost == null ? 'text-slate-300' : 'text-slate-800')}>
+          {row.cost != null ? fmtMoney(row.cost, row.currency) : '—'}
+        </td>
+      )}
     </tr>
   );
 }

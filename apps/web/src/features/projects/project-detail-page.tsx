@@ -18,6 +18,7 @@ const KanbanBoard = lazy(() => import('@/features/tasks/kanban-board').then(m =>
 const LaborCostTab = lazy(() => import('./labor-cost-tab').then(m => ({ default: m.LaborCostTab })));
 import { useProject, useProjectMembers, useAddProjectMember, useRemoveProjectMember } from '@/hooks/use-projects';
 import { useAuthStore } from '@/stores/auth.store';
+import { usePermissions } from '@/hooks/use-permissions';
 import { PresenceIndicator } from '@/components/shared/presence-indicator';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
@@ -64,6 +65,11 @@ export function ProjectDetailPage() {
   const { data: project, isLoading } = useProject(projectId);
   const { data: members } = useProjectMembers(projectId);
   const currentUserId = useAuthStore((s) => s.user?.id);
+  // Finance permission — gates the Cost tab visibility. Backend
+  // already returns 403 on the labor-cost endpoint without it; hiding
+  // the tab matches the policy in the UI.
+  const { can, isAdmin } = usePermissions();
+  const showFinance = isAdmin || can('finance', 'read');
 
   if (isLoading) return <PageSkeleton />;
   if (!project) return <p className="py-8 text-center text-slate-400">Project not found</p>;
@@ -81,10 +87,10 @@ export function ProjectDetailPage() {
     { key: 'planning', label: 'Planning' },
     { key: 'kanban', label: 'Kanban' },
     { key: 'team', label: 'Team' },
-    // M5 — labor cost rollup (logged hours x seniority hourly cost).
-    // Same permission level as the existing budget view; ProjectsService
-    // gates with `projects:read`.
-    { key: 'cost', label: 'Cost' },
+    // Cost tab is gated by the Finance module permission. Backend
+    // /projects/:id/labor-cost returns 403 to non-finance users — the
+    // tab disappears from the UI so the user can't even try.
+    ...(showFinance ? [{ key: 'cost' as const, label: 'Cost' }] : []),
     { key: 'files', label: 'Files' },
     { key: 'discussion', label: 'Discussion' },
     { key: 'activity', label: 'Activity' },
@@ -228,7 +234,7 @@ export function ProjectDetailPage() {
       <div className="px-5 py-6">
         {tab === 'planning' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading planning...</div>}><PlanningTab projectId={projectId} /></Suspense>}
         {tab === 'kanban' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading board...</div>}><KanbanBoard projectId={projectId} /></Suspense>}
-        {tab === 'cost' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading labor cost...</div>}><LaborCostTab projectId={projectId} /></Suspense>}
+        {tab === 'cost' && showFinance && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading labor cost...</div>}><LaborCostTab projectId={projectId} /></Suspense>}
         {tab === 'files' && <FilesTab projectId={projectId} />}
         {tab === 'activity' && <ActivityFeed projectId={projectId} />}
         {tab === 'discussion' && (

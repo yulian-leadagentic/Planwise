@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback, createContext, useContext } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { usePermissions } from '@/hooks/use-permissions';
 import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
 import { formatDuration } from '@/lib/date-utils';
 import { notify } from '@/lib/notify';
@@ -608,6 +609,11 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
   const serviceName = task.serviceType?.name || task.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || null;
   const serviceColor = task.serviceType?.color || '#3B82F6';
   const queryClient = useQueryClient();
+  // Finance permission gate — controls visibility of Amount + Actual ₪
+  // cells. When false, the cells render an em-dash placeholder so the
+  // grid layout stays column-aligned but the money is hidden.
+  const { can, isAdmin } = usePermissions();
+  const showFinance = isAdmin || can('finance', 'read');
 
   // Spreadsheet-style multi-edit: if this row is part of a multi-selection,
   // an inline edit propagates to ALL selected rows. If only one row is
@@ -778,12 +784,20 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           </span>
         );
       })()}
-      <InlineEditCell value={task.budgetAmount} prefix="₪" width="w-16" onSave={(v) => saveField('budgetAmount', v)} />
+      {/* Amount + Actual ₪ are finance-gated. Non-finance users see
+          em-dash placeholders so the CSS grid stays column-aligned
+          without revealing budget or computed cost. */}
+      {showFinance ? (
+        <InlineEditCell value={task.budgetAmount} prefix="₪" width="w-16" onSave={(v) => saveField('budgetAmount', v)} />
+      ) : (
+        <span className="text-right text-[11px] font-mono text-slate-300">—</span>
+      )}
       {/* M5 — Actual cost (read-only). Sum of each contributor's logged
           minutes / 60 × their seniority hourly cost. Aggregated server-side
           (planning.service.ts → actualCost). Red when actual exceeds the
-          budget amount; em-dash when nothing rateable has been logged. */}
-      {(() => {
+          budget amount; em-dash when nothing rateable has been logged.
+          Hidden behind the Finance permission. */}
+      {showFinance ? (() => {
         const ac = Number(task.actualCost ?? 0);
         const budget = Number(task.budgetAmount ?? 0);
         const overBudget = budget > 0 && ac > budget;
@@ -801,7 +815,9 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
             {ac > 0 ? `${sym}${ac.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
           </span>
         );
-      })()}
+      })() : (
+        <span className="text-right text-[11px] font-mono text-slate-300">—</span>
+      )}
       {/* Estimated start date — planning forecast (distinct from actual
           startDate, which is set when work begins and lives in the drawer). */}
       <span>
@@ -2351,6 +2367,12 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
 function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, thClass, handleSort, sortIcon, selectedTaskIds, onToggleTask, onToggleMany }: any) {
   const [collapsed, setCollapsed] = useState(false);
   useBulkCollapseSync(setCollapsed);
+  // Finance permission — controls visibility of the Amount + Actual ₪
+  // columns on the flat task table inside this zone group. Headers
+  // and cells are conditionally rendered (real <table>, so dropping
+  // a column is safe — no layout artifacts).
+  const { can: canPerm, isAdmin: isAdminUser } = usePermissions();
+  const showFinance = isAdminUser || canPerm('finance', 'read');
   const [showAddTask, setShowAddTask] = useState(false);
   const [showTaskMenu, setShowTaskMenu] = useState(false);
   const [showCatalogPicker, setShowCatalogPicker] = useState(false);
@@ -2435,10 +2457,17 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                 <th className={cn(thClass, 'w-20')} onClick={() => handleSort('phase')}>Service{sortIcon('phase')}</th>
                 <th className={cn(thClass, 'w-14 text-right')} onClick={() => handleSort('hours')}>Est. Hours{sortIcon('hours')}</th>
                 <th className={cn(thClass, 'w-16 text-right')}>Logged</th>
-                <th className={cn(thClass, 'w-20 text-right')} onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
-                {/* M5 — Actual cost (logged hours x hourly cost). Read-only;
-                    sums each contributor's time x their seniority rate. */}
-                <th className={cn(thClass, 'w-24 text-right')}>Actual ₪</th>
+                {/* Amount + Actual ₪ headers are finance-gated. Dropping
+                    them entirely is safe here (real <table>, no fixed
+                    grid layout to keep aligned). */}
+                {showFinance && (
+                  <>
+                    <th className={cn(thClass, 'w-20 text-right')} onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
+                    {/* M5 — Actual cost (logged hours x hourly cost). Read-only;
+                        sums each contributor's time x their seniority rate. */}
+                    <th className={cn(thClass, 'w-24 text-right')}>Actual ₪</th>
+                  </>
+                )}
                 <th className={cn(thClass, 'w-24')}>Due Date</th>
                 <th className={cn(thClass, 'w-28')}>Assignee</th>
                 <th className={cn(thClass, 'w-24')}>Status</th>
@@ -2482,25 +2511,32 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                         </td>
                       );
                     })()}
-                    <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-slate-700">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</td>
-                    {/* M5 — Actual cost. Computed server-side from each
-                        contributor's logged time x their seniority hourly
-                        cost (planning.service.ts → actualCost). Em-dash
-                        when no rateable time has been logged on this task. */}
-                    {(() => {
-                      const ac = Number(task.actualCost ?? 0);
-                      const budget = Number(task.budgetAmount ?? 0);
-                      const overBudget = budget > 0 && ac > budget;
-                      const sym = task.actualCostCurrency === 'USD' ? '$' : task.actualCostCurrency === 'EUR' ? '€' : '₪';
-                      return (
-                        <td className={cn(
-                          'px-3 py-2 text-right font-mono text-xs font-semibold',
-                          ac === 0 ? 'text-slate-300' : overBudget ? 'text-red-600' : 'text-slate-700',
-                        )} title={overBudget ? `Over budget (${sym}${ac.toLocaleString()} actual vs ${sym}${budget.toLocaleString()} budget)` : undefined}>
-                          {ac > 0 ? `${sym}${ac.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '-'}
-                        </td>
-                      );
-                    })()}
+                    {/* Amount + Actual ₪ cells — dropped entirely for
+                        non-finance users (matches the header gates
+                        above). */}
+                    {showFinance && (
+                      <>
+                        <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-slate-700">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</td>
+                        {/* M5 — Actual cost. Computed server-side from each
+                            contributor's logged time x their seniority hourly
+                            cost (planning.service.ts → actualCost). Em-dash
+                            when no rateable time has been logged on this task. */}
+                        {(() => {
+                          const ac = Number(task.actualCost ?? 0);
+                          const budget = Number(task.budgetAmount ?? 0);
+                          const overBudget = budget > 0 && ac > budget;
+                          const sym = task.actualCostCurrency === 'USD' ? '$' : task.actualCostCurrency === 'EUR' ? '€' : '₪';
+                          return (
+                            <td className={cn(
+                              'px-3 py-2 text-right font-mono text-xs font-semibold',
+                              ac === 0 ? 'text-slate-300' : overBudget ? 'text-red-600' : 'text-slate-700',
+                            )} title={overBudget ? `Over budget (${sym}${ac.toLocaleString()} actual vs ${sym}${budget.toLocaleString()} budget)` : undefined}>
+                              {ac > 0 ? `${sym}${ac.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '-'}
+                            </td>
+                          );
+                        })()}
+                      </>
+                    )}
                     <td className="px-3 py-2"><input type="date" value={dueDate} className="w-full px-1 py-0.5 rounded border border-slate-200 text-[10px] text-slate-600 bg-transparent focus:outline-none focus:ring-1 focus:ring-blue-400" /></td>
                     <td className="px-3 py-2">
                       <AssigneePicker task={task} members={members} projectId={projectId} onUpdate={onUpdate} />
