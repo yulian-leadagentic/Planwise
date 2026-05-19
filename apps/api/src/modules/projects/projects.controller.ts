@@ -51,21 +51,24 @@ export class ProjectsController {
     return this.projectsService.findOne(id);
   }
 
+  // Budget + cost endpoints are gated behind the Finance module
+  // permission (Item 1 / 2026-05-18). Users without finance:read get
+  // a 403; admins toggle access per role via /admin/roles.
   @Get(':id/budget-summary')
-  @RequirePermissions({ module: 'projects', action: 'read' })
-  @ApiOperation({ summary: 'Get budget summary for project' })
+  @RequirePermissions({ module: 'finance', action: 'read' })
+  @ApiOperation({ summary: 'Get budget summary for project (requires finance:read)' })
   getBudgetSummary(@Param('id', ParseIntPipe) id: number) {
     return this.projectsService.getBudgetSummary(id);
   }
 
-  // M5 — Labor cost rollup. Same permission as budget-summary (both are
-  // financial views of the same project). Returns per-user breakdown,
-  // per-currency totals, and a separate "unrateable" bucket for users
-  // whose seniority isn't set / has no hourly cost — surfaced so admins
-  // see the data gap rather than silently zero-bucketed.
+  // M5 — Labor cost rollup. Gated by finance:read (cost data is
+  // sensitive). Returns per-user breakdown, per-currency totals, and a
+  // separate "unrateable" bucket for users whose seniority isn't set /
+  // has no hourly cost — surfaced so admins see the data gap rather
+  // than silently zero-bucketed.
   @Get(':id/labor-cost')
-  @RequirePermissions({ module: 'projects', action: 'read' })
-  @ApiOperation({ summary: 'Labor cost rollup from logged time × seniority hourly cost' })
+  @RequirePermissions({ module: 'finance', action: 'read' })
+  @ApiOperation({ summary: 'Labor cost rollup from logged time × seniority hourly cost (requires finance:read)' })
   getLaborCost(@Param('id', ParseIntPipe) id: number) {
     return this.projectsService.getLaborCost(id);
   }
