@@ -42,6 +42,36 @@ export class TimeEntriesController {
     return this.timeEntriesService.batchCreate(user.id, entries);
   }
 
+  /**
+   * List time entries for the current user, optionally filtered by task,
+   * project, or a specific date. Used by:
+   *   • Task drawer "Time" tab — `?taskId=N` to show history for one task
+   *   • QuickTimeLog inline form (kanban card + list view) — same usage
+   *   • My-Tasks list view "Today's entries" block — `?date=YYYY-MM-DD`
+   *
+   * Without filters it returns the caller's most recent entries (capped) so
+   * the route is safe to hit blind. Always scoped to `user.id` server-side
+   * — query params can't escape that.
+   */
+  @Get()
+  @OwnData()
+  @RequirePermissions({ module: 'time', action: 'read' })
+  @ApiOperation({ summary: 'List time entries for the current user' })
+  list(
+    @CurrentUser() user: any,
+    @Query('taskId') taskId?: string,
+    @Query('projectId') projectId?: string,
+    @Query('date') date?: string,
+  ) {
+    const taskIdNum = taskId != null && taskId !== '' ? Number(taskId) : undefined;
+    const projectIdNum = projectId != null && projectId !== '' ? Number(projectId) : undefined;
+    return this.timeEntriesService.listForUser(user.id, {
+      taskId: Number.isFinite(taskIdNum) ? taskIdNum : undefined,
+      projectId: Number.isFinite(projectIdNum) ? projectIdNum : undefined,
+      date,
+    });
+  }
+
   @Get('daily')
   @OwnData()
   @RequirePermissions({ module: 'time', action: 'read' })

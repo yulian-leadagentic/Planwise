@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Clock } from 'lucide-react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { timeApi } from '@/api/time.api';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
+import { useOverlapConfirm } from './overlap-confirm';
 
 interface TimeEntryFormProps {
   taskId: number;
@@ -47,42 +48,56 @@ export function TimeEntryForm({
   const totalMinutes = Math.max(0, (eh * 60 + em) - (sh * 60 + sm));
   const totalHours = (totalMinutes / 60).toFixed(2);
 
-  const logTime = useMutation({
-    mutationFn: () =>
-      timeApi.createEntry({
-        taskId,
-        projectId: projectId ?? undefined,
-        date,
-        startTime: start,
-        endTime: end,
-        minutes: totalMinutes,
-        note: note.trim() || undefined,
-        isBillable: true,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['time'] });
-      queryClient.invalidateQueries({ queryKey: ['tasks', 'mine'] });
-      queryClient.invalidateQueries({ queryKey: ['tasks', taskId] });
-      queryClient.invalidateQueries({ queryKey: ['execution-board'] });
-      notify.success(`Logged ${totalHours}h`, { code: 'TIME-LOG-200' });
-      setNote('');
-      onLogged?.();
-    },
-    onError: (err: any) => notify.apiError(err, 'Failed to log time'),
-  });
+  const overlap = useOverlapConfirm();
+  const [submitting, setSubmitting] = useState(false);
+
+  // Wrapped save: tries with confirmOverlap=false first; if the backend
+  // returns CROSS_TASK_OVERLAP, the hook shows the confirm dialog and
+  // retries with confirmOverlap=true on user approval. Same-task overlap
+  // is a hard error and falls through to notify.apiError.
+  const handleLog = () => {
+    if (totalMinutes <= 0) return;
+    setSubmitting(true);
+    overlap.withConfirm(
+      (confirmOverlap) =>
+        timeApi.createEntry({
+          taskId,
+          projectId: projectId ?? undefined,
+          date,
+          startTime: start,
+          endTime: end,
+          minutes: totalMinutes,
+          note: note.trim() || undefined,
+          isBillable: true,
+          confirmOverlap,
+        }),
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: ['time'] });
+          queryClient.invalidateQueries({ queryKey: ['tasks', 'mine'] });
+          queryClient.invalidateQueries({ queryKey: ['tasks', taskId] });
+          queryClient.invalidateQueries({ queryKey: ['execution-board'] });
+          notify.success(`Logged ${totalHours}h`, { code: 'TIME-LOG-200' });
+          setNote('');
+          onLogged?.();
+        },
+      },
+    ).finally(() => setSubmitting(false));
+  };
 
   const compact = variant === 'compact';
   const inputCls = compact
     ? 'rounded border border-slate-200 px-1.5 py-1 text-[11px] focus:border-blue-400 focus:outline-none'
     : 'rounded border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none';
 
-  const canSubmit = totalMinutes > 0 && !logTime.isPending;
+  const canSubmit = totalMinutes > 0 && !submitting;
 
   return (
     <div
       className={cn(compact ? 'space-y-1.5' : 'space-y-2', 'rounded-md border border-blue-200 bg-blue-50/50 p-2')}
       onClick={(e) => e.stopPropagation()}
     >
+      {overlap.dialog}
       <div className={cn('flex items-center gap-1', compact ? 'text-[10px]' : 'text-xs')}>
         <label className="w-10 font-semibold text-slate-500 uppercase">Date</label>
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date"
@@ -110,15 +125,15 @@ export function TimeEntryForm({
 
       <div className="flex gap-1.5">
         <button
-          onClick={() => { if (canSubmit) logTime.mutate(); }}
+          onClick={() => { if (canSubmit) handleLog(); }}
           disabled={!canSubmit}
           className={cn(
             'rounded bg-blue-600 font-semibold text-white hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1',
             compact ? 'px-2 py-0.5 text-[10px]' : 'px-3 py-1 text-xs',
           )}
         >
-          {logTime.isPending ? <Clock className="h-3 w-3 animate-spin" /> : <Clock className="h-3 w-3" />}
-          {logTime.isPending ? 'Saving…' : 'Log'}
+          {submitting ? <Clock className="h-3 w-3 animate-spin" /> : <Clock className="h-3 w-3" />}
+          {submitting ? 'Saving…' : 'Log'}
         </button>
       </div>
     </div>

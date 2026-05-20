@@ -1,8 +1,16 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { startOfDay, endOfDay, addDays, parseISO, format } from 'date-fns';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateTimeEntryDto } from './dto/create-time-entry.dto';
+
+/** Minutes since midnight from an HH:MM string (rejects undefined). */
+function hhmmToMinutes(s?: string | null): number | null {
+  if (!s) return null;
+  const [h, m] = s.split(':').map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return h * 60 + m;
+}
 
 @Injectable()
 export class TimeEntriesService {
@@ -26,6 +34,100 @@ export class TimeEntriesService {
         select: { projectId: true },
       });
       if (t) projectId = t.projectId;
+    }
+
+    // ─── Overlap validation ────────────────────────────────────────────
+    // Same task, same day, intervals touching → reject hard (a user can't
+    // legitimately report two slots on the same task that overlap — it
+    // would double-count). Cross-task overlap → reject unless the client
+    // explicitly opts in via `confirmOverlap`. This lets the UI show a
+    // confirmation dialog ("You logged 07:00–18:00 on Task B which
+    // overlaps with this — continue?") instead of silently saving.
+    const newStart = hhmmToMinutes(dto.startTime);
+    const newEnd = hhmmToMinutes(dto.endTime);
+    if (newStart != null && newEnd != null && newEnd > newStart) {
+      const sameDayEntries = await this.prisma.timeEntry.findMany({
+        where: {
+          userId,
+          deletedAt: null,
+          date: { gte: startOfDay(localDate), lte: endOfDay(localDate) },
+          // Only entries with concrete start/end can overlap; legacy
+          // hours-only entries are excluded.
+          NOT: [{ startTime: null }, { endTime: null }],
+        },
+        select: {
+          id: true,
+          taskId: true,
+          startTime: true,
+          endTime: true,
+          task: { select: { id: true, name: true, code: true } },
+        },
+      });
+
+      const sameTaskConflicts: Array<{ id: number; startTime: string; endTime: string }> = [];
+      const crossTaskConflicts: Array<{
+        id: number;
+        taskId: number | null;
+        taskName: string | null;
+        taskCode: string | null;
+        startTime: string;
+        endTime: string;
+      }> = [];
+
+      for (const e of sameDayEntries) {
+        const s = hhmmToMinutes(e.startTime);
+        const en = hhmmToMinutes(e.endTime);
+        if (s == null || en == null) continue;
+        // Open-interval overlap: [a,b) overlaps [c,d) iff a<d && c<b.
+        // Adjacent (09:00→10:00 then 10:00→11:00) is NOT an overlap.
+        const overlaps = newStart < en && s < newEnd;
+        if (!overlaps) continue;
+        if (e.taskId === dto.taskId) {
+          sameTaskConflicts.push({
+            id: e.id,
+            startTime: e.startTime!,
+            endTime: e.endTime!,
+          });
+        } else {
+          crossTaskConflicts.push({
+            id: e.id,
+            taskId: e.taskId,
+            taskName: e.task?.name ?? null,
+            taskCode: e.task?.code ?? null,
+            startTime: e.startTime!,
+            endTime: e.endTime!,
+          });
+        }
+      }
+
+      if (sameTaskConflicts.length > 0) {
+        // 409 with structured payload — the client renders the conflict
+        // detail via the notify.businessRule card. Hard error: no
+        // override flag bypasses this.
+        throw new ConflictException({
+          code: 'SAME_TASK_OVERLAP',
+          message: 'Time overlap on the same task is not allowed.',
+          details: {
+            date: dto.date,
+            attempted: { startTime: dto.startTime, endTime: dto.endTime },
+            conflicts: sameTaskConflicts,
+          },
+        });
+      }
+
+      if (crossTaskConflicts.length > 0 && !dto.confirmOverlap) {
+        // 409 with code the client recognizes → shows confirm dialog,
+        // then retries with confirmOverlap=true.
+        throw new ConflictException({
+          code: 'CROSS_TASK_OVERLAP',
+          message: 'This entry overlaps with time logged on another task. Confirm to continue.',
+          details: {
+            date: dto.date,
+            attempted: { startTime: dto.startTime, endTime: dto.endTime },
+            conflicts: crossTaskConflicts,
+          },
+        });
+      }
     }
 
     const entry = await this.prisma.timeEntry.create({
@@ -144,6 +246,39 @@ export class TimeEntriesService {
       },
       orderBy: { createdAt: 'desc' },
       take: data.length,
+    });
+  }
+
+  /**
+   * Return the calling user's time entries, optionally narrowed by task,
+   * project, or a specific date. Scoped to `userId` so a user can never
+   * peek at another person's reporting via query-param injection.
+   *
+   * The unfiltered case is bounded (take: 200) — this is the same endpoint
+   * the kanban card hits to render a small history list, and we don't want
+   * it pulling the whole table for a power-user with thousands of entries.
+   */
+  async listForUser(
+    userId: number,
+    filters: { taskId?: number; projectId?: number; date?: string },
+  ) {
+    const where: any = { userId, deletedAt: null };
+    if (filters.taskId) where.taskId = filters.taskId;
+    if (filters.projectId) where.projectId = filters.projectId;
+    if (filters.date) {
+      const dp = filters.date.split('-').map(Number);
+      const dayStart = startOfDay(new Date(dp[0], dp[1] - 1, dp[2]));
+      const dayEnd = endOfDay(new Date(dp[0], dp[1] - 1, dp[2]));
+      where.date = { gte: dayStart, lte: dayEnd };
+    }
+    return this.prisma.timeEntry.findMany({
+      where,
+      include: {
+        project: { select: { id: true, name: true } },
+        task: { select: { id: true, name: true, code: true } },
+      },
+      orderBy: [{ date: 'desc' }, { startTime: 'desc' }, { createdAt: 'desc' }],
+      take: 200,
     });
   }
 

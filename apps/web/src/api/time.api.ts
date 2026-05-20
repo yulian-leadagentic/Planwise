@@ -32,6 +32,12 @@ export interface TimeEntryPayload {
   isBillable?: boolean;
   location?: string;
   completionPct?: number;
+  /**
+   * Acknowledges a cross-task overlap and allows the entry to save. Sent
+   * by `useOverlapConfirm` after the user clicks "Save anyway" in the
+   * confirm dialog. No effect for same-task overlaps (always rejected).
+   */
+  confirmOverlap?: boolean;
 }
 
 export interface WeeklyGridQuery {

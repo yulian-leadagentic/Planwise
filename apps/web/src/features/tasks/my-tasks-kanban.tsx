@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Clock, User as UserIcon, GripVertical, CalendarClock, ListChecks, Columns3, Play, Check, AlertCircle, AlertTriangle, Calendar } from 'lucide-react';
 import { DndContext, DragOverlay, closestCorners, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, useDraggable, useDroppable } from '@dnd-kit/core';
 import { PageHeader } from '@/components/shared/page-header';
@@ -13,6 +13,7 @@ import { getTaskHealth } from '@/lib/task-health';
 import { STATUS_PILL, STATUS_LABEL, ZONE_BORDER_COLORS, formatShortDate } from '@/lib/task-constants';
 import { queryKeys } from '@/lib/query-keys';
 import { useAllowedTransitions } from '@/hooks/use-allowed-transitions';
+import { useOverlapConfirm } from '@/features/time/overlap-confirm';
 
 type TabMode = 'time' | 'kanban';
 
@@ -60,6 +61,20 @@ function getStartByDate(task: any): string | null {
   return formatShortDate(d);
 }
 
+/**
+ * Inline time-logging panel embedded inside a task card.
+ *
+ * UI notes:
+ *   • Renders as a white, neutral-bordered panel so it doesn't fight the
+ *     parent card's red/amber background when the task is overdue/at-risk.
+ *     (The previous blue-on-blue panel clashed badly on red cards.)
+ *   • Surfaces the user's prior reporting on the task at the top — users
+ *     were complaining that they only saw the NEW-entry form and had no
+ *     visibility into what they'd already logged. The full history list
+ *     lives on the task drawer; this is a compact "last 5" view inline.
+ *   • The whole panel stopsPropagation so clicks inside (date/time inputs,
+ *     the history list) don't bubble up and open the task drawer.
+ */
 function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskProjectId?: number | null }) {
   const [open, setOpen] = useState(false);
   const today = new Date().toISOString().split('T')[0];
@@ -74,26 +89,56 @@ function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskProjectId
   const totalMinutes = Math.max(0, (eh * 60 + em) - (sh * 60 + sm));
   const totalHours = (totalMinutes / 60).toFixed(2);
 
-  const logTime = useMutation({
-    mutationFn: () => timeApi.createEntry({
-      taskId,
-      projectId: taskProjectId ?? undefined,
-      date,
-      startTime: start,
-      endTime: end,
-      minutes: totalMinutes,
-      note: note.trim() || undefined,
-      isBillable: true,
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.time.all });
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.mine() });
-      notify.success(`Logged ${totalHours}h`, { code: 'TIME-LOG-200' });
-      setOpen(false);
-      setNote('');
-    },
-    onError: (err: any) => notify.apiError(err, 'Failed'),
+  // Pull history only when the panel is open — keeps the dashboard cheap
+  // when the user just glances at the kanban. The endpoint is scoped
+  // server-side to the caller's userId, so this returns only THIS user's
+  // prior reporting on this task.
+  const { data: historyRaw } = useQuery({
+    queryKey: queryKeys.time.entriesByTask(taskId),
+    queryFn: () => timeApi.listEntries({ taskId }),
+    enabled: open,
+    staleTime: 30 * 1000,
   });
+  const history: any[] = (() => {
+    const raw = historyRaw as any;
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    if (raw.data && Array.isArray(raw.data)) return raw.data;
+    return [];
+  })();
+  const historyTotalMin = history.reduce((s, e) => s + (e.minutes ?? 0), 0);
+
+  const overlap = useOverlapConfirm();
+  const [saving, setSaving] = useState(false);
+
+  // Cross-task overlap → confirm dialog, then retry with confirmOverlap.
+  // Same-task overlap → backend rejects, notify.apiError surfaces it.
+  const handleLog = () => {
+    if (totalMinutes <= 0) return;
+    setSaving(true);
+    overlap.withConfirm(
+      (confirmOverlap) => timeApi.createEntry({
+        taskId,
+        projectId: taskProjectId ?? undefined,
+        date,
+        startTime: start,
+        endTime: end,
+        minutes: totalMinutes,
+        note: note.trim() || undefined,
+        isBillable: true,
+        confirmOverlap,
+      }),
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: queryKeys.time.all });
+          queryClient.invalidateQueries({ queryKey: queryKeys.tasks.mine() });
+          queryClient.invalidateQueries({ queryKey: queryKeys.time.entriesByTask(taskId) });
+          notify.success(`Logged ${totalHours}h`, { code: 'TIME-LOG-200' });
+          setNote('');
+        },
+      },
+    ).finally(() => setSaving(false));
+  };
 
   if (!open) {
     return (
@@ -105,30 +150,91 @@ function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskProjectId
   }
 
   return (
-    <div className="mt-2 rounded-md border border-blue-200 bg-blue-50/50 p-2 space-y-1.5" onClick={(e) => e.stopPropagation()}>
-      <div className="flex items-center gap-1">
-        <label className="text-[9px] font-semibold text-slate-500 uppercase w-10">Date</label>
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-          className="flex-1 px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
-      </div>
-      <div className="flex items-center gap-1">
-        <label className="text-[9px] font-semibold text-slate-500 uppercase w-10">Time</label>
-        <input type="time" value={start} onChange={(e) => setStart(e.target.value)} step="300"
-          className="w-[78px] px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
-        <span className="text-[10px] text-slate-400">→</span>
-        <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} step="300"
-          className="w-[78px] px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
-        <span className="ml-auto text-[11px] font-bold text-blue-600 tabular-nums">{totalHours}h</span>
-      </div>
-      <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
-        placeholder="Note (optional)…" className="w-full px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
-      <div className="flex gap-1">
-        <button onClick={() => { if (totalMinutes > 0) logTime.mutate(); }}
-          disabled={totalMinutes <= 0 || logTime.isPending}
-          className="rounded bg-blue-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
-          {logTime.isPending ? 'Saving...' : 'Save'}
+    <div
+      onClick={(e) => e.stopPropagation()}
+      className="mt-2 rounded-md border border-slate-200 bg-white shadow-sm overflow-hidden"
+    >
+      {overlap.dialog}
+      {/* History header — totals + count, with collapse toggle for the
+          panel itself. Neutral palette so it stays readable on top of any
+          parent-card border (red/amber for at-risk, white for OK). */}
+      <div className="flex items-center justify-between px-2 py-1 border-b border-slate-100 bg-slate-50">
+        <div className="flex items-center gap-1.5 text-[10px] text-slate-600 min-w-0">
+          <Clock className="h-3 w-3 text-slate-400 shrink-0" />
+          <span className="font-semibold">Your time</span>
+          {history.length > 0 ? (
+            <span className="tabular-nums truncate">
+              · {(historyTotalMin / 60).toFixed(2)}h across {history.length}
+            </span>
+          ) : (
+            <span className="text-slate-400 italic">no entries yet</span>
+          )}
+        </div>
+        <button
+          onClick={() => setOpen(false)}
+          className="text-[12px] leading-none text-slate-400 hover:text-slate-600 shrink-0 px-1"
+          aria-label="Close time log panel"
+        >
+          ×
         </button>
-        <button onClick={() => setOpen(false)} className="text-[10px] text-slate-400 px-1">Cancel</button>
+      </div>
+
+      {/* Past entries (capped to 5 inline; deeper history lives on the
+          task drawer's Time tab via "open task for full history"). */}
+      {history.length > 0 && (
+        <div className="max-h-28 overflow-y-auto border-b border-slate-100 divide-y divide-slate-50">
+          {history.slice(0, 5).map((e: any) => (
+            <div key={e.id} className="flex items-center gap-2 px-2 py-1 text-[10px]">
+              <span className="text-slate-500 tabular-nums w-[52px] shrink-0">
+                {e.date ? formatShortDate(e.date) : '—'}
+              </span>
+              <span className="text-slate-400 tabular-nums w-[78px] shrink-0">
+                {e.startTime && e.endTime ? `${e.startTime}–${e.endTime}` : ''}
+              </span>
+              <span className="font-semibold text-slate-700 tabular-nums w-[36px] shrink-0">
+                {((e.minutes ?? 0) / 60).toFixed(2)}h
+              </span>
+              {e.note && (
+                <span className="text-slate-500 truncate flex-1" title={e.note}>{e.note}</span>
+              )}
+            </div>
+          ))}
+          {history.length > 5 && (
+            <div className="px-2 py-1 text-[10px] text-slate-400 text-center">
+              + {history.length - 5} more — open task for full history
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* New-entry form. Thin left bar marks the "add" zone, visually
+          separate from the history above. */}
+      <div className="px-2 py-1.5 space-y-1.5 border-l-2 border-blue-400/40">
+        <div className="flex items-center gap-1">
+          <label className="text-[9px] font-semibold text-slate-500 uppercase w-10">Date</label>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+            className="flex-1 px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
+        </div>
+        <div className="flex items-center gap-1">
+          <label className="text-[9px] font-semibold text-slate-500 uppercase w-10">Time</label>
+          <input type="time" value={start} onChange={(e) => setStart(e.target.value)} step="300"
+            className="w-[78px] px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
+          <span className="text-[10px] text-slate-400">→</span>
+          <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} step="300"
+            className="w-[78px] px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
+          <span className="ml-auto text-[11px] font-bold text-blue-600 tabular-nums">{totalHours}h</span>
+        </div>
+        <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
+          placeholder="Note (optional)…"
+          className="w-full px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
+        <div className="flex gap-1">
+          <button onClick={handleLog}
+            disabled={totalMinutes <= 0 || saving}
+            className="rounded bg-blue-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+          <button onClick={() => setOpen(false)} className="text-[10px] text-slate-400 px-1">Cancel</button>
+        </div>
       </div>
     </div>
   );
@@ -207,13 +313,43 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
 
         {/* Hours — YOUR own logged time on this task. The findMine endpoint
             scopes time-entries by userId so this card shows what *you*
-            reported, not the team's combined hours. */}
-        <div className="flex items-center gap-1 text-[10px] text-slate-600">
-          <Clock className="h-2.5 w-2.5 shrink-0" />
-          <span className="tabular-nums font-medium">
-            {health.loggedHours}h {health.estimatedHours > 0 ? `/ ${health.estimatedHours}h est.` : 'logged'}
-          </span>
-        </div>
+            reported, not the team's combined hours.
+
+            Visibility upgrade: rendered as a colored pill so the
+            "X.XXh / Yh" reading pops on the card. Color tracks budget
+            usage so over-budget tasks scream red without needing the
+            "Over budget" risk reason. */}
+        {(() => {
+          const logged = health.loggedHours;
+          const est = health.estimatedHours;
+          const pct = est > 0 ? (logged / est) * 100 : 0;
+          // Bucket the color: green under 80%, amber 80–100%, red over.
+          // Always uses the loggedHours value direct from health, which
+          // recomputes from the freshly-invalidated tasks.mine query.
+          const tone = est <= 0
+            ? 'bg-slate-100 text-slate-600 border-slate-200'
+            : pct >= 100
+              ? 'bg-red-100 text-red-700 border-red-200'
+              : pct >= 80
+                ? 'bg-amber-100 text-amber-700 border-amber-200'
+                : 'bg-emerald-100 text-emerald-700 border-emerald-200';
+          return (
+            <div className={cn(
+              'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-bold tabular-nums',
+              tone,
+            )}>
+              <Clock className="h-3 w-3 shrink-0" />
+              <span>{logged}h</span>
+              {est > 0 && (
+                <>
+                  <span className="opacity-60">/</span>
+                  <span>{est}h</span>
+                  <span className="opacity-70 font-semibold">· {Math.round(pct)}%</span>
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Due date */}
         {task.endDate && (
@@ -301,8 +437,29 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
   const [start, setStart] = useState('09:00');
   const [end, setEnd] = useState('10:00');
   const [note, setNote] = useState('');
+  // Expanding the row reveals BOTH the note input AND the user's prior
+  // reporting on the task — users complained they could only see the new
+  // entry form, not what they'd already logged. We fetch lazily when the
+  // row is expanded so collapsed rows stay free.
   const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const { data: historyRaw } = useQuery({
+    queryKey: queryKeys.time.entriesByTask(task.id),
+    queryFn: () => timeApi.listEntries({ taskId: task.id }),
+    enabled: expanded,
+    staleTime: 30 * 1000,
+  });
+  const history: any[] = (() => {
+    const raw = historyRaw as any;
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    if (raw.data && Array.isArray(raw.data)) return raw.data;
+    return [];
+  })();
+  const historyTotalMin = history.reduce((s, e) => s + (e.minutes ?? 0), 0);
+
+  const overlap = useOverlapConfirm();
 
   const projectName = task.project?.name || task.label?.projectName || '';
   const zoneName = task.zone?.name || task.label?.name || '';
@@ -321,11 +478,11 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
   const totalMinutes = Math.max(0, endMins - startMins);
   const totalHours = (totalMinutes / 60).toFixed(2);
 
-  const handleLog = async () => {
+  const handleLog = () => {
     if (totalMinutes <= 0) { notify.warning('End time must be after start time'); return; }
     setSaving(true);
-    try {
-      await timeApi.createEntry({
+    overlap.withConfirm(
+      (confirmOverlap) => timeApi.createEntry({
         taskId: task.id,
         projectId: task.projectId || undefined,
         date,
@@ -334,15 +491,19 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
         minutes: totalMinutes,
         note: note.trim() || undefined,
         isBillable: true,
-      });
-      queryClient.invalidateQueries({ queryKey: queryKeys.time.all });
-      notify.success(`Logged ${totalHours}h for ${task.name}`);
-      setNote('');
-    } catch (err: any) {
-      notify.apiError(err, 'Failed to log time');
-    } finally {
-      setSaving(false);
-    }
+        confirmOverlap,
+      }),
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: queryKeys.time.all });
+          queryClient.invalidateQueries({ queryKey: queryKeys.tasks.mine() });
+          // Force the per-task history below to refresh with the new entry
+          queryClient.invalidateQueries({ queryKey: queryKeys.time.entriesByTask(task.id) });
+          notify.success(`Logged ${totalHours}h for ${task.name}`);
+          setNote('');
+        },
+      },
+    ).finally(() => setSaving(false));
   };
 
   const TIME_OPTIONS = useMemo(() => {
@@ -360,6 +521,7 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
 
   return (
     <div className="border-b border-slate-100 last:border-b-0">
+      {overlap.dialog}
       <div className="flex items-center gap-2 px-4 py-2.5 hover:bg-blue-50/30 transition-colors">
         {/* Task info — clickable to open the task sidebar. The form
             controls below have their own click/change handlers, so clicks
@@ -426,10 +588,12 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
           <span className={cn('text-[13px] font-bold', totalMinutes > 0 ? 'text-slate-700' : 'text-slate-300')}>{totalHours}h</span>
         </div>
 
-        {/* Note toggle */}
+        {/* Expand toggle — opens a panel with the user's prior entries on
+            this task plus a note field for the new entry. Renamed from
+            "+ Note" since the panel now does more than just notes. */}
         <button onClick={() => setExpanded(!expanded)}
-          className="text-[10px] text-slate-400 hover:text-slate-600 shrink-0 w-12 text-center">
-          {expanded ? 'Hide' : '+ Note'}
+          className="text-[10px] text-slate-400 hover:text-slate-600 shrink-0 w-14 text-center">
+          {expanded ? 'Hide' : 'Details'}
         </button>
 
         {/* Log button */}
@@ -440,12 +604,55 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
         </button>
       </div>
 
-      {/* Note row */}
+      {/* Expanded panel — note input + this user's reporting history on
+          the task. Listing history here addresses the "I only see the
+          new entry, not what I've already logged" feedback. */}
       {expanded && (
-        <div className="px-4 pb-2.5 pl-8">
+        <div className="px-4 pb-3 pl-8 bg-slate-50/60 border-t border-slate-100 space-y-2 pt-2">
           <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
             placeholder="What did you work on? (optional)"
             className="w-full rounded-md border border-slate-200 px-3 py-1.5 text-[12px] focus:border-blue-400 focus:outline-none" />
+
+          {/* History list — same column convention as the QuickTimeLog
+              panel on the kanban card for consistency. */}
+          <div>
+            <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1 px-0.5">
+              <span className="font-semibold uppercase tracking-wider">Your reporting on this task</span>
+              {history.length > 0 ? (
+                <span className="tabular-nums">
+                  {(historyTotalMin / 60).toFixed(2)}h · {history.length}{' '}
+                  {history.length === 1 ? 'entry' : 'entries'}
+                </span>
+              ) : null}
+            </div>
+            {history.length === 0 ? (
+              <p className="text-[11px] text-slate-400 italic px-0.5">No entries yet — log your first above.</p>
+            ) : (
+              <div className="rounded-md border border-slate-200 bg-white divide-y divide-slate-100 max-h-40 overflow-y-auto">
+                {history.slice(0, 10).map((e: any) => (
+                  <div key={e.id} className="flex items-center gap-3 px-3 py-1.5 text-[11px]">
+                    <span className="text-slate-600 tabular-nums w-[60px] shrink-0">
+                      {e.date ? formatShortDate(e.date) : '—'}
+                    </span>
+                    <span className="text-slate-400 tabular-nums w-[90px] shrink-0">
+                      {e.startTime && e.endTime ? `${e.startTime}–${e.endTime}` : ''}
+                    </span>
+                    <span className="font-semibold text-slate-700 tabular-nums w-[42px] shrink-0">
+                      {((e.minutes ?? 0) / 60).toFixed(2)}h
+                    </span>
+                    {e.note && (
+                      <span className="text-slate-500 truncate flex-1" title={e.note}>{e.note}</span>
+                    )}
+                  </div>
+                ))}
+                {history.length > 10 && (
+                  <div className="px-3 py-1.5 text-[10px] text-slate-400 text-center">
+                    + {history.length - 10} more entries — open task for full history
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
