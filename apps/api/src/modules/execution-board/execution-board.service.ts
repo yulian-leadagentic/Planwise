@@ -69,6 +69,13 @@ export class ExecutionBoardService {
         take: MAX_TASKS + 1,
         include: {
           zone: { select: { id: true, name: true } },
+          // deliverableTemplate is the AUTHORITATIVE deliverable link —
+          // it's what the project task table shows and what the user
+          // actually assigns. The board must resolve the same dimension
+          // so a task lands in the SAME deliverable column the user sees
+          // in the table (previously the board ignored this and used the
+          // legacy [SERVICE:xxx] marker / phase, so the two views drifted).
+          deliverableTemplate: { select: { id: true, name: true } },
           serviceType: { select: { id: true, name: true, code: true, color: true } },
           phase: { select: { id: true, name: true, color: true } },
           assignees: {

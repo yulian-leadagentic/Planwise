@@ -7,7 +7,20 @@ import {
 } from './execution-board.util';
 
 describe('getTaskPhaseName', () => {
-  it('prefers serviceType.name', () => {
+  it('prefers deliverableTemplate.name over everything (matches the task table)', () => {
+    expect(
+      getTaskPhaseName({
+        id: 1,
+        zoneId: 1,
+        deliverableTemplate: { name: 'Critical Report' },
+        serviceType: { name: 'Design' },
+        description: '[SERVICE:Other]',
+        phase: { name: 'Phase X' },
+      }),
+    ).toBe('Critical Report');
+  });
+
+  it('prefers serviceType.name when no deliverableTemplate', () => {
     expect(getTaskPhaseName({ id: 1, zoneId: 1, serviceType: { name: 'Design' }, description: '[SERVICE:Other]' })).toBe('Design');
   });
 

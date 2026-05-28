@@ -344,8 +344,20 @@ function TaskCard({ task, health, onClick }: { task: Task; health: TaskHealth; o
   );
 }
 
-export function ExecutionBoardPage() {
-  const [projectId, setProjectId] = useState<number | null>(null);
+export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: number } = {}) {
+  // When the page is rendered as a project tab (forcedProjectId set),
+  // the project selector at the top is hidden and the page is locked
+  // to that single project. The standalone /execution-board route
+  // passes nothing and gets the cross-project view it always had.
+  const [projectId, setProjectId] = useState<number | null>(forcedProjectId ?? null);
+  useEffect(() => {
+    if (forcedProjectId != null) setProjectId(forcedProjectId);
+  }, [forcedProjectId]);
+  // V8 — view-mode tab inside Execution Board. "matrix" is the
+  // existing zone × deliverable matrix; "status" is the project ×
+  // deliverable status board (formerly /status-board). The two share
+  // the same filter state so swapping views doesn't lose context.
+  const [viewMode, setViewMode] = useState<'matrix' | 'status'>('matrix');
   // Service filter is now a STRING (the service name from getTaskPhaseName)
   // and applied client-side — see the explanation in execution-board.service.ts.
   const [serviceFilter, setServiceFilter] = useState<string>('');
@@ -405,6 +417,34 @@ export function ExecutionBoardPage() {
     setExpandedIds(keys);
   }, [data]);
 
+  // When a filter turns active, force-expand EVERY project + zone
+  // (including nested) so the visibleFlatRows empty-row pruning has the
+  // child rows present to evaluate. Without this, a collapsed project
+  // has no child rows in flatRows, the "keep project if a child
+  // survives" check finds nothing, and every project gets dropped —
+  // which is exactly the "all rows vanish on filter" bug. Recursive so
+  // deeply-nested zones with matches also surface.
+  useEffect(() => {
+    // Inline the filter-active check (the memoized isFilterActive const
+    // is declared later in the component — referencing it here would hit
+    // its TDZ during render).
+    const filterActive = !!serviceFilter || !!dueFrom || !!dueTo || onlyWithDue;
+    if (!filterActive || !data) return;
+    const keys = new Set<string>();
+    const addZones = (nodes: ZoneNode[]) => {
+      for (const z of nodes) {
+        keys.add(`zone-${z.id}`);
+        if (z.children?.length) addZones(z.children);
+      }
+    };
+    for (const project of data.projects) {
+      keys.add(`project-${project.id}`);
+      addZones(data.zones[project.id] ?? []);
+    }
+    setExpandedIds((prev) => new Set([...prev, ...keys]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serviceFilter, dueFrom, dueTo, onlyWithDue, data]);
+
   const toggleExpand = useCallback((key: string) => {
     setExpandedIds((prev) => {
       const next = new Set(prev);
@@ -442,67 +482,46 @@ export function ExecutionBoardPage() {
     return map;
   }, [data]);
 
-  // service-name → deliverable-name lookup, used by the filter to decide
-  // which tasks belong to the picked deliverable. MUST be declared before
-  // filteredTasks since filteredTasks references it (TDZ otherwise).
-  const serviceNameToDeliverable = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const tpl of (data?.templates ?? [])) {
-      if (tpl.phase?.name) m.set(tpl.name, tpl.phase.name);
-    }
-    return m;
-  }, [data?.templates]);
-
   // The dropdown filters by DELIVERABLE — the small pill below each column
-  // header. A task's deliverable resolves in two paths (matches the
-  // column-builder logic below in `phaseColumns`):
-  //   1. Template path — task.serviceType.name -> template.name ->
-  //      template.phase.name. Canonical for catalogued tasks.
-  //   2. Direct fallback — task.phase.name. Used for tasks created
-  //      without going through a template (typical for root tasks
-  //      like "BIM Management"); previously the dropdown ignored
-  //      these and silently dropped their deliverables even though
-  //      the column was rendered on the board.
-  // Computed from unfiltered tasks so the list doesn't shrink as the
-  // user picks a value.
+  // header.
+  //
+  // X3 — narrow the option list to deliverables that ACTUALLY appear in
+  // the projects currently in scope. Previously the dropdown was built
+  // from ALL tasks across ALL projects; picking a name that exists only
+  // in some unrelated project then matched zero tasks and the user
+  // saw "all rows vanish". Now the dropdown only offers values that
+  // can actually produce a result.
   const availableServices = useMemo(() => {
-    const allTasks = data?.tasks ?? [];
+    const allTasks = (data?.tasks ?? []).filter((t: any) =>
+      projectId == null ? true : t.projectId === projectId,
+    );
     const templates = data?.templates ?? [];
-    const serviceNamesWithTasks = new Set<string>();
-    const directPhaseNamesWithTasks = new Set<string>();
+
+    // CRITICAL — the dropdown must offer EXACTLY the deliverable column
+    // values the board actually renders, i.e. getTaskPhaseName(task).
+    // That same function keys the matrix columns AND (below) the filter
+    // matcher, so dropdown ≡ column ≡ filter. Listing phase.name here
+    // (the previous behaviour) drifted from the marker/serviceType-driven
+    // columns and produced false positives — e.g. zone מרתף surfacing
+    // under a deliverable it has no tasks in.
+    const present = new Set<string>();
     for (const t of allTasks) {
       const n = getTaskPhaseName(t);
-      if (n) serviceNamesWithTasks.add(n);
-      if (t.phase?.name) directPhaseNamesWithTasks.add(t.phase.name);
+      if (n) present.add(n);
     }
 
-    // Path 1: template-driven order. For each template whose name is
-    // in use, emit the linked phase name in catalog order so the
-    // dropdown lines up with the column ordering.
+    // Order to match the board's column ordering: templates first (catalog
+    // order), then any remaining names in insertion order.
     const ordered: string[] = [];
-    const seen = new Set<string>();
     for (const tpl of templates) {
-      if (!serviceNamesWithTasks.has(tpl.name)) continue;
-      const phaseName = tpl.phase?.name;
-      if (phaseName && !seen.has(phaseName)) {
-        seen.add(phaseName);
-        ordered.push(phaseName);
-      }
+      if (present.has(tpl.name) && !ordered.includes(tpl.name)) ordered.push(tpl.name);
     }
-
-    // Path 2: append any task.phase.name we saw on tasks that wasn't
-    // already covered by path 1. Sorted for stability (no catalog
-    // order to follow on this path).
-    const directOnly = Array.from(directPhaseNamesWithTasks)
-      .filter((n) => !seen.has(n))
-      .sort((a, b) => a.localeCompare(b));
-    for (const n of directOnly) {
-      seen.add(n);
-      ordered.push(n);
+    for (const n of present) {
+      if (!ordered.includes(n)) ordered.push(n);
     }
 
     return ordered;
-  }, [data?.tasks, data?.templates]);
+  }, [data?.tasks, data?.templates, projectId]);
 
   // Apply client-side filters before the matrix is built. Order matters:
   // deliverable filter narrows by template-phase; date filters trim by endDate.
@@ -517,19 +536,17 @@ export function ExecutionBoardPage() {
         if (dueTo && d > dueTo) return false;
       }
       if (serviceFilter) {
-        // serviceFilter is a deliverable (phase) name. Resolve the task's
-        // deliverable via the templates lookup first; fall back to
-        // task.phase.name for tasks that weren't created via a template
-        // (matches the new dual-source availableServices dropdown above
-        // and the column-builder fallback below).
-        const serviceName = getTaskPhaseName(t);
-        if (!serviceName) return false;
-        const deliverable = serviceNameToDeliverable.get(serviceName) ?? t.phase?.name ?? null;
-        if (deliverable !== serviceFilter) return false;
+        // serviceFilter is a deliverable column value straight from the
+        // dropdown, which now lists getTaskPhaseName values. Match STRICTLY
+        // on the same dimension the board uses to build columns, so the
+        // filter is exactly consistent with what's rendered. A zone only
+        // survives if it genuinely owns a task in this exact column — no
+        // phase-vs-marker false positives (the מרתף-under-תאום-מערכות bug).
+        if ((getTaskPhaseName(t) ?? '__none__') !== serviceFilter) return false;
       }
       return true;
     });
-  }, [data?.tasks, serviceFilter, dueFrom, dueTo, onlyWithDue, serviceNameToDeliverable]);
+  }, [data?.tasks, serviceFilter, dueFrom, dueTo, onlyWithDue]);
 
   const { phaseColumns, directMatrix, hasNoPhase, phaseToService } = useMemo(() => {
     const tasks = filteredTasks;
@@ -741,6 +758,49 @@ export function ExecutionBoardPage() {
     return result;
   }, [data, projectId, expandedIds, projectsWithRootTasks]);
 
+  // When any client-side filter is active, hide rows that have zero
+  // tasks under any phase column. Without this the user picks a filter
+  // (e.g. service = "BIM") and still sees every zone with empty cells
+  // — exactly what F2 in the bug list called out.
+  //
+  // A row "has tasks" when at least one phase column returns a non-empty
+  // aggregated-tasks list for it. Project rows are kept if any of their
+  // child zones survive — collapsing/expanding still works because
+  // expandedIds is unaffected.
+  const isFilterActive = !!serviceFilter || !!dueFrom || !!dueTo || onlyWithDue;
+  const visibleFlatRows = useMemo(() => {
+    if (!isFilterActive) return flatRows;
+
+    // Survival computed DIRECTLY from the matched tasks — NOT from which
+    // rows happen to be present in flatRows. The old version walked
+    // flatRows for surviving children, which silently dropped every
+    // project when projects were collapsed (their zone children weren't
+    // in flatRows yet). Deriving from filteredTasks removes that
+    // coupling entirely.
+    const projMatch = new Set<number>();        // projects with any match
+    const zoneLeafMatch = new Set<number>();    // leaf zones holding a match
+    const rootMatchProjects = new Set<number>(); // projects with a matching ROOT task
+    for (const t of filteredTasks) {
+      if (t.projectId != null) projMatch.add(t.projectId);
+      if (t.zoneId != null) zoneLeafMatch.add(t.zoneId);
+      else if (t.projectId != null) rootMatchProjects.add(t.projectId);
+    }
+
+    const zoneSurvives = (rowId: number) => {
+      // Synthetic 'Project Root' rows use id = -projectId.
+      if (rowId < 0) return rootMatchProjects.has(-rowId);
+      // A real zone survives if it OR any descendant holds a match.
+      const desc = zoneDescendants.get(rowId) ?? [rowId];
+      return desc.some((id) => zoneLeafMatch.has(id));
+    };
+
+    return flatRows.filter((r) => {
+      if (r.type === 'project') return projMatch.has(r.id);
+      if (r.type === 'zone') return zoneSurvives(r.id);
+      return true;
+    });
+  }, [flatRows, isFilterActive, filteredTasks, zoneDescendants]);
+
   if (isLoading) return <PageSkeleton />;
 
   const projectColorMap = new Map<number, (typeof PROJECT_COLORS)[0]>();
@@ -748,21 +808,52 @@ export function ExecutionBoardPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        title="Execution Board"
-        description="Zone × Deliverable task matrix across projects — risk indicators highlight overdue, at-risk, and stale tasks"
-      />
+      {/* Page header is suppressed when embedded as a project tab — the
+          project tab bar already names the surface, a second title is
+          redundant. */}
+      {forcedProjectId == null && (
+        <PageHeader
+          title="Execution Board"
+          description="Zone × Deliverable task matrix across projects — risk indicators highlight overdue, at-risk, and stale tasks"
+        />
+      )}
+
+      {/* View-mode tabs — V8. Sits above filters so the swap doesn't
+          look like a filter change. */}
+      <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5 self-start">
+        <button
+          onClick={() => setViewMode('matrix')}
+          className={cn(
+            'rounded-md px-3 py-1.5 text-[12px] font-semibold transition-colors',
+            viewMode === 'matrix' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+          )}
+        >
+          Matrix (Zone × Deliverable)
+        </button>
+        <button
+          onClick={() => setViewMode('status')}
+          className={cn(
+            'rounded-md px-3 py-1.5 text-[12px] font-semibold transition-colors',
+            viewMode === 'status' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+          )}
+        >
+          Status Board (Project × Deliverable)
+        </button>
+      </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <ProjectSelect
-          value={projectId}
-          onChange={(id) => {
-            setProjectId(id);
-            didAutoExpand.current = false;
-          }}
-          placeholder="All Projects"
-          className="w-64"
-        />
+        {/* Project selector hidden when locked to a specific project. */}
+        {forcedProjectId == null && (
+          <ProjectSelect
+            value={projectId}
+            onChange={(id) => {
+              setProjectId(id);
+              didAutoExpand.current = false;
+            }}
+            placeholder="All Projects"
+            className="w-64"
+          />
+        )}
         {/* Deliverable dropdown — lists the distinct deliverable names (the
             small pill under each column header) that have tasks in scope.
             Picking one narrows the matrix to columns whose deliverable
@@ -846,6 +937,17 @@ export function ExecutionBoardPage() {
               : 'Select a project or adjust filters to see the execution board.'
           }
         />
+      ) : viewMode === 'status' ? (
+        // V8 — Status Board view. Project × Deliverable matrix with
+        // completion-percentage cells. Reuses the page's filter state
+        // (projectId, serviceFilter) so swapping views respects active
+        // filters. Each cell color-codes by completion: green ≥ 100%,
+        // amber 1–99%, slate-empty otherwise.
+        <ExecutionStatusBoard
+          tasks={filteredTasks as any[]}
+          projects={data!.projects as any[]}
+          forcedProjectId={forcedProjectId}
+        />
       ) : (
         <div className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
             <table className="w-full border-collapse text-sm">
@@ -889,7 +991,7 @@ export function ExecutionBoardPage() {
                 </tr>
               </thead>
               <tbody>
-                {flatRows.map((row) => {
+                {visibleFlatRows.map((row) => {
                   if (row.type === 'project') {
                     const totalCols = phaseColumns.length + (hasNoPhase ? 2 : 1);
                     const pc = projectColorMap.get(row.id) ?? PROJECT_COLORS[0];
@@ -1063,6 +1165,132 @@ export function ExecutionBoardPage() {
       )}
 
       <TaskDrawer taskId={drawerTaskId} onClose={() => setDrawerTaskId(null)} />
+    </div>
+  );
+}
+
+/**
+ * V8 — Status Board view inside Execution Board.
+ *
+ * Renders a Project × Deliverable matrix. Each cell shows the
+ * completion ratio of tasks belonging to that (project, deliverable)
+ * pair: green when ≥ 100% complete, amber when partially complete,
+ * empty/slate when no tasks. Tooltip on hover shows the raw "N of M
+ * done" count.
+ *
+ * Reads from the already-filtered `tasks` list so the page's active
+ * filters (project, service, due date) apply transparently. Columns
+ * are derived from whatever deliverables appear in those filtered
+ * tasks — admins don't manage a separate column catalog for this view.
+ */
+function ExecutionStatusBoard({
+  tasks,
+  projects,
+  forcedProjectId,
+}: {
+  tasks: any[];
+  projects: any[];
+  forcedProjectId?: number;
+}) {
+  // Resolve a task's Deliverable label with the SINGLE canonical resolver
+  // (getTaskPhaseName) so the status board columns line up exactly with the
+  // matrix board, the filter dropdown, and the project task table. Tasks
+  // with no deliverable signal fall into "No Deliverable".
+  const resolveDeliverable = (t: any): string => getTaskPhaseName(t) ?? 'No Deliverable';
+
+  // Build (projectId, deliverable) → { done, total } from filtered tasks.
+  const cells = new Map<string, { done: number; total: number }>();
+  const deliverableSet = new Set<string>();
+  const projectIdsWithTasks = new Set<number>();
+  for (const t of tasks) {
+    const pid = t.projectId;
+    if (pid == null) continue;
+    projectIdsWithTasks.add(pid);
+    const d = resolveDeliverable(t);
+    deliverableSet.add(d);
+    const key = `${pid}|${d}`;
+    if (!cells.has(key)) cells.set(key, { done: 0, total: 0 });
+    const cell = cells.get(key)!;
+    cell.total += 1;
+    if (t.status === 'completed') cell.done += 1;
+  }
+
+  // Sort columns alphabetically with "No Deliverable" last.
+  const deliverables = Array.from(deliverableSet).sort((a, b) => {
+    if (a === 'No Deliverable') return 1;
+    if (b === 'No Deliverable') return -1;
+    return a.localeCompare(b);
+  });
+
+  // Restrict rows to projects that (a) have tasks in scope and (b) are
+  // not filtered out by forcedProjectId. Projects with zero in-scope
+  // tasks are dropped to keep the board readable — consistent with
+  // F2's hide-empty-rows behaviour on the matrix view.
+  const visibleProjects = (projects ?? []).filter((p) =>
+    projectIdsWithTasks.has(p.id) && (forcedProjectId == null || p.id === forcedProjectId),
+  );
+
+  if (visibleProjects.length === 0 || deliverables.length === 0) {
+    return (
+      <div className="rounded-[14px] border border-slate-200 bg-white py-12 text-center text-sm text-slate-400 italic">
+        No data to display on the Status Board. Try clearing filters or adding tasks under a Deliverable.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
+      <table className="w-full text-[12px]">
+        <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 tracking-wider">
+          <tr>
+            <th className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left font-semibold min-w-[240px] border-r border-slate-200">
+              Project
+            </th>
+            {deliverables.map((d) => (
+              <th key={d} className="px-3 py-2.5 text-center font-semibold min-w-[140px]" title={d}>
+                <span className="block truncate">{d}</span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {visibleProjects.map((p, idx) => (
+            <tr key={p.id} className={cn(idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/30')}>
+              <td className={cn(
+                'sticky left-0 z-10 px-4 py-2 border-r border-slate-200',
+                idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/30',
+              )}>
+                <div className="font-medium text-slate-800 truncate max-w-[220px]" title={p.name}>{p.name}</div>
+                {p.number && <div className="text-[10px] font-mono text-slate-400">{p.number}</div>}
+              </td>
+              {deliverables.map((d) => {
+                const cell = cells.get(`${p.id}|${d}`);
+                if (!cell || cell.total === 0) {
+                  return <td key={d} className="px-3 py-2 text-center text-slate-300">—</td>;
+                }
+                const pct = cell.total > 0 ? Math.round((cell.done / cell.total) * 100) : 0;
+                const tone = pct >= 100 ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                  : pct > 0 ? 'bg-amber-100 text-amber-700 border-amber-300'
+                  : 'bg-slate-100 text-slate-500 border-slate-200';
+                return (
+                  <td key={d} className="px-3 py-2 text-center">
+                    <div
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-semibold tabular-nums',
+                        tone,
+                      )}
+                      title={`${cell.done} of ${cell.total} tasks completed`}
+                    >
+                      <span>{cell.done}/{cell.total}</span>
+                      <span className="text-[10px] opacity-75">· {pct}%</span>
+                    </div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

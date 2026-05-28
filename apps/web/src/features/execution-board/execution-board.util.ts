@@ -10,6 +10,12 @@ export interface TaskLike {
   /** Nullable — task may live at the project root (no parent zone). */
   zoneId: number | null;
   description?: string | null;
+  /**
+   * The AUTHORITATIVE deliverable link (deliverable_template_id). This is
+   * what the project task table shows and what the user assigns, so it
+   * takes top priority — the board must agree with the table.
+   */
+  deliverableTemplate?: { name: string } | null;
   serviceType?: { name: string } | null;
   /**
    * The Phase relation (DB) — surfaced in the UI as the column label
@@ -26,15 +32,25 @@ export interface ZoneNodeLike {
 }
 
 /**
- * Resolves the phase/milestone column a task belongs to. Priority:
- *  1. task.serviceType.name (DB-linked, primary path for catalogued tasks)
- *  2. [SERVICE:...] marker inside task.description (legacy/template flow)
- *  3. task.phase.name (DB-linked Phase — root tasks typically only have
- *     this populated; without this fallback they'd silently end up in
- *     the "No Deliverable" column even when a phase is set)
- *  4. null → placed in the "No Deliverable" column
+ * Resolves the Deliverable column a task belongs to. This is the SINGLE
+ * canonical resolver for the whole Execution Board (columns, dropdown,
+ * filter, status board) AND it mirrors the project task table's
+ * resolveTaskDeliverable() priority exactly, so every view agrees on
+ * which deliverable a task belongs to.
+ *
+ * Priority:
+ *  1. task.deliverableTemplate.name — the authoritative deliverable link
+ *     the user assigns and sees in the task table. Takes precedence over
+ *     everything else (previously the board ignored this and tasks drifted
+ *     into a different column than the table showed).
+ *  2. task.serviceType.name (DB-linked, legacy catalogued tasks)
+ *  3. [SERVICE:...] marker inside task.description (legacy/template flow)
+ *  4. task.phase.name (DB-linked Phase — defensive fallback for root tasks
+ *     that only carry a phase; no live data relies on it today)
+ *  5. null → placed in the "No Deliverable" column
  */
 export function getTaskPhaseName(task: TaskLike): string | null {
+  if (task.deliverableTemplate?.name) return task.deliverableTemplate.name;
   if (task.serviceType?.name) return task.serviceType.name;
   const m = task.description?.match(SERVICE_RE);
   if (m) return m[1];
