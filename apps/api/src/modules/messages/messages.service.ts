@@ -345,6 +345,31 @@ export class MessagesService {
     };
   }
 
+  /**
+   * Single grouped count query for many (entityType, entityId) pairs.
+   * Used by the planning grid's task-discussion bubbles so 30 tasks
+   * resolve in ONE round-trip instead of 30. Filters to top-level
+   * messages only (parentId IS NULL) to match the per-task badge —
+   * which shows the conversation count, not the reply count.
+   */
+  async countByEntities(entityType: string, entityIds: number[]): Promise<Record<number, number>> {
+    if (entityIds.length === 0) return {};
+    const rows = await this.prisma.message.groupBy({
+      by: ['entityId'],
+      where: {
+        deletedAt: null,
+        parentId: null,
+        entityType: entityType as MessageEntityType,
+        entityId: { in: entityIds },
+      },
+      _count: { entityId: true },
+    });
+    const map: Record<number, number> = {};
+    for (const id of entityIds) map[id] = 0;
+    for (const r of rows) map[r.entityId] = r._count.entityId;
+    return map;
+  }
+
   async findByEntity(dto: QueryMessagesDto) {
     const where: Prisma.MessageWhereInput = {
       deletedAt: null,

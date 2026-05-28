@@ -33,6 +33,28 @@ export class MessagesController {
     return this.messagesService.findByEntity(query);
   }
 
+  /**
+   * Batch message-counts endpoint. Returns a map of entityId → count
+   * for the given entityIds — used by the planning grid's TaskDiscussion
+   * buttons so we don't fire one request per task row (the N+1 that
+   * caused the slow-page report). Caller passes
+   *   GET /messages/counts?entityType=task&entityIds=1,2,3
+   * and gets `{ "1": 2, "2": 0, "3": 5 }` back.
+   */
+  @Get('counts')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'Batch message counts for many entityIds' })
+  counts(
+    @Query('entityType') entityType: string,
+    @Query('entityIds') entityIds: string,
+  ) {
+    const ids = (entityIds ?? '')
+      .split(',')
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n));
+    return this.messagesService.countByEntities(entityType, ids);
+  }
+
   @Get('inbox')
   @OwnData()
   @ApiOperation({ summary: 'Personal inbox' })
