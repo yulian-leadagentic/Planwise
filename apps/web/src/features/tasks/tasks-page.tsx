@@ -1,7 +1,8 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { notify } from '@/lib/notify';
 import { PageHeader } from '@/components/shared/page-header';
 import { FilterBar } from '@/components/shared/filter-bar';
 import { DataTable } from '@/components/shared/data-table';
@@ -9,6 +10,7 @@ import { StatusBadge } from '@/components/shared/status-badge';
 import { PriorityBadge } from '@/components/shared/priority-badge';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { TaskCard } from './task-card';
+import { CreateTaskModal } from './create-task-modal';
 import { tasksApi } from '@/api/tasks.api';
 import client from '@/api/client';
 import { useFilterStore } from '@/stores/filter.store';
@@ -16,7 +18,7 @@ import { useDebounce } from '@/hooks/use-debounce';
 import { cn } from '@/lib/utils';
 import type { ColumnDef } from '@tanstack/react-table';
 
-type Tab = 'mine' | 'all';
+type Tab = 'mine' | 'all' | 'archived';
 
 interface TaskRow {
   id: number;
@@ -51,15 +53,21 @@ const columns: ColumnDef<TaskRow, unknown>[] = [
   {
     accessorKey: 'name',
     header: 'Name',
+    // truncate on inline <span> doesn't clip without a width constraint —
+    // long task names were overflowing the cell on the all-tasks page.
+    // `block max-w-[260px]` gives truncate something to clip against;
+    // the title attribute keeps full text discoverable on hover.
     cell: ({ row }) => (
-      <span className="truncate font-medium">{row.original.name}</span>
+      <span className="block max-w-[260px] truncate font-medium" title={row.original.name}>
+        {row.original.name}
+      </span>
     ),
   },
   {
     accessorKey: 'project',
     header: 'Project',
     cell: ({ row }) => (
-      <span className="truncate text-sm">
+      <span className="block max-w-[200px] truncate text-sm" title={row.original.project?.name ?? ''}>
         {row.original.project?.name ?? '-'}
       </span>
     ),
@@ -68,7 +76,7 @@ const columns: ColumnDef<TaskRow, unknown>[] = [
     accessorKey: 'zone',
     header: 'Zone',
     cell: ({ row }) => (
-      <span className="truncate text-sm">
+      <span className="block max-w-[180px] truncate text-sm" title={row.original.zone?.name ?? ''}>
         {row.original.zone?.name ?? '-'}
       </span>
     ),
@@ -181,7 +189,15 @@ const columns: ColumnDef<TaskRow, unknown>[] = [
 
 export function TasksPage() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<Tab>('mine');
+  const [searchParams] = useSearchParams();
+  // Deep-link support: ?tab=archived lands the user directly on the
+  // Archived tab so the "Archived" button on the planning toolbar can
+  // navigate straight to the right view.
+  const initialTab = (searchParams.get('tab') as Tab) || 'mine';
+  const [tab, setTab] = useState<Tab>(
+    ['mine', 'all', 'archived'].includes(initialTab as string) ? initialTab : 'mine',
+  );
+  const [showCreate, setShowCreate] = useState(false);
 
   const {
     taskSearch,
@@ -210,6 +226,26 @@ export function TasksPage() {
     queryKey: ['tasks', 'all', filters],
     queryFn: () => tasksApi.list(filters),
     enabled: tab === 'all',
+  });
+
+  // Archived tasks. Same filter set as All Tasks but with archived=true
+  // so the backend flips the predicate from "deletedAt IS NULL" to
+  // "deletedAt IS NOT NULL". Restoring a row invalidates this key so
+  // the list refreshes without a manual refetch.
+  const queryClient = useQueryClient();
+  const archivedFilters = { ...filters, archived: true };
+  const { data: archivedData, isLoading: archivedLoading } = useQuery({
+    queryKey: ['tasks', 'archived', archivedFilters],
+    queryFn: () => tasksApi.list(archivedFilters),
+    enabled: tab === 'archived',
+  });
+  const restoreMutation = useMutation({
+    mutationFn: (id: number) => tasksApi.restore(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      notify.success('Task restored', { code: 'TASK-RESTORE-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to restore task'),
   });
 
   // My tasks
@@ -247,6 +283,7 @@ export function TasksPage() {
   const tabs: { key: Tab; label: string }[] = [
     { key: 'mine', label: 'My Tasks' },
     { key: 'all', label: 'All Tasks' },
+    { key: 'archived', label: 'Archived' },
   ];
 
   const resetAllFilters = () => {
@@ -268,7 +305,7 @@ export function TasksPage() {
         description="Manage and track all tasks"
         actions={
           <button
-            onClick={() => {/* TODO: open create dialog */}}
+            onClick={() => setShowCreate(true)}
             className="flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
           >
             <Plus className="h-4 w-4" />
@@ -479,6 +516,71 @@ export function TasksPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Archived tab — shows soft-deleted tasks with a Restore button.
+          Reuses the same backend list endpoint (with archived=true) so
+          the table is consistent with All Tasks. Restoring invalidates
+          the tasks query keys so the row vanishes from Archived and
+          reappears under All Tasks immediately. */}
+      {tab === 'archived' && (
+        <div className="space-y-4">
+          {archivedLoading ? (
+            <p className="py-12 text-center text-sm text-slate-400">Loading…</p>
+          ) : !archivedData || (archivedData?.data ?? archivedData ?? []).length === 0 ? (
+            <p className="py-12 text-center text-sm text-slate-400 italic">
+              No archived tasks. Deleted tasks land here.
+            </p>
+          ) : (
+            <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+              <table className="w-full text-[13px]">
+                <thead className="bg-slate-50 text-[10px] uppercase text-slate-500">
+                  <tr>
+                    <th className="px-4 py-2 text-left">Code</th>
+                    <th className="px-4 py-2 text-left">Name</th>
+                    <th className="px-4 py-2 text-left">Project</th>
+                    <th className="px-4 py-2 text-left">Zone</th>
+                    <th className="px-4 py-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {((archivedData as any)?.data ?? archivedData ?? []).map((t: any) => (
+                    <tr key={t.id} className="hover:bg-slate-50/50">
+                      <td className="px-4 py-2 font-mono text-slate-500 whitespace-nowrap">{t.code}</td>
+                      <td className="px-4 py-2 max-w-[260px]">
+                        <span className="block truncate font-medium text-slate-700" title={t.name}>
+                          {t.name}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-slate-600 truncate max-w-[200px]" title={t.project?.name ?? ''}>
+                        {t.project?.name ?? '—'}
+                      </td>
+                      <td className="px-4 py-2 text-slate-600 truncate max-w-[180px]" title={t.zone?.name ?? ''}>
+                        {t.zone?.name ?? 'Project Root'}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <button
+                          onClick={() => restoreMutation.mutate(t.id)}
+                          disabled={restoreMutation.isPending}
+                          className="rounded-md bg-emerald-50 border border-emerald-200 px-3 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                        >
+                          Restore
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showCreate && (
+        <CreateTaskModal
+          onClose={() => setShowCreate(false)}
+          onCreated={(id) => navigate(`/tasks/${id}`)}
+        />
       )}
     </div>
   );

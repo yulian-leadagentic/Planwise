@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { X, Clock, Paperclip, MessageSquare, UserPlus, ChevronDown, Search, Trash2, AlertCircle, AlertTriangle, Calendar, FileText, Pencil } from 'lucide-react';
 import { FilesTab } from '@/features/projects/files-tab';
 import { MessagePanel } from '@/features/messaging/message-panel';
@@ -136,7 +137,10 @@ export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerP
             <div className="flex border-b border-slate-200 px-5">
               {([
                 ...(hideTimeTab ? [] : [{ key: 'time' as const, label: 'Time', icon: Clock }]),
-                { key: 'details' as const, label: 'Details' },
+                // Renamed "Details" → "Project Info" (Z1). The tab now
+                // leads with the parent project's info, then the task's
+                // own details below.
+                { key: 'details' as const, label: 'Project Info' },
                 { key: 'files' as const, label: 'Files', icon: FileText },
                 { key: 'discussion' as const, label: 'Discussion', icon: MessageSquare },
               ]).map((t) => (
@@ -340,7 +344,14 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
 
   return (
     <div className="space-y-4">
-      <div>
+      {/* Project Info leads the tab (Z1) — the parent project's metadata
+          (weekly meeting, authoring tool, file hub links, contracted
+          services) is the primary content. The task's own details
+          follow below under a divider. */}
+      {task.projectId && <TaskProjectInfoBlock projectId={task.projectId} />}
+
+      <div className="pt-1 border-t border-slate-100">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-2 mt-2">Task details</p>
         <label className="text-[11px] font-semibold text-slate-400 uppercase">Description</label>
         <p className="mt-1 text-[13px] text-slate-600">{task.description || <span className="italic text-slate-400">No description</span>}</p>
       </div>
@@ -389,6 +400,80 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
         </div>
         {task.phase && <div><span className="text-slate-400">Service:</span> <span className="text-slate-700 font-medium">{task.phase.name}</span></div>}
         {task.serviceType && <div><span className="text-slate-400">Deliverable:</span> <span className="text-slate-700 font-medium">{task.serviceType.name}</span></div>}
+      </div>
+    </div>
+  );
+}
+
+function TaskProjectInfoBlock({ projectId }: { projectId: number }) {
+  const { data: project, isLoading } = useQuery({
+    queryKey: ['project-info-summary', projectId],
+    queryFn: () => client.get(`/projects/${projectId}`).then((r) => r.data?.data ?? r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+  if (isLoading) {
+    return <div className="rounded-md border border-slate-200 bg-slate-50/60 p-3 text-[12px] text-slate-400">Loading project info…</div>;
+  }
+  if (!project) return null;
+
+  // Always-rendered list (Z1 follow-up) — the user wants the task card's
+  // Project Info to mirror the Project Info tab, so we show every field
+  // with an em-dash placeholder rather than hiding empties. Helpers
+  // resolve URL fields into click-throughs.
+  const fmtVal = (v?: string | null) => (v && v.trim() ? v : null);
+  const fields: Array<{ label: string; value: string | null; isLink?: boolean }> = [
+    { label: 'Weekly Meeting', value: fmtVal(project.weeklyMeetingDay) },
+    { label: 'Authoring Tool', value: fmtVal(project.authoringToolVersion) },
+    { label: 'File Hub', value: fmtVal(project.fileSystemLink), isLink: true },
+  ];
+
+  return (
+    <div className="rounded-md border border-slate-200 bg-slate-50/60 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Project Info</span>
+        <Link to={`/projects/${projectId}`} className="text-[10px] text-blue-600 hover:underline">
+          Open project →
+        </Link>
+      </div>
+      <dl className="space-y-1 text-[12px]">
+        <div className="flex gap-2">
+          <dt className="text-slate-500 w-[110px] shrink-0">Project:</dt>
+          <dd className="text-slate-700 font-medium break-words min-w-0">{project.name}</dd>
+        </div>
+        {fields.map((f) => (
+          <div key={f.label} className="flex gap-2">
+            <dt className="text-slate-500 w-[110px] shrink-0">{f.label}:</dt>
+            <dd className="text-slate-700 break-words min-w-0">
+              {f.value == null ? (
+                <span className="text-slate-300 italic">—</span>
+              ) : f.isLink ? (
+                // The hub field can hold multiple "Label | URL" lines.
+                // Render each on its own row; linkify URLs.
+                f.value.split('\n').map((line, i) => {
+                  const trimmed = line.trim();
+                  if (!trimmed) return null;
+                  const sep = trimmed.indexOf('|');
+                  const label = sep >= 0 ? trimmed.slice(0, sep).trim() : '';
+                  const url = sep >= 0 ? trimmed.slice(sep + 1).trim() : trimmed;
+                  return (
+                    <div key={i}>
+                      {label && <span className="text-slate-500">{label}: </span>}
+                      {/^https?:\/\//.test(url)
+                        ? <a href={url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline break-all">{url}</a>
+                        : <span className="break-all">{url}</span>}
+                    </div>
+                  );
+                })
+              ) : f.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <div className="mt-2 pt-2 border-t border-slate-200">
+        <span className="text-[10px] text-slate-500 uppercase tracking-wider">Services Per Contract</span>
+        <p className="text-[12px] text-slate-600 mt-1 whitespace-pre-wrap">
+          {project.servicesPerContract?.trim() || <span className="text-slate-300 italic">—</span>}
+        </p>
       </div>
     </div>
   );

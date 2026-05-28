@@ -85,9 +85,12 @@ export class TasksService {
   }
 
   async findAll(query: QueryTasksDto, restrictToProjectIds?: number[]) {
-    const where: Prisma.TaskWhereInput = {
-      deletedAt: null,
-    };
+    // archived=true flips the visibility predicate from "alive only" to
+    // "archived only" — used by the Archived tab on /tasks. The default
+    // is alive-only so existing callers don't change.
+    const where: Prisma.TaskWhereInput = query.archived
+      ? { deletedAt: { not: null } }
+      : { deletedAt: null };
 
     if (query.projectId) where.projectId = query.projectId;
     else if (restrictToProjectIds && restrictToProjectIds.length > 0) {
@@ -390,12 +393,52 @@ export class TasksService {
   async remove(id: number) {
     await this.findOne(id);
 
+    // Soft-delete AND flip status to 'cancelled' so any report or
+    // rollup that reads status (not just deletedAt) reflects the
+    // deletion. Restore() puts the status back to not_started.
     await this.prisma.task.update({
       where: { id },
-      data: { deletedAt: new Date() },
+      data: { deletedAt: new Date(), status: 'cancelled' },
     });
 
     return { message: 'Task deleted' };
+  }
+
+  /**
+   * Restore a soft-deleted task — clears deletedAt so the task reappears
+   * in normal lists. The /tasks Archived tab uses this. Throws 404 if
+   * the task isn't soft-deleted (preventing accidental no-ops).
+   */
+  async restore(id: number) {
+    // IMPORTANT: a global soft-delete middleware rewrites findUnique →
+    // findFirst and injects `deletedAt: null` whenever the caller
+    // doesn't specify deletedAt. That means a plain findUnique can NEVER
+    // see a soft-deleted row — which is exactly the task we're trying to
+    // restore. So we query findFirst with an EXPLICIT
+    // `deletedAt: { not: null }` predicate; because deletedAt is no
+    // longer `undefined`, the middleware leaves it alone and we can
+    // actually locate the archived task. (This was the TASK-CREATE-404
+    // "Task not found" on restore.)
+    const existing = await this.prisma.task.findFirst({
+      where: { id, deletedAt: { not: null } },
+      select: { id: true },
+    });
+    if (!existing) {
+      // Either the id doesn't exist at all, or it's already active.
+      // Distinguish so the caller gets a useful message.
+      const live = await this.prisma.task.findFirst({ where: { id }, select: { id: true } });
+      if (live) return { message: 'Task is not archived', alreadyActive: true };
+      throw new NotFoundException('Task not found');
+    }
+    // `update` is not touched by the soft-delete middleware, so clearing
+    // deletedAt here works directly. Reset status from 'cancelled' (set
+    // on delete) back to not_started so the restored task isn't stuck
+    // looking cancelled.
+    await this.prisma.task.update({
+      where: { id },
+      data: { deletedAt: null, status: 'not_started' },
+    });
+    return { message: 'Task restored', id };
   }
 
   async addAssignee(taskId: number, data: { userId: number; role?: string; hourlyRate?: number }, actorId?: number) {

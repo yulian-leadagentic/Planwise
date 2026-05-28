@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Filter, User as UserIcon, GripVertical } from 'lucide-react';
+import { Plus, Filter, User as UserIcon, GripVertical, Clock, Calendar, AlertCircle, AlertTriangle } from 'lucide-react';
 import { DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -11,6 +11,8 @@ import client from '@/api/client';
 import { tasksApi } from '@/api/tasks.api';
 import { formatShortDate } from '@/lib/date-utils';
 import { TaskDrawer } from './task-drawer';
+import { getTaskHealth } from '@/lib/task-health';
+import { STATUS_PILL, STATUS_LABEL, ZONE_BORDER_COLORS } from '@/lib/task-constants';
 
 const columns = [
   { id: 'not_started', label: 'Not Started', color: 'border-t-slate-400', bg: 'bg-slate-50' },
@@ -25,10 +27,38 @@ const columns = [
 // split a click anywhere on the card would race with @dnd-kit's pointer
 // activation and randomly trigger drag instead of click.
 function KanbanCard({ task, onOpen }: { task: any; onOpen: (id: number) => void }) {
+  // V2 — mirror the my-tasks Kanban card layout so users see the same
+  // visual language across both surfaces. Differences kept on purpose:
+  //   • no project-name header (the page IS the project context)
+  //   • no Log-Time button (manager view, not the worker's surface)
+  // Everything else — health icons, zone breadcrumb, service +
+  // deliverable chips, status pill, hours pill colored by budget,
+  // due date with overdue tone, risk reason banner, assignee
+  // avatars — matches /my-tasks.
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `task-${task.id}` });
   const style = { transform: CSS.Transform.toString(transform), transition };
-  const assignee = task.assignees?.[0]?.user;
-  const extraAssignees = (task.assignees?.length ?? 0) - 1;
+
+  const health = getTaskHealth(task);
+  const zoneType = task.zone?.zoneType || 'zone';
+  const zoneName = task.zone?.name ?? '';
+  const breadcrumb: string[] = Array.isArray((task as any).zoneBreadcrumb) ? (task as any).zoneBreadcrumb : [];
+
+  const borderCls =
+    health.level === 'critical'
+      ? 'border-red-300 bg-red-50 ring-1 ring-red-200'
+      : health.level === 'warning'
+        ? 'border-amber-300 bg-amber-50/50'
+        : 'border-slate-200 bg-white';
+
+  // Hours pill tone matches /my-tasks: green<80% / amber 80-100% / red>100% / slate if no estimate.
+  const pct = health.estimatedHours > 0 ? (health.loggedHours / health.estimatedHours) * 100 : 0;
+  const hoursTone = health.estimatedHours <= 0
+    ? 'bg-slate-100 text-slate-600 border-slate-200'
+    : pct >= 100
+      ? 'bg-red-100 text-red-700 border-red-200'
+      : pct >= 80
+        ? 'bg-amber-100 text-amber-700 border-amber-200'
+        : 'bg-emerald-100 text-emerald-700 border-emerald-200';
 
   return (
     <div
@@ -36,12 +66,14 @@ function KanbanCard({ task, onOpen }: { task: any; onOpen: (id: number) => void 
       style={style}
       {...attributes}
       className={cn(
-        'group rounded-lg border border-slate-200 bg-white shadow-sm hover:shadow-md transition-shadow',
+        'group rounded-lg border shadow-sm hover:shadow-md transition-shadow duration-100 border-l-[3px]',
+        borderCls,
+        ZONE_BORDER_COLORS[zoneType] || 'border-l-slate-300',
         isDragging && 'opacity-50 shadow-lg ring-2 ring-blue-300',
       )}
     >
       <div className="flex items-start gap-1 p-3">
-        {/* Drag grip — the only place that listens for drag activation. */}
+        {/* Drag grip — the only listener for drag activation. */}
         <button
           type="button"
           aria-label="Drag to reorder or change column"
@@ -52,41 +84,115 @@ function KanbanCard({ task, onOpen }: { task: any; onOpen: (id: number) => void 
           <GripVertical className="h-3.5 w-3.5" />
         </button>
 
-        {/* Click target — opens the drawer */}
         <button
           type="button"
           onClick={() => onOpen(task.id)}
-          className="flex-1 min-w-0 text-left cursor-pointer rounded -mx-1 px-1 py-0.5 hover:bg-slate-50/50 focus:outline-none focus:ring-2 focus:ring-blue-300"
+          className="flex-1 min-w-0 text-left cursor-pointer rounded -mx-1 px-1 py-0.5 hover:bg-slate-50/50 focus:outline-none focus:ring-2 focus:ring-blue-300 space-y-1.5"
         >
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0 flex-1">
-              {task.code && <span className="text-[10px] font-mono text-slate-400">{task.code}</span>}
-              <p className="text-[13px] font-medium text-slate-800 line-clamp-2">{task.name}</p>
+          {/* Health icon row */}
+          {(health.level === 'critical' || health.level === 'warning') && (
+            <div className="flex items-center gap-1">
+              {health.level === 'critical' && <AlertCircle className="h-3.5 w-3.5 text-red-600" />}
+              {health.level === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />}
             </div>
-            {task.priority === 'critical' && <span className="rounded bg-red-100 px-1 py-0.5 text-[9px] font-bold text-red-600">!</span>}
-            {task.priority === 'high' && <span className="rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-600">!</span>}
+          )}
+
+          {task.code && <span className="text-[9px] font-mono text-slate-500">{task.code}</span>}
+          <p className="text-[13px] font-semibold text-slate-800 leading-tight break-words">{task.name}</p>
+
+          {/* Zone breadcrumb (or "Project Root" for zoneId=null tasks). */}
+          {breadcrumb.length > 0 ? (
+            <p className="text-[10px] text-slate-500 truncate" title={breadcrumb.join(' > ')}>
+              {breadcrumb.join(' › ')}
+            </p>
+          ) : zoneName ? (
+            <p className="text-[10px] text-slate-500 truncate">{zoneName}</p>
+          ) : (
+            <p className="text-[10px] text-slate-400 italic truncate">
+              Project Root
+              {task.phase?.name ? ` · ${task.phase.name}` : task.serviceType?.name ? ` · ${task.serviceType.name}` : ''}
+            </p>
+          )}
+
+          {/* Service + Deliverable chips */}
+          {(task.phase?.name || task.serviceType?.name) && (
+            <div className="flex items-center gap-1 flex-wrap text-[10px]">
+              {task.phase?.name && (
+                <span className="rounded bg-violet-50 px-1.5 py-0.5 text-violet-700 font-medium">
+                  {task.phase.name}
+                </span>
+              )}
+              {task.serviceType?.name && (
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-600">
+                  {task.serviceType.name}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Status + priority */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider', STATUS_PILL[task.status] ?? STATUS_PILL.not_started)}>
+              {STATUS_LABEL[task.status] ?? task.status}
+            </span>
+            {task.priority === 'critical' && <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-bold text-red-600">Critical</span>}
+            {task.priority === 'high' && <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-600">High</span>}
           </div>
 
-          <div className="mt-2 flex items-center gap-2 text-[10px] flex-wrap">
-            {assignee && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-1.5 py-0.5 text-indigo-600">
-                <UserIcon className="h-2.5 w-2.5" />
-                {assignee.firstName}
-                {extraAssignees > 0 && <span className="text-indigo-400">+{extraAssignees}</span>}
-              </span>
-            )}
-            {task.budgetHours && (
-              <span className="text-slate-400">{Number(task.budgetHours)}h</span>
-            )}
-            {task.endDate && (
-              <span className={cn(
-                'text-slate-400',
-                new Date(task.endDate) < new Date() && task.status !== 'completed' && 'text-red-500 font-medium',
-              )}>
-                {formatShortDate(task.endDate)}
-              </span>
-            )}
+          {/* Hours pill */}
+          <div className={cn(
+            'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-bold tabular-nums',
+            hoursTone,
+          )}>
+            <Clock className="h-3 w-3 shrink-0" />
+            <span>{health.loggedHours}h</span>
+            {health.estimatedHours > 0 && <span className="opacity-70">/ {health.estimatedHours}h</span>}
           </div>
+
+          {/* Due date */}
+          {task.endDate && (
+            <div className="flex items-center gap-1 text-[10px]">
+              <Calendar className={cn('h-2.5 w-2.5 shrink-0', health.isOverdue ? 'text-red-600' : 'text-slate-400')} />
+              <span className={cn(
+                'tabular-nums',
+                health.isOverdue ? 'text-red-600 font-bold' : 'text-slate-500 font-medium',
+              )}>
+                Due {formatShortDate(task.endDate)}
+                {health.isOverdue && ' (overdue)'}
+              </span>
+            </div>
+          )}
+
+          {/* Risk reason inline */}
+          {health.reasons.length > 0 && (
+            <div className={cn(
+              'rounded px-1.5 py-1 text-[10px]',
+              health.level === 'critical' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700',
+            )}>
+              {health.reasons[0]}
+            </div>
+          )}
+
+          {/* Assignee avatars stack */}
+          {Array.isArray(task.assignees) && task.assignees.length > 0 && (
+            <div className="flex items-center gap-0.5">
+              {(task.assignees as any[]).slice(0, 4).map((a) => {
+                const initials = `${a.user?.firstName?.[0] ?? ''}${a.user?.lastName?.[0] ?? ''}` || '?';
+                return (
+                  <span
+                    key={a.id}
+                    className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-[8px] font-bold border border-white -ml-1 first:ml-0"
+                    title={`${a.user?.firstName ?? ''} ${a.user?.lastName ?? ''}`.trim()}
+                  >
+                    {initials}
+                  </span>
+                );
+              })}
+              {task.assignees.length > 4 && (
+                <span className="text-[9px] text-slate-500 ml-1">+{task.assignees.length - 4}</span>
+              )}
+            </div>
+          )}
         </button>
       </div>
     </div>

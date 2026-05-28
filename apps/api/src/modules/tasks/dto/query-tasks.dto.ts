@@ -1,6 +1,6 @@
-import { IsOptional, IsEnum, IsString, IsInt } from 'class-validator';
+import { IsOptional, IsEnum, IsString, IsInt, IsBoolean } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 
 import { PaginationQueryDto } from '../../../common/dto/pagination.dto';
 
@@ -49,4 +49,15 @@ export class QueryTasksDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  /**
+   * Show ONLY soft-deleted ("archived") tasks. Default false — the
+   * normal list excludes archived rows. The Archived view on /tasks
+   * passes `?archived=true` to get the inverse.
+   */
+  @ApiPropertyOptional({ description: 'Show only archived (soft-deleted) tasks' })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  archived?: boolean;
 }

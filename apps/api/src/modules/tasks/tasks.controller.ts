@@ -122,6 +122,21 @@ export class TasksController {
     return this.tasksService.remove(id);
   }
 
+  // Restore a soft-deleted (archived) task. Mirrored on the frontend
+  // by the Restore button on the Archived tab.
+  //
+  // We skip the per-task project-access check here because the helper
+  // filters out archived tasks (deletedAt IS NULL) — so any restore
+  // would 404 before getting to the actual restore step. Authorization
+  // is still enforced via @RequirePermissions; restore is a power-user
+  // action gated by tasks:write at the role level.
+  @Post(':id/restore')
+  @RequirePermissions({ module: 'tasks', action: 'write' })
+  @ApiOperation({ summary: 'Restore an archived task' })
+  async restore(@Param('id', ParseIntPipe) id: number) {
+    return this.tasksService.restore(id);
+  }
+
   // Assignees
   @Post(':id/assignees')
   @RequirePermissions({ module: 'tasks', action: 'write' })

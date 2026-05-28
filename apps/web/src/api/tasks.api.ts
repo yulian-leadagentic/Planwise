@@ -11,6 +11,8 @@ export interface TaskQuery {
   search?: string;
   page?: number;
   perPage?: number;
+  /** When true, show only archived (soft-deleted) tasks. Default false. */
+  archived?: boolean;
 }
 
 export interface CreateTaskPayload {
@@ -59,6 +61,9 @@ export const tasksApi = {
 
   delete: (id: number) =>
     client.delete(`/tasks/${id}`).then((r) => r.data),
+
+  restore: (id: number) =>
+    client.post(`/tasks/${id}/restore`).then((r) => r.data),
 
   // Assignees
   addAssignee: (taskId: number, payload: { userId: number; role?: string; hourlyRate?: number }) =>

@@ -62,6 +62,39 @@ function getStartByDate(task: any): string | null {
 }
 
 /**
+ * Time dropdown — 15-minute slots from 06:00 to 22:00, same options
+ * the Add Timesheet Entry modal uses. Extracted so QuickTimeLog and
+ * the My Tasks list-view row share the same control shape (V10
+ * unification: every time-entry UI in the app reads the same).
+ */
+const TIME_SLOTS: string[] = (() => {
+  const slots: string[] = [];
+  for (let h = 6; h <= 22; h++) {
+    for (const m of [0, 15, 30, 45]) {
+      slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+    }
+  }
+  return slots;
+})();
+
+function TimeDropdown({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full px-2 py-1.5 rounded-md border border-slate-200 text-[12px] focus:border-blue-400 focus:outline-none bg-white"
+    >
+      {/* Allow whatever the current value is, even if off-grid (e.g.
+          legacy 09:07). Keeps the rendered <option> identifiable. */}
+      {!TIME_SLOTS.includes(value) && value && <option value={value}>{value}</option>}
+      {TIME_SLOTS.map((t) => (
+        <option key={t} value={t}>{t}</option>
+      ))}
+    </select>
+  );
+}
+
+/**
  * Inline time-logging panel embedded inside a task card.
  *
  * UI notes:
@@ -72,6 +105,9 @@ function getStartByDate(task: any): string | null {
  *     were complaining that they only saw the NEW-entry form and had no
  *     visibility into what they'd already logged. The full history list
  *     lives on the task drawer; this is a compact "last 5" view inline.
+ *   • Time controls match the Add Timesheet Entry modal: Start Time /
+ *     End Time dropdowns + Total Hours readout in 3 columns. Same look
+ *     as the weekly timesheet.
  *   • The whole panel stopsPropagation so clicks inside (date/time inputs,
  *     the history list) don't bubble up and open the task drawer.
  */
@@ -207,33 +243,43 @@ function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskProjectId
         </div>
       )}
 
-      {/* New-entry form. Thin left bar marks the "add" zone, visually
-          separate from the history above. */}
-      <div className="px-2 py-1.5 space-y-1.5 border-l-2 border-blue-400/40">
-        <div className="flex items-center gap-1">
-          <label className="text-[9px] font-semibold text-slate-500 uppercase w-10">Date</label>
+      {/* New-entry form — matches the Add Timesheet Entry visual
+          language: Start Time / End Time / Total Hours triplet with
+          dropdowns + grey readout. V10 unification. */}
+      <div className="px-3 py-2 space-y-2 border-l-2 border-blue-400/40">
+        <div>
+          <label className="text-[10px] font-semibold text-slate-600 mb-1 block">Date</label>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-            className="flex-1 px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
+            className="w-full px-2 py-1.5 rounded-md border border-slate-200 text-[12px] focus:border-blue-400 focus:outline-none" />
         </div>
-        <div className="flex items-center gap-1">
-          <label className="text-[9px] font-semibold text-slate-500 uppercase w-10">Time</label>
-          <input type="time" value={start} onChange={(e) => setStart(e.target.value)} step="300"
-            className="w-[78px] px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
-          <span className="text-[10px] text-slate-400">→</span>
-          <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} step="300"
-            className="w-[78px] px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
-          <span className="ml-auto text-[11px] font-bold text-blue-600 tabular-nums">{totalHours}h</span>
+        <div className="grid grid-cols-3 gap-2">
+          <div>
+            <label className="text-[10px] font-semibold text-slate-600 mb-1 block">Start Time</label>
+            <TimeDropdown value={start} onChange={setStart} />
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold text-slate-600 mb-1 block">End Time</label>
+            <TimeDropdown value={end} onChange={setEnd} />
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold text-slate-600 mb-1 block">Total Hours</label>
+            <div className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-slate-50 text-[12px] text-slate-600 tabular-nums">
+              {totalHours}h
+            </div>
+          </div>
         </div>
         <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
-          placeholder="Note (optional)…"
-          className="w-full px-1.5 py-1 rounded border border-slate-200 text-[11px] focus:border-blue-400 focus:outline-none" />
-        <div className="flex gap-1">
+          placeholder="Description (optional)…"
+          className="w-full px-2 py-1.5 rounded-md border border-slate-200 text-[12px] focus:border-blue-400 focus:outline-none" />
+        <div className="flex justify-end gap-1.5 pt-1">
+          <button onClick={() => setOpen(false)} className="rounded-md border border-slate-200 px-3 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50">
+            Cancel
+          </button>
           <button onClick={handleLog}
             disabled={totalMinutes <= 0 || saving}
-            className="rounded bg-blue-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
-            {saving ? 'Saving...' : 'Save'}
+            className="rounded-md bg-blue-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+            {saving ? 'Saving...' : 'Submit'}
           </button>
-          <button onClick={() => setOpen(false)} className="text-[10px] text-slate-400 px-1">Cancel</button>
         </div>
       </div>
     </div>
@@ -256,14 +302,21 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
         : 'border-slate-200 bg-white';
 
   return (
+    // Hover effect: fast shadow lift on hover. The native browser
+    // `title` tooltip used to be on the card root for the at-risk
+    // reasons, which gave a ~500ms delay before any feedback —
+    // exactly the "hover delay" the user flagged. We dropped it
+    // because the same information is already rendered inline below
+    // (the reasons banner near the bottom of the card), so the tooltip
+    // was redundant. Transitions are explicitly bound to shadow only,
+    // so layout-affecting properties don't animate.
     <div ref={setNodeRef} style={style} {...attributes}
       className={cn(
-        'rounded-lg border shadow-sm hover:shadow-md transition-all border-l-[3px]',
+        'rounded-lg border shadow-sm hover:shadow-md transition-shadow duration-100 border-l-[3px]',
         borderCls,
         ZONE_BORDER_COLORS[zoneType] || 'border-l-slate-300',
         isDragging && 'opacity-40 shadow-lg ring-2 ring-blue-300 z-50',
       )}
-      title={health.reasons.length > 0 ? health.reasons.join(' • ') : undefined}
     >
       {/* Drag handle + project — bumped project name to a more legible size
           per spec ("project name font should be larger"). */}
@@ -299,6 +352,27 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
             Project Root
             {task.phase?.name ? ` · ${task.phase.name}` : task.serviceType?.name ? ` · ${task.serviceType.name}` : ''}
           </p>
+        )}
+
+        {/* Service + Deliverable chips — same data the Tasks list page
+            surfaces, so the Kanban card now carries equal context. The
+            user asked for "all relevant data on the card including
+            breadcrumbs"; phase (Service) and serviceType (Deliverable)
+            were missing. Render in muted slate so they don't compete
+            with the status pill. */}
+        {(task.phase?.name || task.serviceType?.name) && (
+          <div className="flex items-center gap-1 flex-wrap text-[10px]">
+            {task.phase?.name && (
+              <span className="rounded bg-violet-50 px-1.5 py-0.5 text-violet-700 font-medium">
+                {task.phase.name}
+              </span>
+            )}
+            {task.serviceType?.name && (
+              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-600">
+                {task.serviceType.name}
+              </span>
+            )}
+          </div>
         )}
 
         {/* Kanban stage pill — progress bar removed per spec ("the progress
@@ -375,6 +449,31 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
           </div>
         )}
 
+        {/* Assignee avatars — stack of up to 4 with overflow count. The
+            Kanban already scopes to /tasks/mine so the caller sees their
+            own tasks, but tasks can be assigned to multiple people and
+            seeing teammates inline avoids a click into the drawer just
+            to learn "who else is on this". */}
+        {Array.isArray((task as any).assignees) && (task as any).assignees.length > 0 && (
+          <div className="flex items-center gap-0.5">
+            {((task as any).assignees as any[]).slice(0, 4).map((a) => {
+              const initials = `${a.user?.firstName?.[0] ?? ''}${a.user?.lastName?.[0] ?? ''}` || '?';
+              return (
+                <span
+                  key={a.id}
+                  className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-[8px] font-bold border border-white -ml-1 first:ml-0"
+                  title={`${a.user?.firstName ?? ''} ${a.user?.lastName ?? ''}`.trim()}
+                >
+                  {initials}
+                </span>
+              );
+            })}
+            {(task as any).assignees.length > 4 && (
+              <span className="text-[9px] text-slate-500 ml-1">+{(task as any).assignees.length - 4}</span>
+            )}
+          </div>
+        )}
+
         {/* Keyboard-accessible status change (WCAG 2.5.7 Dragging Movements alternative) */}
         <div className="pt-1 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
           <KanbanStatusSelect status={task.status} onStatusChange={(s) => onStatusChange(task.id, s)} />
@@ -403,17 +502,50 @@ function KanbanStatusSelect({ status, onStatusChange }: { status: string; onStat
 
 function DroppableColumn({ column, tasks, onOpenDrawer, onStatusChange }: { column: typeof columns[0]; tasks: any[]; onOpenDrawer: (id: number) => void; onStatusChange: (taskId: number, status: string) => void }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
+  // Default the "To Do" column to collapsed when it has many cards so
+  // the user sees their active work first. Other columns start expanded.
+  // The collapse state is per-column, persisted in localStorage so it
+  // sticks across page reloads (kanban is a long-lived view people
+  // anchor on; resetting it on every reload was annoying).
+  const lsKey = `kanban.collapsed.${column.id}`;
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem(lsKey);
+      if (v === '1') return true;
+      if (v === '0') return false;
+    } catch {}
+    // Default: collapse "To Do" only when it has more than 10 tasks.
+    return column.id === 'not_started' && tasks.length > 10;
+  });
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(lsKey, next ? '1' : '0'); } catch {}
+      return next;
+    });
+  };
 
   return (
     <div ref={setNodeRef}
-      className={cn('flex flex-col rounded-[14px] border-t-[3px] min-h-[400px] transition-all', column.color,
+      className={cn('flex flex-col rounded-[14px] border-t-[3px] transition-all', column.color,
+        collapsed ? 'min-h-[80px]' : 'min-h-[400px]',
         isOver ? 'bg-blue-50/60 border-blue-300 border-2 shadow-inner' : `border border-slate-200 ${column.bg}`)}>
       <div className="flex items-center justify-between px-4 py-3">
-        <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          aria-label={collapsed ? `Expand ${column.label}` : `Collapse ${column.label}`}
+          aria-expanded={!collapsed}
+          className="flex items-center gap-2 group"
+        >
+          <span className={cn('text-slate-400 group-hover:text-slate-600 transition-transform', collapsed ? '-rotate-90' : '')}>
+            ▾
+          </span>
           <h3 className="text-[13px] font-semibold text-slate-700">{column.label}</h3>
           <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">{tasks.length}</span>
-        </div>
+        </button>
       </div>
+      {!collapsed && (
       <div className="flex-1 space-y-2 px-3 pb-3">
         {tasks.map((task: any) => (
           <DraggableTaskCard key={task.id} task={task} onOpenDrawer={onOpenDrawer} onStatusChange={onStatusChange} />
@@ -424,6 +556,7 @@ function DroppableColumn({ column, tasks, onOpenDrawer, onStatusChange }: { colu
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -506,15 +639,8 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
     ).finally(() => setSaving(false));
   };
 
-  const TIME_OPTIONS = useMemo(() => {
-    const opts: string[] = [];
-    for (let h = 6; h <= 22; h++) {
-      for (const m of [0, 15, 30, 45]) {
-        opts.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
-      }
-    }
-    return opts;
-  }, []);
+  // TIME_OPTIONS removed — both selects now use the shared
+  // TimeDropdown component which reads from module-level TIME_SLOTS.
 
   const statusLabel = task.status === 'completed' ? 'Done' : task.status === 'in_review' ? 'Review' : task.status === 'in_progress' ? 'Active' : 'To Do';
   const statusColor = task.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : task.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : task.status === 'in_review' ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-600';
@@ -569,23 +695,21 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
           className="w-[130px] rounded-md border border-slate-200 px-2 py-1.5 text-[12px] focus:border-blue-400 focus:outline-none shrink-0" />
 
-        {/* Start time */}
-        <select value={start} onChange={(e) => setStart(e.target.value)}
-          className="w-[80px] rounded-md border border-slate-200 px-1.5 py-1.5 text-[12px] focus:border-blue-400 focus:outline-none shrink-0">
-          {TIME_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-
-        <span className="text-[11px] text-slate-300 shrink-0">→</span>
-
-        {/* End time */}
-        <select value={end} onChange={(e) => setEnd(e.target.value)}
-          className="w-[80px] rounded-md border border-slate-200 px-1.5 py-1.5 text-[12px] focus:border-blue-400 focus:outline-none shrink-0">
-          {TIME_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-
-        {/* Total */}
-        <div className="w-[52px] text-center shrink-0">
-          <span className={cn('text-[13px] font-bold', totalMinutes > 0 ? 'text-slate-700' : 'text-slate-300')}>{totalHours}h</span>
+        {/* Start / End / Total — same shape as Add Timesheet Entry modal
+            (V10 unification). Dropdown style, no arrow separator,
+            grey readout for total. The row-level layout keeps them
+            inline since this is a per-task list, not a single-task
+            modal — but the visual treatment matches. */}
+        <div className="w-[80px] shrink-0">
+          <TimeDropdown value={start} onChange={setStart} />
+        </div>
+        <div className="w-[80px] shrink-0">
+          <TimeDropdown value={end} onChange={setEnd} />
+        </div>
+        <div className="w-[58px] shrink-0">
+          <div className="px-2 py-1.5 rounded-md border border-slate-200 bg-slate-50 text-[12px] text-center tabular-nums text-slate-600">
+            {totalHours}h
+          </div>
         </div>
 
         {/* Expand toggle — opens a panel with the user's prior entries on
@@ -702,11 +826,14 @@ function TimeReportingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer:
               <h3 className="text-[13px] font-semibold text-slate-700">Active Tasks</h3>
               <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-600">{activeTasks.length}</span>
             </div>
-            <div className="flex items-center gap-6 text-[10px] font-semibold text-slate-400 uppercase tracking-wider pr-1">
+            {/* Header labels — matched to the Add Timesheet Entry
+                modal's labels ("Start Time" + "End Time" + "Total Hours"). */}
+            <div className="flex items-center gap-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wider pr-1">
               <span className="w-[80px] text-center">Due</span>
               <span className="w-[130px] text-center">Date</span>
-              <span className="w-[170px] text-center">Start → End</span>
-              <span className="w-[52px] text-center">Hours</span>
+              <span className="w-[80px] text-center">Start Time</span>
+              <span className="w-[80px] text-center">End Time</span>
+              <span className="w-[58px] text-center">Total Hours</span>
               <span className="w-[72px]" />
             </div>
           </div>
@@ -767,6 +894,14 @@ export function MyTasksKanbanPage() {
   const [filterProjectId, setFilterProjectId] = useState<number | null>(null);
   const [filterServiceId, setFilterServiceId] = useState<number | null>(null);
   const [filterPhaseName, setFilterPhaseName] = useState<string | null>(null);
+  // M3 — match the Tasks list filter set. Priority + Due-date filters
+  // join the existing Project / Service / Deliverable filters so users
+  // working off the Kanban have the same cuts the tasks page provides.
+  // We deliberately skip an Assignee filter since /my-tasks is already
+  // scoped to the caller.
+  const [filterPriority, setFilterPriority] = useState<string>('');
+  const [filterDueFrom, setFilterDueFrom] = useState<string>('');
+  const [filterDueTo, setFilterDueTo] = useState<string>('');
 
   const { data: tasksData, isLoading } = useQuery({
     queryKey: queryKeys.tasks.mine(),
@@ -818,11 +953,18 @@ export function MyTasksKanbanPage() {
         const n = t.serviceType?.name || t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || t.phase?.name;
         if (n !== filterPhaseName) return false;
       }
+      if (filterPriority && t.priority !== filterPriority) return false;
+      if (filterDueFrom || filterDueTo) {
+        if (!t.endDate) return false;
+        const d = String(t.endDate).slice(0, 10);
+        if (filterDueFrom && d < filterDueFrom) return false;
+        if (filterDueTo && d > filterDueTo) return false;
+      }
       return true;
     });
-  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName]);
+  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo]);
 
-  const hasActiveFilter = filterProjectId || filterServiceId || filterPhaseName;
+  const hasActiveFilter = !!(filterProjectId || filterServiceId || filterPhaseName || filterPriority || filterDueFrom || filterDueTo);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -936,9 +1078,49 @@ export function MyTasksKanbanPage() {
             <option key={name} value={name}>{name}</option>
           ))}
         </select>
+        {/* Priority filter — mirrors the Tasks list page. Short labels
+            so the row stays a single line on common viewports. */}
+        <select
+          value={filterPriority}
+          onChange={(e) => setFilterPriority(e.target.value)}
+          className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+        >
+          <option value="">Any Priority</option>
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+        {/* Due-date range — same control set as the Execution board's
+            date filter. Either side optional. */}
+        <div className="flex items-center gap-1 text-[12px] text-slate-500">
+          <span className="text-[11px]">Due:</span>
+          <input
+            type="date"
+            value={filterDueFrom}
+            onChange={(e) => setFilterDueFrom(e.target.value)}
+            className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+            aria-label="Due date from"
+          />
+          <span className="text-slate-400">→</span>
+          <input
+            type="date"
+            value={filterDueTo}
+            onChange={(e) => setFilterDueTo(e.target.value)}
+            className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+            aria-label="Due date to"
+          />
+        </div>
         {hasActiveFilter && (
           <button
-            onClick={() => { setFilterProjectId(null); setFilterServiceId(null); setFilterPhaseName(null); }}
+            onClick={() => {
+              setFilterProjectId(null);
+              setFilterServiceId(null);
+              setFilterPhaseName(null);
+              setFilterPriority('');
+              setFilterDueFrom('');
+              setFilterDueTo('');
+            }}
             className="text-[12px] text-slate-500 hover:text-slate-700 underline"
           >
             Clear filters

@@ -152,12 +152,62 @@ export class ZonesService {
   async remove(id: number) {
     await this.findOne(id);
 
-    await this.prisma.zone.update({
-      where: { id },
-      data: { deletedAt: new Date() },
-    });
+    // Cascade soft-delete: previously this only flagged the SINGLE zone
+    // as deletedAt, leaving its children with parentId still pointing at
+    // a now-invisible parent. The tree-list query (which filters
+    // deletedAt IS NULL) then showed the orphan children "promoted" up
+    // to their grandparent — exactly the bug the user reported as
+    // "deleting a parent floats children up a level instead of deleting
+    // them" (marked critical).
+    //
+    // We now recursively gather every descendant of `id` and soft-delete
+    // them in one update — plus the tasks inside those zones, so the
+    // archive view stays consistent.
+    const descendantIds = await this.collectDescendantIds(id);
+    const allIds = [id, ...descendantIds];
+    const now = new Date();
 
-    return { message: 'Zone deleted' };
+    await this.prisma.$transaction([
+      this.prisma.zone.updateMany({
+        where: { id: { in: allIds }, deletedAt: null },
+        data: { deletedAt: now },
+      }),
+      // Soft-delete tasks belonging to any of the affected zones. Tasks
+      // already have a deletedAt column (used for the manual delete
+      // path); reusing it keeps the archive list consistent.
+      this.prisma.task.updateMany({
+        where: { zoneId: { in: allIds }, deletedAt: null },
+        // Match the single-task delete behaviour: also flip status to
+        // 'cancelled' so status-based reports reflect the deletion.
+        data: { deletedAt: now, status: 'cancelled' },
+      }),
+    ]);
+
+    return {
+      message: 'Zone deleted',
+      deletedZoneCount: allIds.length,
+    };
+  }
+
+  /**
+   * BFS over the zone tree starting at `rootId`, collecting every
+   * not-yet-deleted descendant id. Returns [] when `rootId` is a leaf.
+   * Used by remove() for cascade soft-delete.
+   */
+  private async collectDescendantIds(rootId: number): Promise<number[]> {
+    const all: number[] = [];
+    let frontier = [rootId];
+    while (frontier.length > 0) {
+      const children = await this.prisma.zone.findMany({
+        where: { parentId: { in: frontier }, deletedAt: null },
+        select: { id: true },
+      });
+      const childIds = children.map((c) => c.id);
+      if (childIds.length === 0) break;
+      all.push(...childIds);
+      frontier = childIds;
+    }
+    return all;
   }
 
   async copyStructure(id: number, newParentId: number) {
