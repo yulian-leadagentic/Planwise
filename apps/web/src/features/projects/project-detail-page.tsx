@@ -16,6 +16,15 @@ const KanbanBoard = lazy(() => import('@/features/tasks/kanban-board').then(m =>
 // M5 — Labor cost tab. Lazy too so the project page doesn't pay for it
 // on every load; most users open Planning first and never touch Cost.
 const LaborCostTab = lazy(() => import('./labor-cost-tab').then(m => ({ default: m.LaborCostTab })));
+// Execution Board embedded as a project tab. The page accepts a
+// `forcedProjectId` prop that hides its own project selector + page
+// title, so it slots cleanly inside the Project tab bar without UX
+// duplication.
+const ProjectExecutionBoard = lazy(() =>
+  import('@/features/execution-board/execution-board-page').then((m) => ({
+    default: ({ projectId }: { projectId: number }) => <m.ExecutionBoardPage forcedProjectId={projectId} />,
+  })),
+);
 import { useProject, useProjectMembers, useAddProjectMember, useRemoveProjectMember } from '@/hooks/use-projects';
 import { useAuthStore } from '@/stores/auth.store';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -25,7 +34,7 @@ import { notify } from '@/lib/notify';
 import client from '@/api/client';
 import { formatDate } from '@/lib/date-utils';
 
-type Tab = 'planning' | 'kanban' | 'team' | 'cost' | 'files' | 'discussion' | 'activity';
+type Tab = 'info' | 'planning' | 'kanban' | 'execution' | 'team' | 'cost' | 'files' | 'discussion' | 'activity';
 
 interface User {
   id: number;
@@ -85,8 +94,10 @@ export function ProjectDetailPage() {
   // dashboard (/operations), which shows workload across all projects in one
   // place. Per-project workload was redundant with the operations view.
   const tabs: { key: Tab; label: string }[] = [
+    { key: 'info', label: 'Project Info' },
     { key: 'planning', label: 'Planning' },
     { key: 'kanban', label: 'Kanban' },
+    { key: 'execution', label: 'Execution' },
     { key: 'team', label: 'Team' },
     // Cost tab is gated by the Finance module permission. Backend
     // /projects/:id/labor-cost returns 403 to non-finance users — the
@@ -205,20 +216,40 @@ export function ProjectDetailPage() {
                 </div>
               </>
             )}
+
+            {/* Authoring Tool Version — surfaced near the project name
+                (Y2) so the BIM tool/version is visible at a glance
+                without opening Project Info. Hidden when unset. */}
+            {(project as any).authoringToolVersion && (
+              <>
+                <span className="text-slate-300">|</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-500 text-xs">Authoring Tool:</span>
+                  <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] font-semibold text-violet-700">
+                    {(project as any).authoringToolVersion}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
 
       {/* Tab bar */}
       <div className="bg-white border-b border-slate-200">
-        <div className="px-5">
-          <div className="flex gap-6">
+        {/* overflow-x-auto + flex-nowrap so the 9-tab strip stays one row
+            even on narrow viewports. Without this, tabs wrapped onto a
+            second line and the Kanban tab (5th of 9) ended up below the
+            fold — exactly U5 in the bug list ("Kanban tab not opening").
+            Tab "buttons" stop shrinking via shrink-0. */}
+        <div className="px-5 overflow-x-auto">
+          <div className="flex gap-6 flex-nowrap">
             {tabs.map((t) => (
               <button
                 key={t.key}
                 onClick={() => setTab(t.key)}
                 className={cn(
-                  'border-b-2 px-1 py-2.5 text-[13px] font-semibold transition-colors',
+                  'border-b-2 px-1 py-2.5 text-[13px] font-semibold transition-colors shrink-0 whitespace-nowrap',
                   tab === t.key
                     ? 'border-blue-600 text-blue-600'
                     : 'border-transparent text-slate-400 hover:text-slate-600',
@@ -233,8 +264,10 @@ export function ProjectDetailPage() {
 
       {/* Tab content */}
       <div className="px-5 py-6">
+        {tab === 'info' && <ProjectInfoTab projectId={projectId} project={project} />}
         {tab === 'planning' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading planning...</div>}><PlanningTab projectId={projectId} /></Suspense>}
         {tab === 'kanban' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading board...</div>}><KanbanBoard projectId={projectId} /></Suspense>}
+        {tab === 'execution' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading execution...</div>}><ProjectExecutionBoard projectId={projectId} /></Suspense>}
         {tab === 'cost' && showFinance && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading labor cost...</div>}><LaborCostTab projectId={projectId} /></Suspense>}
         {tab === 'files' && <FilesTab projectId={projectId} />}
         {tab === 'activity' && <ActivityFeed projectId={projectId} />}
@@ -426,23 +459,32 @@ function TeamTab({
   const removeMyTeam = (row: ProjectTeamPerson) => {
     // Internal employee — disconnect via legacy ProjectMember endpoint;
     // the write-through soft-ends the participates_in_project row.
+    //
+    // Bug fix: the backend route is `DELETE /projects/:id/members/:userId`
+    // and the service looks up `projectMember.delete({ where:
+    // projectId_userId })`. The earlier code passed `member.id` (the
+    // ProjectMember row PK) as `memberId`, which Prisma then couldn't
+    // find — producing the "Failed to remove member" error users were
+    // seeing on the Team tab. Pass the user ID instead.
     if (row.userId) {
-      // Find legacy ProjectMember.id for this user (members from props)
-      const m = members.find((mm) => mm.userId === row.userId);
-      if (m) {
-        removeMember.mutate(
-          { projectId, memberId: m.id },
-          {
-            onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project-team', projectId] }),
-            onError: () => notify.error('Failed to remove member'),
-          },
-        );
-        return;
-      }
+      removeMember.mutate(
+        { projectId, memberId: row.userId },
+        {
+          onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project-team', projectId] }),
+          onError: () => notify.error('Failed to remove member'),
+        },
+      );
+      return;
     }
     // Fallback: soft-end the relationship directly.
     softEnd.mutate(row.relationshipId);
   };
+
+  // View toggle — Cards (the existing per-section view) vs Table (a flat
+  // searchable list of everyone on the project). The table is what the
+  // user asked for in A6 and is useful when scanning "who has access /
+  // what's their phone number" without scrolling through five sections.
+  const [view, setView] = useState<'cards' | 'table'>('cards');
 
   if (isLoading || !team) {
     return <p className="py-8 text-center text-sm text-slate-400">Loading team...</p>;
@@ -450,12 +492,49 @@ function TeamTab({
 
   return (
     <div className="space-y-5">
-      <div>
-        <h2 className="text-sm font-semibold text-slate-700">Project Team</h2>
-        <p className="text-[11px] text-slate-400 mt-0.5">
-          Connections between this project and your business partners. Disconnects are <strong>soft-ended</strong> (history preserved).
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-700">Project Team</h2>
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            Connections between this project and your business partners. Disconnects are <strong>soft-ended</strong> (history preserved).
+          </p>
+        </div>
+        <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5 shrink-0">
+          <button
+            onClick={() => setView('cards')}
+            className={cn(
+              'rounded-md px-3 py-1 text-[12px] font-semibold transition-colors',
+              view === 'cards' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+            )}
+          >
+            Cards
+          </button>
+          <button
+            onClick={() => setView('table')}
+            className={cn(
+              'rounded-md px-3 py-1 text-[12px] font-semibold transition-colors',
+              view === 'table' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+            )}
+          >
+            Table
+          </button>
+        </div>
       </div>
+
+      {/* Table view — single flat list of everyone touching the project
+          (internal team, role assignments, customer, customer contacts).
+          Each row carries name, role, email, phone, and "kind" so
+          there's a single scannable surface for the contact-info use
+          case. The cards view stays the default since it's the way
+          users add/remove people. */}
+      {view === 'table' && (
+        <TeamTableView team={team} />
+      )}
+
+      {view === 'cards' && (
+      <>
+      {/* (cards content below — wrapped in fragment so the next-section
+          markers don't shift indentation across the diff) */}
 
       {/* Section ordering — per user request:
             1. Obligatory roles (isPrimaryRequired)
@@ -533,9 +612,28 @@ function TeamTab({
           <p className="text-[12px] text-slate-400 italic">No internal members yet.</p>
         ) : (
           <div className="space-y-2">
-            {team.projectTeam.map((row) => (
-              <PersonRow key={row.relationshipId} row={row} onRemove={() => removeMyTeam(row)} accent="blue" onOpenProfile={setFocusedPartnerId} />
-            ))}
+            {team.projectTeam.map((row) => {
+              // Cross-reference: every ProjectRoleType assignment this
+              // member holds (Architect, Engineer, etc.). Previously the
+              // Project Team section showed only the person's name +
+              // email — users had no quick way to see "what role does
+              // Yulian play on this project?" without scrolling to each
+              // role section. Now the chip list of held roles renders
+              // right next to the name.
+              const heldRoles = team.roleAssignments
+                .filter((a) => a.party.id === row.businessPartnerId)
+                .map((a) => a.role.name);
+              return (
+                <PersonRow
+                  key={row.relationshipId}
+                  row={row}
+                  onRemove={() => removeMyTeam(row)}
+                  accent="blue"
+                  onOpenProfile={setFocusedPartnerId}
+                  heldRoles={heldRoles}
+                />
+              );
+            })}
           </div>
         )}
       </Section>
@@ -681,8 +779,316 @@ function TeamTab({
           }}
         />
       )}
+      </>
+      )}
     </div>
   );
+}
+
+/**
+ * Flat table view of every person touching the project. Aggregates:
+ *   • Internal team members (Project Team section)
+ *   • Customer (the org itself — single row)
+ *   • Customer contacts (people working at the customer org)
+ *   • Role assignments (Architect / Engineer / etc.)
+ *
+ * Dedupes by businessPartnerId so a person assigned to multiple
+ * role-types appears once with all roles listed in one cell.
+ */
+function TeamTableView({ team }: { team: ProjectTeamData }) {
+  // Build a single deduped row list keyed by businessPartnerId.
+  const rows = (() => {
+    const byId = new Map<number, {
+      bpId: number;
+      displayName: string;
+      email: string | null;
+      phone: string | null;
+      kinds: Set<string>;
+      roles: Set<string>;
+    }>();
+
+    const upsert = (
+      bpId: number,
+      data: { displayName: string; email: string | null; phone: string | null },
+      kind: string,
+      role?: string,
+    ) => {
+      const existing = byId.get(bpId);
+      if (existing) {
+        existing.kinds.add(kind);
+        if (role) existing.roles.add(role);
+        return;
+      }
+      byId.set(bpId, {
+        bpId,
+        displayName: data.displayName,
+        email: data.email,
+        phone: data.phone,
+        kinds: new Set([kind]),
+        roles: new Set(role ? [role] : []),
+      });
+    };
+
+    for (const m of team.projectTeam) {
+      upsert(m.businessPartnerId, m, 'Project Team', m.roleInContext ?? undefined);
+    }
+    if (team.customer) {
+      upsert(
+        team.customer.organizationId,
+        { displayName: team.customer.displayName, email: team.customer.email, phone: team.customer.phone },
+        'Customer',
+      );
+    }
+    for (const c of team.customerContacts) {
+      upsert(c.businessPartnerId, c, 'Customer Contact', c.relationshipTypeName);
+    }
+    for (const a of team.roleAssignments) {
+      upsert(
+        a.party.id,
+        { displayName: a.party.displayName, email: a.party.email ?? null, phone: a.party.phone ?? null },
+        a.role.name,
+        a.role.name,
+      );
+    }
+
+    return Array.from(byId.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
+  })();
+
+  // V6 — per-column sort + filter on the Team table. Sort cycles
+  // none→asc→desc on header click; filter is a small input under each
+  // header that does substring match (case-insensitive). Both live in
+  // local component state — the dataset is small enough that
+  // sort/filter happen client-side every render.
+  type ColKey = 'name' | 'role' | 'kind' | 'email' | 'phone';
+  const [sort, setSort] = useState<{ key: ColKey; dir: 'asc' | 'desc' } | null>(null);
+  const [filters, setFilters] = useState<Record<ColKey, string>>({
+    name: '', role: '', kind: '', email: '', phone: '',
+  });
+  const toggleSort = (key: ColKey) => {
+    setSort((s) => {
+      if (!s || s.key !== key) return { key, dir: 'asc' };
+      if (s.dir === 'asc') return { key, dir: 'desc' };
+      return null; // 3rd click clears
+    });
+  };
+  const valueFor = (r: typeof rows[0], key: ColKey): string => {
+    if (key === 'name') return r.displayName;
+    if (key === 'role') return Array.from(r.roles).join(', ');
+    if (key === 'kind') return Array.from(r.kinds).join(', ');
+    if (key === 'email') return r.email ?? '';
+    if (key === 'phone') return r.phone ?? '';
+    return '';
+  };
+  const filtered = rows.filter((r) =>
+    (Object.keys(filters) as ColKey[]).every((k) => {
+      const f = filters[k].trim().toLowerCase();
+      if (!f) return true;
+      return valueFor(r, k).toLowerCase().includes(f);
+    }),
+  );
+  const sorted = sort
+    ? [...filtered].sort((a, b) => {
+        const av = valueFor(a, sort.key).toLowerCase();
+        const bv = valueFor(b, sort.key).toLowerCase();
+        return sort.dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+      })
+    : filtered;
+
+  if (rows.length === 0) {
+    return <p className="py-12 text-center text-sm text-slate-400 italic">No people on this project yet.</p>;
+  }
+
+  const SortHeader = ({ k, label }: { k: ColKey; label: string }) => (
+    <button
+      type="button"
+      onClick={() => toggleSort(k)}
+      className="flex items-center gap-1 hover:text-slate-700 cursor-pointer"
+    >
+      <span>{label}</span>
+      <span className="text-slate-300 text-[9px] tabular-nums">
+        {sort?.key === k ? (sort.dir === 'asc' ? '▲' : '▼') : '⇅'}
+      </span>
+    </button>
+  );
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+      <table className="w-full text-[13px]">
+        <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 tracking-wider">
+          <tr>
+            <th className="px-4 py-2 text-left"><SortHeader k="name" label="Name" /></th>
+            <th className="px-4 py-2 text-left"><SortHeader k="role" label="Role / Position" /></th>
+            <th className="px-4 py-2 text-left"><SortHeader k="kind" label="Kind" /></th>
+            <th className="px-4 py-2 text-left"><SortHeader k="email" label="Email" /></th>
+            <th className="px-4 py-2 text-left"><SortHeader k="phone" label="Phone" /></th>
+          </tr>
+          {/* Filter input row — substring match against the cell's
+              flattened text. Empty = pass-through. */}
+          <tr className="bg-white border-t border-slate-100">
+            {(['name', 'role', 'kind', 'email', 'phone'] as ColKey[]).map((k) => (
+              <th key={k} className="px-3 py-1.5">
+                <input
+                  value={filters[k]}
+                  onChange={(e) => setFilters((f) => ({ ...f, [k]: e.target.value }))}
+                  placeholder="Filter…"
+                  className="w-full rounded border border-slate-200 px-1.5 py-1 text-[11px] focus:border-blue-400 focus:outline-none"
+                />
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {sorted.length === 0 ? (
+            <tr><td colSpan={5} className="px-4 py-8 text-center text-[12px] text-slate-400 italic">No rows match the active filters.</td></tr>
+          ) : sorted.map((r) => (
+            <tr key={r.bpId} className="hover:bg-slate-50/50">
+              <td className="px-4 py-2 font-medium text-slate-800 truncate max-w-[200px]" title={r.displayName}>
+                {r.displayName}
+              </td>
+              <td className="px-4 py-2 text-slate-600 truncate max-w-[220px]" title={Array.from(r.roles).join(', ')}>
+                {r.roles.size > 0 ? Array.from(r.roles).join(', ') : <span className="text-slate-300">—</span>}
+              </td>
+              <td className="px-4 py-2">
+                <div className="flex flex-wrap gap-1">
+                  {Array.from(r.kinds).map((k) => (
+                    <span key={k} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                      {k}
+                    </span>
+                  ))}
+                </div>
+              </td>
+              <td className="px-4 py-2 text-slate-600 truncate max-w-[220px]" title={r.email ?? ''}>
+                {r.email ? (
+                  <a href={`mailto:${r.email}`} className="text-blue-600 hover:underline">{r.email}</a>
+                ) : <span className="text-slate-300">—</span>}
+              </td>
+              <td className="px-4 py-2 text-slate-600 whitespace-nowrap">
+                {r.phone ?? <span className="text-slate-300">—</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * Editor for the File Management / Hub Links field on Project Info.
+ * Persists as newline-delimited "Label | URL" pairs inside the single
+ * `fileSystemLink` column — no schema change needed for what's
+ * essentially a small per-project KV. Users see one row per link with
+ * label + URL inputs and a trash icon; "+ Add Link" appends a row.
+ * Empty rows are stripped on commit.
+ */
+function HubLinksEditor({
+  value,
+  onChange,
+  onCommit,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  onCommit: () => void;
+}) {
+  // Parse the stored blob into rows on each render. Cheap (< 100 chars
+  // typical) and keeps the component stateless — the parent's `value`
+  // is the single source of truth.
+  const rows = parseHubLinks(value);
+
+  const serialize = (next: Array<{ label: string; url: string }>) =>
+    next
+      .filter((r) => r.label.trim() || r.url.trim())
+      .map((r) => (r.label.trim() ? `${r.label.trim()} | ${r.url.trim()}` : r.url.trim()))
+      .join('\n');
+
+  const updateRow = (i: number, patch: Partial<{ label: string; url: string }>) => {
+    const next = rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r));
+    onChange(serialize(next));
+  };
+  const removeRow = (i: number) => {
+    const next = rows.filter((_, idx) => idx !== i);
+    onChange(serialize(next));
+    // Removing is a deliberate action — commit immediately so it sticks
+    // even if the user navigates away without touching another field.
+    setTimeout(onCommit, 0);
+  };
+  const addRow = () => {
+    const next = [...rows, { label: '', url: '' }];
+    onChange(serialize(next));
+  };
+
+  const linkInputCls = 'w-full rounded-md border border-slate-200 px-2 py-1.5 text-[12px] focus:border-blue-400 focus:outline-none';
+
+  return (
+    <div className="space-y-2">
+      {rows.length === 0 ? (
+        <p className="text-[11px] text-slate-400 italic">No links yet — add one below.</p>
+      ) : (
+        rows.map((r, i) => (
+          <div key={i} className="grid grid-cols-[160px_1fr_auto] gap-2 items-center">
+            <input
+              type="text"
+              value={r.label}
+              placeholder="Label (e.g. BIM 360)"
+              onChange={(e) => updateRow(i, { label: e.target.value })}
+              onBlur={onCommit}
+              className={linkInputCls}
+            />
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={r.url}
+                placeholder="https://…"
+                onChange={(e) => updateRow(i, { url: e.target.value })}
+                onBlur={onCommit}
+                className={linkInputCls}
+              />
+              {r.url && /^https?:\/\//.test(r.url) && (
+                <a
+                  href={r.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] text-blue-600 hover:underline whitespace-nowrap"
+                  title="Open link"
+                >
+                  Open →
+                </a>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => removeRow(i)}
+              className="rounded p-1 text-slate-400 hover:text-red-600 hover:bg-red-50"
+              aria-label="Remove link"
+              title="Remove link"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))
+      )}
+      <button
+        type="button"
+        onClick={addRow}
+        className="inline-flex items-center gap-1 rounded-md border border-dashed border-slate-300 px-3 py-1.5 text-[12px] font-semibold text-slate-600 hover:border-blue-400 hover:text-blue-600"
+      >
+        <Plus className="h-3.5 w-3.5" />
+        Add Link
+      </button>
+    </div>
+  );
+}
+
+/** Parse the stored newline-delimited "Label | URL" blob. */
+function parseHubLinks(raw: string): Array<{ label: string; url: string }> {
+  if (!raw?.trim()) return [];
+  return raw.split('\n').map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return { label: '', url: '' };
+    const sep = trimmed.indexOf('|');
+    if (sep === -1) return { label: '', url: trimmed };
+    return { label: trimmed.slice(0, sep).trim(), url: trimmed.slice(sep + 1).trim() };
+  }).filter((r) => r.label || r.url);
 }
 
 /* ─── Section + small subcomponents ───────────────────────────────────────── */
@@ -743,12 +1149,17 @@ function OrgRow({ displayName, email, phone, bpId, onOpenProfile }: {
   );
 }
 
-function PersonRow({ row, onRemove, accent, compact = false, onOpenProfile }: {
+function PersonRow({ row, onRemove, accent, compact = false, onOpenProfile, heldRoles }: {
   row: ProjectTeamPerson;
   onRemove: () => void;
   accent: keyof typeof ACCENTS;
   compact?: boolean;
   onOpenProfile?: (bpId: number) => void;
+  /** ProjectRoleType names this person holds on the project (Architect,
+   *  Engineer, etc.). Rendered as small chips next to the name so users
+   *  see at a glance what role each team member plays. Optional —
+   *  Customer Contacts and other non-team rows don't pass this. */
+  heldRoles?: string[];
 }) {
   return (
     <div className={cn(
@@ -764,14 +1175,29 @@ function PersonRow({ row, onRemove, accent, compact = false, onOpenProfile }: {
         {getInitials(row.firstName ?? '', row.lastName ?? '') || row.displayName.slice(0, 2).toUpperCase()}
       </div>
       <div className="flex-1 min-w-0">
-        <button
-          type="button"
-          onClick={() => onOpenProfile?.(row.businessPartnerId)}
-          className={cn('font-medium text-slate-900 hover:underline truncate text-left block w-full', compact ? 'text-[13px]' : 'text-sm')}
-          title="Open partner profile"
-        >
-          {row.displayName}
-        </button>
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            type="button"
+            onClick={() => onOpenProfile?.(row.businessPartnerId)}
+            className={cn('font-medium text-slate-900 hover:underline truncate text-left', compact ? 'text-[13px]' : 'text-sm')}
+            title="Open partner profile"
+          >
+            {row.displayName}
+          </button>
+          {heldRoles && heldRoles.length > 0 && (
+            <div className="flex flex-wrap gap-1 shrink-0">
+              {heldRoles.map((r) => (
+                <span
+                  key={r}
+                  className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700"
+                  title={`Project role: ${r}`}
+                >
+                  {r}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
         <p className="text-[11px] text-slate-500 truncate">
           {[row.roleInContext, row.email].filter(Boolean).join(' · ') || row.position || '—'}
         </p>
@@ -1610,6 +2036,138 @@ function AddMemberDialog({
 
         {/* Dialog footer spacer */}
         <div className="h-3" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Project Info tab — a single-page summary + edit surface for the
+ * "soft" metadata that doesn't justify its own data model yet:
+ * authoring tool version, weekly meeting day, file system / hub link,
+ * and a free-text summary of contracted services. Plus read-only tables
+ * for files (delegated to FilesTab) and contacts (delegated to
+ * TeamTableView).
+ *
+ * Edits use PATCH /projects/:id on blur (no save button — the form
+ * autocommits on focus loss, same UX as the Description field on the
+ * Edit Employee modal).
+ */
+function ProjectInfoTab({ projectId, project }: { projectId: number; project: any }) {
+  const queryClient = useQueryClient();
+  const { data: team } = useQuery<ProjectTeamData>({
+    queryKey: ['project-team', projectId],
+    queryFn: () => client.get(`/projects/${projectId}/team`).then((r) => r.data?.data ?? r.data),
+  });
+
+  const save = useMutation({
+    mutationFn: (patch: Record<string, any>) =>
+      client.patch(`/projects/${projectId}`, patch).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to save'),
+  });
+
+  // Local state mirrors the project record so users can edit without
+  // round-tripping on every keystroke. Commits on blur.
+  const [form, setForm] = useState({
+    authoringToolVersion: project?.authoringToolVersion ?? '',
+    weeklyMeetingDay: project?.weeklyMeetingDay ?? '',
+    fileSystemLink: project?.fileSystemLink ?? '',
+    servicesPerContract: project?.servicesPerContract ?? '',
+  });
+
+  // If the project payload refreshes (e.g. after a save) refresh the
+  // local form so external edits land in our UI too.
+  useEffect(() => {
+    setForm({
+      authoringToolVersion: project?.authoringToolVersion ?? '',
+      weeklyMeetingDay: project?.weeklyMeetingDay ?? '',
+      fileSystemLink: project?.fileSystemLink ?? '',
+      servicesPerContract: project?.servicesPerContract ?? '',
+    });
+  }, [project?.id, project?.authoringToolVersion, project?.weeklyMeetingDay, project?.fileSystemLink, project?.servicesPerContract]);
+
+  const commitField = (field: keyof typeof form) => {
+    const cur = (project?.[field] ?? '') as string;
+    const next = form[field];
+    if (cur === next) return; // no-op
+    save.mutate({ [field]: next || null });
+  };
+
+  const inputCls = 'w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none';
+
+  return (
+    <div className="space-y-6">
+      {/* Quick-facts block — 4 free-text fields side by side on wide
+          screens, stacked on narrow. Each commits on blur. */}
+      <div className="rounded-lg border border-slate-200 bg-white p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-slate-800">Project Info</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="text-[12px] font-semibold text-slate-600 mb-1.5 block">Weekly Meeting Day</label>
+            <input
+              type="text"
+              value={form.weeklyMeetingDay}
+              placeholder='e.g. "Tuesdays at 10:00"'
+              onChange={(e) => setForm((f) => ({ ...f, weeklyMeetingDay: e.target.value }))}
+              onBlur={() => commitField('weeklyMeetingDay')}
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <label className="text-[12px] font-semibold text-slate-600 mb-1.5 block">Authoring Tool Version</label>
+            <input
+              type="text"
+              value={form.authoringToolVersion}
+              placeholder='e.g. "Revit 2024.2"'
+              onChange={(e) => setForm((f) => ({ ...f, authoringToolVersion: e.target.value }))}
+              onBlur={() => commitField('authoringToolVersion')}
+              className={inputCls}
+            />
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-[12px] font-semibold text-slate-600 mb-1.5 block">File Management System / Hub Links</label>
+            {/* Multi-link list. Stored as newline-delimited "Label | URL"
+                pairs in the same servicesPerContract-style free-text
+                column we already have — no schema change. New rows are
+                added via the "+ Add Link" button and removed via the
+                trash icon. Plain text without a "|" is treated as a
+                bare URL with no label. */}
+            <HubLinksEditor
+              value={form.fileSystemLink}
+              onChange={(v) => setForm((f) => ({ ...f, fileSystemLink: v }))}
+              onCommit={() => commitField('fileSystemLink')}
+            />
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-[12px] font-semibold text-slate-600 mb-1.5 block">Services Per Contract</label>
+            <textarea
+              value={form.servicesPerContract}
+              placeholder="What we deliver to this customer per the contract — free text."
+              rows={4}
+              onChange={(e) => setForm((f) => ({ ...f, servicesPerContract: e.target.value }))}
+              onBlur={() => commitField('servicesPerContract')}
+              className={cn(inputCls, 'resize-none')}
+            />
+          </div>
+        </div>
+        <p className="text-[11px] text-slate-400">Changes save automatically when you leave a field.</p>
+      </div>
+
+      {/* Contacts table — reuses TeamTableView for consistency with the
+          Team tab's table view. */}
+      <div className="rounded-lg border border-slate-200 bg-white p-5 space-y-3">
+        <h3 className="text-sm font-semibold text-slate-800">Contacts &amp; Project Team</h3>
+        {team ? <TeamTableView team={team} /> : <p className="py-6 text-center text-[12px] text-slate-400">Loading team…</p>}
+      </div>
+
+      {/* Files — reuses the existing FilesTab. Same drop-zone, same
+          permission story; just a different framing on the page. */}
+      <div className="rounded-lg border border-slate-200 bg-white p-5 space-y-3">
+        <h3 className="text-sm font-semibold text-slate-800">Files</h3>
+        <FilesTab projectId={projectId} />
       </div>
     </div>
   );

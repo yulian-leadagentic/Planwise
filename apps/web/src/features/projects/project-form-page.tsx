@@ -11,19 +11,54 @@ import { useProject, useCreateProject, useUpdateProject, useProjectTypes } from 
 import { usePermissions } from '@/hooks/use-permissions';
 import { notify } from '@/lib/notify';
 
+// Empty-string → undefined preprocessor. Lets `.optional()` pass for
+// blank fields without z.coerce.number() turning '' into NaN and
+// triggering "Expected number, received nan" (a default zod message
+// that means nothing to end users).
+const optionalNumber = z.preprocess(
+  (v) => (v === '' || v == null ? undefined : Number(v)),
+  z.number({ invalid_type_error: 'Must be a number' }).optional(),
+);
+
 const projectSchema = z.object({
   name: z.string().min(1, 'Project name is required'),
   number: z.string().optional(),
   description: z.string().optional(),
-  projectTypeId: z.coerce.number().min(1, 'Please select a project type'),
-  departmentId: z.preprocess((v) => (v === '' || v === 0 || v === '0' ? undefined : Number(v)), z.number().optional()),
+  projectTypeId: z.coerce.number().min(1, 'Please select a project category'),
+  departmentId: optionalNumber,
   customerOrgId: z.coerce.number().min(1, 'Please pick a customer organization'),
   status: z.string().default('draft'),
-  budget: z.coerce.number().optional(),
+  // Was z.coerce.number().optional() — empty input coerces to NaN
+  // before .optional() can save it. Use the preprocess wrapper so an
+  // unfilled Budget stays valid.
+  budget: optionalNumber,
   startDate: z.string().optional(),
   endDate: z.string().optional(),
-  leaderId: z.preprocess((v) => (v === '' || v === 0 || v === '0' ? undefined : Number(v)), z.number().optional()),
+  // Free-text authoring tool version (e.g. "Revit 2024.2"). Editable
+  // both at create time and from the Project Info tab.
+  authoringToolVersion: z.string().optional(),
+  // leaderId stays in the schema for back-compat with edit-mode forms
+  // that still send the field; the dropdown was removed but Project
+  // Leader is now a ProjectRoleType assignment via RequiredRolePicker.
+  leaderId: optionalNumber,
 });
+
+// Map schema field names to human labels for the error banner. zod's
+// default error refers to fields by their property name ("budget",
+// "projectTypeId") which is debugging-friendly but user-hostile.
+const FIELD_LABELS: Record<string, string> = {
+  name: 'Project Name',
+  number: 'Project Number',
+  projectTypeId: 'Project Category',
+  departmentId: 'Department',
+  customerOrgId: 'Customer',
+  status: 'Status',
+  budget: 'Budget',
+  startDate: 'Start Date',
+  endDate: 'End Date',
+  authoringToolVersion: 'Authoring Tool Version',
+  leaderId: 'Team Leader',
+};
 
 type ProjectFormData = z.infer<typeof projectSchema>;
 
@@ -153,6 +188,7 @@ export function ProjectFormPage() {
         // For pre-existing projects with no end date, fall back to the
         // far-future sentinel so the field is never empty.
         endDate: toDateInput(project.endDate) || DEFAULT_OPEN_END_DATE,
+        authoringToolVersion: (project as any).authoringToolVersion ?? '',
         leaderId: (project as any).leaderId ?? undefined,
       });
       // Member loading was here. Team is managed only from the Team
@@ -304,15 +340,66 @@ export function ProjectFormPage() {
           {isEdit ? 'Edit Project' : 'New Project'}
         </h1>
 
-        <form onSubmit={handleSubmit(onSubmit)}>
-          {/* Validation error banner */}
+        <form
+          onSubmit={handleSubmit(onSubmit, (errs) => {
+            // Auto-scroll to the error banner on any submit failure.
+            // Users were clicking Save at the bottom of the form, getting
+            // no visible feedback (errors render at the TOP), and
+            // reporting "can't create project" — when in fact the form
+            // had errors they never saw. Bringing the banner into view
+            // makes the failure explicit. Falls back to scrolling the
+            // first invalid field if the banner ref isn't found.
+            setTimeout(() => {
+              const banner = document.getElementById('project-form-errors');
+              if (banner) {
+                banner.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                return;
+              }
+              const firstKey = Object.keys(errs)[0];
+              if (firstKey) {
+                document.querySelector<HTMLElement>(`[name="${firstKey}"]`)
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }
+            }, 50);
+          })}
+        >
+          {/* Validation error banner — pairs each issue with the
+              field label and a click handler that focuses the input.
+              Replaces the old raw-zod-message list which was a debugging
+              view ("Expected number, received nan") rather than a user
+              guide. */}
           {Object.keys(errors).length > 0 && (
-            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4">
-              <p className="text-sm font-semibold text-red-700 mb-1">Please fix the following errors:</p>
+            <div id="project-form-errors" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4">
+              <p className="text-sm font-semibold text-red-700 mb-1">Please fix the following before saving:</p>
               <ul className="list-disc list-inside space-y-0.5">
-                {Object.entries(errors).map(([field, error]) => (
-                  <li key={field} className="text-sm text-red-600">{(error as any)?.message || `${field} is invalid`}</li>
-                ))}
+                {Object.entries(errors).map(([field, error]) => {
+                  const label = FIELD_LABELS[field] ?? field;
+                  // zod's default "Expected number, received nan" is
+                  // technical jargon — rewrite to a human prompt.
+                  let msg = (error as any)?.message ?? '';
+                  if (!msg || /expected.*received/i.test(msg)) {
+                    msg = `Please fill in this field.`;
+                  }
+                  return (
+                    <li key={field} className="text-sm text-red-600">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // Focus the matching named input (works for
+                          // <input>, <select>, <textarea> registered
+                          // via react-hook-form). Scrolls into view
+                          // for free thanks to focus({preventScroll:false}).
+                          const el = document.querySelector<HTMLElement>(`[name="${field}"]`);
+                          el?.focus();
+                          el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }}
+                        className="text-left hover:underline focus:underline focus:outline-none"
+                      >
+                        <span className="font-semibold">{label}:</span> {msg}
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}
@@ -348,10 +435,11 @@ export function ProjectFormPage() {
                   />
                 </div>
 
-                {/* Project Type with color indicator */}
+                {/* Project Category (was "Project Type" — renamed per V4
+                    since the two were the same concept causing confusion). */}
                 <div>
                   <label className={labelClass}>
-                    Project Type <span className="text-red-500">*</span>
+                    Project Category <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
                     {(() => {
@@ -380,16 +468,11 @@ export function ProjectFormPage() {
                   )}
                 </div>
 
-                {/* Department */}
-                <div>
-                  <label className={labelClass}>Department</label>
-                  <select {...register('departmentId')} className={inputClass}>
-                    <option value="">Select department</option>
-                    {(departments as any[]).map((d: any) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                </div>
+                {/* Department field removed (V3) — unused per spec.
+                    Field still exists in the DTO/DB so legacy data is
+                    preserved; it just stops being editable from the
+                    create form. Future cleanup migration can drop the
+                    column. */}
 
                 {/* Customer (required at create; locked in edit mode) */}
                 <div>
@@ -398,10 +481,14 @@ export function ProjectFormPage() {
                   </label>
                   <select
                     {...register('customerOrgId')}
-                    disabled={!canChangeCustomer}
+                    disabled={!canChangeCustomer || (!isEdit && customers.length === 0)}
                     className={`${errors.customerOrgId ? inputErrorClass : inputClass} ${!canChangeCustomer ? 'bg-slate-50 cursor-not-allowed' : ''}`}
                   >
-                    <option value="">Select customer organization</option>
+                    <option value="">
+                      {customers.length === 0 && !isEdit
+                        ? 'No customer organizations — create one first ↓'
+                        : 'Select customer organization'}
+                    </option>
                     {customers.map((c: any) => (
                       <option key={c.id} value={c.id}>
                         {c.displayName}
@@ -414,7 +501,22 @@ export function ProjectFormPage() {
                   )}
                   <p className="mt-1 text-[11px] text-slate-400">
                     {!isEdit ? (
-                      <>Need a new customer? Add it from <a href="/partners?tab=organizations" className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">Partners → Organizations</a> first.</>
+                      customers.length === 0 ? (
+                        // Empty-state explainer — the dropdown was silently empty
+                        // when no organizations were tagged with the 'customer'
+                        // role-type, leaving the user stuck on "can't create
+                        // project". Now we name the cause and give a one-click
+                        // path to fix it.
+                        <span className="text-amber-600">
+                          No organizations are tagged as <strong>customer</strong> yet.{' '}
+                          <a href="/partners?tab=organizations" className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">
+                            Add one in Partners → Organizations
+                          </a>{' '}
+                          and tag it with the customer role-type.
+                        </span>
+                      ) : (
+                        <>Need a new customer? Add it from <a href="/partners?tab=organizations" className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">Partners → Organizations</a> first.</>
+                      )
                     ) : isAdmin ? (
                       'Saving will end the previous customer-of-project relationship and start a new one (history is preserved).'
                     ) : (
@@ -480,6 +582,19 @@ export function ProjectFormPage() {
                   <p className="mt-1 text-[11px] text-slate-400">
                     Defaults to <code>9999-12-31</code> (open-ended) — set a real date when the project has a known finish.
                   </p>
+                </div>
+
+                {/* Authoring Tool Version — free text (Y2). Also editable
+                    from the Project Info tab; surfaced here so it can be
+                    captured at create time. */}
+                <div>
+                  <label className={labelClass}>Authoring Tool Version</label>
+                  <input
+                    {...register('authoringToolVersion')}
+                    type="text"
+                    placeholder='e.g. "Revit 2024.2"'
+                    className={inputClass}
+                  />
                 </div>
               </div>
             </div>
@@ -724,10 +839,17 @@ function RequiredRolePicker({
         ))}
       </select>
       {candidates.length === 0 ? (
+        // V5 — drop the previous "Partners" link. Clicking it
+        // navigated away mid-create-flow, wiping the half-filled
+        // form. Replace with a plain-text hint so the user knows
+        // what's missing without losing their inputs. Adding eligible
+        // people is still a one-time-setup step; the user can save
+        // the in-progress form, then go to /admin/employees in a
+        // separate tab if needed.
         <p className="mt-1 text-[11px] text-amber-700">
           No eligible {role.allowedPartnerKind === 'any' ? 'parties' : `${role.allowedPartnerKind}s`}
           {role.requiredPartnerRoleCode ? ` with role "${role.requiredPartnerRoleCode}"` : ''}
-          . Add one from <a href="/partners" className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">Partners</a> first.
+          . Ask an admin to add one under Admin → Employees first.
         </p>
       ) : (
         <p className="mt-1 text-[11px] text-slate-400">

@@ -87,6 +87,48 @@ export class CreateProjectDto {
   @Type(() => Number)
   memberIds?: number[];
 
+  // ─── Project Info fields ──────────────────────────────────────────
+  // Free-text descriptors surfaced on the Project Info tab. All
+  // optional; create flows generally leave them blank and the user
+  // fills them in once the project is set up.
+
+  @ApiPropertyOptional({ description: 'Free-text authoring tool version (e.g. "Revit 2024.2")' })
+  @IsOptional()
+  @IsString()
+  authoringToolVersion?: string;
+
+  @ApiPropertyOptional({ description: 'Day/time of weekly project meeting (free text)' })
+  @IsOptional()
+  @IsString()
+  weeklyMeetingDay?: string;
+
+  @ApiPropertyOptional({ description: 'File-management system + hub link (free text / URL)' })
+  @IsOptional()
+  @IsString()
+  fileSystemLink?: string;
+
+  @ApiPropertyOptional({ description: 'Free-text summary of services we deliver per the contract' })
+  @IsOptional()
+  @IsString()
+  servicesPerContract?: string;
+
+  /**
+   * Per-project Deliverable display-name overrides, keyed by template id
+   * → custom label. Populated from the inline rename UI on planning-grid
+   * deliverable headers (A14b). Stored as JSON on Project. Whitelisted
+   * here so PATCH /projects/:id can persist the map; without this entry
+   * NestJS ValidationPipe rejects the property and the rename mutation
+   * fails with "property deliverableNameOverrides should not exist"
+   * (X1 in the bug list).
+   */
+  @ApiPropertyOptional({
+    description: 'Per-template display-name overrides ({ [templateId]: name })',
+    type: 'object',
+    additionalProperties: { type: 'string' },
+  })
+  @IsOptional()
+  deliverableNameOverrides?: Record<string, string>;
+
   /**
    * Required: the BusinessPartner id of the customer organization this
    * project belongs to. Must be an organization holding the "customer"

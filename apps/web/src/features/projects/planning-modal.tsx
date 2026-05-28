@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useCallback, createContext, useContext } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback, createContext, useContext, Fragment } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
@@ -8,6 +8,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { planningApi, zonesApi, templatesApi } from '@/api/zones.api';
 import { tasksApi } from '@/api/tasks.api';
+import { STATUS_LABEL } from '@/lib/task-constants';
 import client from '@/api/client';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
 import {
@@ -462,19 +463,24 @@ function TaskAttachmentButton({ taskId, projectId }: { taskId: number; projectId
   );
 }
 
+// ─── Task discussion-count batch ────────────────────────────────────────────
+//
+// One query fetches all task discussion counts in a single grouped call
+// (batch endpoint at /messages/counts). Previously each
+// TaskDiscussionButton fired its own /messages?taskId=X query, producing
+// N+1 traffic on every page mount — the U1 (slow page load) report
+// traced directly to this. Context shares the count map; the buttons
+// read keys from it.
+const TaskMessageCountsContext = createContext<Record<number, number>>({});
+
 // ─── Task Discussion Button — opens the side Discussion drawer ──────────────
 
 function TaskDiscussionButton({ taskId, taskName }: { taskId: number; taskName: string }) {
   const [open, setOpen] = useState(false);
-  const { data } = useQuery({
-    queryKey: ['messages', 'task-count', taskId],
-    queryFn: () => client.get('/messages', { params: { entityType: 'task', entityId: taskId, perPage: 1 } }).then((r) => {
-      const d = r.data;
-      return d?.meta?.total ?? d?.data?.meta?.total ?? 0;
-    }),
-    staleTime: 2 * 60 * 1000,
-  });
-  const msgCount = typeof data === 'number' ? data : 0;
+  // Count comes from the batched parent query via context. Missing key
+  // = 0 — same fallback as before.
+  const counts = useContext(TaskMessageCountsContext);
+  const msgCount = counts[taskId] ?? 0;
 
   return (
     <>
@@ -584,6 +590,173 @@ function useBulkCollapseSync(setCollapsed: (b: boolean) => void) {
   }, [version]);
 }
 
+// ─── Per-column task filters (Y1) ────────────────────────────────────────────
+//
+// Excel-style filter funnel on each column header of the planning grid.
+// The header rows are rendered deep inside the zone-group components, so
+// we expose the filter state + distinct values + setters through a
+// context (same pattern as BulkCollapse / TaskMessageCounts) rather than
+// prop-drilling. The ColHeader component below renders the label plus a
+// funnel icon; clicking opens a small popover with a text input or a
+// value picker depending on the column kind.
+
+export interface ColFilters {
+  code: string;
+  name: string;
+  zone: string;
+  deliverable: string;
+  service: string;
+  status: string;
+  assignee: string; // user id as string
+}
+
+interface TaskFilterCtx {
+  filters: ColFilters;
+  setFilter: (key: keyof ColFilters, value: string) => void;
+  // Distinct option lists derived from the in-scope tasks.
+  options: {
+    zone: string[];
+    deliverable: string[];
+    service: string[];
+    status: string[];
+    assignee: Array<{ id: string; name: string }>;
+  };
+}
+
+const TaskFilterContext = createContext<TaskFilterCtx | null>(null);
+
+/**
+ * Canonical Deliverable label for a task — the SINGLE resolution used by
+ * the group headers, the column-filter option list, and the filter
+ * matcher so they never disagree. Priority:
+ *   1. deliverableTemplate.name  (source Template — most tasks)
+ *   2. serviceType.name          (legacy ServiceType FK)
+ *   3. [SERVICE:xxx] marker       (legacy zone-template description) —
+ *      this is the path the old filter shortcut missed, which is why
+ *      marker-only deliverables like "מיפוי סופי" were absent from the
+ *      Deliverable dropdown.
+ *   4. 'No Deliverable'
+ * (Per-project name overrides are applied at the group label level, not
+ *  here — the filter compares against the underlying canonical name.)
+ */
+function resolveTaskDeliverable(t: any): string {
+  if (t.deliverableTemplate?.name) return t.deliverableTemplate.name;
+  if (t.serviceType?.name) return t.serviceType.name;
+  const marker = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1];
+  if (marker) return marker;
+  return 'No Deliverable';
+}
+
+/**
+ * Column header cell with an optional filter funnel. `kind` decides the
+ * popover control:
+ *   • 'text'   → substring input (code, name)
+ *   • 'select' → dropdown of distinct values (zone, deliverable, service, status)
+ *   • 'assignee' → dropdown of distinct assignees
+ *   • undefined → plain label, no funnel (numeric / date columns use the
+ *     toolbar range filters instead)
+ */
+function ColHeader({
+  label,
+  filterKey,
+  kind,
+  align = 'left',
+}: {
+  label: string;
+  filterKey?: keyof ColFilters;
+  kind?: 'text' | 'select' | 'assignee';
+  align?: 'left' | 'right';
+}) {
+  const ctx = useContext(TaskFilterContext);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  if (!ctx || !filterKey || !kind) {
+    return <span className={align === 'right' ? 'text-right' : ''}>{label}</span>;
+  }
+
+  const active = !!ctx.filters[filterKey];
+  const cur = ctx.filters[filterKey];
+
+  return (
+    <span ref={ref} className={cn('relative inline-flex items-center gap-1', align === 'right' && 'justify-end w-full')}>
+      {label}
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        className={cn(
+          'inline-flex h-4 w-4 items-center justify-center rounded transition-colors',
+          active ? 'text-blue-600' : 'text-slate-300 hover:text-slate-500',
+        )}
+        title={active ? `Filtered: ${cur}` : `Filter by ${label}`}
+        aria-label={`Filter by ${label}`}
+      >
+        {/* Funnel glyph — filled when a filter is active. */}
+        <svg viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
+          <path d="M1.5 2.5h13l-5 6v4l-3 1.5v-5.5l-5-6z" />
+        </svg>
+      </button>
+      {open && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute top-5 left-0 z-50 w-48 rounded-lg border border-slate-200 bg-white shadow-xl p-2 normal-case tracking-normal font-normal text-slate-700"
+        >
+          {kind === 'text' ? (
+            <input
+              autoFocus
+              value={cur}
+              onChange={(e) => ctx.setFilter(filterKey, e.target.value)}
+              placeholder={`Filter ${label}…`}
+              className="w-full rounded border border-slate-200 px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none"
+            />
+          ) : kind === 'assignee' ? (
+            <select
+              autoFocus
+              value={cur}
+              onChange={(e) => ctx.setFilter(filterKey, e.target.value)}
+              className="w-full rounded border border-slate-200 px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none"
+            >
+              <option value="">All</option>
+              {ctx.options.assignee.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          ) : (
+            <select
+              autoFocus
+              value={cur}
+              onChange={(e) => ctx.setFilter(filterKey, e.target.value)}
+              className="w-full rounded border border-slate-200 px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none"
+            >
+              <option value="">All</option>
+              {(ctx.options[filterKey as 'zone' | 'deliverable' | 'service' | 'status'] ?? []).map((v) => (
+                <option key={v} value={v}>{filterKey === 'status' ? (STATUS_LABEL[v] ?? v) : v}</option>
+              ))}
+            </select>
+          )}
+          {active && (
+            <button
+              onClick={() => { ctx.setFilter(filterKey, ''); setOpen(false); }}
+              className="mt-1.5 w-full text-[11px] text-slate-500 hover:text-slate-700 underline"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+    </span>
+  );
+}
+
 // Column grid template shared between headers and data rows
 // Grid template for one task row.
 // Columns: drag · check · code · name · zone · deliverable · service ·
@@ -595,7 +768,21 @@ function useBulkCollapseSync(setCollapsed: (b: boolean) => void) {
 // otherwise be lost. Tasks at the project root display "Project Root".
 // 16-slot grid. Slot 11 (Actual ₪) was added in M5 — sits right after
 // Amount so the budget vs actual comparison reads left-to-right.
-const TASK_GRID = 'grid grid-cols-[16px_16px_80px_1fr_180px_96px_80px_56px_64px_64px_72px_96px_96px_96px_96px_84px] gap-x-2 items-center';
+// Column template — 16 columns. The 4th (task name) was previously `1fr`
+// which on a standard laptop (≈1366px wide, minus sidebar) shrank to
+// nearly 0 because the fixed widths total ~1192px and outsize the
+// remaining space. The name then visually disappeared and the user saw
+// only the zone breadcrumb in column 5.
+//
+// Two combined fixes:
+//   • `minmax(180px, 2fr)` floors the name column at 180px AND lets it
+//     grow faster than other flex columns when the screen is wider.
+//   • The zone breadcrumb column is reduced from 180 → 140 — the
+//     breadcrumbs were getting more space than necessary; the truncate
+//     + tooltip handles long paths.
+//   • The page-level wrapper (PlanningPage) now allows horizontal
+//     scroll so the whole table doesn't squash to fit narrow screens.
+const TASK_GRID = 'grid grid-cols-[16px_16px_80px_minmax(180px,2fr)_140px_96px_80px_56px_64px_64px_72px_96px_96px_96px_96px_84px] gap-x-2 items-center min-w-[1280px]';
 
 function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onToggleTask, onUpdate, onDeleteTask }: {
   task: any; idx: number; projectId: number; members: any[];
@@ -1635,6 +1822,197 @@ function TemplatePickerDialog({ projectId, onClose, onApplied }: { projectId: nu
           );
         })}
         {templates.length === 0 && <p className="col-span-3 py-8 text-center text-[13px] text-slate-400">No zone templates available.</p>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Archived Tasks Modal (project-scoped) ───────────────────────────────────
+//
+// Shows soft-deleted tasks for THIS project with a Restore action per
+// row. Replaces the previous "Archived" link that opened /tasks?tab=
+// archived in a new tab (which broke the user's planning flow).
+// Uses the same archived=true + projectId backend filter the global
+// archive view uses, so visibility / soft-delete semantics are
+// consistent.
+
+function ProjectArchivedTasksModal({
+  projectId,
+  onClose,
+  onRestored,
+}: {
+  projectId: number;
+  onClose: () => void;
+  onRestored: () => void;
+}) {
+  const queryClient = useQueryClient();
+  // Row currently expanded by the "View" button (inline read-only
+  // detail). Null = none expanded.
+  const [viewId, setViewId] = useState<number | null>(null);
+  // Always refetch when the modal opens so the user sees the latest
+  // archived list — even if they just deleted something. staleTime: 0
+  // + refetchOnMount: 'always' bypasses any cached empty result from a
+  // pre-delete fetch.
+  const { data: rows = [], isLoading, isFetching, error } = useQuery<any[]>({
+    queryKey: ['tasks', 'archived', projectId],
+    refetchOnMount: 'always',
+    staleTime: 0,
+    queryFn: () =>
+      client
+        .get('/tasks', { params: { projectId, archived: true, perPage: 500 } })
+        .then((r) => {
+          // Response interceptor unwraps { data, meta } shape, so the
+          // canonical shape here is { success, data: [...], meta }. We
+          // still fall back through other shapes defensively because
+          // some legacy callers return the array directly.
+          const d = r.data?.data ?? r.data;
+          if (Array.isArray(d)) return d;
+          if (d?.data && Array.isArray(d.data)) return d.data;
+          // eslint-disable-next-line no-console
+          console.warn('[archive-modal] unexpected response shape', r.data);
+          return [];
+        }),
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: (id: number) => client.post(`/tasks/${id}/restore`).then((r) => r.data),
+    onSuccess: () => {
+      notify.success('Task restored', { code: 'TASK-RESTORE-200' });
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+      onRestored();
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to restore task'),
+  });
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="archive-modal-title"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-3xl rounded-[14px] bg-white shadow-2xl overflow-hidden max-h-[85vh] flex flex-col"
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+          <div>
+            <h2 id="archive-modal-title" className="text-sm font-bold text-slate-900">Archived Tasks</h2>
+            <p className="text-[11px] text-slate-400">Soft-deleted tasks on this project. Click Restore to bring one back.</p>
+          </div>
+          <button onClick={onClose} className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {isLoading || isFetching ? (
+            <div className="py-12 text-center text-[12px] text-slate-400">Loading…</div>
+          ) : error ? (
+            <div className="py-12 text-center text-[12px] text-red-500">
+              Failed to load: {(error as any)?.message ?? 'unknown error'}.
+              <div className="mt-2">
+                <button
+                  onClick={() => queryClient.invalidateQueries({ queryKey: ['tasks', 'archived', projectId] })}
+                  className="text-[11px] text-blue-600 hover:underline"
+                >
+                  Retry
+                </button>
+              </div>
+            </div>
+          ) : rows.length === 0 ? (
+            <div className="py-12 text-center text-[12px] text-slate-400 italic">
+              No archived tasks on this project.
+              <div className="mt-2 text-[10px] text-slate-400">
+                Tip: deleted tasks land here. If you just deleted one, click Retry below.
+              </div>
+              <button
+                onClick={() => queryClient.invalidateQueries({ queryKey: ['tasks', 'archived', projectId] })}
+                className="mt-2 text-[11px] text-blue-600 hover:underline"
+              >
+                Retry
+              </button>
+            </div>
+          ) : (
+            <table className="w-full text-[12px]">
+              <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 tracking-wider sticky top-0">
+                <tr>
+                  <th className="px-3 py-2 text-left">Code</th>
+                  <th className="px-3 py-2 text-left">Name</th>
+                  <th className="px-3 py-2 text-left">Zone</th>
+                  <th className="px-3 py-2 text-left">Deleted</th>
+                  <th className="px-3 py-2 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rows.map((t: any) => (
+                  <Fragment key={t.id}>
+                    <tr className="hover:bg-slate-50/50">
+                      <td className="px-3 py-2 font-mono text-[11px] text-slate-500 whitespace-nowrap">{t.code}</td>
+                      <td className="px-3 py-2 max-w-[280px]">
+                        <span className="block truncate font-medium text-slate-700" title={t.name}>{t.name}</span>
+                      </td>
+                      <td className="px-3 py-2 text-slate-600 truncate max-w-[200px]">
+                        {t.zone?.name ?? <span className="italic text-slate-400">Project Root</span>}
+                      </td>
+                      <td className="px-3 py-2 text-slate-500 tabular-nums whitespace-nowrap">
+                        {t.deletedAt ? new Date(t.deletedAt).toLocaleDateString() : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap">
+                        {/* View — expands an inline read-only detail panel.
+                            We can't deep-link to /tasks/:id because the
+                            detail endpoint hides soft-deleted rows; the
+                            list query already returns everything we need,
+                            so we just toggle visibility. */}
+                        <button
+                          onClick={() => setViewId((cur) => (cur === t.id ? null : t.id))}
+                          className="rounded-md border border-slate-200 px-3 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 mr-1.5"
+                        >
+                          {viewId === t.id ? 'Hide' : 'View'}
+                        </button>
+                        <button
+                          onClick={() => restoreMutation.mutate(t.id)}
+                          disabled={restoreMutation.isPending}
+                          className="rounded-md bg-emerald-50 border border-emerald-200 px-3 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                        >
+                          Restore
+                        </button>
+                      </td>
+                    </tr>
+                    {viewId === t.id && (
+                      <tr className="bg-slate-50/60">
+                        <td colSpan={5} className="px-4 py-3">
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-[12px]">
+                            <div><span className="text-slate-400">Description: </span><span className="text-slate-700">{t.description || <span className="italic text-slate-400">none</span>}</span></div>
+                            <div><span className="text-slate-400">Deliverable: </span><span className="text-slate-700">{t.deliverableTemplate?.name ?? t.serviceType?.name ?? '—'}</span></div>
+                            <div><span className="text-slate-400">Service: </span><span className="text-slate-700">{t.phase?.name ?? '—'}</span></div>
+                            <div><span className="text-slate-400">Est. Hours: </span><span className="text-slate-700">{t.budgetHours ?? '—'}</span></div>
+                            <div><span className="text-slate-400">Due: </span><span className="text-slate-700">{t.endDate ? new Date(t.endDate).toLocaleDateString() : '—'}</span></div>
+                            <div><span className="text-slate-400">Status: </span><span className="text-slate-700">{STATUS_LABEL[t.status] ?? t.status}</span></div>
+                            <div className="col-span-2">
+                              <span className="text-slate-400">Assignees: </span>
+                              <span className="text-slate-700">
+                                {Array.isArray(t.assignees) && t.assignees.length > 0
+                                  ? t.assignees.map((a: any) => `${a.user?.firstName ?? ''} ${a.user?.lastName ?? ''}`.trim()).filter(Boolean).join(', ')
+                                  : '—'}
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex justify-end">
+          <button onClick={onClose} className="rounded-md border border-slate-200 px-3 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-100">
+            Close
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -2803,19 +3181,19 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
             <div style={{ marginLeft: 28 }} className={cn(TASK_GRID, 'py-1.5 px-4 bg-slate-50/70 border-b border-l-[3px] border-l-transparent border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider')}>
               <span />
               <span />
-              <span>Code</span>
-              <span>Task Name</span>
-              <span>Zone</span>
-              <span>Deliverable</span>
-              <span>Service</span>
+              <ColHeader label="Code" filterKey="code" kind="text" />
+              <ColHeader label="Task Name" filterKey="name" kind="text" />
+              <ColHeader label="Zone" filterKey="zone" kind="select" />
+              <ColHeader label="Deliverable" filterKey="deliverable" kind="select" />
+              <ColHeader label="Service" filterKey="service" kind="select" />
               <span className="text-right">Est. Hours</span>
               <span className="text-right">Logged</span>
               <span className="text-right">Amount</span>
               <span className="text-right">Actual ₪</span>
               <span>Est. Start</span>
               <span>Due Date</span>
-              <span>Assignees</span>
-              <span>Status</span>
+              <ColHeader label="Assignees" filterKey="assignee" kind="assignee" />
+              <ColHeader label="Status" filterKey="status" kind="select" />
               <span className="w-5 shrink-0" />
             </div>
           )}
@@ -2910,7 +3288,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
 function ProjectRootDeliverableGroup({
   projectId, label, serviceLabel, color, tasks, members, onUpdate, onDeleteTask,
   selectedTaskIds, onToggleTask, onToggleMany,
-  dndId,
+  dndId, kind, editableTemplateId,
 }: {
   projectId: number;
   label: string;
@@ -2928,6 +3306,20 @@ function ProjectRootDeliverableGroup({
    *  the header. Cards without an id (the "No Deliverable" orphan
    *  bucket) stay non-draggable. */
   dndId?: string;
+  /** What this group actually represents. Drives the colored tag on
+   *  the header. Previously the tag was hardcoded to "deliverable"
+   *  regardless of grouping mode — the regression the user has had
+   *  to flag repeatedly. Pass 'service' when grouping by Phase and
+   *  the chip becomes "service"; default stays 'deliverable' for
+   *  backwards-compat with all other call sites. */
+  kind?: 'deliverable' | 'service' | 'none';
+  /** When set, the user can inline-rename the group's display name —
+   *  saved as a per-project override under
+   *  Project.deliverableNameOverrides[templateId]. Only meaningful
+   *  for Template-based groups (not ServiceType / marker / orphan).
+   *  Pass the deliverableTemplate's id; null/undefined hides the
+   *  rename pencil. */
+  editableTemplateId?: number | null;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   useBulkCollapseSync(setCollapsed);
@@ -2937,6 +3329,41 @@ function ProjectRootDeliverableGroup({
   const sortableStyle = dndId
     ? { transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition }
     : undefined;
+
+  // Inline rename — saves per-project override map at
+  // `Project.deliverableNameOverrides[templateId]`. Opens on pencil
+  // click. Empty value clears the override (falls back to template
+  // name). Outside-click confirms (Enter / blur), Esc cancels.
+  const queryClient = useQueryClient();
+  const [renaming, setRenaming] = useState(false);
+  const [draftName, setDraftName] = useState(label);
+  const renameMutation = useMutation({
+    mutationFn: async (newName: string) => {
+      // Fetch the current overrides map, patch it, send back. We do
+      // the merge client-side so a stale read doesn't clobber an
+      // unrelated key — for a tiny map this is plenty safe.
+      const current = await client.get(`/projects/${projectId}`).then((r) => {
+        const p = r.data?.data ?? r.data;
+        return (p?.deliverableNameOverrides ?? {}) as Record<string, string>;
+      });
+      const next = { ...current };
+      if (editableTemplateId == null) return;
+      const key = String(editableTemplateId);
+      if (newName.trim() === '') delete next[key];
+      else next[key] = newName.trim();
+      await client.patch(`/projects/${projectId}`, { deliverableNameOverrides: next });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'deliverable-overrides'] });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to rename deliverable'),
+  });
+  const commitRename = () => {
+    setRenaming(false);
+    if (draftName.trim() !== label) renameMutation.mutate(draftName);
+  };
+
   const totalHours = tasks.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
   const totalAmount = tasks.reduce((s: number, t: any) => s + Number(t.budgetAmount || 0), 0);
   const totalLoggedMinutes = tasks.reduce((s: number, t: any) => s + Number(t.loggedMinutes || 0), 0);
@@ -2990,14 +3417,54 @@ function ProjectRootDeliverableGroup({
           onChange={(e) => onToggleMany(tasks.map((t: any) => t.id), e.target.checked)}
           title={`Select all ${tasks.length} tasks in ${label}`}
         />
-        <span
-          className="rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide shrink-0"
-          style={{ backgroundColor: `${color}25`, color }}
-        >
-          deliverable
-        </span>
+        {/* Header chip — labels what this group represents. Derives
+            from `kind` so grouping by Service shows "service", grouping
+            by Deliverable shows "deliverable", and the "No Group"/"All
+            Tasks" bucket stays blank. The string used to be hardcoded
+            to "deliverable" — that's been the recurring regression. */}
+        {kind !== 'none' && (
+          <span
+            className="rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide shrink-0"
+            style={{ backgroundColor: `${color}25`, color }}
+          >
+            {kind ?? 'deliverable'}
+          </span>
+        )}
         <div className="min-w-0 flex items-baseline gap-1.5">
-          <span className="text-[15px] font-semibold text-slate-900 truncate" title={label}>{label}</span>
+          {renaming ? (
+            <input
+              autoFocus
+              type="text"
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onBlur={commitRename}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter') commitRename();
+                if (e.key === 'Escape') { setRenaming(false); setDraftName(label); }
+              }}
+              placeholder="(empty = use template name)"
+              className="text-[15px] font-semibold text-slate-900 bg-transparent border-b-2 border-blue-400 focus:outline-none min-w-0 max-w-[260px]"
+            />
+          ) : (
+            <span className="text-[15px] font-semibold text-slate-900 truncate" title={label}>{label}</span>
+          )}
+          {/* Pencil affordance only when this group is editable (Template-
+              backed). The pencil is hidden until row hover so the header
+              stays clean. Stop-prop on click so the collapse toggle
+              behind it doesn't fire. */}
+          {editableTemplateId != null && !renaming && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setDraftName(label); setRenaming(true); }}
+              className="text-[11px] text-slate-300 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Rename this Deliverable for this project"
+              aria-label="Rename deliverable"
+            >
+              ✎
+            </button>
+          )}
           {serviceLabel && (
             <span className="text-[11px] text-slate-400 truncate" title={`Service: ${serviceLabel}`}>
               · {serviceLabel}
@@ -3016,19 +3483,19 @@ function ProjectRootDeliverableGroup({
         <>
           <div style={{ marginLeft: 28 }} className={cn(TASK_GRID, 'py-1.5 px-4 bg-slate-50/70 border-b border-l-[3px] border-l-transparent border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider')}>
             <span /><span />
-            <span>Code</span>
-            <span>Task Name</span>
-            <span>Zone</span>
-            <span>Deliverable</span>
-            <span>Service</span>
+            <ColHeader label="Code" filterKey="code" kind="text" />
+            <ColHeader label="Task Name" filterKey="name" kind="text" />
+            <ColHeader label="Zone" filterKey="zone" kind="select" />
+            <ColHeader label="Deliverable" filterKey="deliverable" kind="select" />
+            <ColHeader label="Service" filterKey="service" kind="select" />
             <span className="text-right">Est. Hours</span>
             <span className="text-right">Logged</span>
             <span className="text-right">Amount</span>
             <span className="text-right">Actual ₪</span>
             <span>Est. Start</span>
             <span>Due Date</span>
-            <span>Assignees</span>
-            <span>Status</span>
+            <ColHeader label="Assignees" filterKey="assignee" kind="assignee" />
+            <ColHeader label="Status" filterKey="status" kind="select" />
             <span className="w-5 shrink-0" />
           </div>
           <SortableTaskList
@@ -3053,12 +3520,17 @@ function ProjectRootDeliverableGroup({
 // "No Deliverable" bucket so nothing is dropped on the floor.
 function ProjectRootGroup({
   projectId, tasks, members, onUpdate, onDeleteTask, selectedTaskIds, onToggleTask, onToggleMany,
+  deliverableOverrides,
 }: {
   projectId: number; tasks: any[]; members: any[];
   onUpdate: () => void; onDeleteTask: (id: number) => void;
   selectedTaskIds: Set<number>; onToggleTask: (id: number) => void;
   onToggleMany: (ids: number[], checked: boolean) => void;
+  /** Per-project Deliverable display-name map: templateId → custom label. */
+  deliverableOverrides?: Record<string, string>;
 }) {
+  const overrideFor = (tplId: number | null | undefined) =>
+    tplId != null ? deliverableOverrides?.[String(tplId)] : undefined;
   if (tasks.length === 0) return null;
 
   // Bucket by Deliverable identity. Priority order:
@@ -3099,7 +3571,10 @@ function ProjectRootGroup({
     const markerName: string | null = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1] ?? null;
     if (tplId != null) {
       key = `tpl-${tplId}`;
-      label = t.deliverableTemplate?.name || `Deliverable #${tplId}`;
+      // Per-project name override takes precedence over the source
+      // template name so "BIM Foundation" can show up as "Tower A
+      // Foundation" on this project without forking the template.
+      label = overrideFor(tplId) ?? t.deliverableTemplate?.name ?? `Deliverable #${tplId}`;
       color = t.phase?.color || '#8B5CF6';
       // No dndId — Template has no sortOrder yet.
     } else if (stId != null) {
@@ -3167,6 +3642,11 @@ function ProjectRootGroup({
           onToggleTask={onToggleTask}
           onToggleMany={onToggleMany}
           dndId={b.dndId}
+          // First task in the bucket is enough to identify the
+          // deliverable Template — all tasks in this group share the
+          // same deliverableTemplateId. Null for ServiceType / marker
+          // / orphan groups (those don't have per-project overrides).
+          editableTemplateId={b.tasks[0]?.deliverableTemplateId ?? null}
         />
       ))}
     </SortableContext>
@@ -3177,12 +3657,76 @@ function ProjectRootGroup({
 
 function PlanningView({ projectId }: { projectId: number }) {
   const queryClient = useQueryClient();
+
+  // Loaded planning data (zones + tasks) — used below for the group
+  // builder. We also use it here to derive the list of task IDs that
+  // need a discussion-count, so the batch query runs ONCE for the whole
+  // page instead of per task row.
+  const planningQuery = useQuery<any>({
+    queryKey: ['planning', projectId],
+    queryFn: () => client.get(`/projects/${projectId}/planning-data`).then((r) => r.data?.data ?? r.data),
+    enabled: !!projectId,
+  });
+  const planningTasks: any[] = (() => {
+    const raw = planningQuery.data;
+    const pd = raw?.tasks ? raw : raw?.data?.tasks ? raw.data : raw?.data ?? raw;
+    return Array.isArray(pd?.tasks) ? pd.tasks : [];
+  })();
+
+  // Batched message counts for every task on the page. ONE query —
+  // /messages/counts?entityType=task&entityIds=1,2,3 — vs the previous
+  // N requests (one per TaskDiscussionButton). Result is a map that
+  // each button reads via the TaskMessageCountsContext below.
+  const taskIdsForCounts = planningTasks.map((t: any) => t.id);
+  const { data: messageCounts = {} as Record<number, number> } = useQuery<Record<number, number>>({
+    queryKey: ['messages', 'task-counts', projectId, taskIdsForCounts.length],
+    enabled: taskIdsForCounts.length > 0,
+    queryFn: () =>
+      client
+        .get('/messages/counts', { params: { entityType: 'task', entityIds: taskIdsForCounts.join(',') } })
+        .then((r) => r.data?.data ?? r.data ?? {}),
+    staleTime: 2 * 60 * 1000,
+  });
+
+  // Per-project Deliverable display-name overrides. Loaded from the
+  // project record; group labels fall through to template.name when no
+  // override exists for a given deliverableTemplateId. Reactive — when
+  // a user renames a group, the project PATCH invalidates ['projects',
+  // projectId] which refetches this query and the label re-resolves.
+  const { data: deliverableOverrides = {} as Record<string, string> } = useQuery({
+    queryKey: ['projects', projectId, 'deliverable-overrides'],
+    queryFn: () =>
+      client.get(`/projects/${projectId}`).then((r) => {
+        const p = r.data?.data ?? r.data;
+        const raw = p?.deliverableNameOverrides;
+        if (!raw || typeof raw !== 'object') return {} as Record<string, string>;
+        return raw as Record<string, string>;
+      }),
+    staleTime: 30 * 1000,
+  });
+  const overrideFor = (templateId: number | null | undefined) =>
+    templateId != null ? deliverableOverrides[String(templateId)] : undefined;
+
+  // Y1 — per-column filter state. One object for all column funnels;
+  // applied in the `filtered` useMemo below. Distinct option lists are
+  // derived from the loaded tasks.
+  const [colFilters, setColFilters] = useState<ColFilters>({
+    code: '', name: '', zone: '', deliverable: '', service: '', status: '', assignee: '',
+  });
+  const setColFilter = useCallback((key: keyof ColFilters, value: string) => {
+    setColFilters((f) => ({ ...f, [key]: value }));
+  }, []);
+
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showManualZone, setShowManualZone] = useState(false);
   // Project-root creation: tasks/deliverables that attach directly to
   // the project (zoneId=null) instead of a spatial zone. Same UX shape
   // as the zone picker — two flows: from a template, or manual.
   const [showRootTemplate, setShowRootTemplate] = useState(false);
+  // V1 — archived-tasks modal for THIS project. Opens from the
+  // "Archived" link in the toolbar; renders project-scoped archived
+  // tasks with a Restore action per row.
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
   const [showRootTask, setShowRootTask] = useState(false);
   // Cross-zone DnD confirm: when a task drag ends in a different zone,
   // we hold the resolved move here and surface a confirm modal so the
@@ -3228,6 +3772,12 @@ function PlanningView({ projectId }: { projectId: number }) {
   // Task filters — empty = no filter. Date filters compare against task.startDate / task.endDate
   // (stored ISO strings; we compare YYYY-MM-DD prefix).
   const [filterStatus, setFilterStatus] = useState<string>('');
+  // V7 — Priority + Assignee filters on the planning task table.
+  // Joins the existing Status / Start / Due / Has-due / free-text
+  // filters. Assignee filter is a single user-id; switches the row to
+  // "tasks where assignee X is on the team for this task".
+  const [filterPriority, setFilterPriority] = useState<string>('');
+  const [filterAssigneeId, setFilterAssigneeId] = useState<string>('');
   const [filterStartFrom, setFilterStartFrom] = useState<string>('');
   const [filterStartTo, setFilterStartTo] = useState<string>('');
   const [filterDueFrom, setFilterDueFrom] = useState<string>('');
@@ -3361,7 +3911,12 @@ function PlanningView({ projectId }: { projectId: number }) {
         execute: async () => {
           if (ids.length === 1) {
             // Single — reuse the mutation so toasts + invalidate fire.
+            // Clear the selection too so the floating "N task selected"
+            // pill doesn't linger after the row vanishes. Previously the
+            // single-task path returned early and left the pill on screen
+            // with stale state — exactly U3 in the bug list.
             deleteTask.mutate(ids[0]);
+            clearSelection();
             return;
           }
           // Bulk — fire all in parallel, summarise the result.
@@ -3614,6 +4169,15 @@ function PlanningView({ projectId }: { projectId: number }) {
       }
       // Status (must be exact enum match if set)
       if (filterStatus && t.status !== filterStatus) return false;
+      // Priority (must be exact enum match if set) — V7
+      if (filterPriority && t.priority !== filterPriority) return false;
+      // Assignee — match if the user is on the task's assignees list.
+      if (filterAssigneeId) {
+        const aid = Number(filterAssigneeId);
+        const hasAssignee = Array.isArray(t.assignees)
+          && t.assignees.some((a: any) => a.userId === aid || a.user?.id === aid);
+        if (!hasAssignee) return false;
+      }
       // Estimated-start range — uses the planning field, NOT actual startDate.
       const ts = t.estimatedStartDate ? String(t.estimatedStartDate).slice(0, 10) : '';
       if (filterStartFrom && (!ts || ts < filterStartFrom)) return false;
@@ -3625,18 +4189,77 @@ function PlanningView({ projectId }: { projectId: number }) {
       // Has-due-date filter (yes/no/any)
       if (filterHasDue === 'yes' && !td) return false;
       if (filterHasDue === 'no' && td) return false;
+
+      // Y1 — per-column funnel filters. Text columns substring-match;
+      // select columns exact-match on the resolved value.
+      if (colFilters.code && !t.code?.toLowerCase().includes(colFilters.code.toLowerCase())) return false;
+      if (colFilters.name && !t.name?.toLowerCase().includes(colFilters.name.toLowerCase())) return false;
+      if (colFilters.zone) {
+        const zn = t.zone?.name ?? 'Project Root';
+        if (zn !== colFilters.zone) return false;
+      }
+      if (colFilters.deliverable) {
+        if (resolveTaskDeliverable(t) !== colFilters.deliverable) return false;
+      }
+      if (colFilters.service && (t.phase?.name ?? '') !== colFilters.service) return false;
+      if (colFilters.status && t.status !== colFilters.status) return false;
+      if (colFilters.assignee) {
+        const aid = Number(colFilters.assignee);
+        const has = Array.isArray(t.assignees)
+          && t.assignees.some((a: any) => a.userId === aid || a.user?.id === aid);
+        if (!has) return false;
+      }
       return true;
     });
-  }, [tasks, search, filterStatus, filterStartFrom, filterStartTo, filterDueFrom, filterDueTo, filterHasDue]);
+  }, [tasks, search, filterStatus, filterPriority, filterAssigneeId, filterStartFrom, filterStartTo, filterDueFrom, filterDueTo, filterHasDue, colFilters]);
 
-  const hasTaskFilter = !!(filterStatus || filterStartFrom || filterStartTo || filterDueFrom || filterDueTo || filterHasDue);
+  // Distinct option lists for the column funnels, derived from the
+  // loaded task set so only present values are offered.
+  const colFilterOptions = useMemo(() => {
+    const zone = new Set<string>();
+    const deliverable = new Set<string>();
+    const service = new Set<string>();
+    const status = new Set<string>();
+    const assigneeMap = new Map<string, string>();
+    for (const t of tasks) {
+      zone.add(t.zone?.name ?? 'Project Root');
+      // Use the SAME resolution as the group label + the matcher so the
+      // dropdown lists every deliverable that actually appears —
+      // including ones identified only via a [SERVICE:xxx] description
+      // marker (e.g. "מיפוי סופי"), which the old
+      // deliverableTemplate?.name ?? serviceType?.name shortcut missed.
+      const dn = resolveTaskDeliverable(t);
+      if (dn && dn !== 'No Deliverable') deliverable.add(dn);
+      if (t.phase?.name) service.add(t.phase.name);
+      if (t.status) status.add(t.status);
+      for (const a of t.assignees ?? []) {
+        const id = a.userId ?? a.user?.id;
+        if (id == null) continue;
+        const name = `${a.user?.firstName ?? ''} ${a.user?.lastName ?? ''}`.trim() || `User #${id}`;
+        assigneeMap.set(String(id), name);
+      }
+    }
+    return {
+      zone: Array.from(zone).sort(),
+      deliverable: Array.from(deliverable).sort(),
+      service: Array.from(service).sort(),
+      status: Array.from(status),
+      assignee: Array.from(assigneeMap.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)),
+    };
+  }, [tasks]);
+
+  const hasColFilter = Object.values(colFilters).some(Boolean);
+  const hasTaskFilter = !!(filterStatus || filterPriority || filterAssigneeId || filterStartFrom || filterStartTo || filterDueFrom || filterDueTo || filterHasDue || hasColFilter);
   const clearTaskFilters = () => {
     setFilterStatus('');
+    setFilterPriority('');
+    setFilterAssigneeId('');
     setFilterStartFrom('');
     setFilterStartTo('');
     setFilterDueFrom('');
     setFilterDueTo('');
     setFilterHasDue('');
+    setColFilters({ code: '', name: '', zone: '', deliverable: '', service: '', status: '', assignee: '' });
   };
 
   // Sort
@@ -3707,7 +4330,11 @@ function PlanningView({ projectId }: { projectId: number }) {
         //   4. "No Deliverable"       → orphan bucket
         const marker = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1];
         if (t.deliverableTemplateId != null) {
-          label = t.deliverableTemplate?.name || `Deliverable #${t.deliverableTemplateId}`;
+          // Apply the same per-project override as the project-root
+          // resolver above. Without this, switching the grouping mode
+          // would suddenly show the canonical template name instead of
+          // the user's preferred per-project label.
+          label = overrideFor(t.deliverableTemplateId) ?? t.deliverableTemplate?.name ?? `Deliverable #${t.deliverableTemplateId}`;
           color = t.phase?.color || '#8B5CF6';
           // No dndId — no sortOrder on Template. Cards stay alpha-sorted.
           key = `tpl-${t.deliverableTemplateId}`;
@@ -3767,10 +4394,19 @@ function PlanningView({ projectId }: { projectId: number }) {
 
   return (
     <BulkCollapseContext.Provider value={{ desired: bulkCollapsed, version: bulkVersion }}>
+    <TaskMessageCountsContext.Provider value={messageCounts as Record<number, number>}>
+    <TaskFilterContext.Provider value={{ filters: colFilters, setFilter: setColFilter, options: colFilterOptions }}>
     <div className="space-y-5">
       {/* Template picker / manual zone dialogs */}
       {showTemplatePicker && <TemplatePickerDialog projectId={projectId} onClose={() => setShowTemplatePicker(false)} onApplied={invalidate} />}
       {showManualZone && <AddZoneManuallyDialog projectId={projectId} onClose={() => setShowManualZone(false)} onCreated={invalidate} />}
+      {showArchiveModal && (
+        <ProjectArchivedTasksModal
+          projectId={projectId}
+          onClose={() => setShowArchiveModal(false)}
+          onRestored={invalidate}
+        />
+      )}
       {/* Project-root deliverable + task dialogs */}
       {showRootTemplate && <AddRootDeliverableDialog projectId={projectId} onClose={() => setShowRootTemplate(false)} onApplied={invalidate} />}
       {showRootTask && <AddRootTaskDialog projectId={projectId} projectTasks={tasks} onClose={() => setShowRootTask(false)} onCreated={invalidate} />}
@@ -3968,6 +4604,20 @@ function PlanningView({ projectId }: { projectId: number }) {
                 Undo
               </button>
             )}
+            {/* Archive button — opens an inline modal listing this
+                project's archived tasks with Restore actions. Previous
+                version (U4) opened /tasks?tab=archived in a new tab,
+                which broke flow and lost the planning state. V1 fix:
+                keep the user in the planning view. */}
+            <button
+              type="button"
+              onClick={() => setShowArchiveModal(true)}
+              className="text-[12px] font-semibold text-slate-500 hover:text-slate-700 flex items-center gap-1"
+              title="View archived tasks for this project (deleted tasks can be restored)"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5"><path fillRule="evenodd" d="M3.5 3A1.5 1.5 0 002 4.5v.5H18v-.5A1.5 1.5 0 0016.5 3h-13zM2 6.5h16v9a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 012 15.5v-9zm5.75 1.75a.75.75 0 000 1.5h4.5a.75.75 0 000-1.5h-4.5z" /></svg>
+              Archived
+            </button>
             <div className="flex items-center gap-1.5">
               <span className="text-[11px] font-semibold text-slate-400">Group:</span>
               <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as any)} className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none">
@@ -4007,13 +4657,57 @@ function PlanningView({ projectId }: { projectId: number }) {
             className="px-2.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none"
             title="Status"
           >
+            {/* Labels pulled from STATUS_LABEL (the single source of
+                truth in task-constants.ts) so the planning filter shows
+                the same wording as Kanban, the task drawer, the
+                execution board, etc. Previously this dropdown said
+                "Not started / Completed" while the rest of the app said
+                "To Do / Done" — that's the inconsistency the user flagged. */}
             <option value="">All statuses</option>
-            <option value="not_started">Not started</option>
-            <option value="in_progress">In progress</option>
-            <option value="in_review">In review</option>
-            <option value="completed">Completed</option>
-            <option value="on_hold">On hold</option>
-            <option value="cancelled">Cancelled</option>
+            {(['not_started', 'in_progress', 'in_review', 'completed', 'on_hold', 'cancelled'] as const).map((s) => (
+              <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
+            ))}
+          </select>
+          {/* V7 — Priority + Assignee filters on the planning table. */}
+          <select
+            value={filterPriority}
+            onChange={(e) => setFilterPriority(e.target.value)}
+            className="px-2.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none"
+            title="Priority"
+          >
+            <option value="">Any Priority</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+          <select
+            value={filterAssigneeId}
+            onChange={(e) => setFilterAssigneeId(e.target.value)}
+            className="px-2.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none"
+            title="Assignee"
+          >
+            <option value="">Any Assignee</option>
+            {/* Derive distinct users from the task list itself —
+                cheaper than another query, and only assignees who
+                actually appear on tasks here are listed. */}
+            {Array.from(
+              new Map<number, { id: number; name: string }>(
+                tasks.flatMap((t: any) =>
+                  (t.assignees ?? []).map((a: any) => {
+                    const u = a.user ?? {};
+                    const id = a.userId ?? u.id;
+                    if (id == null) return null;
+                    const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || `User #${id}`;
+                    return [id, { id, name }] as [number, { id: number; name: string }];
+                  }).filter(Boolean),
+                ),
+              ).values(),
+            )
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((u) => (
+                <option key={u.id} value={String(u.id)}>{u.name}</option>
+              ))}
           </select>
           <div className="flex items-center gap-1 text-[11px] text-slate-500">
             <span>Est. start:</span>
@@ -4111,6 +4805,7 @@ function PlanningView({ projectId }: { projectId: number }) {
                   selectedTaskIds={selectedTaskIds}
                   onToggleTask={toggleTask}
                   onToggleMany={toggleManyTasks}
+                  deliverableOverrides={deliverableOverrides}
                 />
                 <SortableContext
                   items={zones.filter((z: any) => !z.parentId).map((z: any) => `z-${z.id}`)}
@@ -4166,6 +4861,24 @@ function PlanningView({ projectId }: { projectId: number }) {
                     onToggleTask={toggleTask}
                     onToggleMany={toggleManyTasks}
                     dndId={g.dndId}
+                    // Drive the header chip from the active grouping mode.
+                    // service-mode (groupBy='phase') → "service" chip;
+                    // deliverable-mode (groupBy='service') → "deliverable"
+                    // chip; "no grouping" hides the chip entirely.
+                    kind={
+                      groupBy === 'phase'
+                        ? 'service'
+                        : groupBy === 'service'
+                          ? 'deliverable'
+                          : 'none'
+                    }
+                    // Inline-rename is meaningful only in Deliverable
+                    // mode (per-project override is template-scoped).
+                    // Phase-mode groups are Services, not Deliverables —
+                    // we skip rename there.
+                    editableTemplateId={
+                      groupBy === 'service' ? (g.tasks[0]?.deliverableTemplateId ?? null) : null
+                    }
                   />
                 ))}
               </SortableContext>
@@ -4236,6 +4949,8 @@ function PlanningView({ projectId }: { projectId: number }) {
         onRequestDelete={requestTaskDelete}
       />
     </div>
+    </TaskFilterContext.Provider>
+    </TaskMessageCountsContext.Provider>
     </BulkCollapseContext.Provider>
   );
 }
@@ -4245,8 +4960,12 @@ function PlanningView({ projectId }: { projectId: number }) {
 export function PlanningPage() {
   const navigate = useNavigate();
   const { id } = useParams();
+  // Allow horizontal scroll — TASK_GRID's min-width (1280px) forces a
+  // baseline column layout where the task name stays visible at ≥180px.
+  // On a wide monitor everything fits inside the viewport; on a 13" laptop
+  // the user scrolls horizontally rather than losing column data.
   return (
-    <div className="px-4 py-5 space-y-4">
+    <div className="px-4 py-5 space-y-4 overflow-x-auto">
       <button onClick={() => navigate(`/projects/${Number(id)}`)} className="flex items-center gap-1.5 text-[13px] text-slate-400 hover:text-slate-600"><ArrowLeft className="h-4 w-4" /> Back to Project</button>
       <PlanningView projectId={Number(id)} />
     </div>
@@ -4254,7 +4973,13 @@ export function PlanningPage() {
 }
 
 export function PlanningTab({ projectId }: { projectId: number }) {
-  return <PlanningView projectId={projectId} />;
+  // Same overflow-x rationale as PlanningPage above — see TASK_GRID
+  // comment for the column-width context.
+  return (
+    <div className="overflow-x-auto">
+      <PlanningView projectId={projectId} />
+    </div>
+  );
 }
 
 export default PlanningPage;

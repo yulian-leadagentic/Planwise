@@ -322,7 +322,7 @@ export function ProjectListPage() {
           >
             <option value="">No grouping</option>
             <option value="leader">Team Leader</option>
-            <option value="department">Department</option>
+            {/* Department group-by removed (V3) — field is unused. */}
             <option value="status">Status</option>
             {visibleRoleColumns.length > 0 && (
               <optgroup label="Role columns">
@@ -417,10 +417,35 @@ export function ProjectListPage() {
       {isLoading ? (
         <div className="py-12 text-center text-sm text-slate-400">Loading projects...</div>
       ) : projects.length === 0 ? (
-        <div className="rounded-[14px] border border-slate-200 bg-white py-12 text-center">
-          <p className="text-sm text-slate-500">{projectSearch ? 'No projects match your search' : 'No projects yet'}</p>
-          <button onClick={() => navigate('/projects/new')}
-            className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">Create Project</button>
+        // Empty state — distinguish "no projects in DB" from "filter
+        // hides them" so users with a stale status filter persisted in
+        // localStorage (U6 in the bug list) can recover. The filter
+        // store is zustand+persist, so a prior session's status pick
+        // sticks across reloads.
+        <div className="rounded-[14px] border border-slate-200 bg-white py-12 text-center space-y-3">
+          {(() => {
+            const hasFilter = !!projectSearch || projectStatus.length > 0 || !!memberFilter;
+            return hasFilter ? (
+              <>
+                <p className="text-sm text-slate-500">No projects match your current filters.</p>
+                <button
+                  onClick={() => {
+                    setProjectFilters({ projectSearch: '', projectStatus: [] });
+                    setMemberFilter(null);
+                  }}
+                  className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+                >
+                  Clear filters
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-slate-500">No projects yet.</p>
+                <button onClick={() => navigate('/projects/new')}
+                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">Create Project</button>
+              </>
+            );
+          })()}
         </div>
       ) : (
         <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
@@ -439,7 +464,7 @@ export function ProjectListPage() {
                   {visibleRoleColumns.map((rt) => (
                     <th key={rt.id} className="px-4 py-3 text-left font-semibold">{rt.name}</th>
                   ))}
-                  <th className="px-4 py-3 text-left font-semibold">Department</th>
+                  {/* Department column removed (V3) — field is unused. */}
                   <th className="px-4 py-3 text-left font-semibold">Status</th>
                   <th className="px-4 py-3 text-left font-semibold">Category</th>
                   {/* Finance-gated columns. Hidden entirely when the
@@ -496,9 +521,14 @@ export function ProjectListPage() {
                       onClick={() => navigate(`/projects/${p.id}`)}
                       className={cn('border-b border-slate-100 cursor-pointer hover:bg-blue-50/30 transition-colors',
                         idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/30')}>
-                      <td className="px-4 py-3 font-mono text-slate-500">{p.number || '-'}</td>
-                      <td className="px-4 py-3">
-                        <p className="font-semibold text-slate-800">{p.name}</p>
+                      <td className="px-4 py-3 font-mono text-slate-500 whitespace-nowrap">{p.number || '-'}</td>
+                      <td className="px-4 py-3 max-w-[280px]">
+                        {/* Long project names were overflowing the cell
+                            (no min-w-0 on the parent flex/grid context,
+                            no truncate on the inner <p>). Cap the cell
+                            at 280px and truncate with a hover tooltip
+                            so the full name is still discoverable. */}
+                        <p className="font-semibold text-slate-800 truncate" title={p.name}>{p.name}</p>
                       </td>
                       {/* Team Leader static cell removed — surface it via
                           the Columns customizer (it's seeded as a system
@@ -542,7 +572,7 @@ export function ProjectListPage() {
                           </td>
                         );
                       })}
-                      <td className="px-4 py-3 text-slate-600">{dept}</td>
+                      {/* Department cell removed (V3) — header dropped above. */}
                       <td className="px-4 py-3">
                         <span className={cn('rounded-[5px] px-2 py-0.5 text-[10px] font-bold', st.bg, st.text)}>{st.label}</span>
                       </td>
