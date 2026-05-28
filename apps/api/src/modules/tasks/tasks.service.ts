@@ -59,6 +59,8 @@ export class TasksService {
         // Source Deliverable (Template). Optional — null is fine for
         // ad-hoc tasks not tied to a template.
         deliverableTemplateId: dto.deliverableTemplateId ?? null,
+        // First-class project-owned Deliverable link (authoritative).
+        projectDeliverableId: dto.projectDeliverableId ?? null,
         code: dto.code,
         name: dto.name,
         description: dto.description,

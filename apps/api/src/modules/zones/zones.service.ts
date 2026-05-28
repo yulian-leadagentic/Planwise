@@ -658,6 +658,31 @@ export class ZonesService {
         data: { usageCount: { increment: 1 } },
       });
 
+      // ── Guard against deliverable-link drift ──────────────────────────
+      // Several creation paths above copy a templateTask's [SERVICE:<name>]
+      // description marker into the project task but leave
+      // deliverable_template_id NULL (zone templates aren't deliverables).
+      // The Execution Board groups by the deliverable LINK, so resolve any
+      // just-created marked task to its matching Deliverable in one pass —
+      // the marker stays in the description (non-destructive). This keeps
+      // new data consistent with the 20260521030000 backfill so columns,
+      // dropdown and filter never drift apart again.
+      await tx.$executeRaw`
+        UPDATE tasks t
+        JOIN templates dt
+          ON dt.type = 'task_list'
+          AND dt.deleted_at IS NULL
+          AND dt.name = TRIM(SUBSTRING(
+                t.description,
+                LOCATE('[SERVICE:', t.description) + 9,
+                LOCATE(']', t.description, LOCATE('[SERVICE:', t.description))
+                  - (LOCATE('[SERVICE:', t.description) + 9)
+              ))
+        SET t.deliverable_template_id = dt.id
+        WHERE t.project_id = ${projectId}
+          AND t.deliverable_template_id IS NULL
+          AND t.description LIKE '%[SERVICE:%'`;
+
       return createdZones;
     }, { timeout: 30_000 });
   }

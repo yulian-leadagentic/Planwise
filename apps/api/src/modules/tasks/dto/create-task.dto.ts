@@ -61,6 +61,14 @@ export class CreateTaskDto {
   @IsInt()
   deliverableTemplateId?: number | null;
 
+  /** The first-class, project-owned Deliverable this task belongs to. This
+   *  is the authoritative link the board / reports resolve from. Usually set
+   *  together with deliverableTemplateId (kept synced for provenance). */
+  @ApiPropertyOptional({ description: 'ProjectDeliverable id (project-owned).' })
+  @IsOptional()
+  @IsInt()
+  projectDeliverableId?: number | null;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

@@ -40,6 +40,7 @@ import { ProjectRoleTypesModule } from './modules/project-role-types/project-rol
 import { ProjectPartnerRolesModule } from './modules/project-partner-roles/project-partner-roles.module';
 import { DataImportModule } from './modules/data-import/data-import.module';
 import { ProjectStatusBoardModule } from './modules/project-status-board/project-status-board.module';
+import { ProjectDeliverablesModule } from './modules/project-deliverables/project-deliverables.module';
 
 @Module({
   imports: [
@@ -115,6 +116,7 @@ import { ProjectStatusBoardModule } from './modules/project-status-board/project
     ProjectPartnerRolesModule,
     DataImportModule,
     ProjectStatusBoardModule,
+    ProjectDeliverablesModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

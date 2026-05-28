@@ -52,6 +52,9 @@ export class PlanningService {
         // /templates/deliverables exactly. Only id+name needed for
         // display; full template data is fetched on demand.
         deliverableTemplate: { select: { id: true, name: true } },
+        // First-class project-owned Deliverable — the authoritative link the
+        // grid resolves its label from (overrides the catalog template name).
+        projectDeliverable: { select: { id: true, name: true, sortOrder: true, serviceId: true } },
         dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true } } } },
         assignees: {
           where: { deletedAt: null },

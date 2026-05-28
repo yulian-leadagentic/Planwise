@@ -45,10 +45,10 @@ export class ExecutionBoardService {
 
     const projectIds = projects.map((p) => p.id);
     if (projectIds.length === 0) {
-      return { projects: [], zones: {}, tasks: [], services: [], templates: [], truncated: false };
+      return { projects: [], zones: {}, tasks: [], services: [], templates: [], deliverables: [], truncated: false };
     }
 
-    const [flatZones, tasks, services, templates] = await Promise.all([
+    const [flatZones, tasks, services, templates, deliverables] = await Promise.all([
       this.prisma.zone.findMany({
         where: { projectId: { in: projectIds }, deletedAt: null },
         orderBy: [{ path: 'asc' }, { sortOrder: 'asc' }],
@@ -76,6 +76,19 @@ export class ExecutionBoardService {
           // in the table (previously the board ignored this and used the
           // legacy [SERVICE:xxx] marker / phase, so the two views drifted).
           deliverableTemplate: { select: { id: true, name: true } },
+          // projectDeliverable is the AUTHORITATIVE, project-owned deliverable
+          // (first-class entity). Its name/order/service belong to the project
+          // and are what the PM and customer see. The board resolves columns
+          // from this; deliverableTemplate is kept only for provenance/back-compat.
+          projectDeliverable: {
+            select: {
+              id: true,
+              name: true,
+              sortOrder: true,
+              serviceId: true,
+              service: { select: { id: true, name: true, color: true } },
+            },
+          },
           serviceType: { select: { id: true, name: true, code: true, color: true } },
           phase: { select: { id: true, name: true, color: true } },
           assignees: {
@@ -110,6 +123,23 @@ export class ExecutionBoardService {
         },
         orderBy: { createdAt: 'asc' },
       }),
+      // Per-project Deliverable instances — the authoritative column set for
+      // the board. Returning these (not just deriving from tasks) means a
+      // freshly-added deliverable with no tasks yet still shows as a column.
+      this.prisma.projectDeliverable.findMany({
+        where: { projectId: { in: projectIds }, deletedAt: null },
+        orderBy: [{ projectId: 'asc' }, { sortOrder: 'asc' }, { name: 'asc' }],
+        select: {
+          id: true,
+          projectId: true,
+          sourceTemplateId: true,
+          serviceId: true,
+          name: true,
+          sortOrder: true,
+          status: true,
+          service: { select: { id: true, name: true, color: true } },
+        },
+      }),
     ]);
 
     // Aggregate logged time per task. Filter on the task ids we just
@@ -135,11 +165,31 @@ export class ExecutionBoardService {
       }
     }
 
-    // Enrich tasks with logged time data
-    const tasksWithTime = tasks.map((t) => {
+    // Enrich tasks with logged time data. The authoritative deliverable is
+    // now task.projectDeliverable (a first-class, project-owned entity). To
+    // keep the frontend resolver consistent during the migration window we
+    // also mirror the project deliverable's name onto deliverableTemplate.name
+    // (the resolver's priority-1 field) so columns / dropdown / filter all
+    // reflect the project-owned label even before the resolver prefers
+    // projectDeliverable directly. The template id is preserved.
+    const tasksWithTime = tasks.map((t: any) => {
       const logged = loggedByTask.get(t.id);
+      let deliverableTemplate = t.deliverableTemplate;
+      if (t.projectDeliverable) {
+        const name = t.projectDeliverable.name;
+        if (deliverableTemplate) {
+          deliverableTemplate = { ...deliverableTemplate, name };
+        } else {
+          // Task linked only to a project deliverable (no legacy template).
+          deliverableTemplate = {
+            id: t.projectDeliverable.sourceTemplateId ?? -t.projectDeliverable.id,
+            name,
+          };
+        }
+      }
       return {
         ...t,
+        deliverableTemplate,
         loggedMinutes: logged?.minutes ?? 0,
         lastActivityDate: logged?.lastDate ?? null,
       };
@@ -168,6 +218,6 @@ export class ExecutionBoardService {
     // Drop the extra row used to detect truncation
     const truncated = tasks.length > MAX_TASKS;
     const finalTasks = truncated ? tasksWithTime.slice(0, MAX_TASKS) : tasksWithTime;
-    return { projects, zones, tasks: finalTasks, services, templates, truncated };
+    return { projects, zones, tasks: finalTasks, services, templates, deliverables, truncated };
   }
 }
