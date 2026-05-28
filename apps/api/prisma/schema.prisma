@@ -540,6 +540,7 @@ model Project {
   files        ProjectFile[]
   partnerRoles ProjectPartnerRole[]
   milestoneStatuses ProjectMilestoneStatus[]
+  deliverables ProjectDeliverable[]
 
   @@index([projectTypeId])
   @@index([departmentId])
@@ -1053,10 +1054,11 @@ model Phase {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  tasks             Task[]
-  templates         Template[]
-  templateTasks     TemplateTask[]
-  templateZoneTasks TemplateZoneTask[]
+  tasks               Task[]
+  templates           Template[]
+  templateTasks       TemplateTask[]
+  templateZoneTasks   TemplateZoneTask[]
+  projectDeliverables ProjectDeliverable[]
 
   @@map("phases")
 }
@@ -1079,6 +1081,11 @@ model Task {
   // same name shown on /templates/deliverables. ServiceType is kept
   // alongside as a legacy fallback for tasks that pre-date this column.
   deliverableTemplateId Int?         @map("deliverable_template_id")
+  // Project-owned deliverable (first-class instance). This is the
+  // AUTHORITATIVE link going forward — its name/order/status belong to
+  // the project (and are what the PM and customer see). deliverableTemplateId
+  // is kept as the catalog provenance + back-compat for legacy readers.
+  projectDeliverableId  Int?         @map("project_deliverable_id")
   code                  String       @db.VarChar(50)
   name                  String       @db.VarChar(255)
   description           String?      @db.Text
@@ -1105,6 +1112,7 @@ model Task {
   serviceType         ServiceType?     @relation(fields: [serviceTypeId], references: [id])
   phase               Phase?           @relation(fields: [phaseId], references: [id])
   deliverableTemplate Template?        @relation("TaskDeliverableTemplate", fields: [deliverableTemplateId], references: [id], onDelete: SetNull)
+  projectDeliverable  ProjectDeliverable? @relation(fields: [projectDeliverableId], references: [id], onDelete: SetNull)
   creator             User             @relation("TaskCreator", fields: [createdBy], references: [id])
   assignees           TaskAssignee[]
   comments            TaskComment[]
@@ -1116,8 +1124,41 @@ model Task {
   @@index([zoneId])
   @@index([projectId])
   @@index([serviceTypeId])
+  @@index([projectDeliverableId])
   @@index([status])
   @@map("tasks")
+}
+
+/// A project-owned Deliverable instance. Instantiated from a catalog
+/// Template (sourceTemplateId) but its name/description/order/status
+/// belong to the project — this is what the PM manages and the customer
+/// sees. The catalog Template is never mutated; the project instance
+/// diverges freely. Tasks link here via Task.projectDeliverableId.
+model ProjectDeliverable {
+  id               Int       @id @default(autoincrement())
+  projectId        Int       @map("project_id")
+  /// Catalog Template (type=task_list) this was instantiated from. Null
+  /// for project-only deliverables with no catalog source.
+  sourceTemplateId Int?      @map("source_template_id")
+  /// The Service (Phase) line this deliverable belongs to. Inherited from
+  /// the source template's phase; editable per project.
+  serviceId        Int?      @map("service_id")
+  name             String    @db.VarChar(255)
+  description      String?   @db.Text
+  sortOrder        Int       @default(0) @map("sort_order")
+  status           String    @default("active") @db.VarChar(30)
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  deletedAt        DateTime? @map("deleted_at")
+
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceTemplate Template? @relation("DeliverableSourceTemplate", fields: [sourceTemplateId], references: [id], onDelete: SetNull)
+  service        Phase?    @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  tasks          Task[]
+
+  @@index([projectId])
+  @@index([sourceTemplateId])
+  @@map("project_deliverables")
 }
 
 model TaskAttachment {
@@ -1240,6 +1281,10 @@ model Template {
   // Task.deliverableTemplate. Enables COUNT-by-deliverable and "where
   // is this template used" queries without scanning Tasks globally.
   projectTasks      Task[]         @relation("TaskDeliverableTemplate")
+  // Per-project deliverable instances materialized from this catalog
+  // template. The catalog template stays untouched; each ProjectDeliverable
+  // may diverge (rename, reorder, status) without affecting the catalog.
+  projectDeliverables ProjectDeliverable[] @relation("DeliverableSourceTemplate")
 
   @@map("templates")
 }
