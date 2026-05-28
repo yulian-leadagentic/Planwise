@@ -184,7 +184,7 @@ model ZoneTypeMeta {
 }
 
 enum TemplateType {
-  task_list   @map("task_list")
+  task_list @map("task_list")
   zone
   combined
 }
@@ -203,30 +203,30 @@ enum MessageType {
 // ─── Models ─────────────────────────────────────────────────────────────────
 
 model User {
-  id           Int       @id @default(autoincrement())
+  id                 Int             @id @default(autoincrement())
   /// Business code (employee number). Allocated from the EMPLOYEE entity
   /// kind's number range at user create time. Mode determines who supplies
   /// it: auto = system, manual/external = user. Nullable for backward
   /// compat with users created before M1.1.
-  code         String?   @unique @db.VarChar(50)
-  email        String    @unique
-  password     String
-  firstName    String    @map("first_name")
-  lastName     String    @map("last_name")
-  phone        String?
-  avatarUrl    String?   @map("avatar_url")
-  roleId       Int       @map("role_id")
-  userType     UserType  @map("user_type")
-  position     String?
-  department   String?
-  companyName  String?   @map("company_name")
-  taxId        String?   @map("tax_id")
-  address      String?
-  salaryHourly Decimal?  @map("salary_hourly") @db.Decimal(10, 2)
-  dailyStandardHours Decimal? @map("daily_standard_hours") @db.Decimal(4, 2)
-  employmentDate DateTime? @map("employment_date") @db.Date
-  employmentEndDate DateTime? @map("employment_end_date") @db.Date
-  employeeCategory String? @map("employee_category")
+  code               String?         @unique @db.VarChar(50)
+  email              String          @unique
+  password           String
+  firstName          String          @map("first_name")
+  lastName           String          @map("last_name")
+  phone              String?
+  avatarUrl          String?         @map("avatar_url")
+  roleId             Int             @map("role_id")
+  userType           UserType        @map("user_type")
+  position           String?
+  department         String?
+  companyName        String?         @map("company_name")
+  taxId              String?         @map("tax_id")
+  address            String?
+  salaryHourly       Decimal?        @map("salary_hourly") @db.Decimal(10, 2)
+  dailyStandardHours Decimal?        @map("daily_standard_hours") @db.Decimal(4, 2)
+  employmentDate     DateTime?       @map("employment_date") @db.Date
+  employmentEndDate  DateTime?       @map("employment_end_date") @db.Date
+  employeeCategory   String?         @map("employee_category")
   /// Employee seniority level. Used to look up the default hourly cost
   /// for project labor calculations. Nullable for backward compat and for
   /// non-employee users who have no cost concept.
@@ -236,66 +236,75 @@ model User {
   /// so existing reads (employee table, edit form, etc.) keep working.
   /// Will be dropped in a future cleanup once every reader is migrated
   /// to date-aware lookups.
-  seniorityLevelId Int? @map("seniority_level_id")
-  seniorityLevel   SeniorityLevel? @relation("UserSeniorityLevel", fields: [seniorityLevelId], references: [id], onDelete: SetNull)
+  seniorityLevelId   Int?            @map("seniority_level_id")
+  seniorityLevel     SeniorityLevel? @relation("UserSeniorityLevel", fields: [seniorityLevelId], references: [id], onDelete: SetNull)
   // Full history of seniority assignments per user — see UserSeniority.
-  seniorityHistory UserSeniority[] @relation("UserSeniorityHistory")
-  website      String?
-  otpCode      String?   @map("otp_code")
-  otpExpiresAt DateTime? @map("otp_expires_at")
-  otpAttempts  Int       @default(0) @map("otp_attempts")
-  isActive     Boolean   @default(true) @map("is_active")
-  lastLoginAt  DateTime? @map("last_login_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
-  deletedAt    DateTime? @map("deleted_at")
+  seniorityHistory   UserSeniority[] @relation("UserSeniorityHistory")
+  website            String?
+  otpCode            String?         @map("otp_code")
+  otpExpiresAt       DateTime?       @map("otp_expires_at")
+  otpAttempts        Int             @default(0) @map("otp_attempts")
+  isActive           Boolean         @default(true) @map("is_active")
+  lastLoginAt        DateTime?       @map("last_login_at")
+  createdAt          DateTime        @default(now()) @map("created_at")
+  updatedAt          DateTime        @updatedAt @map("updated_at")
+  deletedAt          DateTime?       @map("deleted_at")
 
   // Bridge to the Business Partner record. A User is a BP that also has
   // login credentials. Most BPs (orgs, external contacts who never log in)
   // won't have a User row.
-  businessPartnerId Int?              @unique @map("business_partner_id")
-  businessPartner   BusinessPartner?  @relation("UserBusinessPartner", fields: [businessPartnerId], references: [id], onDelete: SetNull)
+  businessPartnerId Int?             @unique @map("business_partner_id")
+  businessPartner   BusinessPartner? @relation("UserBusinessPartner", fields: [businessPartnerId], references: [id], onDelete: SetNull)
 
   role Role @relation(fields: [roleId], references: [id])
 
-  projectsCreated      Project[]          @relation("ProjectCreatedBy")
-  projectsLed          Project[]          @relation("ProjectLeader")
-  projectMembers       ProjectMember[]
-  taskAssignees        TaskAssignee[]
-  taskComments         TaskComment[]
-  workSchedules        WorkSchedule[]
-  calendarDaysCreated  CalendarDay[]      @relation("CalendarDayCreatedBy")
-  timeClocks           TimeClock[]        @relation("TimeClockUser")
-  timeClocksApproved   TimeClock[]        @relation("TimeClockApprovedBy")
-  timeClocksEdited     TimeClock[]        @relation("TimeClockEditedBy")
-  timeEntries          TimeEntry[]
-  contractsAsPartner   Contract[]         @relation("ContractPartner")
-  contractsCreated     Contract[]         @relation("ContractCreatedBy")
-  milestonesAsPartner  LabelMilestone[]   @relation("MilestonePartner")
-  milestonesCreated    LabelMilestone[]   @relation("MilestoneCreatedBy")
-  contacts             Contact[]
-  expensesCreated      Expense[]
-  terms                Term[]
-  activityLogs         ActivityLog[]
-  notifications        Notification[]
-  billingsCreated      Billing[]
-  teamTemplates        TeamTemplate[]
-  teamTemplateMembers  TeamTemplateMember[]
-  tasksCreated         Task[]             @relation("TaskCreator")
-  templatesCreated     Template[]         @relation("TemplateCreator")
-  messages             Message[]          @relation("MessageAuthor")
-  messageMentions      MessageMention[]
-  taskAttachments      TaskAttachment[]
-  projectFiles         ProjectFile[]
-  notificationsActed   Notification[]     @relation("NotificationActor")
-  notificationPrefs    NotificationPreference[]
-  resourceOverrides    ResourceOverride[] @relation("UserResourceOverrides")
+  projectsCreated     Project[]                @relation("ProjectCreatedBy")
+  projectsLed         Project[]                @relation("ProjectLeader")
+  projectMembers      ProjectMember[]
+  taskAssignees       TaskAssignee[]
+  taskComments        TaskComment[]
+  workSchedules       WorkSchedule[]
+  calendarDaysCreated CalendarDay[]            @relation("CalendarDayCreatedBy")
+  timeClocks          TimeClock[]              @relation("TimeClockUser")
+  timeClocksApproved  TimeClock[]              @relation("TimeClockApprovedBy")
+  timeClocksEdited    TimeClock[]              @relation("TimeClockEditedBy")
+  timeEntries         TimeEntry[]
+  contractsAsPartner  Contract[]               @relation("ContractPartner")
+  contractsCreated    Contract[]               @relation("ContractCreatedBy")
+  milestonesAsPartner LabelMilestone[]         @relation("MilestonePartner")
+  milestonesCreated   LabelMilestone[]         @relation("MilestoneCreatedBy")
+  contacts            Contact[]
+  expensesCreated     Expense[]
+  terms               Term[]
+  activityLogs        ActivityLog[]
+  notifications       Notification[]
+  billingsCreated     Billing[]
+  teamTemplates       TeamTemplate[]
+  teamTemplateMembers TeamTemplateMember[]
+  tasksCreated        Task[]                   @relation("TaskCreator")
+  templatesCreated    Template[]               @relation("TemplateCreator")
+  messages            Message[]                @relation("MessageAuthor")
+  messageMentions     MessageMention[]
+  taskAttachments     TaskAttachment[]
+  projectFiles        ProjectFile[]
+  notificationsActed  Notification[]           @relation("NotificationActor")
+  notificationPrefs   NotificationPreference[]
+  resourceOverrides   ResourceOverride[]       @relation("UserResourceOverrides")
+
+  /// Bulk-import provenance + history. createdByImportId tags users that
+  /// were created by an import (used for rollback); dataImportsRun is
+  /// the reverse of who ran an import. Two unrelated fields, kept
+  /// together so the import wiring is in one place on the User model.
+  createdByImportId Int?         @map("created_by_import_id")
+  createdByImport   DataImport?  @relation("UsersCreatedByImport", fields: [createdByImportId], references: [id], onDelete: SetNull)
+  dataImportsRun    DataImport[] @relation("DataImportRunner")
 
   @@index([roleId])
   @@index([email])
   @@index([userType])
   @@index([isActive])
   @@index([deletedAt])
+  @@index([createdByImportId])
   @@map("users")
 }
 
@@ -306,10 +315,10 @@ model Role {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  users              User[]
-  roleModules        RoleModule[]
-  stageTransitions   RoleStageTransition[]
-  resourceOverrides  ResourceOverride[]
+  users             User[]
+  roleModules       RoleModule[]
+  stageTransitions  RoleStageTransition[]
+  resourceOverrides ResourceOverride[]
 
   @@map("roles")
 }
@@ -379,7 +388,7 @@ model ResourceOverride {
   resourceId   Int     @map("resource_id")
   roleId       Int?    @map("role_id")
   userId       Int?    @map("user_id")
-  canRead      Boolean @default(true)  @map("can_read")
+  canRead      Boolean @default(true) @map("can_read")
   canWrite     Boolean @default(false) @map("can_write")
   canDelete    Boolean @default(false) @map("can_delete")
 
@@ -431,7 +440,7 @@ model Profession {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  partners  BusinessPartnerProfession[]
+  partners BusinessPartnerProfession[]
 
   @@map("professions")
 }
@@ -448,7 +457,7 @@ model BusinessPartnerProfession {
   since             DateTime? @db.Date
   notes             String?   @db.VarChar(255)
   createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt      @map("updated_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
   businessPartner BusinessPartner @relation(fields: [businessPartnerId], references: [id], onDelete: Cascade)
   profession      Profession      @relation(fields: [professionId], references: [id], onDelete: Cascade)
@@ -470,28 +479,55 @@ model ProjectRoleTemplate {
 }
 
 model Project {
-  id            Int           @id @default(autoincrement())
-  name          String
-  number        String?
-  description   String?
-  projectTypeId Int           @map("project_type_id")
-  departmentId  Int?          @map("department_id")
-  leaderId      Int?          @map("leader_id")
-  status        ProjectStatus @default(draft)
-  budget        Decimal?      @db.Decimal(14, 2)
-  estimatedValue Decimal?     @map("estimated_value") @db.Decimal(14, 2)
-  startDate     DateTime?     @map("start_date")
-  endDate       DateTime?     @map("end_date")
-  isArchived    Boolean       @default(false) @map("is_archived")
-  createdBy     Int           @map("created_by")
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
-  deletedAt     DateTime?     @map("deleted_at")
+  id             Int           @id @default(autoincrement())
+  name           String
+  number         String?
+  description    String?
+  projectTypeId  Int           @map("project_type_id")
+  departmentId   Int?          @map("department_id")
+  leaderId       Int?          @map("leader_id")
+  status         ProjectStatus @default(draft)
+  budget         Decimal?      @db.Decimal(14, 2)
+  estimatedValue Decimal?      @map("estimated_value") @db.Decimal(14, 2)
+  startDate      DateTime?     @map("start_date")
+  endDate        DateTime?     @map("end_date")
+  isArchived     Boolean       @default(false) @map("is_archived")
+  /// Free-text version of the authoring tool used on this project (e.g.
+  /// "Revit 2024.2", "ArchiCAD 27"). Replaces the old single-purpose
+  /// "Revit version" concept now that the company uses multiple tools.
+  /// Surfaced on the Project Info tab and editable from the project
+  /// edit form.
+  authoringToolVersion String? @map("authoring_tool_version") @db.VarChar(100)
+  /// Day of the weekly project meeting, free text ("Tuesday 10:00",
+  /// "Sundays after standup"). Surfaced on the Project Info tab.
+  weeklyMeetingDay String? @map("weekly_meeting_day") @db.VarChar(100)
+  /// File-management system + hub link for the project ("BIM 360 — link",
+  /// "OneDrive: https://..."). Free text by design — different
+  /// customers use different vendors.
+  fileSystemLink String? @map("file_system_link") @db.VarChar(500)
+  /// What we deliver to this customer per the contract — free text.
+  /// Plain-text summary for the Project Info tab; the structured part
+  /// lives in deliverables.
+  servicesPerContract String? @map("services_per_contract") @db.Text
+  /// Per-project display-name overrides for Deliverable groups, keyed
+  /// by deliverableTemplateId (the Template's id, as a string). When a
+  /// deliverable group is rendered on the planning grid, the label
+  /// resolves from this map first, falling back to the source
+  /// Template.name when no override exists. Lets the same template
+  /// (e.g. "BIM Foundation") be re-labelled per-project (e.g. "Tower A
+  /// Foundation") without forking the template catalog. Stored as JSON
+  /// so we don't need a join table for what's effectively a small
+  /// per-project KV.
+  deliverableNameOverrides Json? @map("deliverable_name_overrides")
+  createdBy      Int           @map("created_by")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+  deletedAt      DateTime?     @map("deleted_at")
 
-  projectType ProjectType  @relation(fields: [projectTypeId], references: [id])
-  department  Department?  @relation(fields: [departmentId], references: [id])
-  creator     User         @relation("ProjectCreatedBy", fields: [createdBy], references: [id])
-  leader      User?        @relation("ProjectLeader", fields: [leaderId], references: [id])
+  projectType ProjectType @relation(fields: [projectTypeId], references: [id])
+  department  Department? @relation(fields: [departmentId], references: [id])
+  creator     User        @relation("ProjectCreatedBy", fields: [createdBy], references: [id])
+  leader      User?       @relation("ProjectLeader", fields: [leaderId], references: [id])
 
   members      ProjectMember[]
   labels       Label[]
@@ -503,6 +539,7 @@ model Project {
   categories   ProjectCategory[]
   files        ProjectFile[]
   partnerRoles ProjectPartnerRole[]
+  milestoneStatuses ProjectMilestoneStatus[]
 
   @@index([projectTypeId])
   @@index([departmentId])
@@ -544,9 +581,9 @@ model Label {
   updatedAt   DateTime  @updatedAt @map("updated_at")
   deletedAt   DateTime? @map("deleted_at")
 
-  project   Project @relation(fields: [projectId], references: [id])
-  parent    Label?  @relation("LabelParent", fields: [parentId], references: [id])
-  children  Label[] @relation("LabelParent")
+  project  Project @relation(fields: [projectId], references: [id])
+  parent   Label?  @relation("LabelParent", fields: [parentId], references: [id])
+  children Label[] @relation("LabelParent")
 
   contractItems ContractItem[]
   milestones    LabelMilestone[]
@@ -580,17 +617,17 @@ model WorkSchedule {
 }
 
 model CalendarDay {
-  id          Int                 @id @default(autoincrement())
-  date        DateTime            @unique
-  name        String
-  type        CalendarDayType
-  halfDayUntil String?            @map("half_day_until")
-  appliesTo   CalendarDayAppliesTo @default(all) @map("applies_to")
-  isRecurring Boolean             @default(false) @map("is_recurring")
-  notes       String?
-  createdBy   Int                 @map("created_by")
-  createdAt   DateTime            @default(now()) @map("created_at")
-  updatedAt   DateTime            @updatedAt @map("updated_at")
+  id           Int                  @id @default(autoincrement())
+  date         DateTime             @unique
+  name         String
+  type         CalendarDayType
+  halfDayUntil String?              @map("half_day_until")
+  appliesTo    CalendarDayAppliesTo @default(all) @map("applies_to")
+  isRecurring  Boolean              @default(false) @map("is_recurring")
+  notes        String?
+  createdBy    Int                  @map("created_by")
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
 
   creator User @relation("CalendarDayCreatedBy", fields: [createdBy], references: [id])
 
@@ -637,27 +674,27 @@ model TimeClock {
 }
 
 model TimeEntry {
-  id          Int            @id @default(autoincrement())
-  userId      Int            @map("user_id")
-  timeClockId Int?           @map("time_clock_id")
-  projectId   Int?           @map("project_id")
-  taskId      Int?           @map("task_id")
-  date        DateTime
-  startTime   String?        @map("start_time") @db.VarChar(5)
-  endTime     String?        @map("end_time") @db.VarChar(5)
-  minutes     Int
-  note        String?
-  isBillable  Boolean        @default(true) @map("is_billable")
-  location    String?        @db.VarChar(20)
-  completionPct Int?         @map("completion_pct")
-  createdAt   DateTime       @default(now()) @map("created_at")
-  updatedAt   DateTime       @updatedAt @map("updated_at")
-  deletedAt   DateTime?      @map("deleted_at")
+  id            Int       @id @default(autoincrement())
+  userId        Int       @map("user_id")
+  timeClockId   Int?      @map("time_clock_id")
+  projectId     Int?      @map("project_id")
+  taskId        Int?      @map("task_id")
+  date          DateTime
+  startTime     String?   @map("start_time") @db.VarChar(5)
+  endTime       String?   @map("end_time") @db.VarChar(5)
+  minutes       Int
+  note          String?
+  isBillable    Boolean   @default(true) @map("is_billable")
+  location      String?   @db.VarChar(20)
+  completionPct Int?      @map("completion_pct")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
 
-  user       User        @relation(fields: [userId], references: [id])
-  timeClock  TimeClock?  @relation(fields: [timeClockId], references: [id])
-  project    Project?    @relation(fields: [projectId], references: [id])
-  task       Task?       @relation(fields: [taskId], references: [id])
+  user      User       @relation(fields: [userId], references: [id])
+  timeClock TimeClock? @relation(fields: [timeClockId], references: [id])
+  project   Project?   @relation(fields: [projectId], references: [id])
+  task      Task?      @relation(fields: [taskId], references: [id])
 
   @@index([userId])
   @@index([timeClockId])
@@ -1027,54 +1064,54 @@ model Phase {
 // ─── Tasks ─────────────────────────────────────────────────────────────────
 
 model Task {
-  id            Int          @id @default(autoincrement())
+  id                    Int          @id @default(autoincrement())
   // Tasks can attach directly to a project (zoneId = null) — used for
   // project-level deliverables/tasks that aren't tied to a spatial zone.
   // The planning grid renders these in a "Project Root" group above any
   // zoned tasks. Cascade-delete still fires for zone deletion since the
   // FK is the relation, not this scalar — the relation below is now
   // optional and uses SetNull semantics via Prisma.
-  zoneId        Int?         @map("zone_id")
-  projectId     Int          @map("project_id")
-  serviceTypeId Int?         @map("service_type_id")
+  zoneId                Int?         @map("zone_id")
+  projectId             Int          @map("project_id")
+  serviceTypeId         Int?         @map("service_type_id")
   // Source Deliverable (Template with type=task_list). Direct FK so
   // the planning grid's "Group by Deliverable" can label cards by the
   // same name shown on /templates/deliverables. ServiceType is kept
   // alongside as a legacy fallback for tasks that pre-date this column.
-  deliverableTemplateId Int?  @map("deliverable_template_id")
-  code          String       @db.VarChar(50)
-  name          String       @db.VarChar(255)
-  description   String?      @db.Text
-  budgetHours   Decimal?     @map("budget_hours") @db.Decimal(10, 2)
-  budgetAmount  Decimal?     @map("budget_amount") @db.Decimal(14, 2)
-  phaseId       Int?         @map("phase_id")
-  status        TaskStatus   @default(not_started)
-  priority      TaskPriority @default(medium)
-  completionPct Int          @default(0) @map("completion_pct")
+  deliverableTemplateId Int?         @map("deliverable_template_id")
+  code                  String       @db.VarChar(50)
+  name                  String       @db.VarChar(255)
+  description           String?      @db.Text
+  budgetHours           Decimal?     @map("budget_hours") @db.Decimal(10, 2)
+  budgetAmount          Decimal?     @map("budget_amount") @db.Decimal(14, 2)
+  phaseId               Int?         @map("phase_id")
+  status                TaskStatus   @default(not_started)
+  priority              TaskPriority @default(medium)
+  completionPct         Int          @default(0) @map("completion_pct")
   // Estimated start date — forecast set during planning, separate from
   // startDate (which is the *actual* date work began).
-  estimatedStartDate DateTime? @map("estimated_start_date") @db.Date
-  startDate     DateTime?    @map("start_date") @db.Date
-  endDate       DateTime?    @map("end_date") @db.Date
-  sortOrder     Int          @default(0) @map("sort_order")
-  isArchived    Boolean      @default(false) @map("is_archived")
-  createdBy     Int          @map("created_by")
-  createdAt     DateTime     @default(now()) @map("created_at")
-  updatedAt     DateTime     @updatedAt @map("updated_at")
-  deletedAt     DateTime?    @map("deleted_at")
+  estimatedStartDate    DateTime?    @map("estimated_start_date") @db.Date
+  startDate             DateTime?    @map("start_date") @db.Date
+  endDate               DateTime?    @map("end_date") @db.Date
+  sortOrder             Int          @default(0) @map("sort_order")
+  isArchived            Boolean      @default(false) @map("is_archived")
+  createdBy             Int          @map("created_by")
+  createdAt             DateTime     @default(now()) @map("created_at")
+  updatedAt             DateTime     @updatedAt @map("updated_at")
+  deletedAt             DateTime?    @map("deleted_at")
 
-  zone         Zone?        @relation(fields: [zoneId], references: [id], onDelete: SetNull)
-  project      Project      @relation(fields: [projectId], references: [id])
-  serviceType  ServiceType? @relation(fields: [serviceTypeId], references: [id])
-  phase        Phase?       @relation(fields: [phaseId], references: [id])
-  deliverableTemplate Template? @relation("TaskDeliverableTemplate", fields: [deliverableTemplateId], references: [id], onDelete: SetNull)
-  creator      User         @relation("TaskCreator", fields: [createdBy], references: [id])
-  assignees    TaskAssignee[]
-  comments     TaskComment[]
-  attachments  TaskAttachment[]
-  timeEntries  TimeEntry[]
-  dependencies TaskDependency[] @relation("TaskDeps")
-  dependedBy   TaskDependency[] @relation("TaskDepBy")
+  zone                Zone?            @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  project             Project          @relation(fields: [projectId], references: [id])
+  serviceType         ServiceType?     @relation(fields: [serviceTypeId], references: [id])
+  phase               Phase?           @relation(fields: [phaseId], references: [id])
+  deliverableTemplate Template?        @relation("TaskDeliverableTemplate", fields: [deliverableTemplateId], references: [id], onDelete: SetNull)
+  creator             User             @relation("TaskCreator", fields: [createdBy], references: [id])
+  assignees           TaskAssignee[]
+  comments            TaskComment[]
+  attachments         TaskAttachment[]
+  timeEntries         TimeEntry[]
+  dependencies        TaskDependency[] @relation("TaskDeps")
+  dependedBy          TaskDependency[] @relation("TaskDepBy")
 
   @@index([zoneId])
   @@index([projectId])
@@ -1084,14 +1121,14 @@ model Task {
 }
 
 model TaskAttachment {
-  id           Int      @id @default(autoincrement())
-  taskId       Int      @map("task_id")
-  fileName     String   @map("file_name") @db.VarChar(255)
-  fileUrl      String   @map("file_url") @db.VarChar(500)
-  fileSize     Int?     @map("file_size")
-  mimeType     String?  @map("mime_type") @db.VarChar(100)
-  uploadedBy   Int      @map("uploaded_by")
-  createdAt    DateTime @default(now()) @map("created_at")
+  id         Int      @id @default(autoincrement())
+  taskId     Int      @map("task_id")
+  fileName   String   @map("file_name") @db.VarChar(255)
+  fileUrl    String   @map("file_url") @db.VarChar(500)
+  fileSize   Int?     @map("file_size")
+  mimeType   String?  @map("mime_type") @db.VarChar(100)
+  uploadedBy Int      @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
 
   task     Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
   uploader User @relation(fields: [uploadedBy], references: [id])
@@ -1167,9 +1204,9 @@ model TaskComment {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  task    Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  user    User         @relation(fields: [userId], references: [id])
-  parent  TaskComment? @relation("CommentThread", fields: [parentId], references: [id])
+  task    Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user    User          @relation(fields: [userId], references: [id])
+  parent  TaskComment?  @relation("CommentThread", fields: [parentId], references: [id])
   replies TaskComment[] @relation("CommentThread")
 
   @@index([taskId])
@@ -1193,16 +1230,16 @@ model Template {
   updatedAt   DateTime     @updatedAt @map("updated_at")
   deletedAt   DateTime?    @map("deleted_at")
 
-  creator            User           @relation("TemplateCreator", fields: [createdBy], references: [id])
-  phase              Phase?         @relation(fields: [phaseId], references: [id])
-  templateTasks      TemplateTask[]
-  templateZones      TemplateZone[]
-  linkedZones        TemplateZone[] @relation("LinkedTaskTemplate")
-  referencedByZones  TemplateZone[] @relation("ReferencedZoneTemplate")
+  creator           User           @relation("TemplateCreator", fields: [createdBy], references: [id])
+  phase             Phase?         @relation(fields: [phaseId], references: [id])
+  templateTasks     TemplateTask[]
+  templateZones     TemplateZone[]
+  linkedZones       TemplateZone[] @relation("LinkedTaskTemplate")
+  referencedByZones TemplateZone[] @relation("ReferencedZoneTemplate")
   // Project tasks materialized from this Template — back-relation for
   // Task.deliverableTemplate. Enables COUNT-by-deliverable and "where
   // is this template used" queries without scanning Tasks globally.
-  projectTasks       Task[]         @relation("TaskDeliverableTemplate")
+  projectTasks      Task[]         @relation("TaskDeliverableTemplate")
 
   @@map("templates")
 }
@@ -1229,31 +1266,31 @@ model TemplateTask {
 }
 
 model TemplateZone {
-  id                     Int      @id @default(autoincrement())
-  templateId             Int      @map("template_id")
-  parentId               Int?     @map("parent_id")
-  zoneType               ZoneType @default(zone) @map("zone_type")
-  name                   String   @db.VarChar(255)
-  code                   String?  @db.VarChar(50)
-  isTypical              Boolean  @default(false) @map("is_typical")
-  typicalCount           Int      @default(1) @map("typical_count")
+  id                   Int      @id @default(autoincrement())
+  templateId           Int      @map("template_id")
+  parentId             Int?     @map("parent_id")
+  zoneType             ZoneType @default(zone) @map("zone_type")
+  name                 String   @db.VarChar(255)
+  code                 String?  @db.VarChar(50)
+  isTypical            Boolean  @default(false) @map("is_typical")
+  typicalCount         Int      @default(1) @map("typical_count")
   // Instance count — at apply time, instantiate this template-zone N times
   // (each becoming a separate, individually-renameable zone in the project).
   // Distinct from `typicalCount`, which marks a single zone in the project
   // as "typical" so the PM can later explode it manually. Default 1 = current
   // single-instance behaviour.
-  instanceCount          Int      @default(1) @map("instance_count")
-  sortOrder              Int      @default(0) @map("sort_order")
-  linkedTaskTemplateId   Int?     @map("linked_task_template_id")
-  referencedTemplateId   Int?     @map("referenced_template_id")
-  createdAt              DateTime @default(now()) @map("created_at")
+  instanceCount        Int      @default(1) @map("instance_count")
+  sortOrder            Int      @default(0) @map("sort_order")
+  linkedTaskTemplateId Int?     @map("linked_task_template_id")
+  referencedTemplateId Int?     @map("referenced_template_id")
+  createdAt            DateTime @default(now()) @map("created_at")
 
-  template             Template          @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  parent               TemplateZone?     @relation("TemplateZoneTree", fields: [parentId], references: [id])
-  children             TemplateZone[]    @relation("TemplateZoneTree")
-  linkedTaskTemplate   Template?         @relation("LinkedTaskTemplate", fields: [linkedTaskTemplateId], references: [id])
-  referencedTemplate   Template?         @relation("ReferencedZoneTemplate", fields: [referencedTemplateId], references: [id])
-  templateZoneTasks    TemplateZoneTask[]
+  template           Template           @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  parent             TemplateZone?      @relation("TemplateZoneTree", fields: [parentId], references: [id])
+  children           TemplateZone[]     @relation("TemplateZoneTree")
+  linkedTaskTemplate Template?          @relation("LinkedTaskTemplate", fields: [linkedTaskTemplateId], references: [id])
+  referencedTemplate Template?          @relation("ReferencedZoneTemplate", fields: [referencedTemplateId], references: [id])
+  templateZoneTasks  TemplateZoneTask[]
 
   @@map("template_zones")
 }
@@ -1295,11 +1332,11 @@ model Message {
   updatedAt  DateTime          @updatedAt @map("updated_at")
   deletedAt  DateTime?         @map("deleted_at")
 
-  author         User?            @relation("MessageAuthor", fields: [authorId], references: [id])
-  parent         Message?         @relation("MessageThread", fields: [parentId], references: [id])
-  replies        Message[]        @relation("MessageThread")
-  mentions       MessageMention[]
-  notifications  Notification[]
+  author        User?            @relation("MessageAuthor", fields: [authorId], references: [id])
+  parent        Message?         @relation("MessageThread", fields: [parentId], references: [id])
+  replies       Message[]        @relation("MessageThread")
+  mentions      MessageMention[]
+  notifications Notification[]
 
   @@index([entityType, entityId])
   @@index([parentId])
@@ -1350,30 +1387,30 @@ model NotificationPreference {
 // User.businessPartnerId. BPs without a User row are non-login partners.
 
 model BusinessPartner {
-  id           Int            @id @default(autoincrement())
-  partnerType  PartnerType    @map("partner_type")
-  displayName  String         @map("display_name") @db.VarChar(255)
+  id           Int           @id @default(autoincrement())
+  partnerType  PartnerType   @map("partner_type")
+  displayName  String        @map("display_name") @db.VarChar(255)
   // Person-only (nullable for orgs)
-  firstName    String?        @map("first_name") @db.VarChar(100)
-  lastName     String?        @map("last_name")  @db.VarChar(100)
+  firstName    String?       @map("first_name") @db.VarChar(100)
+  lastName     String?       @map("last_name") @db.VarChar(100)
   // Org-typically (nullable for persons; persons can also have an
   // employer relationship — see BusinessPartnerRelationship)
-  companyName  String?        @map("company_name") @db.VarChar(255)
-  taxId        String?        @map("tax_id")       @db.VarChar(50)
+  companyName  String?       @map("company_name") @db.VarChar(255)
+  taxId        String?       @map("tax_id") @db.VarChar(50)
   // Common contact info
-  email        String?        @unique @db.VarChar(255)
-  phone        String?        @db.VarChar(50)
-  mobile       String?        @db.VarChar(50)
-  address      String?        @db.VarChar(500)
-  website      String?        @db.VarChar(255)
-  linkedinUrl  String?        @map("linkedin_url")  @db.VarChar(500)
-  facebookUrl  String?        @map("facebook_url")  @db.VarChar(500)
-  twitterUrl   String?        @map("twitter_url")   @db.VarChar(500)
-  instagramUrl String?        @map("instagram_url") @db.VarChar(500)
+  email        String?       @unique @db.VarChar(255)
+  phone        String?       @db.VarChar(50)
+  mobile       String?       @db.VarChar(50)
+  address      String?       @db.VarChar(500)
+  website      String?       @db.VarChar(255)
+  linkedinUrl  String?       @map("linkedin_url") @db.VarChar(500)
+  facebookUrl  String?       @map("facebook_url") @db.VarChar(500)
+  twitterUrl   String?       @map("twitter_url") @db.VarChar(500)
+  instagramUrl String?       @map("instagram_url") @db.VarChar(500)
   // Meta
-  status       String         @default("active") @db.VarChar(20)
-  source       PartnerSource  @default(manual)
-  notes        String?        @db.Text
+  status       String        @default("active") @db.VarChar(20)
+  source       PartnerSource @default(manual)
+  notes        String?       @db.Text
 
   // Main Role — the single primary categorization of the contact
   // (Customer / Supplier / Consultant / Internal / ...). Optional so
@@ -1381,29 +1418,36 @@ model BusinessPartner {
   // null. Additional role contexts live on relationships, not here.
   // ON DELETE SET NULL — deleting a role-type unbinds it from BPs
   // rather than orphaning them.
-  mainRoleTypeId Int?          @map("main_role_type_id")
+  mainRoleTypeId Int?             @map("main_role_type_id")
   mainRoleType   PartnerRoleType? @relation("BusinessPartnerMainRole", fields: [mainRoleTypeId], references: [id], onUpdate: Cascade, onDelete: SetNull)
 
-  createdAt    DateTime       @default(now()) @map("created_at")
-  updatedAt    DateTime       @updatedAt      @map("updated_at")
-  deletedAt    DateTime?      @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
-  user                  User?                          @relation("UserBusinessPartner")
+  user                  User?                         @relation("UserBusinessPartner")
   roles                 BusinessPartnerRole[]
-  outgoingRelationships BusinessPartnerRelationship[]  @relation("RelationshipSource")
+  outgoingRelationships BusinessPartnerRelationship[] @relation("RelationshipSource")
   // M3b — new party↔party + project-role tables. The FK column is named
   // `party_id` so M2's swap from BusinessPartner → Party is a target-only
   // change (no schema rename).
-  partnerRelationshipsA PartnerRelationship[]          @relation("PartyAOnRel")
-  partnerRelationshipsB PartnerRelationship[]          @relation("PartyBOnRel")
-  projectPartnerRoles   ProjectPartnerRole[]           @relation("PartyOnProjectRole")
+  partnerRelationshipsA PartnerRelationship[]         @relation("PartyAOnRel")
+  partnerRelationshipsB PartnerRelationship[]         @relation("PartyBOnRel")
+  projectPartnerRoles   ProjectPartnerRole[]          @relation("PartyOnProjectRole")
   professions           BusinessPartnerProfession[]
+
+  /// If this partner row was created by a bulk import, track which import.
+  /// Used by the data-import rollback flow. NULL for partners created via
+  /// the regular UI or seeds. SET NULL on import-record delete.
+  createdByImportId Int?        @map("created_by_import_id")
+  createdByImport   DataImport? @relation("PartnersCreatedByImport", fields: [createdByImportId], references: [id], onDelete: SetNull)
 
   @@index([partnerType])
   @@index([status])
   @@index([companyName])
   @@index([deletedAt])
   @@index([mainRoleTypeId])
+  @@index([createdByImportId])
   @@map("business_partners")
 }
 
@@ -1420,11 +1464,11 @@ model PartnerRoleCategory {
   code        String   @unique @db.VarChar(20)
   name        String   @db.VarChar(100)
   description String?  @db.VarChar(500)
-  color       String?  @db.VarChar(7)  // hex like '#3B82F6' for chip background
+  color       String?  @db.VarChar(7) // hex like '#3B82F6' for chip background
   sortOrder   Int      @default(0) @map("sort_order")
   isSystem    Boolean  @default(false) @map("is_system")
   createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt      @map("updated_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   roleTypes PartnerRoleType[] @relation("PartnerRoleTypeCategory")
 
@@ -1432,27 +1476,27 @@ model PartnerRoleCategory {
 }
 
 model PartnerRoleType {
-  id          Int       @id @default(autoincrement())
-  code        String    @unique @db.VarChar(50)
-  name        String    @db.VarChar(100)
-  description String?   @db.VarChar(500)
+  id            Int                  @id @default(autoincrement())
+  code          String               @unique @db.VarChar(50)
+  name          String               @db.VarChar(100)
+  description   String?              @db.VarChar(500)
   // Coarse grouping. References PartnerRoleCategory.code. The column
   // keeps the string code (not an FK to .id) so legacy JSON references in
   // SideTarget.categoryCodes / relationship-type side-pickers stay valid.
   // ON DELETE SET NULL — deleting a category unbinds it from role types
   // rather than cascading; the admin UI also blocks delete while in use.
-  category    String?   @db.VarChar(20)
-  categoryRef PartnerRoleCategory? @relation("PartnerRoleTypeCategory", fields: [category], references: [code], onUpdate: Cascade, onDelete: SetNull)
+  category      String?              @db.VarChar(20)
+  categoryRef   PartnerRoleCategory? @relation("PartnerRoleTypeCategory", fields: [category], references: [code], onUpdate: Cascade, onDelete: SetNull)
   // Which kind of party can hold this role. 'person', 'organization', or
   // 'any' (default — the role can attach to either). Used by the
   // SidePickerCard to filter the role chip list so admins don't see
   // combinations that can never match real data (e.g. 'employee' on an
   // organization, 'supplier' on a person).
-  appliesToKind String  @default("any") @map("applies_to_kind") @db.VarChar(20)
-  sortOrder   Int       @default(0) @map("sort_order")
-  isSystem    Boolean   @default(false) @map("is_system")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt      @map("updated_at")
+  appliesToKind String               @default("any") @map("applies_to_kind") @db.VarChar(20)
+  sortOrder     Int                  @default(0) @map("sort_order")
+  isSystem      Boolean              @default(false) @map("is_system")
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
 
   roles          BusinessPartnerRole[]
   mainOfPartners BusinessPartner[]     @relation("BusinessPartnerMainRole")
@@ -1498,13 +1542,13 @@ model PartnerRelationshipType {
   //   isSymmetric:  e.g. partner_of, joint_venture_with — same label both ways
   //   allowsMultiple: false ⇒ a single party can have at most one active
   //                  rel of this type (e.g. one primary employer at a time)
-  sideALabel     String?  @map("side_a_label")    @db.VarChar(100)
-  sideBLabel     String?  @map("side_b_label")    @db.VarChar(100)
-  sideAKind      String?  @map("side_a_kind")     @db.VarChar(20)
-  sideBKind      String?  @map("side_b_kind")     @db.VarChar(20)
-  inverseLabel   String?  @map("inverse_label")   @db.VarChar(100)
-  isSymmetric    Boolean  @default(false)         @map("is_symmetric")
-  allowsMultiple Boolean  @default(true)          @map("allows_multiple")
+  sideALabel     String? @map("side_a_label") @db.VarChar(100)
+  sideBLabel     String? @map("side_b_label") @db.VarChar(100)
+  sideAKind      String? @map("side_a_kind") @db.VarChar(20)
+  sideBKind      String? @map("side_b_kind") @db.VarChar(20)
+  inverseLabel   String? @map("inverse_label") @db.VarChar(100)
+  isSymmetric    Boolean @default(false) @map("is_symmetric")
+  allowsMultiple Boolean @default(true) @map("allows_multiple")
 
   // M3.5 — structured side targets. Each side is a JSON array of allowed
   // (kind, optional role/category constraint) tuples; the relationship
@@ -1526,21 +1570,21 @@ model PartnerRelationshipType {
   // The single-shot sideAKind/sideBKind + required*RoleCode columns above
   // are still backfilled and read by older clients; the API prefers the
   // JSON when present. Old columns will be dropped in M7.
-  sideATargets   Json?    @map("side_a_targets")
-  sideBTargets   Json?    @map("side_b_targets")
+  sideATargets Json? @map("side_a_targets")
+  sideBTargets Json? @map("side_b_targets")
 
   // ─── Legacy fields — kept until M3b migrates rows into the new tables.
   // The relationship service still consults these for validation; the
   // admin UI shows them in an "advanced" section.
-  applicableTargetTypes  String? @map("applicable_target_types")  @db.VarChar(255)
-  applicableSourceType   String? @map("applicable_source_type")   @db.VarChar(50)
+  applicableTargetTypes  String? @map("applicable_target_types") @db.VarChar(255)
+  applicableSourceType   String? @map("applicable_source_type") @db.VarChar(50)
   requiredSourceRoleCode String? @map("required_source_role_code") @db.VarChar(50)
   requiredTargetRoleCode String? @map("required_target_role_code") @db.VarChar(50)
 
   sortOrder Int      @default(0) @map("sort_order")
   isSystem  Boolean  @default(false) @map("is_system")
   createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt      @map("updated_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   relationships        BusinessPartnerRelationship[]
   partnerRelationships PartnerRelationship[]
@@ -1557,8 +1601,8 @@ model BusinessPartnerRole {
   validTo           DateTime? @map("valid_to")
   createdAt         DateTime  @default(now()) @map("created_at")
 
-  partner   BusinessPartner @relation(fields: [businessPartnerId], references: [id], onDelete: Cascade)
-  roleType  PartnerRoleType @relation(fields: [roleTypeId], references: [id])
+  partner  BusinessPartner @relation(fields: [businessPartnerId], references: [id], onDelete: Cascade)
+  roleType PartnerRoleType @relation(fields: [roleTypeId], references: [id])
 
   @@unique([businessPartnerId, roleTypeId])
   @@index([businessPartnerId])
@@ -1567,25 +1611,25 @@ model BusinessPartnerRole {
 }
 
 model BusinessPartnerRelationship {
-  id                 Int                       @id @default(autoincrement())
-  sourcePartnerId    Int                       @map("source_partner_id")
-  targetType         RelationshipTarget        @map("target_type")
-  targetId           Int                       @map("target_id")              // polymorphic — not a hard FK
-  relationshipTypeId Int                       @map("relationship_type_id")
-  roleInContext      String?                   @map("role_in_context") @db.VarChar(255)
-  isPrimary          Boolean                   @default(false) @map("is_primary")
+  id                 Int                @id @default(autoincrement())
+  sourcePartnerId    Int                @map("source_partner_id")
+  targetType         RelationshipTarget @map("target_type")
+  targetId           Int                @map("target_id") // polymorphic — not a hard FK
+  relationshipTypeId Int                @map("relationship_type_id")
+  roleInContext      String?            @map("role_in_context") @db.VarChar(255)
+  isPrimary          Boolean            @default(false) @map("is_primary")
   // BUT050-style time-bounded validity. valid_from defaults to now(),
   // valid_to defaults to far-future (open-ended). On "disconnect", the
   // service sets valid_to = now() instead of deleting — preserves history.
-  validFrom          DateTime                  @default(now())              @map("valid_from")
-  validTo            DateTime                  @default(dbgenerated("'9999-12-31 00:00:00'"))  @map("valid_to")
-  status             String                    @default("active") @db.VarChar(20)
-  notes              String?                   @db.Text
-  createdAt          DateTime                  @default(now()) @map("created_at")
-  updatedAt          DateTime                  @updatedAt      @map("updated_at")
+  validFrom          DateTime           @default(now()) @map("valid_from")
+  validTo            DateTime           @default(dbgenerated("'9999-12-31 00:00:00'")) @map("valid_to")
+  status             String             @default("active") @db.VarChar(20)
+  notes              String?            @db.Text
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
 
-  source           BusinessPartner          @relation("RelationshipSource", fields: [sourcePartnerId], references: [id], onDelete: Cascade)
-  relationshipType PartnerRelationshipType  @relation(fields: [relationshipTypeId], references: [id])
+  source           BusinessPartner         @relation("RelationshipSource", fields: [sourcePartnerId], references: [id], onDelete: Cascade)
+  relationshipType PartnerRelationshipType @relation(fields: [relationshipTypeId], references: [id])
 
   @@unique([sourcePartnerId, targetType, targetId, relationshipTypeId])
   @@index([sourcePartnerId])
@@ -1615,22 +1659,22 @@ model BusinessPartnerRelationship {
 ///   external — same as manual but with an optional validation regex
 ///              (`externalPattern`). For codes coming from another system.
 model NumberRange {
-  id            Int      @id @default(autoincrement())
-  code          String   @unique @db.VarChar(50)
-  name          String?  @db.VarChar(100)
-  mode          String   @default("auto") @db.VarChar(20)
-  prefix        String   @default("") @db.VarChar(20)
-  padWidth      Int      @default(8) @map("pad_width")
-  fromNumber    BigInt   @default(1) @map("from_number")
-  toNumber      BigInt   @default(99999999) @map("to_number")
-  currentNumber BigInt   @default(0) @map("current_number")
-  externalPattern String? @map("external_pattern") @db.VarChar(255)
-  isActive      Boolean  @default(true) @map("is_active")
-  description   String?  @db.VarChar(255)
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt      @map("updated_at")
+  id              Int      @id @default(autoincrement())
+  code            String   @unique @db.VarChar(50)
+  name            String?  @db.VarChar(100)
+  mode            String   @default("auto") @db.VarChar(20)
+  prefix          String   @default("") @db.VarChar(20)
+  padWidth        Int      @default(8) @map("pad_width")
+  fromNumber      BigInt   @default(1) @map("from_number")
+  toNumber        BigInt   @default(99999999) @map("to_number")
+  currentNumber   BigInt   @default(0) @map("current_number")
+  externalPattern String?  @map("external_pattern") @db.VarChar(255)
+  isActive        Boolean  @default(true) @map("is_active")
+  description     String?  @db.VarChar(255)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
-  entityKinds   EntityKind[] @relation("EntityKindRange")
+  entityKinds EntityKind[] @relation("EntityKindRange")
 
   @@map("number_ranges")
 }
@@ -1649,9 +1693,9 @@ model EntityKind {
   sortOrder       Int      @default(0) @map("sort_order")
   isSystem        Boolean  @default(false) @map("is_system")
   createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt      @map("updated_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
-  numberRange     NumberRange? @relation("EntityKindRange", fields: [numberRangeCode], references: [code], onUpdate: Cascade, onDelete: SetNull)
+  numberRange NumberRange? @relation("EntityKindRange", fields: [numberRangeCode], references: [code], onUpdate: Cascade, onDelete: SetNull)
 
   @@map("entity_kinds")
 }
@@ -1668,7 +1712,7 @@ model Currency {
   isActive  Boolean  @default(true) @map("is_active")
   sortOrder Int      @default(0) @map("sort_order")
   createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt      @map("updated_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("currencies")
 }
@@ -1677,9 +1721,9 @@ model Currency {
 // Empty by default — each org defines their own. Used by EmployeeRole and
 // the RoleCostRate matrix (added in M5).
 model SeniorityLevel {
-  id        Int      @id @default(autoincrement())
-  code      String   @unique @db.VarChar(50)
-  name      String   @db.VarChar(100)
+  id                Int      @id @default(autoincrement())
+  code              String   @unique @db.VarChar(50)
+  name              String   @db.VarChar(100)
   /// Default hourly cost for an employee at this seniority level. Used by
   /// project labor-cost calculations: cost = logged_minutes / 60 *
   /// employee.seniorityLevel.defaultHourlyCost. Nullable — admin fills
@@ -1688,13 +1732,13 @@ model SeniorityLevel {
   defaultHourlyCost Decimal? @map("default_hourly_cost") @db.Decimal(10, 2)
   /// ISO-4217 currency code (FK currencies.code). When NULL, costs are
   /// treated as unitless on this seniority level.
-  currency  String?  @db.VarChar(3)
-  sortOrder Int      @default(0) @map("sort_order")
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt      @map("updated_at")
+  currency          String?  @db.VarChar(3)
+  sortOrder         Int      @default(0) @map("sort_order")
+  isActive          Boolean  @default(true) @map("is_active")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
 
-  employees User[]   @relation("UserSeniorityLevel")
+  employees             User[]          @relation("UserSeniorityLevel")
   // Reverse side of UserSeniority — every historical assignment that
   // pointed at this level. Cascade SET NULL on delete so we never
   // orphan a row (but a level in use can't be hard-deleted from the UI
@@ -1723,17 +1767,17 @@ model SeniorityLevel {
 /// the "convenience" field for read paths that don't care about
 /// historical date-aware lookups; the source of truth lives here.
 model UserSeniority {
-  id                Int       @id @default(autoincrement())
-  userId            Int       @map("user_id")
-  seniorityLevelId  Int       @map("seniority_level_id")
+  id               Int       @id @default(autoincrement())
+  userId           Int       @map("user_id")
+  seniorityLevelId Int       @map("seniority_level_id")
   /// Inclusive — the day the assignment begins.
-  startDate         DateTime  @map("start_date") @db.Date
+  startDate        DateTime  @map("start_date") @db.Date
   /// Inclusive — the day the assignment ends. NULL = currently active
   /// (no planned end). At most one row per user can have endDate=NULL.
-  endDate           DateTime? @map("end_date") @db.Date
-  notes             String?   @db.Text
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
+  endDate          DateTime? @map("end_date") @db.Date
+  notes            String?   @db.Text
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   user           User           @relation("UserSeniorityHistory", fields: [userId], references: [id], onDelete: Cascade)
   seniorityLevel SeniorityLevel @relation("SeniorityLevelHistory", fields: [seniorityLevelId], references: [id])
@@ -1770,7 +1814,7 @@ model PartnerRelationship {
   status    String   @default("active") @db.VarChar(20)
   notes     String?  @db.Text
   createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt      @map("updated_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   partyA BusinessPartner         @relation("PartyAOnRel", fields: [partyAId], references: [id], onDelete: Cascade)
   partyB BusinessPartner         @relation("PartyBOnRel", fields: [partyBId], references: [id], onDelete: Cascade)
@@ -1809,7 +1853,7 @@ model ProjectRoleType {
   sortOrder               Int      @default(0) @map("sort_order")
   isSystem                Boolean  @default(false) @map("is_system")
   createdAt               DateTime @default(now()) @map("created_at")
-  updatedAt               DateTime @updatedAt      @map("updated_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
 
   roles ProjectPartnerRole[]
 
@@ -1832,7 +1876,7 @@ model ProjectPartnerRole {
   status         String   @default("active") @db.VarChar(20)
   notes          String?  @db.Text
   createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt      @map("updated_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   project Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   party   BusinessPartner @relation("PartyOnProjectRole", fields: [partyId], references: [id], onDelete: Cascade)
@@ -1843,4 +1887,175 @@ model ProjectPartnerRole {
   @@index([partyId])
   @@index([roleId])
   @@map("project_partner_roles")
+}
+
+// ─── F5 — Project Stage Milestones (Notion-style status board) ───────────
+//
+// Two tables:
+//   • ProjectStageMilestone — admin-defined catalog of milestone columns
+//     ("URS Submission", "Architectural Approval", "Stage 1", …). Order
+//     drives the board column order; isActive=false hides without losing
+//     history.
+//   • ProjectMilestoneStatus — one row per (project, milestone). Boolean
+//     completion + completedAt + free-text notes. Unique on the pair.
+//
+// Surfaced as a project-list-style board where each row = one project
+// and each column = a milestone checkbox. Toggle writes through to
+// ProjectMilestoneStatus immediately (no draft state).
+
+model ProjectStageMilestone {
+  id         Int      @id @default(autoincrement())
+  code       String   @unique @db.VarChar(50)
+  name       String   @db.VarChar(150)
+  /// Optional explanation surfaced in tooltip / drawer; e.g. "Customer
+  /// signed off the URS and the doc is in the archive."
+  description String? @db.Text
+  /// Column order on the board. Lower = leftmost.
+  sortOrder  Int      @default(0) @map("sort_order")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  statuses ProjectMilestoneStatus[]
+
+  @@map("project_stage_milestones")
+}
+
+model ProjectMilestoneStatus {
+  id          Int       @id @default(autoincrement())
+  projectId   Int       @map("project_id")
+  milestoneId Int       @map("milestone_id")
+  isCompleted Boolean   @default(false) @map("is_completed")
+  completedAt DateTime? @map("completed_at")
+  completedBy Int?      @map("completed_by")
+  notes       String?   @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  project   Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  milestone ProjectStageMilestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, milestoneId])
+  @@index([projectId])
+  @@index([milestoneId])
+  @@map("project_milestone_statuses")
+}
+
+// ─── M? — Bulk Data Import ───────────────────────────────────────────────
+//
+// Audit + rollback tracking for the bulk Excel import feature. One
+// DataImport per upload; one DataImportRow per source-file row. Every
+// entity created by an import is tagged with the DataImport.id via a
+// `createdByImportId` column on the entity table — so rollback is just
+// "delete all rows where createdByImportId = X" (for insert-only mode)
+// or "restore beforeJson on rows updated by X" (for upsert, M2+).
+//
+// Permission gating uses 3 per-entity modules:
+//   • data-import/users
+//   • data-import/partners
+//   • data-import/contacts
+// All three are in NO_ADMIN_BYPASS — even admins must hold the explicit
+// grant. Bulk imports can corrupt thousands of rows in seconds, so the
+// permission must be deliberately granted, not inherited from Admin.
+
+enum DataImportTarget {
+  users
+  partners
+  contacts
+}
+
+enum DataImportStatus {
+  parsed // file uploaded + parsed, awaiting commit
+  committed // commit ran successfully
+  partial // commit ran with some errors
+  failed // commit aborted with no rows written
+  rolled_back // rollback ran successfully
+}
+
+enum DataImportMode {
+  insert // skip existing (default)
+  upsert // update existing + create new (M2+)
+  update // only touch existing
+}
+
+model DataImport {
+  id           Int              @id @default(autoincrement())
+  userId       Int              @map("user_id")
+  target       DataImportTarget
+  /// Original filename as uploaded by the user. Only for display in the
+  /// history page — we never read the source file back; everything we
+  /// need is captured in DataImportRow.
+  filename     String           @db.VarChar(255)
+  /// SHA-256 of the file bytes. Used to detect duplicate uploads (same
+  /// user, same file, within a short window) so a double-click doesn't
+  /// create two parallel import runs.
+  fileHash     String           @map("file_hash") @db.VarChar(64)
+  mode         DataImportMode
+  rowCount     Int              @map("row_count")
+  createdCount Int              @default(0) @map("created_count")
+  updatedCount Int              @default(0) @map("updated_count")
+  skippedCount Int              @default(0) @map("skipped_count")
+  errorCount   Int              @default(0) @map("error_count")
+  status       DataImportStatus
+  /// When set, rollback is no longer available — past this point the row
+  /// is read-only history. Default 30 days from finishedAt.
+  expiresAt    DateTime?        @map("expires_at")
+  startedAt    DateTime         @default(now()) @map("started_at")
+  finishedAt   DateTime?        @map("finished_at")
+  rolledBackAt DateTime?        @map("rolled_back_at")
+  /// Free-text describing the column mapping used + any user-supplied
+  /// notes (e.g. "imported from HR spreadsheet 2026-Q2"). Plain text.
+  notes        String?          @db.Text
+
+  user User            @relation("DataImportRunner", fields: [userId], references: [id], onDelete: Restrict)
+  rows DataImportRow[]
+
+  // Reverse side of entity tagging — every user/partner row whose
+  // createdByImportId matches this import. Wired via the SET NULL FKs on
+  // the entity tables so deleting an import doesn't delete the entities
+  // it once created (only un-tags them).
+  usersCreated    User[]            @relation("UsersCreatedByImport")
+  partnersCreated BusinessPartner[] @relation("PartnersCreatedByImport")
+
+  @@index([userId])
+  @@index([target])
+  @@index([status])
+  @@index([startedAt])
+  @@map("data_imports")
+}
+
+enum DataImportRowOutcome {
+  created
+  updated
+  skipped
+  failed
+}
+
+model DataImportRow {
+  id           Int                  @id @default(autoincrement())
+  importId     Int                  @map("import_id")
+  /// 1-based index in the source file (after header row). Used to point
+  /// the user at the exact spreadsheet row when reporting errors.
+  rowIndex     Int                  @map("row_index")
+  outcome      DataImportRowOutcome
+  /// The PK of the created/updated entity in its respective table.
+  /// NULL when outcome is skipped/failed. We don't constrain this with
+  /// an FK because the entity table varies by import.target (users,
+  /// partners, contacts) — the import.target field tells you which.
+  entityId     Int?                 @map("entity_id")
+  errorMessage String?              @map("error_message") @db.Text
+  /// JSON snapshot of the entity BEFORE this import touched it. Only
+  /// populated for `updated` outcomes. Used by rollback to restore the
+  /// prior state. NULL for created/skipped/failed.
+  beforeJson   Json?                @map("before_json")
+  /// JSON of what we tried to write (parsed and normalized). Always
+  /// present so the per-row report shows exactly what was processed.
+  afterJson    Json?                @map("after_json")
+  createdAt    DateTime             @default(now()) @map("created_at")
+
+  import DataImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@index([importId])
+  @@index([outcome])
+  @@map("data_import_rows")
 }
