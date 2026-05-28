@@ -22,15 +22,18 @@ export function App() {
         <AuthBootstrap>
           <AppRouter />
         </AuthBootstrap>
+        {/*
+         * All notifications render through notify.tsx as toast.custom
+         * cards, so we drop `richColors` (it adds Sonner's default
+         * coloring that fights our own) and `closeButton` (our card
+         * has its own dismiss X). `visibleToasts={5}` caps the
+         * stack — newer ones push out the oldest so the screen
+         * doesn't fill up during long error sequences.
+         */}
         <Toaster
           position="top-right"
-          richColors
-          closeButton
-          toastOptions={{
-            className: 'text-sm font-medium',
-            style: { whiteSpace: 'pre-line' },
-            duration: 4000,
-          }}
+          visibleToasts={5}
+          toastOptions={{ unstyled: true, className: '' }}
         />
       </BrowserRouter>
       <ReactQueryDevtools initialIsOpen={false} />

@@ -59,13 +59,32 @@ client.interceptors.response.use(
         const { data } = await axios.post(`${API_BASE}/api/v1/auth/refresh`, null, {
           withCredentials: true,
         });
-        const newToken = data.data.accessToken;
+        // Defensive: handle BOTH wrapped { success, data: { accessToken } }
+        // and unwrapped { accessToken } response shapes. The wrapping
+        // interceptor handles this server-side, but if it ever yields a
+        // different shape (e.g. on a misconfigured route or future
+        // refactor), the old `data.data.accessToken` line silently set
+        // the token to undefined and the user got "logged out" without
+        // ever seeing /login — the most likely cause of the
+        // long-session kick-out reports.
+        const newToken: string | undefined =
+          data?.data?.accessToken ?? data?.accessToken;
+        if (!newToken) {
+          throw new Error(
+            `Refresh response missing accessToken (payload: ${JSON.stringify(data).slice(0, 200)})`,
+          );
+        }
         useAuthStore.getState().setToken(newToken);
         processQueue(null, newToken);
         originalRequest.headers.Authorization = `Bearer ${newToken}`;
         return client(originalRequest);
-      } catch (refreshError) {
+      } catch (refreshError: any) {
         processQueue(refreshError, null);
+        // Log to the console so the failure is visible (helps diagnose
+        // the kick-out reports). The redirect still happens — but at
+        // least we leave a trace.
+        // eslint-disable-next-line no-console
+        console.warn('[auth] refresh failed → redirecting to /login', refreshError?.message ?? refreshError);
         useAuthStore.getState().clearAuth();
         window.location.href = '/login';
         return Promise.reject(refreshError);

@@ -53,6 +53,12 @@ export function CreateContactModal({
     // set"; saved as null on the server. Drawer surfaces a soft prompt
     // later if left blank here.
     mainRoleTypeId: '' as string,
+    // Job Title (Profession) — the standardized title from the
+    // /admin/config/professions catalog. Previously this was only
+    // settable AFTER creation via the partner drawer's Details tab,
+    // forcing a two-step flow. Set the primary profession now; users
+    // can add more via the drawer later.
+    primaryProfessionId: '' as string,
   });
 
   useEffect(() => {
@@ -74,6 +80,21 @@ export function CreateContactModal({
     queryKey: ['partner-relationship-types'],
     staleTime: 10 * 60 * 1000,
     queryFn: () => client.get('/admin/partner-types/relationship-types').then((r) => r.data?.data ?? r.data ?? []),
+  });
+
+  // Profession catalog for the Job Title dropdown. Catalog is admin-
+  // managed via /admin/config/professions; this dropdown shows the
+  // primary choice. The list intentionally falls open with [] when the
+  // catalog endpoint isn't reachable so the rest of the form still
+  // works.
+  const { data: professions = [] } = useQuery<Array<{ id: number; name: string }>>({
+    queryKey: ['professions'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/config/professions').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
   });
 
   // Role-types catalog for the Main Role dropdown. Filter to roles
@@ -114,7 +135,19 @@ export function CreateContactModal({
         mainRoleTypeId: form.mainRoleTypeId ? Number(form.mainRoleTypeId) : undefined,
       }).then((r) => r.data?.data ?? r.data);
 
-      // 2) Wire the worker_of relationship to the chosen organization,
+      // 2a) Set the primary Job Title (profession) if the user picked
+      //     one. Single PUT replaces the full list; we're creating the
+      //     contact, so the "full list" is just this one item.
+      if (form.primaryProfessionId) {
+        await client
+          .put(`/business-partners/${created.id}/professions`, {
+            professionIds: [Number(form.primaryProfessionId)],
+            primaryProfessionId: Number(form.primaryProfessionId),
+          })
+          .catch(() => undefined);
+      }
+
+      // 2b) Wire the worker_of relationship to the chosen organization,
       //    so the contact is correctly classified throughout the system.
       if (form.employerOrgId) {
         const workerOf = relTypes.find((rt) => rt.code === 'worker_of');
@@ -184,6 +217,37 @@ export function CreateContactModal({
               <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Last Name *</label>
               <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className={inputClass} />
             </div>
+          </div>
+
+          {/* Job Title (Profession) — standardized title from the
+              admin-managed catalog. Different from Main Role: Main Role
+              is the side-of-business categorization (Customer / Supplier
+              / Consultant), Job Title is the actual profession the
+              person practices (Architect, Civil Engineer, BIM Manager).
+              Both are optional; Job Title can be set later via the
+              partner drawer, but having it at creation saves a step. */}
+          <div>
+            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+              Job Title <span className="text-slate-400 font-normal">(optional)</span>
+            </label>
+            <select
+              value={form.primaryProfessionId}
+              onChange={(e) => setForm((f) => ({ ...f, primaryProfessionId: e.target.value }))}
+              className={inputClass}
+              disabled={professions.length === 0}
+            >
+              <option value="">
+                {professions.length === 0
+                  ? 'No job titles configured — add some under /admin first'
+                  : '— None / set later —'}
+              </option>
+              {professions.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-slate-400">
+              The person's actual profession (e.g. Architect, MEP Engineer). Used by project role pickers to suggest qualified candidates. Add more titles from the partner profile after creation.
+            </p>
           </div>
 
           {/* Main Role — the contact's primary categorization. Optional;

@@ -175,9 +175,13 @@ const emptyPerson = {
   position: '',
   department: '',
   companyName: '',
-  // M4a.4 — employment fields.
+  // M4a.4 — employment fields. End date defaults to the
+  // OPEN_ENDED_SENTINEL (9999-12-31) — same convention used for
+  // seniority history rows — so a "currently employed" employee
+  // appears with an explicit far-future end date instead of an empty
+  // field that reads as "no end planned".
   employmentDate: '',
-  employmentEndDate: '',
+  employmentEndDate: '9999-12-31',
   dailyStandardHours: '',
   // M5a — seniority drives default hourly cost (via SeniorityLevel catalog).
   seniorityLevelId: '' as number | '',
@@ -1007,7 +1011,10 @@ function EditPersonModal({
     // (the model is a single User record; the userType flag just
     // categorises them on this list).
     employmentDate: toDateInput((user as any).employmentDate),
-    employmentEndDate: toDateInput((user as any).employmentEndDate),
+    // On edit, fall back to the open-ended sentinel when the stored
+    // end date is null so the field reads "currently employed" and
+    // matches the create-form default.
+    employmentEndDate: toDateInput((user as any).employmentEndDate) || '9999-12-31',
     dailyStandardHours:
       (user as any).dailyStandardHours != null ? String((user as any).dailyStandardHours) : '',
     seniorityLevelId: ((user as any).seniorityLevelId ?? '') as number | '',

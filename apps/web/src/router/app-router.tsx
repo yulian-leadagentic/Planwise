@@ -55,6 +55,10 @@ const ProjectRoleTypesPage = lazy(() => import('@/features/admin/project-role-ty
 const ActivityLogPage = lazy(() => import('@/features/admin/activity-log-page').then(m => ({ default: m.ActivityLogPage })));
 const WorkSchedulesPage = lazy(() => import('@/features/admin/work-schedules-page').then(m => ({ default: m.WorkSchedulesPage })));
 const CalendarDaysPage = lazy(() => import('@/features/admin/calendar-page').then(m => ({ default: m.CalendarDaysPage })));
+const DataImportPage = lazy(() => import('@/features/data-import/data-import-page').then(m => ({ default: m.DataImportPage })));
+const ImportHistoryPage = lazy(() => import('@/features/data-import/import-history-page').then(m => ({ default: m.ImportHistoryPage })));
+const ProjectStatusBoardPage = lazy(() => import('@/features/project-status-board/project-status-board-page').then(m => ({ default: m.ProjectStatusBoardPage })));
+const StageMilestonesPage = lazy(() => import('@/features/admin/stage-milestones-page').then(m => ({ default: m.StageMilestonesPage })));
 
 // DnD-heavy (kept lazy to avoid @dnd-kit React version conflicts)
 const MyTasksKanbanPage = lazy(() => import('@/features/tasks/my-tasks-kanban').then(m => ({ default: m.MyTasksKanbanPage })));
@@ -90,6 +94,7 @@ export function AppRouter() {
         <Route path="dashboard/manager" element={<L><ManagerDashboard /></L>} />
         <Route path="dashboard/workload" element={<L><WorkloadDashboardPage /></L>} />
         <Route path="execution-board" element={<L><ExecutionBoardPage /></L>} />
+        <Route path="status-board" element={<L><ProjectStatusBoardPage /></L>} />
 
         {/* Tasks */}
         <Route path="tasks" element={<L><TasksPage /></L>} />
@@ -155,6 +160,9 @@ export function AppRouter() {
         <Route path="admin/currencies" element={<L><CurrenciesPage /></L>} />
         <Route path="admin/seniority-levels" element={<L><SeniorityLevelsPage /></L>} />
         <Route path="admin/project-role-types" element={<L><ProjectRoleTypesPage /></L>} />
+        <Route path="admin/data-import" element={<L><DataImportPage /></L>} />
+        <Route path="admin/data-import/history" element={<L><ImportHistoryPage /></L>} />
+        <Route path="admin/project-stage-milestones" element={<L><StageMilestonesPage /></L>} />
       </Route>
 
       {/* Catch-all */}

@@ -11,6 +11,7 @@ import {
   CheckSquare,
   Activity,
   Grid3X3,
+  ListChecks,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -48,6 +49,11 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/', icon: LayoutDashboard },
   { label: 'Operations', href: '/operations', icon: Activity },
   { label: 'Execution Board', href: '/execution-board', icon: Grid3X3 },
+  // Standalone Status Board entry removed (V8). The "Status Board
+  // (Project × Deliverable)" view now lives as a tab INSIDE the
+  // Execution Board page. The old /status-board route (admin-defined
+  // milestones) is still mounted for back-compat / deep-link access
+  // but no longer surfaced in the sidebar.
   { label: 'Projects', href: '/projects', icon: FolderKanban },
   { label: 'My Tasks', href: '/my-tasks', icon: CheckSquare },
   { label: 'Inbox', href: '/inbox', icon: MessageSquare },

@@ -38,6 +38,8 @@ import { EntityKindsModule } from './modules/entity-kinds/entity-kinds.module';
 import { PartnerRelationshipsModule } from './modules/partner-relationships/partner-relationships.module';
 import { ProjectRoleTypesModule } from './modules/project-role-types/project-role-types.module';
 import { ProjectPartnerRolesModule } from './modules/project-partner-roles/project-partner-roles.module';
+import { DataImportModule } from './modules/data-import/data-import.module';
+import { ProjectStatusBoardModule } from './modules/project-status-board/project-status-board.module';
 
 @Module({
   imports: [
@@ -111,6 +113,8 @@ import { ProjectPartnerRolesModule } from './modules/project-partner-roles/proje
     PartnerRelationshipsModule,
     ProjectRoleTypesModule,
     ProjectPartnerRolesModule,
+    DataImportModule,
+    ProjectStatusBoardModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

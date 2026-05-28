@@ -12,6 +12,8 @@ import {
   GraduationCap,
   Briefcase,
   Link as LinkIcon,
+  Upload,
+  ListChecks,
 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -120,6 +122,22 @@ const adminCards = [
     href: '/admin/seniority-levels',
     module: 'admin',
     color: 'bg-indigo-100 text-indigo-700',
+  },
+  {
+    title: 'Data Import',
+    description: 'Bulk-load employees, customers, and contacts from Excel templates. Reversible within 30 days.',
+    icon: Upload,
+    href: '/admin/data-import',
+    module: 'data-import',
+    color: 'bg-teal-100 text-teal-700',
+  },
+  {
+    title: 'Project Stage Milestones',
+    description: 'Catalog of columns on the Status Board (URS Production, Architectural Review, Stage 1, …). Manage names, order, and visibility.',
+    icon: ListChecks,
+    href: '/admin/project-stage-milestones',
+    module: 'admin',
+    color: 'bg-yellow-100 text-yellow-700',
   },
 ];
 

@@ -11,6 +11,7 @@ const NAV_MODULE_MAP: Record<string, string> = {
   '/': 'dashboard',
   '/operations': 'operations',
   '/execution-board': 'projects',
+  '/status-board': 'projects',
   '/projects': 'projects',
   '/my-tasks': 'tasks',
   '/inbox': 'tasks',

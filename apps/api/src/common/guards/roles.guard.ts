@@ -33,10 +33,20 @@ export class RolesGuard implements CanActivate {
     //
     // Exception: modules in NO_ADMIN_BYPASS are intentionally NOT
     // bypassed — even admins must hold the explicit grant. Used today
-    // for 'finance' so an org can restrict cost/budget visibility
-    // strictly via the role-modules matrix; admins can deny themselves
-    // Finance access just by unchecking the row.
-    const NO_ADMIN_BYPASS = new Set(['finance']);
+    // for:
+    //   • 'finance'           — restrict cost/budget visibility
+    //   • 'data-import/*'     — bulk imports can corrupt thousands of
+    //                           rows; permission must be deliberately
+    //                           granted, not inherited from Admin
+    // Admins can deny themselves access just by unchecking the row in
+    // /admin/roles.
+    const NO_ADMIN_BYPASS = new Set([
+      'finance',
+      'data-import',
+      'data-import/users',
+      'data-import/partners',
+      'data-import/contacts',
+    ]);
     const allBypassable = requiredPermissions.every((p) => !NO_ADMIN_BYPASS.has(p.module));
     if (allBypassable && (user.role?.name === 'Admin' || user.roleName === 'Admin')) {
       return true;
