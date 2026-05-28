@@ -309,8 +309,7 @@ function ContactsListLoader({ partners, onSelect }: { partners: BusinessPartner[
 
   // The seeded "Internal" org represents your own company. People who
   // worker_of the Internal org are *internal employees*, not external
-  // contacts — managing them belongs in /people, not in the Partners
-  // Contacts list.
+  // contacts. (Secondary safety net — see the primary rule below.)
   const internalOrgIds = useMemo(() => {
     const ids = new Set<number>();
     for (const o of orgs) {
@@ -322,14 +321,20 @@ function ContactsListLoader({ partners, onSelect }: { partners: BusinessPartner[
   }, [orgs]);
 
   const externalContacts = useMemo(() => {
-    if (internalOrgIds.size === 0) return partners;
     return partners.filter((bp) => {
-      const workerOf = bp.outgoingRelationships?.find(
-        (r: any) => r.relationshipType?.code === 'worker_of' && r.targetType === 'organization',
-      );
-      // Drop only the contacts whose ONLY/primary employer is Internal.
-      // Contacts with no worker_of yet (or with an external one) stay visible.
-      if (workerOf && internalOrgIds.has(workerOf.targetId)) return false;
+      // PRIMARY RULE: a person who has a login account IS an internal
+      // employee — they belong in /people (HR), not the Contacts list.
+      // This is what previously leaked: employees with no worker_of edge
+      // slipped through. Identity = "has a User row", not "works_of Internal".
+      if (bp.user) return false;
+
+      // SECONDARY: also drop anyone explicitly working for the Internal org.
+      if (internalOrgIds.size > 0) {
+        const workerOf = bp.outgoingRelationships?.find(
+          (r: any) => r.relationshipType?.code === 'worker_of' && r.targetType === 'organization',
+        );
+        if (workerOf && internalOrgIds.has(workerOf.targetId)) return false;
+      }
       return true;
     });
   }, [partners, internalOrgIds]);
