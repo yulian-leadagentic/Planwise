@@ -5,7 +5,8 @@ import { PageHeader } from '@/components/shared/page-header';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { timeApi, type TimeEntryPayload } from '@/api/time.api';
-import { useClockStatus, useClockIn, useClockOut, useWeeklyGrid, useCreateTimeEntry } from '@/hooks/use-time';
+import { useClockStatus, useClockIn, useClockOut, useWeeklyGrid } from '@/hooks/use-time';
+import { useOverlapConfirm } from './overlap-confirm';
 import { format, addDays, startOfWeek } from '@/lib/date-utils';
 import { minutesToDisplay } from '@/types';
 import client from '@/api/client';
@@ -46,7 +47,13 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
   const [taskStatus, setTaskStatus] = useState<string>('in_progress');
   const [showQuickTask, setShowQuickTask] = useState(false);
   const [quickTaskName, setQuickTaskName] = useState('');
-  const createEntry = useCreateTimeEntry();
+  // Bypass the blanket useCreateTimeEntry hook and drive the request
+  // directly so we can intercept the CROSS_TASK_OVERLAP error and show
+  // the Save-anyway confirmation. The hook always toasts on error,
+  // which is why the user saw the warning without an action button —
+  // V11 in the bug list.
+  const overlap = useOverlapConfirm();
+  const [submitting, setSubmitting] = useState(false);
   const queryClient = useQueryClient();
 
   // Fetch user's projects
@@ -115,7 +122,7 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
       } catch { /* ignore status update failure */ }
     }
 
-    createEntry.mutate({
+    const payloadBase: TimeEntryPayload = {
       projectId: projectId ? Number(projectId) : undefined,
       taskId: taskId ? Number(taskId) : undefined,
       date,
@@ -125,12 +132,21 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
       note: note.trim() || undefined,
       isBillable,
       location,
-    }, {
-      onSuccess: () => {
-        onSaved();
-        onClose();
+    };
+
+    setSubmitting(true);
+    await overlap.withConfirm(
+      (confirmOverlap) => timeApi.createEntry({ ...payloadBase, confirmOverlap }),
+      {
+        onSuccess: () => {
+          notify.success('Time entry created', { code: 'TIME-CREATE-200' });
+          queryClient.invalidateQueries({ queryKey: ['time'] });
+          onSaved();
+          onClose();
+        },
       },
-    });
+    );
+    setSubmitting(false);
   };
 
   return (
@@ -286,12 +302,16 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
           <button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2 text-[13px] font-semibold text-slate-700 hover:bg-slate-50">
             Cancel
           </button>
-          <button onClick={handleSubmit} disabled={createEntry.isPending || totalMinutes <= 0}
+          <button onClick={handleSubmit} disabled={submitting || totalMinutes <= 0}
             className="rounded-lg bg-blue-600 px-5 py-2 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
-            {createEntry.isPending ? 'Saving...' : 'Submit'}
+            {submitting ? 'Saving...' : 'Submit'}
           </button>
         </div>
       </div>
+      {/* Save-anyway dialog for cross-task time overlaps. Renders only
+          when overlap.withConfirm caught a CROSS_TASK_OVERLAP from the
+          backend; otherwise it's null. */}
+      {overlap.dialog}
     </div>
   );
 }

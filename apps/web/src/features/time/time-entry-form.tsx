@@ -87,31 +87,65 @@ export function TimeEntryForm({
 
   const compact = variant === 'compact';
   const inputCls = compact
-    ? 'rounded border border-slate-200 px-1.5 py-1 text-[11px] focus:border-blue-400 focus:outline-none'
-    : 'rounded border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none';
+    ? 'rounded-md border border-slate-200 px-2 py-1 text-[11px] focus:border-blue-400 focus:outline-none bg-white'
+    : 'rounded-md border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none bg-white';
 
   const canSubmit = totalMinutes > 0 && !submitting;
 
+  // 15-minute slot catalog 06:00–22:00 — same as Add Timesheet Entry
+  // modal + the my-tasks QuickTimeLog. Inline here to avoid pulling in
+  // a new shared module just for one helper used in 3 places.
+  const TIME_SLOTS: string[] = [];
+  for (let h = 6; h <= 22; h++) {
+    for (const m of [0, 15, 30, 45]) {
+      TIME_SLOTS.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+    }
+  }
+  const renderTimeSelect = (val: string, onChange: (v: string) => void, label: string) => (
+    <select
+      value={val}
+      onChange={(e) => onChange(e.target.value)}
+      aria-label={label}
+      className={cn(inputCls, 'w-full appearance-auto')}
+    >
+      {!TIME_SLOTS.includes(val) && val && <option value={val}>{val}</option>}
+      {TIME_SLOTS.map((t) => (
+        <option key={t} value={t}>{t}</option>
+      ))}
+    </select>
+  );
+
+  // W1 — unify the drawer time form with Add Timesheet Entry. Three
+  // labeled columns (Start Time / End Time / Total Hours) + dropdowns
+  // + grey total readout. Same visual treatment everywhere.
   return (
     <div
-      className={cn(compact ? 'space-y-1.5' : 'space-y-2', 'rounded-md border border-blue-200 bg-blue-50/50 p-2')}
+      className={cn(compact ? 'space-y-1.5' : 'space-y-3', 'rounded-md border border-slate-200 bg-blue-50/30 p-3')}
       onClick={(e) => e.stopPropagation()}
     >
       {overlap.dialog}
-      <div className={cn('flex items-center gap-1', compact ? 'text-[10px]' : 'text-xs')}>
-        <label className="w-10 font-semibold text-slate-500 uppercase">Date</label>
+
+      <div>
+        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">Date</label>
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date"
-          className={cn(inputCls, 'flex-1')} />
+          className={cn(inputCls, 'w-full')} />
       </div>
 
-      <div className={cn('flex items-center gap-1', compact ? 'text-[10px]' : 'text-xs')}>
-        <label className="w-10 font-semibold text-slate-500 uppercase">Time</label>
-        <input type="time" step="300" value={start} onChange={(e) => setStart(e.target.value)} aria-label="Start time"
-          className={cn(inputCls, compact ? 'w-[78px]' : 'w-[92px]')} />
-        <span className="text-slate-400">→</span>
-        <input type="time" step="300" value={end} onChange={(e) => setEnd(e.target.value)} aria-label="End time"
-          className={cn(inputCls, compact ? 'w-[78px]' : 'w-[92px]')} />
-        <span className={cn('ml-auto font-bold text-blue-600 tabular-nums', compact ? 'text-[11px]' : 'text-sm')}>{totalHours}h</span>
+      <div className="grid grid-cols-3 gap-2">
+        <div>
+          <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">Start Time</label>
+          {renderTimeSelect(start, setStart, 'Start time')}
+        </div>
+        <div>
+          <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">End Time</label>
+          {renderTimeSelect(end, setEnd, 'End time')}
+        </div>
+        <div>
+          <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">Total Hours</label>
+          <div className={cn(inputCls, 'w-full text-center tabular-nums bg-slate-50 text-blue-600 font-semibold')}>
+            {totalHours}h
+          </div>
+        </div>
       </div>
 
       <input
@@ -123,16 +157,16 @@ export function TimeEntryForm({
         className={cn(inputCls, 'w-full')}
       />
 
-      <div className="flex gap-1.5">
+      <div className="flex justify-end">
         <button
           onClick={() => { if (canSubmit) handleLog(); }}
           disabled={!canSubmit}
           className={cn(
-            'rounded bg-blue-600 font-semibold text-white hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1',
-            compact ? 'px-2 py-0.5 text-[10px]' : 'px-3 py-1 text-xs',
+            'rounded-md bg-blue-600 font-semibold text-white hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1.5',
+            compact ? 'px-3 py-1 text-[11px]' : 'px-4 py-2 text-sm',
           )}
         >
-          {submitting ? <Clock className="h-3 w-3 animate-spin" /> : <Clock className="h-3 w-3" />}
+          {submitting ? <Clock className="h-3.5 w-3.5 animate-spin" /> : <Clock className="h-3.5 w-3.5" />}
           {submitting ? 'Saving…' : 'Log'}
         </button>
       </div>
