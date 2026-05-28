@@ -950,7 +950,10 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
         />
       ) : (
         <div className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
+            {/* w-max + min-w-full: grow to content (so column min-widths are
+                respected and the container scrolls horizontally) but still
+                fill the width when there are only a few columns. */}
+            <table className="w-max min-w-full border-collapse text-sm">
               <thead>
                 <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
                   <th className="sticky top-0 left-0 z-30 bg-slate-50 px-4 py-2.5 text-left font-semibold min-w-[300px] border-r border-b border-slate-200">
@@ -1240,7 +1243,7 @@ function ExecutionStatusBoard({
 
   return (
     <div className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
-      <table className="w-full text-[12px]">
+      <table className="w-max min-w-full text-[12px]">
         <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 tracking-wider">
           <tr>
             <th className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 text-left font-semibold min-w-[240px] border-r border-slate-200">

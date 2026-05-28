@@ -625,21 +625,49 @@ interface TaskFilterCtx {
 
 const TaskFilterContext = createContext<TaskFilterCtx | null>(null);
 
+/** Lookups for the project's first-class Deliverable entities. Threaded
+ *  through a context so deeply-nested task rows can resolve / re-assign the
+ *  project-owned deliverable without prop-drilling. */
+interface ProjectDeliverableLookups {
+  /** All of the project's deliverables, display-ordered. */
+  list: any[];
+  /** ProjectDeliverable id → entity. */
+  byId: Map<number, any>;
+  /** sourceTemplateId → entity (1:1 within a project for backfilled rows). */
+  byTemplateId: Map<number, any>;
+}
+const ProjectDeliverablesContext = createContext<ProjectDeliverableLookups>({
+  list: [],
+  byId: new Map(),
+  byTemplateId: new Map(),
+});
+
 /**
  * Canonical Deliverable label for a task — the SINGLE resolution used by
  * the group headers, the column-filter option list, and the filter
  * matcher so they never disagree. Priority:
- *   1. deliverableTemplate.name  (source Template — most tasks)
- *   2. serviceType.name          (legacy ServiceType FK)
- *   3. [SERVICE:xxx] marker       (legacy zone-template description) —
+ *   1. projectDeliverable entity (project-owned name — the authoritative
+ *      label the PM/customer see). Resolved via the task's
+ *      projectDeliverableId, or via its deliverableTemplateId.
+ *   2. deliverableTemplate.name  (legacy source Template)
+ *   3. serviceType.name          (legacy ServiceType FK)
+ *   4. [SERVICE:xxx] marker       (legacy zone-template description) —
  *      this is the path the old filter shortcut missed, which is why
  *      marker-only deliverables like "מיפוי סופי" were absent from the
  *      Deliverable dropdown.
- *   4. 'No Deliverable'
- * (Per-project name overrides are applied at the group label level, not
- *  here — the filter compares against the underlying canonical name.)
+ *   5. 'No Deliverable'
  */
-function resolveTaskDeliverable(t: any): string {
+function resolveTaskDeliverable(t: any, lookups?: ProjectDeliverableLookups): string {
+  if (lookups) {
+    if (t.projectDeliverableId != null) {
+      const d = lookups.byId.get(t.projectDeliverableId);
+      if (d?.name) return d.name;
+    }
+    if (t.deliverableTemplateId != null) {
+      const d = lookups.byTemplateId.get(t.deliverableTemplateId);
+      if (d?.name) return d.name;
+    }
+  }
   if (t.deliverableTemplate?.name) return t.deliverableTemplate.name;
   if (t.serviceType?.name) return t.serviceType.name;
   const marker = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1];
@@ -804,6 +832,9 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
   const { can } = usePermissions();
   const showFinance = can('finance', 'read');
 
+  // Project's first-class deliverables (for the inline Deliverable picker).
+  const deliverableLookups = useContext(ProjectDeliverablesContext);
+
   // Spreadsheet-style multi-edit: if this row is part of a multi-selection,
   // an inline edit propagates to ALL selected rows. If only one row is
   // selected (or none), it behaves like a normal single-task edit.
@@ -843,6 +874,31 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
     } catch (err: any) {
       notify.apiError(err, 'Failed to update task');
+    }
+  };
+
+  // Assign this task (and any co-selected rows) to a project deliverable.
+  // Writes BOTH the authoritative projectDeliverableId and the legacy
+  // deliverableTemplateId (kept synced from the deliverable's source
+  // template) so every resolver — grid, board, reports — agrees.
+  const saveDeliverable = async (payload: { projectDeliverableId: number | null; deliverableTemplateId: number | null }) => {
+    const isBulk = !!(selectedTaskIds && selectedTaskIds.has(task.id) && selectedTaskIds.size > 1);
+    const targetIds = isBulk ? Array.from(selectedTaskIds!) : [task.id];
+    try {
+      if (isBulk) {
+        const results = await Promise.allSettled(targetIds.map((id) => tasksApi.update(id, payload)));
+        const ok = results.filter((r) => r.status === 'fulfilled').length;
+        const fail = results.length - ok;
+        if (ok > 0 && fail === 0) notify.success(`Updated ${ok} task${ok !== 1 ? 's' : ''}`, { code: 'TASK-BULK-UPDATE-200' });
+        else if (ok > 0 && fail > 0) notify.warning(`Updated ${ok}, ${fail} failed`, { code: 'TASK-BULK-UPDATE-207' });
+        else notify.error('Bulk update failed', { code: 'TASK-BULK-UPDATE-500' });
+      } else {
+        await tasksApi.update(task.id, payload);
+      }
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['execution-board'] });
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to update deliverable');
     }
   };
 
@@ -922,24 +978,25 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           </span>
         );
       })()}
-      {/* Deliverable cell — click to edit. Source of truth is
-          `task.deliverableTemplate` (FK to /templates/deliverables);
-          falls back to the legacy serviceType name + [SERVICE:xxx]
-          marker so tasks created before this column existed still
-          render their old label. Save writes deliverableTemplateId. */}
-      <CompactPickerCell
+      {/* Deliverable cell — click to edit. Lists THIS project's first-class
+          deliverables (the project-owned entities, e.g. "דוח קריטי 3").
+          Picking re-assigns just this task (or all co-selected rows) to that
+          deliverable; "+ New" creates a project deliverable. The displayed
+          label is resolved entity-first via the canonical resolver so it
+          always matches the group header and the column filter. */}
+      <ProjectDeliverablePickerCell
         projectId={projectId}
-        currentId={task.deliverableTemplateId ?? null}
-        currentLabel={
-          task.deliverableTemplate?.name
-          || task.serviceType?.name
-          || task.description?.match(/^\[SERVICE:(.+)\]$/)?.[1]
-          || null
+        currentDeliverableId={task.projectDeliverableId ?? null}
+        currentLabel={(() => {
+          const n = resolveTaskDeliverable(task, deliverableLookups);
+          return n === 'No Deliverable' ? null : n;
+        })()}
+        currentColor={
+          (task.projectDeliverableId != null
+            ? deliverableLookups.byId.get(task.projectDeliverableId)?.service?.color
+            : null) || task.phase?.color || task.serviceType?.color
         }
-        currentColor={task.serviceType?.color}
-        kind="deliverable"
-        fieldLabel="Deliverable"
-        onSave={(v) => saveField('deliverableTemplateId', v)}
+        onAssign={saveDeliverable}
       />
       {/* Service cell — click to edit. Phase is the parent Service. */}
       <CompactPickerCell
@@ -2373,6 +2430,119 @@ function CompactPickerCell({
   );
 }
 
+/**
+ * Inline cell for assigning a task to one of the project's first-class
+ * Deliverables. Unlike the legacy CompactPickerCell (which listed the global
+ * /templates catalog and stored deliverableTemplateId), this lists the
+ * PROJECT'S own deliverable entities and stores projectDeliverableId — the
+ * project-owned name (e.g. "דוח קריטי 3") shows here, in the group header,
+ * the filter, the execution board and reports, all from one source.
+ *
+ * Selecting re-assigns just this task (onAssign handles bulk). "+ New" creates
+ * a project deliverable. Renaming a deliverable stays on the group-header
+ * pencil (it renames it for every task that belongs to it).
+ */
+function ProjectDeliverablePickerCell({
+  projectId,
+  currentDeliverableId,
+  currentLabel,
+  currentColor,
+  onAssign,
+}: {
+  projectId: number;
+  currentDeliverableId: number | null;
+  currentLabel: string | null;
+  currentColor?: string | null;
+  onAssign: (payload: { projectDeliverableId: number | null; deliverableTemplateId: number | null }) => Promise<void> | void;
+}) {
+  const { list } = useContext(ProjectDeliverablesContext);
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const queryClient = useQueryClient();
+
+  const handleChange = async (raw: string) => {
+    if (raw === '__new__') {
+      const name = window.prompt('New Deliverable name:');
+      if (!name || !name.trim()) { setEditing(false); return; }
+      setBusy(true);
+      try {
+        const resp = await client.post('/project-deliverables', { projectId, name: name.trim() });
+        const created = resp.data?.data ?? resp.data;
+        queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] });
+        if (created?.id) {
+          await onAssign({ projectDeliverableId: created.id, deliverableTemplateId: created.sourceTemplateId ?? null });
+        }
+      } catch (err: any) {
+        notify.apiError(err, 'Failed to create deliverable');
+      } finally {
+        setBusy(false);
+        setEditing(false);
+      }
+      return;
+    }
+    setBusy(true);
+    try {
+      if (raw === '') {
+        await onAssign({ projectDeliverableId: null, deliverableTemplateId: null });
+      } else {
+        const d = list.find((x: any) => String(x.id) === raw);
+        await onAssign({
+          projectDeliverableId: Number(raw),
+          deliverableTemplateId: d?.sourceTemplateId ?? null,
+        });
+      }
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to set deliverable');
+    } finally {
+      setBusy(false);
+      setEditing(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+        title="Click to edit Deliverable"
+        className="text-left max-w-full truncate hover:bg-blue-50/50 rounded px-1 -mx-1 py-0.5"
+      >
+        {currentLabel ? (
+          <span
+            className="rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold inline-block truncate max-w-full"
+            style={{
+              backgroundColor: currentColor ? `${currentColor}15` : '#3B82F615',
+              color: currentColor || '#3B82F6',
+            }}
+          >
+            {currentLabel}
+          </span>
+        ) : (
+          <span className="text-slate-300 text-[11px]">-</span>
+        )}
+      </button>
+    );
+  }
+
+  return (
+    <select
+      autoFocus
+      disabled={busy}
+      value={currentDeliverableId != null ? String(currentDeliverableId) : ''}
+      onChange={(e) => handleChange(e.target.value)}
+      onBlur={() => setEditing(false)}
+      onClick={(e) => e.stopPropagation()}
+      className="w-full px-1 py-0.5 rounded border border-blue-300 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+    >
+      <option value="">— None —</option>
+      {list.map((d: any) => (
+        <option key={d.id} value={d.id}>{d.name}</option>
+      ))}
+      <option value="__new__">+ Create new…</option>
+    </select>
+  );
+}
+
 function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { projectId: number; projectTasks: any[]; onClose: () => void; onCreated: () => void }) {
   // Two flows:
   //   • manual:  one-off task — user types code/name/hours/amount.
@@ -3288,7 +3458,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
 function ProjectRootDeliverableGroup({
   projectId, label, serviceLabel, color, tasks, members, onUpdate, onDeleteTask,
   selectedTaskIds, onToggleTask, onToggleMany,
-  dndId, kind, editableTemplateId,
+  dndId, kind, editableTemplateId, editableDeliverableId,
 }: {
   projectId: number;
   label: string;
@@ -3313,13 +3483,15 @@ function ProjectRootDeliverableGroup({
    *  the chip becomes "service"; default stays 'deliverable' for
    *  backwards-compat with all other call sites. */
   kind?: 'deliverable' | 'service' | 'none';
-  /** When set, the user can inline-rename the group's display name —
-   *  saved as a per-project override under
-   *  Project.deliverableNameOverrides[templateId]. Only meaningful
-   *  for Template-based groups (not ServiceType / marker / orphan).
-   *  Pass the deliverableTemplate's id; null/undefined hides the
-   *  rename pencil. */
+  /** When set, the user can inline-rename the group. Only meaningful for
+   *  Template-based groups (not ServiceType / marker / orphan). Pass the
+   *  deliverableTemplate's id; null/undefined hides the rename pencil. */
   editableTemplateId?: number | null;
+  /** The project-owned ProjectDeliverable entity id for this group, when
+   *  one exists. Renaming PATCHes this entity so the change is authoritative
+   *  (board, reports, customer-facing). Falls back to creating an entity from
+   *  editableTemplateId if none exists yet. */
+  editableDeliverableId?: number | null;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   useBulkCollapseSync(setCollapsed);
@@ -3330,32 +3502,34 @@ function ProjectRootDeliverableGroup({
     ? { transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition }
     : undefined;
 
-  // Inline rename — saves per-project override map at
-  // `Project.deliverableNameOverrides[templateId]`. Opens on pencil
-  // click. Empty value clears the override (falls back to template
-  // name). Outside-click confirms (Enter / blur), Esc cancels.
+  // Inline rename — writes to the first-class ProjectDeliverable entity, so
+  // the new name is authoritative everywhere (planning grid, execution board,
+  // reports, customer-facing) rather than a cosmetic per-project JSON label.
+  // Opens on pencil click. Empty value is a no-op (the entity name is
+  // required). Outside-click confirms (Enter / blur), Esc cancels.
   const queryClient = useQueryClient();
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(label);
   const renameMutation = useMutation({
     mutationFn: async (newName: string) => {
-      // Fetch the current overrides map, patch it, send back. We do
-      // the merge client-side so a stale read doesn't clobber an
-      // unrelated key — for a tiny map this is plenty safe.
-      const current = await client.get(`/projects/${projectId}`).then((r) => {
-        const p = r.data?.data ?? r.data;
-        return (p?.deliverableNameOverrides ?? {}) as Record<string, string>;
-      });
-      const next = { ...current };
-      if (editableTemplateId == null) return;
-      const key = String(editableTemplateId);
-      if (newName.trim() === '') delete next[key];
-      else next[key] = newName.trim();
-      await client.patch(`/projects/${projectId}`, { deliverableNameOverrides: next });
+      const trimmed = newName.trim();
+      if (trimmed === '') return; // empty rename ignored — name is required
+      if (editableDeliverableId != null) {
+        await client.patch(`/project-deliverables/${editableDeliverableId}`, { name: trimmed });
+      } else if (editableTemplateId != null) {
+        // No entity exists yet for this template (rare — groups normally come
+        // from tasks that already carry a deliverable). Create one on the fly.
+        await client.post('/project-deliverables', {
+          projectId,
+          name: trimmed,
+          sourceTemplateId: editableTemplateId,
+        });
+      }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
-      queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'deliverable-overrides'] });
+      queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['execution-board'] });
+      onUpdate?.();
     },
     onError: (err: any) => notify.apiError(err, 'Failed to rename deliverable'),
   });
@@ -3520,17 +3694,19 @@ function ProjectRootDeliverableGroup({
 // "No Deliverable" bucket so nothing is dropped on the floor.
 function ProjectRootGroup({
   projectId, tasks, members, onUpdate, onDeleteTask, selectedTaskIds, onToggleTask, onToggleMany,
-  deliverableOverrides,
+  deliverableByTemplateId, deliverableById,
 }: {
   projectId: number; tasks: any[]; members: any[];
   onUpdate: () => void; onDeleteTask: (id: number) => void;
   selectedTaskIds: Set<number>; onToggleTask: (id: number) => void;
   onToggleMany: (ids: number[], checked: boolean) => void;
-  /** Per-project Deliverable display-name map: templateId → custom label. */
-  deliverableOverrides?: Record<string, string>;
+  /** Per-project Deliverable entity map: sourceTemplateId → entity. */
+  deliverableByTemplateId?: Map<number, any>;
+  /** Per-project Deliverable entity map: id → entity. */
+  deliverableById?: Map<number, any>;
 }) {
   const overrideFor = (tplId: number | null | undefined) =>
-    tplId != null ? deliverableOverrides?.[String(tplId)] : undefined;
+    tplId != null ? deliverableByTemplateId?.get(tplId)?.name : undefined;
   if (tasks.length === 0) return null;
 
   // Bucket by Deliverable identity. Priority order:
@@ -3555,6 +3731,7 @@ function ProjectRootGroup({
   };
   const buckets = new Map<string, Bucket>();
   for (const t of tasks) {
+    const pdId: number | null = t.projectDeliverableId ?? null;
     const tplId: number | null = t.deliverableTemplateId ?? null;
     const stId: number | null = t.serviceTypeId ?? null;
     const phId: number | null = t.phaseId ?? null;
@@ -3564,16 +3741,22 @@ function ProjectRootGroup({
     let isOrphan = false;
     let dndId: string | undefined;
     let sortOrder = 0;
-    // Same priority as the alt-grouping memo: Template → ServiceType
-    // → description marker → orphan. Phase is intentionally NOT a
-    // fallback — Phase is a Service, not a Deliverable, and using it
-    // here would conflate the two grouping modes.
+    // Same priority as the alt-grouping memo: ProjectDeliverable →
+    // Template → ServiceType → description marker → orphan. Phase is
+    // intentionally NOT a fallback — Phase is a Service, not a
+    // Deliverable, and using it here would conflate the two grouping modes.
     const markerName: string | null = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1] ?? null;
-    if (tplId != null) {
+    if (pdId != null) {
+      // Authoritative project-owned deliverable — key on its id so even
+      // project-only deliverables (no catalog template) group correctly.
+      const d = deliverableById?.get(pdId);
+      key = `pd-${pdId}`;
+      label = d?.name ?? `Deliverable #${pdId}`;
+      color = d?.service?.color || t.phase?.color || '#8B5CF6';
+    } else if (tplId != null) {
       key = `tpl-${tplId}`;
-      // Per-project name override takes precedence over the source
-      // template name so "BIM Foundation" can show up as "Tower A
-      // Foundation" on this project without forking the template.
+      // Per-project entity name takes precedence over the source template
+      // name so a template can show under different labels per project.
       label = overrideFor(tplId) ?? t.deliverableTemplate?.name ?? `Deliverable #${tplId}`;
       color = t.phase?.color || '#8B5CF6';
       // No dndId — Template has no sortOrder yet.
@@ -3645,8 +3828,15 @@ function ProjectRootGroup({
           // First task in the bucket is enough to identify the
           // deliverable Template — all tasks in this group share the
           // same deliverableTemplateId. Null for ServiceType / marker
-          // / orphan groups (those don't have per-project overrides).
+          // / orphan groups (those aren't project deliverable entities).
           editableTemplateId={b.tasks[0]?.deliverableTemplateId ?? null}
+          // The project-owned deliverable entity id — directly from the task
+          // when set, else resolved from its template. Renaming PATCHes it.
+          editableDeliverableId={
+            b.tasks[0]?.projectDeliverableId
+            ?? deliverableByTemplateId?.get(b.tasks[0]?.deliverableTemplateId)?.id
+            ?? null
+          }
         />
       ))}
     </SortableContext>
@@ -3688,24 +3878,39 @@ function PlanningView({ projectId }: { projectId: number }) {
     staleTime: 2 * 60 * 1000,
   });
 
-  // Per-project Deliverable display-name overrides. Loaded from the
-  // project record; group labels fall through to template.name when no
-  // override exists for a given deliverableTemplateId. Reactive — when
-  // a user renames a group, the project PATCH invalidates ['projects',
-  // projectId] which refetches this query and the label re-resolves.
-  const { data: deliverableOverrides = {} as Record<string, string> } = useQuery({
-    queryKey: ['projects', projectId, 'deliverable-overrides'],
+  // Per-project Deliverable ENTITIES. These are first-class, project-owned
+  // deliverables (name / order / service belong to the project). Group labels
+  // resolve from here, and renaming a group PATCHes the entity — so the change
+  // is authoritative everywhere (execution board, reports, customer-facing),
+  // not a cosmetic JSON override. Reactive: a rename invalidates this query
+  // and the label re-resolves. Mapped by sourceTemplateId, which is 1:1 with
+  // a deliverable within a project (the backfill created one per template).
+  const { data: projectDeliverables = [] as any[] } = useQuery<any[]>({
+    queryKey: ['project-deliverables', projectId],
     queryFn: () =>
-      client.get(`/projects/${projectId}`).then((r) => {
-        const p = r.data?.data ?? r.data;
-        const raw = p?.deliverableNameOverrides;
-        if (!raw || typeof raw !== 'object') return {} as Record<string, string>;
-        return raw as Record<string, string>;
-      }),
+      client
+        .get('/project-deliverables', { params: { projectId } })
+        .then((r) => r.data?.data ?? r.data ?? []),
     staleTime: 30 * 1000,
   });
+  const deliverableByTemplateId = useMemo(() => {
+    const m = new Map<number, any>();
+    for (const d of projectDeliverables) {
+      if (d?.sourceTemplateId != null) m.set(d.sourceTemplateId, d);
+    }
+    return m;
+  }, [projectDeliverables]);
+  const deliverableById = useMemo(() => {
+    const m = new Map<number, any>();
+    for (const d of projectDeliverables) m.set(d.id, d);
+    return m;
+  }, [projectDeliverables]);
+  const deliverableLookups = useMemo<ProjectDeliverableLookups>(
+    () => ({ list: projectDeliverables, byId: deliverableById, byTemplateId: deliverableByTemplateId }),
+    [projectDeliverables, deliverableById, deliverableByTemplateId],
+  );
   const overrideFor = (templateId: number | null | undefined) =>
-    templateId != null ? deliverableOverrides[String(templateId)] : undefined;
+    templateId != null ? deliverableByTemplateId.get(templateId)?.name : undefined;
 
   // Y1 — per-column filter state. One object for all column funnels;
   // applied in the `filtered` useMemo below. Distinct option lists are
@@ -4199,7 +4404,7 @@ function PlanningView({ projectId }: { projectId: number }) {
         if (zn !== colFilters.zone) return false;
       }
       if (colFilters.deliverable) {
-        if (resolveTaskDeliverable(t) !== colFilters.deliverable) return false;
+        if (resolveTaskDeliverable(t, deliverableLookups) !== colFilters.deliverable) return false;
       }
       if (colFilters.service && (t.phase?.name ?? '') !== colFilters.service) return false;
       if (colFilters.status && t.status !== colFilters.status) return false;
@@ -4211,7 +4416,7 @@ function PlanningView({ projectId }: { projectId: number }) {
       }
       return true;
     });
-  }, [tasks, search, filterStatus, filterPriority, filterAssigneeId, filterStartFrom, filterStartTo, filterDueFrom, filterDueTo, filterHasDue, colFilters]);
+  }, [tasks, search, filterStatus, filterPriority, filterAssigneeId, filterStartFrom, filterStartTo, filterDueFrom, filterDueTo, filterHasDue, colFilters, deliverableLookups]);
 
   // Distinct option lists for the column funnels, derived from the
   // loaded task set so only present values are offered.
@@ -4228,7 +4433,7 @@ function PlanningView({ projectId }: { projectId: number }) {
       // including ones identified only via a [SERVICE:xxx] description
       // marker (e.g. "מיפוי סופי"), which the old
       // deliverableTemplate?.name ?? serviceType?.name shortcut missed.
-      const dn = resolveTaskDeliverable(t);
+      const dn = resolveTaskDeliverable(t, deliverableLookups);
       if (dn && dn !== 'No Deliverable') deliverable.add(dn);
       if (t.phase?.name) service.add(t.phase.name);
       if (t.status) status.add(t.status);
@@ -4246,7 +4451,7 @@ function PlanningView({ projectId }: { projectId: number }) {
       status: Array.from(status),
       assignee: Array.from(assigneeMap.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)),
     };
-  }, [tasks]);
+  }, [tasks, deliverableLookups]);
 
   const hasColFilter = Object.values(colFilters).some(Boolean);
   const hasTaskFilter = !!(filterStatus || filterPriority || filterAssigneeId || filterStartFrom || filterStartTo || filterDueFrom || filterDueTo || filterHasDue || hasColFilter);
@@ -4324,16 +4529,21 @@ function PlanningView({ projectId }: { projectId: number }) {
         // in the chain — a Phase is a Service, not a Deliverable;
         // letting it fall through made Deliverable grouping look
         // identical to Service grouping):
-        //   1. deliverableTemplateId  → Template (source of truth)
-        //   2. serviceTypeId          → legacy ServiceType FK
-        //   3. [SERVICE:xxx] marker   → legacy zone-template description
-        //   4. "No Deliverable"       → orphan bucket
+        //   1. projectDeliverableId   → project-owned Deliverable entity
+        //   2. deliverableTemplateId  → legacy catalog Template
+        //   3. serviceTypeId          → legacy ServiceType FK
+        //   4. [SERVICE:xxx] marker   → legacy zone-template description
+        //   5. "No Deliverable"       → orphan bucket
         const marker = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1];
-        if (t.deliverableTemplateId != null) {
-          // Apply the same per-project override as the project-root
-          // resolver above. Without this, switching the grouping mode
-          // would suddenly show the canonical template name instead of
-          // the user's preferred per-project label.
+        if (t.projectDeliverableId != null) {
+          // Authoritative project-owned deliverable. Key on its id so even
+          // project-only deliverables (no catalog template) group correctly.
+          const d = deliverableById.get(t.projectDeliverableId);
+          label = d?.name ?? `Deliverable #${t.projectDeliverableId}`;
+          color = d?.service?.color || t.phase?.color || '#8B5CF6';
+          key = `pd-${t.projectDeliverableId}`;
+        } else if (t.deliverableTemplateId != null) {
+          // Apply the same per-project entity name as the resolver above.
           label = overrideFor(t.deliverableTemplateId) ?? t.deliverableTemplate?.name ?? `Deliverable #${t.deliverableTemplateId}`;
           color = t.phase?.color || '#8B5CF6';
           // No dndId — no sortOrder on Template. Cards stay alpha-sorted.
@@ -4383,7 +4593,7 @@ function PlanningView({ projectId }: { projectId: number }) {
       if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
       return a.label.localeCompare(b.label);
     });
-  }, [sorted, groupBy, flatZones]);
+  }, [sorted, groupBy, flatZones, deliverableById, deliverableByTemplateId]);
 
   const totalHours = sorted.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
   const totalAmount = sorted.reduce((s: number, t: any) => s + Number(t.budgetAmount || 0), 0);
@@ -4395,6 +4605,7 @@ function PlanningView({ projectId }: { projectId: number }) {
   return (
     <BulkCollapseContext.Provider value={{ desired: bulkCollapsed, version: bulkVersion }}>
     <TaskMessageCountsContext.Provider value={messageCounts as Record<number, number>}>
+    <ProjectDeliverablesContext.Provider value={deliverableLookups}>
     <TaskFilterContext.Provider value={{ filters: colFilters, setFilter: setColFilter, options: colFilterOptions }}>
     <div className="space-y-5">
       {/* Template picker / manual zone dialogs */}
@@ -4805,7 +5016,8 @@ function PlanningView({ projectId }: { projectId: number }) {
                   selectedTaskIds={selectedTaskIds}
                   onToggleTask={toggleTask}
                   onToggleMany={toggleManyTasks}
-                  deliverableOverrides={deliverableOverrides}
+                  deliverableByTemplateId={deliverableByTemplateId}
+                  deliverableById={deliverableById}
                 />
                 <SortableContext
                   items={zones.filter((z: any) => !z.parentId).map((z: any) => `z-${z.id}`)}
@@ -4873,11 +5085,17 @@ function PlanningView({ projectId }: { projectId: number }) {
                           : 'none'
                     }
                     // Inline-rename is meaningful only in Deliverable
-                    // mode (per-project override is template-scoped).
-                    // Phase-mode groups are Services, not Deliverables —
-                    // we skip rename there.
+                    // mode (the entity is template-scoped). Phase-mode
+                    // groups are Services, not Deliverables — skip rename.
                     editableTemplateId={
                       groupBy === 'service' ? (g.tasks[0]?.deliverableTemplateId ?? null) : null
+                    }
+                    editableDeliverableId={
+                      groupBy === 'service'
+                        ? (g.tasks[0]?.projectDeliverableId
+                            ?? deliverableByTemplateId.get(g.tasks[0]?.deliverableTemplateId)?.id
+                            ?? null)
+                        : null
                     }
                   />
                 ))}
@@ -4950,6 +5168,7 @@ function PlanningView({ projectId }: { projectId: number }) {
       />
     </div>
     </TaskFilterContext.Provider>
+    </ProjectDeliverablesContext.Provider>
     </TaskMessageCountsContext.Provider>
     </BulkCollapseContext.Provider>
   );

@@ -11,9 +11,15 @@ export interface TaskLike {
   zoneId: number | null;
   description?: string | null;
   /**
-   * The AUTHORITATIVE deliverable link (deliverable_template_id). This is
-   * what the project task table shows and what the user assigns, so it
-   * takes top priority — the board must agree with the table.
+   * The AUTHORITATIVE, project-owned Deliverable (first-class entity). Its
+   * name belongs to the project — renaming it changes the deliverable for
+   * the PM and the customer everywhere. Takes top priority over the legacy
+   * catalog-template link.
+   */
+  projectDeliverable?: { name: string } | null;
+  /**
+   * The legacy catalog deliverable link (deliverable_template_id). Kept for
+   * provenance / back-compat; used only when no projectDeliverable is set.
    */
   deliverableTemplate?: { name: string } | null;
   serviceType?: { name: string } | null;
@@ -39,17 +45,19 @@ export interface ZoneNodeLike {
  * which deliverable a task belongs to.
  *
  * Priority:
- *  1. task.deliverableTemplate.name — the authoritative deliverable link
- *     the user assigns and sees in the task table. Takes precedence over
- *     everything else (previously the board ignored this and tasks drifted
- *     into a different column than the table showed).
- *  2. task.serviceType.name (DB-linked, legacy catalogued tasks)
- *  3. [SERVICE:...] marker inside task.description (legacy/template flow)
- *  4. task.phase.name (DB-linked Phase — defensive fallback for root tasks
+ *  1. task.projectDeliverable.name — the authoritative, project-owned
+ *     deliverable. This is what the PM manages and the customer sees, so it
+ *     wins over everything (a per-project rename changes it everywhere).
+ *  2. task.deliverableTemplate.name — the legacy catalog-template link, used
+ *     only when a task isn't linked to a project deliverable yet.
+ *  3. task.serviceType.name (DB-linked, legacy catalogued tasks)
+ *  4. [SERVICE:...] marker inside task.description (legacy/template flow)
+ *  5. task.phase.name (DB-linked Phase — defensive fallback for root tasks
  *     that only carry a phase; no live data relies on it today)
- *  5. null → placed in the "No Deliverable" column
+ *  6. null → placed in the "No Deliverable" column
  */
 export function getTaskPhaseName(task: TaskLike): string | null {
+  if (task.projectDeliverable?.name) return task.projectDeliverable.name;
   if (task.deliverableTemplate?.name) return task.deliverableTemplate.name;
   if (task.serviceType?.name) return task.serviceType.name;
   const m = task.description?.match(SERVICE_RE);

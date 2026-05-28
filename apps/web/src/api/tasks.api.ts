@@ -35,6 +35,10 @@ export interface UpdateTaskPayload {
   budgetAmount?: number;
   phaseId?: number;
   serviceTypeId?: number;
+  /** Legacy catalog Template link (kept synced with projectDeliverableId). */
+  deliverableTemplateId?: number | null;
+  /** First-class, project-owned Deliverable link (authoritative). */
+  projectDeliverableId?: number | null;
   status?: string;
   priority?: string;
   completionPct?: number;
