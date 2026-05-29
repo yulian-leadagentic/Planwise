@@ -44,6 +44,14 @@ export class ProjectsController {
     return this.projectsService.findAll(query);
   }
 
+  // Static route MUST precede `:id` so it isn't swallowed by the param route.
+  @Get('number-config')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'How the project-number field should behave (auto/manual/none)' })
+  numberConfig() {
+    return this.projectsService.getNumberConfig();
+  }
+
   @Get(':id')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get project by ID' })

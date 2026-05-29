@@ -102,6 +102,23 @@ export function ProjectFormPage() {
       return Array.isArray(d) ? d : (d?.data ?? []);
     }),
   });
+  // How the Project Number field should behave, driven by the number range
+  // assigned to the PROJECT entity kind (Admin → Object Numbering):
+  //   • auto     → system-assigned, field is read-only (shows the next code).
+  //   • manual/external → user must type a code (validated server-side).
+  //   • none     → free text (legacy behavior).
+  const { data: numberConfig } = useQuery<{
+    assigned: boolean;
+    mode: 'auto' | 'manual' | 'external' | null;
+    preview: string | null;
+    externalPattern: string | null;
+  }>({
+    queryKey: ['project-number-config'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/projects/number-config').then((r) => r.data?.data ?? r.data),
+  });
+  const numberMode = numberConfig?.mode ?? null;
+
   // M4a.2 — ProjectRoleType catalog. Any role flagged isPrimaryRequired
   // (other than 'customer', which has its own field above) becomes a
   // required picker on the create form. New role-types added in admin
@@ -425,14 +442,48 @@ export function ProjectFormPage() {
                   )}
                 </div>
 
-                {/* Project Number */}
+                {/* Project Number — behavior depends on the PROJECT number
+                    range. auto = system-assigned (read-only); manual/external
+                    = user-typed + server-validated; none = free text. */}
                 <div>
                   <label className={labelClass}>Project Number</label>
-                  <input
-                    {...register('number')}
-                    placeholder="e.g. PRJ-001"
-                    className={inputClass}
-                  />
+                  {numberMode === 'auto' ? (
+                    <>
+                      {/* Not registered → no value submitted; the server
+                          allocates the next code on save. */}
+                      <input
+                        type="text"
+                        readOnly
+                        value={isEdit ? (watch('number') || '—') : (numberConfig?.preview ?? 'Auto-generated')}
+                        className={`${inputClass} bg-slate-50 cursor-not-allowed text-slate-500`}
+                        title="Assigned automatically by the system"
+                      />
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        {isEdit
+                          ? 'System-managed — the project number can’t be changed.'
+                          : (
+                            <>
+                              Assigned automatically on save
+                              {numberConfig?.preview ? <> (next: <span className="font-mono">{numberConfig.preview}</span>)</> : ''}.
+                            </>
+                          )}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <input
+                        {...register('number')}
+                        placeholder={numberConfig?.externalPattern ? `Pattern: ${numberConfig.externalPattern}` : 'e.g. PRJ-001'}
+                        className={inputClass}
+                      />
+                      {numberMode && (
+                        <p className="mt-1 text-[11px] text-slate-400">
+                          Required — must match the configured project number range
+                          {numberConfig?.externalPattern ? ' pattern.' : '.'}
+                        </p>
+                      )}
+                    </>
+                  )}
                 </div>
 
                 {/* Project Category (was "Project Type" — renamed per V4

@@ -6,19 +6,84 @@ import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { QueryProjectsDto } from './dto/query-projects.dto';
 import { BusinessPartnerRelationshipsService } from '../business-partner-relationships/business-partner-relationships.service';
+import { NumberRangesService } from '../number-ranges/number-ranges.service';
 
 @Injectable()
 export class ProjectsService {
   constructor(
     private prisma: PrismaService,
     private bpRelationships: BusinessPartnerRelationshipsService,
+    private numberRanges: NumberRangesService,
   ) {}
+
+  /**
+   * Resolve the number range assigned to the PROJECT entity kind and report
+   * how the project-number field should behave. Used by the create form to
+   * lock the field (auto) or hint the pattern (manual/external).
+   */
+  async getNumberConfig(): Promise<{
+    assigned: boolean;
+    mode: 'auto' | 'manual' | 'external' | null;
+    preview: string | null;
+    externalPattern: string | null;
+  }> {
+    const kind = await this.prisma.entityKind.findUnique({
+      where: { code: 'PROJECT' },
+      select: { numberRangeCode: true },
+    });
+    const code = kind?.numberRangeCode ?? null;
+    if (!code) return { assigned: false, mode: null, preview: null, externalPattern: null };
+    const range = await this.prisma.numberRange.findUnique({ where: { code } });
+    if (!range || !range.isActive) {
+      return { assigned: false, mode: null, preview: null, externalPattern: null };
+    }
+    return {
+      assigned: true,
+      mode: range.mode as 'auto' | 'manual' | 'external',
+      preview: range.mode === 'auto' ? await this.numberRanges.peek(code) : null,
+      externalPattern: range.externalPattern ?? null,
+    };
+  }
+
+  /**
+   * Decide the project number to persist, honoring the PROJECT entity kind's
+   * number range:
+   *   • auto     → allocate the next code (the supplied number is ignored).
+   *   • manual/external → require + validate the supplied number.
+   *   • no range → use the supplied number as-is (free text, legacy behavior).
+   * Existing/old project numbers don't matter here: `projects.number` has no
+   * unique constraint and auto codes come from the range's own counter.
+   */
+  private async resolveProjectNumber(supplied?: string | null): Promise<string | null> {
+    const kind = await this.prisma.entityKind.findUnique({
+      where: { code: 'PROJECT' },
+      select: { numberRangeCode: true },
+    });
+    const code = kind?.numberRangeCode ?? null;
+    if (!code) return supplied?.trim() ? supplied.trim() : null;
+
+    const range = await this.prisma.numberRange.findUnique({ where: { code } });
+    if (!range || !range.isActive) return supplied?.trim() ? supplied.trim() : null;
+
+    if (range.mode === 'auto') {
+      // System-assigned — allocate the next code; ignore any client input.
+      return this.numberRanges.next(code);
+    }
+    // manual / external — the user must supply a valid code.
+    if (!supplied?.trim()) {
+      throw new BadRequestException(
+        `Project number is required (number range "${code}" is in ${range.mode} mode).`,
+      );
+    }
+    return this.numberRanges.validateManual(code, supplied.trim());
+  }
 
   async create(userId: number, dto: CreateProjectDto) {
     const { memberIds, leaderId, customerOrgId, roleAssignments, ...rest } = dto;
 
     // Validate the customer organization up-front so we don't leave a
-    // dangling project if the relationship rules reject it.
+    // dangling project if the relationship rules reject it. A customer is an
+    // ORGANIZATION that holds the "customer" role (persons are excluded).
     const customerOrg = await this.prisma.businessPartner.findFirst({
       where: { id: customerOrgId, partnerType: 'organization', deletedAt: null },
       include: { roles: { include: { roleType: true } } },
@@ -55,9 +120,16 @@ export class ProjectsService {
       }
     }
 
+    // Resolve the project number from the PROJECT number range (auto → system
+    // allocates and the supplied value is ignored; manual/external → validate;
+    // no range → keep the free-text value). Done last, after all fail-fast
+    // validation, so an auto code isn't burned on a rejected create.
+    const number = await this.resolveProjectNumber(rest.number);
+
     const project = await this.prisma.project.create({
       data: {
         ...rest,
+        number,
         leaderId: leaderId && leaderId > 0 ? leaderId : null,
         createdBy: userId,
         startDate: dto.startDate ? new Date(dto.startDate) : undefined,
