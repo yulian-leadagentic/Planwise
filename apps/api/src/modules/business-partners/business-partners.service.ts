@@ -233,7 +233,38 @@ export class BusinessPartnersService {
       include: partnerInclude,
     });
 
+    // A BP's Main Role must also appear in its roles list, otherwise
+    // role-based filters (e.g. the project Customer dropdown, which queries
+    // `roleType=customer`) won't find it. The Partners UI's Main Role picker
+    // used to write only `main_role_type_id`; this sync makes the two
+    // representations consistent going forward.
+    if (dto.mainRoleTypeId) {
+      await this.syncMainRoleIntoRoles(bp.id, dto.mainRoleTypeId);
+      return this.prisma.businessPartner.findUniqueOrThrow({
+        where: { id: bp.id },
+        include: partnerInclude,
+      });
+    }
     return bp;
+  }
+
+  /**
+   * Ensure the BP's Main Role is also present in `business_partner_roles`.
+   * Idempotent (upsert on the (businessPartnerId, roleTypeId) unique).
+   * No-op when called with a null/undefined roleTypeId.
+   */
+  private async syncMainRoleIntoRoles(
+    businessPartnerId: number,
+    roleTypeId: number | null | undefined,
+  ): Promise<void> {
+    if (!roleTypeId) return;
+    await this.prisma.businessPartnerRole.upsert({
+      where: {
+        businessPartnerId_roleTypeId: { businessPartnerId, roleTypeId },
+      },
+      create: { businessPartnerId, roleTypeId, isPrimary: true },
+      update: { isPrimary: true },
+    });
   }
 
   async update(id: number, dto: UpdateBusinessPartnerDto) {
@@ -263,7 +294,7 @@ export class BusinessPartnersService {
           })
         : undefined);
 
-    return this.prisma.businessPartner.update({
+    const updated = await this.prisma.businessPartner.update({
       where: { id },
       data: {
         firstName: dto.firstName,
@@ -290,6 +321,18 @@ export class BusinessPartnersService {
       },
       include: partnerInclude,
     });
+
+    // Keep the Main Role / roles-list invariant in sync — a BP's main role
+    // must also live in business_partner_roles so role-based filters (e.g.
+    // the project Customer dropdown) see it.
+    if (dto.mainRoleTypeId) {
+      await this.syncMainRoleIntoRoles(id, dto.mainRoleTypeId);
+      return this.prisma.businessPartner.findUniqueOrThrow({
+        where: { id },
+        include: partnerInclude,
+      });
+    }
+    return updated;
   }
 
   /**
