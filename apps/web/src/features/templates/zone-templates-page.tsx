@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Trash2, Layers, ChevronRight, ChevronDown, Link, X, Search, BookOpen, Copy, CheckSquare } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 
@@ -775,6 +776,31 @@ function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, readOnl
   servicePhase?: { name: string; code?: string | null } | null;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // Pending per-task delete — drives the ConfirmDialog. null = no dialog open.
+  const [pendingDelete, setPendingDelete] = useState<{ id: number; name: string } | null>(null);
+  const queryClient = useQueryClient();
+  // Per-task delete inside a deliverable-derived service group. The tasks in
+  // these groups are root-level template tasks (`template_tasks`), so the
+  // correct endpoint is `/templates/tasks/:id` — NOT `/templates/zone-tasks/:id`,
+  // which targets a different table (`template_zone_tasks`) and would risk
+  // silently deleting an unrelated zone-task that happens to share the id.
+  const deleteTask = useMutation({
+    mutationFn: (id: number) => client.delete(`/templates/tasks/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      // Broad invalidation by the ['templates', ...] prefix: the task may
+      // live either in THIS template OR in a template referenced by one of
+      // this template's zones (those tasks are fetched under
+      // ['templates', refTemplateId]). Refreshing only the current template
+      // key would leave the referenced-template's cached data stale, so the
+      // deleted task would keep showing until a manual refresh — exactly the
+      // "screen didn't refresh after delete" bug. The prefix invalidation
+      // catches every cached templates query at once.
+      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      notify.success('Task removed', { code: 'TASK-DELETE-200' });
+      setPendingDelete(null);
+    },
+    onError: (err: any) => { notify.apiError(err, 'Failed to delete task'); setPendingDelete(null); },
+  });
   const totalHours = tasks.reduce((s: number, t: any) => s + Number(t.defaultBudgetHours || 0), 0);
   const totalAmount = tasks.reduce((s: number, t: any) => s + Number(t.defaultBudgetAmount || 0), 0);
 
@@ -812,6 +838,12 @@ function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, readOnl
                 <th className="px-2 py-1 text-left font-medium">Name</th>
                 <th className="px-2 py-1 text-right font-medium">Hours</th>
                 <th className="px-2 py-1 text-right font-medium">Amount</th>
+                {/* Action column always present so the per-task delete works
+                    on every task row — including tasks shown inside a zone
+                    via a referenced template. The delete targets the
+                    underlying template_task by id, so a click here removes
+                    the task from wherever it lives. */}
+                <th className="px-2 py-1 text-center font-medium w-8"></th>
               </tr>
             </thead>
             <tbody>
@@ -821,12 +853,38 @@ function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, readOnl
                   <td className="px-2 py-1">{task.name}</td>
                   <td className="px-2 py-1 text-right tabular-nums">{task.defaultBudgetHours != null ? `${Number(task.defaultBudgetHours)}` : '-'}</td>
                   <td className="px-2 py-1 text-right tabular-nums">{task.defaultBudgetAmount != null ? `${'\u20AA'}${Number(task.defaultBudgetAmount).toLocaleString()}` : '-'}</td>
+                  <td className="px-2 py-1 text-center">
+                    {/* Red at rest (not muted) so the per-task delete reads
+                        as an action button instead of disappearing into the
+                        row chrome. Always rendered (no readOnly gate) so the
+                        action is available on every deliverable's task row. */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setPendingDelete({ id: task.id, name: task.name }); }}
+                      title="Remove task"
+                      className="rounded p-1 text-red-500 hover:bg-red-100 hover:text-red-700"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+
+      {/* Styled confirmation — matches the app's design instead of the
+          browser's native confirm() popup. */}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={() => { if (pendingDelete) deleteTask.mutate(pendingDelete.id); }}
+        variant="danger"
+        title="Remove task?"
+        description={pendingDelete ? `Remove "${pendingDelete.name}" from this deliverable? This cannot be undone.` : ''}
+        confirmLabel="Remove"
+        isLoading={deleteTask.isPending}
+      />
     </div>
   );
 }
@@ -936,6 +994,9 @@ function ZoneTreeNode({
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(true);
   const [showAddChild, setShowAddChild] = useState(false);
+  // Tracks the in-flight "delete this zone" confirmation so the styled
+  // ConfirmDialog can replace the native confirm() popup.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const children: any[] = zone.children ?? [];
 
@@ -1004,13 +1065,16 @@ function ZoneTreeNode({
 
   return (
     <div style={{ marginLeft: depth > 0 ? 24 : 0 }}>
-      {/* Zone header row */}
-      <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 mb-1">
+      {/* Zone header row. `flex-wrap` keeps the delete + Add Zone buttons
+          visible at deeper nesting / narrow widths instead of letting them
+          get clipped off-screen; trailing buttons are `shrink-0` so they
+          never collapse to zero width. */}
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-background px-3 py-2 mb-1">
         <button onClick={() => setExpanded(!expanded)} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground">
           {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
         <ZoneTypeBadge zoneType={zone.zoneType} />
-        <span className="text-sm font-semibold">{zone.name}</span>
+        <span className="text-sm font-semibold truncate min-w-0">{zone.name}</span>
         {zone.code && <span className="text-xs text-muted-foreground">({zone.code})</span>}
         {(zone.referencedTemplate || refTemplateId) && (
           <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
@@ -1031,23 +1095,39 @@ function ZoneTreeNode({
           onChange={(n) => updateMutation.mutate({ instanceCount: n })}
         />
 
-        {/* [+ Add Zone] button — sub-zones only contain other zones */}
+        {/* [+ Add Zone] button — sub-zones only contain other zones. */}
         <button
           onClick={() => { setShowAddChild(true); setExpanded(true); }}
-          className="ml-auto flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
+          className="ml-auto shrink-0 flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
           title="Add child zone"
         >
           <Plus className="h-3 w-3" /> Add Zone
         </button>
 
+        {/* Delete this zone. `shrink-0` keeps it visible even when the row
+            is crowded by deeper-nested sub-zones (previously it could get
+            squeezed off the right edge on narrow viewports). Visible "Delete"
+            label + red outline so the action is unmissable — the bare icon
+            was easy to overlook. */}
         <button
-          onClick={() => { if (confirm(`Delete zone "${zone.name}" and all its children?`)) deleteMutation.mutate(); }}
-          className="rounded-md p-1 text-muted-foreground hover:bg-red-100 hover:text-red-600"
+          onClick={() => setConfirmingDelete(true)}
+          className="shrink-0 flex items-center gap-1 rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 hover:border-red-300"
           title="Delete zone"
         >
-          <Trash2 className="h-3.5 w-3.5" />
+          <Trash2 className="h-3 w-3" /> Delete
         </button>
       </div>
+
+      <ConfirmDialog
+        open={confirmingDelete}
+        onClose={() => setConfirmingDelete(false)}
+        onConfirm={() => { deleteMutation.mutate(undefined, { onSettled: () => setConfirmingDelete(false) }); }}
+        variant="danger"
+        title="Delete zone?"
+        description={`Delete "${zone.name}" and all of its child zones and tasks? This cannot be undone.`}
+        confirmLabel="Delete"
+        isLoading={deleteMutation.isPending}
+      />
 
       {/* Expanded: referenced content (view-only) + child zones */}
       {expanded && (

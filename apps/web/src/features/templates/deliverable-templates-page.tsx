@@ -536,6 +536,10 @@ export function DeliverableTemplatesPage() {
   const [code, setCode] = useState('');
   const [description, setDescription] = useState('');
   const [phaseId, setPhaseId] = useState('');
+  // List-level search + filter controls. Apply on top of the catalog-filtered
+  // template list so users can quickly narrow a long deliverable catalog.
+  const [searchTerm, setSearchTerm] = useState('');
+  const [phaseFilter, setPhaseFilter] = useState<string>('');
 
   const { data: templates, isLoading } = useQuery({
     queryKey: ['templates', 'task_list'],
@@ -591,6 +595,23 @@ export function DeliverableTemplatesPage() {
 
   const templateList = ((templates ?? []) as any[]).filter((t: any) => t.code !== '__TASK_CATALOG__');
 
+  // Apply search + service filter on top of the catalog-filtered list.
+  // Search matches name / code / description (case-insensitive). The phase
+  // filter narrows to templates assigned to the chosen Service.
+  const visibleTemplates = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return templateList.filter((t: any) => {
+      if (phaseFilter && String(t.phaseId ?? '') !== phaseFilter) return false;
+      if (!q) return true;
+      return (
+        (t.name ?? '').toLowerCase().includes(q) ||
+        (t.code ?? '').toLowerCase().includes(q) ||
+        (t.description ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [templateList, searchTerm, phaseFilter]);
+  const isFiltered = !!searchTerm.trim() || !!phaseFilter;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -642,6 +663,54 @@ export function DeliverableTemplatesPage() {
         </form>
       )}
 
+      {/* Search + Service filter — narrows the deliverable list below. */}
+      {!isLoading && templateList.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[220px] max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search by name, code, or description…"
+              className={`${inputClass} pl-9 pr-9`}
+            />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm('')}
+                title="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <select
+            value={phaseFilter}
+            onChange={(e) => setPhaseFilter(e.target.value)}
+            className={`${inputClass} w-auto min-w-[180px]`}
+            title="Filter by Service"
+          >
+            <option value="">All Services</option>
+            {(phases as any[]).map((ph: any) => (
+              <option key={ph.id} value={String(ph.id)}>{ph.name}{ph.code ? ` (${ph.code})` : ''}</option>
+            ))}
+          </select>
+          {isFiltered && (
+            <button
+              type="button"
+              onClick={() => { setSearchTerm(''); setPhaseFilter(''); }}
+              className={btnSecondary}
+            >
+              Clear filters
+            </button>
+          )}
+          <span className="ml-auto text-xs text-muted-foreground">
+            {visibleTemplates.length} of {templateList.length} template{templateList.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+      )}
+
       {isLoading ? (
         <TableSkeleton rows={3} cols={3} />
       ) : templateList.length === 0 ? (
@@ -651,9 +720,15 @@ export function DeliverableTemplatesPage() {
           <p className="mt-1 text-sm text-muted-foreground">Create a deliverable template to group tasks from the catalog.</p>
           <button onClick={() => setShowForm(true)} className="mt-4 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">Create Deliverable Template</button>
         </div>
+      ) : visibleTemplates.length === 0 ? (
+        <div className="rounded-lg border border-border bg-background p-8 text-center">
+          <Search className="mx-auto h-12 w-12 text-muted-foreground" />
+          <h3 className="mt-3 text-sm font-medium">No templates match your filters</h3>
+          <p className="mt-1 text-sm text-muted-foreground">Try clearing the search or service filter.</p>
+        </div>
       ) : (
         <div className="space-y-2">
-          {templateList.map((t: any) => (
+          {visibleTemplates.map((t: any) => (
             <div
               key={t.id}
               className="flex items-center justify-between rounded-lg border border-border bg-background p-4 hover:bg-muted/30 cursor-pointer"

@@ -13,6 +13,7 @@ import { getTaskHealth } from '@/lib/task-health';
 import { queryKeys } from '@/lib/query-keys';
 import { TimeEntryForm } from '@/features/time/time-entry-form';
 import { useAllowedTransitions } from '@/hooks/use-allowed-transitions';
+import { STATUS_LABEL } from '@/lib/task-constants';
 import client from '@/api/client';
 
 interface TaskDrawerProps {
@@ -177,7 +178,7 @@ function StatusSelect({ currentStatus, onChange }: { currentStatus: string; onCh
       className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold border-0 cursor-pointer focus:outline-none', statusColors[currentStatus] || statusColors.not_started)}
     >
       {STATUS_OPTIONS.filter((s) => allowedStatuses.includes(s)).map((s) => (
-        <option key={s} value={s}>{s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>
+        <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
       ))}
     </select>
   );
@@ -337,51 +338,16 @@ function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any
   );
 }
 
-function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: string, value: any) => void }) {
-  const inputClass = 'mt-1 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none';
-  const readOnlyClass = 'mt-1 w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm text-slate-600';
-  const fmtDate = (iso?: string | null) => iso ? formatDate(iso) : '—';
-
+function TaskDetailsTab({ task, onUpdate: _onUpdate }: { task: any; onUpdate: (field: string, value: any) => void }) {
   return (
     <div className="space-y-4">
-      {/* Project Info leads the tab (Z1) — the parent project's metadata
-          (weekly meeting, authoring tool, file hub links, contracted
-          services) is the primary content. The task's own details
-          follow below under a divider. */}
+      {/* Project Info leads the tab — the parent project's metadata is the
+          primary content here. The duplicate "Task details" + Planning fields
+          block was removed (the header already shows the task code, status,
+          priority, hours, due date, and % complete; the description was the
+          only unique field and rarely used). The remaining task-specific info
+          (assignees, zone, service, deliverable) follows below. */}
       {task.projectId && <TaskProjectInfoBlock projectId={task.projectId} />}
-
-      <div className="pt-1 border-t border-slate-100">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-2 mt-2">Task details</p>
-        <label className="text-[11px] font-semibold text-slate-400 uppercase">Description</label>
-        <p className="mt-1 text-[13px] text-slate-600">{task.description || <span className="italic text-slate-400">No description</span>}</p>
-      </div>
-
-      {/* Planning fields — read-only here. Edit from the project Planning view. */}
-      <div>
-        <p className="text-[10px] text-slate-400 mb-1.5 italic">
-          Planning data — edit from the Project › Planning view
-        </p>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase">Est. Hours</label>
-            <div className={readOnlyClass}>{task.budgetHours ?? '—'}</div>
-          </div>
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase">Amount</label>
-            <div className={readOnlyClass}>{task.budgetAmount ?? '—'}</div>
-          </div>
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase">Due Date</label>
-            <div className={readOnlyClass}>{fmtDate(task.endDate)}</div>
-          </div>
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase" htmlFor="td-pct">Completion</label>
-            <input id="td-pct" type="number" min="0" max="100" key={`p-${task.id}`} defaultValue={task.completionPct ?? 0}
-              onBlur={(e) => onUpdate('completionPct', Number(e.target.value))}
-              className={inputClass} />
-          </div>
-        </div>
-      </div>
 
       <AssigneeManager taskId={task.id} assignees={task.assignees} />
 

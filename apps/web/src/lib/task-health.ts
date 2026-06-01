@@ -1,3 +1,5 @@
+import { STATUS_LABEL } from './task-constants';
+
 export type HealthLevel = 'critical' | 'warning' | 'ok';
 
 export interface TaskHealthInput {
@@ -104,7 +106,10 @@ export function getTaskHealth(task: TaskHealthInput): TaskHealth {
       }
     } else if (loggedMinutes === 0) {
       isStale = true;
-      const label = task.status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+      // Use the canonical status label so this reason reads exactly like the
+      // status pill the user sees on the same card ("In Progress, no hours
+      // logged" not "Progress…" or "Active…").
+      const label = STATUS_LABEL[task.status] ?? task.status;
       reasons.push(`${label}, no hours logged`);
       if (level === 'ok') level = 'warning';
     }

@@ -642,7 +642,11 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
   // TIME_OPTIONS removed — both selects now use the shared
   // TimeDropdown component which reads from module-level TIME_SLOTS.
 
-  const statusLabel = task.status === 'completed' ? 'Done' : task.status === 'in_review' ? 'Review' : task.status === 'in_progress' ? 'Active' : 'To Do';
+  // Route through STATUS_LABEL so this badge uses the same wording as every
+  // other status pill in the app ("Done" / "In Review" / "In Progress" /
+  // "To Do" / "On Hold" / "Cancelled"). Previously had local "Review" /
+  // "Active" overrides that drifted from the rest of the UI.
+  const statusLabel = STATUS_LABEL[task.status] ?? task.status;
   const statusColor = task.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : task.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : task.status === 'in_review' ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-600';
 
   return (

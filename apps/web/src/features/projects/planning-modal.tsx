@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback, createContext, useContext, Fragment } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { usePermissions } from '@/hooks/use-permissions';
-import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle, ChevronsDownUp, ChevronsUpDown, Pencil } from 'lucide-react';
 import { formatDuration } from '@/lib/date-utils';
 import { notify } from '@/lib/notify';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -119,10 +119,10 @@ function StatusBadgeDropdown({
   }, [open]);
 
   const allStatuses = [
-    { value: 'not_started', label: 'Not Started', bg: 'bg-slate-100', text: 'text-slate-600', dot: 'bg-slate-400' },
+    { value: 'not_started', label: 'To Do', bg: 'bg-slate-100', text: 'text-slate-600', dot: 'bg-slate-400' },
     { value: 'in_progress', label: 'In Progress', bg: 'bg-blue-100', text: 'text-blue-700', dot: 'bg-blue-500' },
     { value: 'in_review', label: 'In Review', bg: 'bg-violet-100', text: 'text-violet-700', dot: 'bg-violet-500' },
-    { value: 'completed', label: 'Completed', bg: 'bg-emerald-100', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+    { value: 'completed', label: 'Done', bg: 'bg-emerald-100', text: 'text-emerald-700', dot: 'bg-emerald-500' },
     { value: 'on_hold', label: 'On Hold', bg: 'bg-amber-100', text: 'text-amber-700', dot: 'bg-amber-500' },
     { value: 'cancelled', label: 'Cancelled', bg: 'bg-red-100', text: 'text-red-700', dot: 'bg-red-500' },
   ];
@@ -204,10 +204,10 @@ function StatusMenu({ taskId, currentStatus, projectId }: { taskId: number; curr
   }, [open]);
 
   const statuses = [
-    { value: 'not_started', label: 'Not Started', dot: 'bg-slate-400' },
+    { value: 'not_started', label: 'To Do', dot: 'bg-slate-400' },
     { value: 'in_progress', label: 'In Progress', dot: 'bg-blue-500' },
     { value: 'in_review', label: 'In Review', dot: 'bg-violet-500' },
-    { value: 'completed', label: 'Completed', dot: 'bg-emerald-500' },
+    { value: 'completed', label: 'Done', dot: 'bg-emerald-500' },
     { value: 'on_hold', label: 'On Hold', dot: 'bg-amber-500' },
     { value: 'cancelled', label: 'Cancelled', dot: 'bg-red-500' },
   ];
@@ -551,10 +551,10 @@ function InlineEditCell({ value, type = 'number', prefix, suffix, width, onSave 
 // ─── Sortable Task Row ──────────────────────────────────────────────────────
 
 const statusMap: Record<string, { bg: string; text: string; label: string }> = {
-  not_started: { bg: 'bg-slate-100', text: 'text-slate-600', label: 'Not Started' },
+  not_started: { bg: 'bg-slate-100', text: 'text-slate-600', label: 'To Do' },
   in_progress: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'In Progress' },
   in_review: { bg: 'bg-violet-100', text: 'text-violet-700', label: 'In Review' },
-  completed: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Completed' },
+  completed: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Done' },
   on_hold: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'On Hold' },
   cancelled: { bg: 'bg-red-100', text: 'text-red-700', label: 'Cancelled' },
 };
@@ -1523,10 +1523,10 @@ function BulkActionBar({
   if (selectedCount === 0) return null;
 
   const statusOptions = [
-    { value: 'not_started', label: 'Not Started', dot: 'bg-slate-400' },
+    { value: 'not_started', label: 'To Do', dot: 'bg-slate-400' },
     { value: 'in_progress', label: 'In Progress', dot: 'bg-blue-500' },
     { value: 'in_review', label: 'In Review', dot: 'bg-violet-500' },
-    { value: 'completed', label: 'Completed', dot: 'bg-emerald-500' },
+    { value: 'completed', label: 'Done', dot: 'bg-emerald-500' },
     { value: 'on_hold', label: 'On Hold', dot: 'bg-amber-500' },
     { value: 'cancelled', label: 'Cancelled', dot: 'bg-red-500' },
   ];
@@ -2912,6 +2912,65 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
   );
 }
 
+// ─── Inline Zone-name rename (used by ZoneGroup / HierarchicalZoneGroup) ────
+// Click the pencil → swap to an input. Enter / blur saves via PATCH /zones/:id;
+// Esc cancels. Click handlers stop-propagation so they don't toggle the
+// surrounding row's collapse state.
+function ZoneNameWithRename({
+  zone, projectId, nameClassName,
+}: {
+  zone: { id: number; name: string };
+  projectId: number;
+  nameClassName?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(zone.name);
+  const queryClient = useQueryClient();
+  const rename = useMutation({
+    mutationFn: (name: string) => zonesApi.update(zone.id, { name }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+      notify.success('Zone renamed', { code: 'ZONE-RENAME-200' });
+      setEditing(false);
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to rename zone'),
+  });
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (!trimmed || trimmed === zone.name) { setEditing(false); setDraft(zone.name); return; }
+    rename.mutate(trimmed);
+  };
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+          else if (e.key === 'Escape') { setDraft(zone.name); setEditing(false); }
+        }}
+        onClick={(e) => e.stopPropagation()}
+        className="min-w-0 max-w-full rounded border border-blue-300 px-1.5 py-0.5 text-[13px] focus:outline-none focus:ring-1 focus:ring-blue-400"
+      />
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 min-w-0">
+      <span className={cn('truncate', nameClassName)} title={zone.name}>{zone.name}</span>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setDraft(zone.name); setEditing(true); }}
+        title="Rename zone"
+        className="shrink-0 text-slate-300 hover:text-blue-600 hover:bg-blue-50 rounded p-0.5 transition-colors"
+      >
+        <Pencil className="h-3 w-3" />
+      </button>
+    </span>
+  );
+}
+
 // ─── Zone Group (collapsible) with task table ────────────────────────────────
 
 function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, thClass, handleSort, sortIcon, selectedTaskIds, onToggleTask, onToggleMany }: any) {
@@ -2943,7 +3002,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
     <div className="border-b border-slate-100 last:border-0">
       <div className="flex items-center gap-2.5 px-5 py-2.5 bg-[#FAFBFC] cursor-pointer" onClick={() => setCollapsed(!collapsed)}>
         {collapsed ? <ChevronRight className="w-3 h-3 text-slate-400" /> : <ChevronDown className="w-3 h-3 text-slate-400" />}
-        <span className="text-[13px] font-semibold text-slate-900 truncate" title={zone.name}>{zone.name}</span>
+        <ZoneNameWithRename zone={zone} projectId={projectId} nameClassName="text-[13px] font-semibold text-slate-900" />
         <span className="rounded-[5px] bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-400">{zone.zoneType}</span>
         <span className="ml-auto text-[11px] font-medium text-slate-400">
           {tasks.length} tasks · {hours}h budget
@@ -3248,7 +3307,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           title={`Select all ${allZoneTasks.length} tasks in this zone`}
         />
         <span className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide shrink-0', zc.bg, zc.text)}>{zone.zoneType}</span>
-        <span className={cn('font-semibold truncate', depth === 0 ? 'text-[15px] text-slate-900' : 'text-[13px] text-slate-800')} title={zone.name}>{zone.name}</span>
+        <ZoneNameWithRename zone={zone} projectId={projectId} nameClassName={cn('font-semibold', depth === 0 ? 'text-[15px] text-slate-900' : 'text-[13px] text-slate-800')} />
         {hasChildren && <span className="text-[11px] text-slate-400">({zone.children.length} sub-zones)</span>}
         <div className="ml-auto flex items-center gap-3 shrink-0">
           {/* Mini progress bar */}

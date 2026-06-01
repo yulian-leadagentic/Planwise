@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Filter, User as UserIcon, GripVertical, Clock, Calendar, AlertCircle, AlertTriangle } from 'lucide-react';
+import { Plus, Filter, User as UserIcon, GripVertical, Clock, Calendar, AlertCircle, AlertTriangle, Search, X } from 'lucide-react';
+import { getTaskPhaseName } from '@/features/execution-board/execution-board.util';
 import { DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -14,12 +15,15 @@ import { TaskDrawer } from './task-drawer';
 import { getTaskHealth } from '@/lib/task-health';
 import { STATUS_PILL, STATUS_LABEL, ZONE_BORDER_COLORS } from '@/lib/task-constants';
 
+// Column labels mirror STATUS_LABEL exactly so the kanban headers read the
+// same as every other status badge in the app ("To Do" / "Done", not "Not
+// Started" / "Completed").
 const columns = [
-  { id: 'not_started', label: 'Not Started', color: 'border-t-slate-400', bg: 'bg-slate-50' },
+  { id: 'not_started', label: 'To Do', color: 'border-t-slate-400', bg: 'bg-slate-50' },
   { id: 'in_progress', label: 'In Progress', color: 'border-t-blue-500', bg: 'bg-blue-50/30' },
   { id: 'in_review', label: 'In Review', color: 'border-t-violet-500', bg: 'bg-violet-50/30' },
   { id: 'on_hold', label: 'On Hold', color: 'border-t-amber-500', bg: 'bg-amber-50/30' },
-  { id: 'completed', label: 'Completed', color: 'border-t-emerald-500', bg: 'bg-emerald-50/30' },
+  { id: 'completed', label: 'Done', color: 'border-t-emerald-500', bg: 'bg-emerald-50/30' },
 ];
 
 // Manager-facing card. Drag listeners live ONLY on the grip button so the
@@ -256,6 +260,54 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
   const pd = raw?.tasks ? raw : raw?.data?.tasks ? raw.data : raw?.data ?? raw;
   const tasks: any[] = Array.isArray(pd?.tasks) ? pd.tasks : [];
 
+  // ─── Filters ────────────────────────────────────────────────────────────
+  // Search (code/name) + deliverable + assignee + priority. The deliverable
+  // dimension uses the SAME canonical resolver (getTaskPhaseName) the
+  // planning grid and execution board use, so picking "Critical Report" here
+  // matches that exact label everywhere else.
+  const [searchText, setSearchText] = useState('');
+  const [deliverableFilter, setDeliverableFilter] = useState('');
+  const [assigneeFilter, setAssigneeFilter] = useState('');
+  const [priorityFilter, setPriorityFilter] = useState('');
+
+  const filterOptions = useMemo(() => {
+    const deliverables = new Set<string>();
+    const assigneeMap = new Map<string, string>();
+    for (const t of tasks) {
+      const dn = getTaskPhaseName(t);
+      if (dn) deliverables.add(dn);
+      for (const a of t.assignees ?? []) {
+        const id = a.userId ?? a.user?.id;
+        if (id == null) continue;
+        const name = `${a.user?.firstName ?? ''} ${a.user?.lastName ?? ''}`.trim() || `User #${id}`;
+        assigneeMap.set(String(id), name);
+      }
+    }
+    return {
+      deliverables: Array.from(deliverables).sort(),
+      assignees: Array.from(assigneeMap.entries())
+        .map(([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    };
+  }, [tasks]);
+
+  const filteredTasks = useMemo(() => {
+    const q = searchText.trim().toLowerCase();
+    return tasks.filter((t: any) => {
+      if (q && !(`${t.code ?? ''} ${t.name ?? ''}`.toLowerCase().includes(q))) return false;
+      if (deliverableFilter && (getTaskPhaseName(t) ?? '') !== deliverableFilter) return false;
+      if (priorityFilter && t.priority !== priorityFilter) return false;
+      if (assigneeFilter) {
+        const aid = Number(assigneeFilter);
+        const has = (t.assignees ?? []).some((a: any) => (a.userId ?? a.user?.id) === aid);
+        if (!has) return false;
+      }
+      return true;
+    });
+  }, [tasks, searchText, deliverableFilter, assigneeFilter, priorityFilter]);
+
+  const isFiltered = !!searchText.trim() || !!deliverableFilter || !!assigneeFilter || !!priorityFilter;
+
   const sensors = useSensors(
     // 8px activation distance — same as the My Tasks kanban. Lower values
     // (e.g. 5px) make it easy to accidentally start a drag when clicking
@@ -266,13 +318,13 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
   const columnTasks = useMemo(() => {
     const map: Record<string, any[]> = {};
     for (const col of columns) map[col.id] = [];
-    for (const task of tasks) {
+    for (const task of filteredTasks) {
       const status = task.status || 'not_started';
       if (map[status]) map[status].push(task);
       else if (map.not_started) map.not_started.push(task);
     }
     return map;
-  }, [tasks]);
+  }, [filteredTasks]);
 
   const handleDragStart = (event: DragStartEvent) => {
     setActiveDragId(String(event.active.id));
@@ -309,6 +361,78 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
 
   return (
     <>
+      {/* Filter bar — search + deliverable + assignee + priority. Uses the
+          shared canonical resolver so picking a deliverable here matches the
+          exact same label everywhere else (planning, execution board). */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <div className="relative flex-1 min-w-[200px] max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+          <input
+            type="text"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            placeholder="Search by code or name…"
+            className="w-full rounded-md border border-slate-200 bg-white pl-8 pr-7 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
+          />
+          {searchText && (
+            <button
+              onClick={() => setSearchText('')}
+              title="Clear search"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+        <select
+          value={deliverableFilter}
+          onChange={(e) => setDeliverableFilter(e.target.value)}
+          className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-400"
+          title="Filter by deliverable"
+        >
+          <option value="">All Deliverables</option>
+          {filterOptions.deliverables.map((d) => (
+            <option key={d} value={d}>{d}</option>
+          ))}
+        </select>
+        <select
+          value={assigneeFilter}
+          onChange={(e) => setAssigneeFilter(e.target.value)}
+          className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-400"
+          title="Filter by assignee"
+        >
+          <option value="">All Assignees</option>
+          {filterOptions.assignees.map((a) => (
+            <option key={a.id} value={a.id}>{a.name}</option>
+          ))}
+        </select>
+        <select
+          value={priorityFilter}
+          onChange={(e) => setPriorityFilter(e.target.value)}
+          className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-400"
+          title="Filter by priority"
+        >
+          <option value="">All Priorities</option>
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+        {isFiltered && (
+          <button
+            type="button"
+            onClick={() => { setSearchText(''); setDeliverableFilter(''); setAssigneeFilter(''); setPriorityFilter(''); }}
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:border-slate-400"
+            title="Clear all filters"
+          >
+            Clear filters
+          </button>
+        )}
+        <span className="ml-auto text-[11px] text-slate-500">
+          {isFiltered ? <>{filteredTasks.length} of {tasks.length} task{tasks.length !== 1 ? 's' : ''}</> : <>{tasks.length} task{tasks.length !== 1 ? 's' : ''}</>}
+        </span>
+      </div>
+
       <DndContext
         sensors={sensors}
         collisionDetection={closestCorners}

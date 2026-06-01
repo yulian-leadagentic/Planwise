@@ -380,10 +380,12 @@ export function TasksPage() {
                 onChange: (v) => setTaskFilters({ taskStatus: v as string[] }),
                 multiple: true,
                 options: [
-                  { label: 'Not Started', value: 'not_started' },
+                  // Labels mirror STATUS_LABEL so the filter wording matches
+                  // the badges shown on each task row / card.
+                  { label: 'To Do', value: 'not_started' },
                   { label: 'In Progress', value: 'in_progress' },
                   { label: 'In Review', value: 'in_review' },
-                  { label: 'Completed', value: 'completed' },
+                  { label: 'Done', value: 'completed' },
                   { label: 'On Hold', value: 'on_hold' },
                 ],
               },

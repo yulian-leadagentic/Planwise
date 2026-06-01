@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/shared/page-header';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
+import { STATUS_LABEL } from '@/lib/task-constants';
 
 const feasibilityColors = {
   OK: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'On Track' },
@@ -109,7 +110,7 @@ export function ManagerDashboard() {
                   <div className="flex items-center gap-2 text-[10px]">
                     {Object.entries(p.statusCounts ?? {}).map(([status, count]) => (
                       <span key={status} className="rounded-full bg-slate-100 px-1.5 py-0.5 text-slate-500">
-                        {status.replace(/_/g, ' ')}: {count as number}
+                        {STATUS_LABEL[status] ?? status}: {count as number}
                       </span>
                     ))}
                   </div>
