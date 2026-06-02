@@ -11,7 +11,7 @@ import { STATUS_DOT, STATUS_PILL, STATUS_LABEL, formatShortDate } from '@/lib/ta
 import { queryKeys } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
-import { getTaskPhaseName } from './execution-board.util';
+import { getTaskPhaseName, getTaskServiceName } from './execution-board.util';
 
 interface TemplateRef {
   id: number;
@@ -359,7 +359,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   //   • "tasks"  — project × deliverable board listing task TITLES as
   //                status-colored chips in each cell.
   // All three share the same filter state so swapping views keeps context.
-  const [viewMode, setViewMode] = useState<'matrix' | 'status' | 'tasks'>('matrix');
+  const [viewMode, setViewMode] = useState<'matrix' | 'status' | 'tasks' | 'zone-tasks'>('matrix');
   // Service filter is now a STRING (the service name from getTaskPhaseName)
   // and applied client-side — see the explanation in execution-board.service.ts.
   const [serviceFilter, setServiceFilter] = useState<string>('');
@@ -394,6 +394,10 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   const [onlyWithDue, setOnlyWithDue] = useState(false);
   // General task-status filter ('' = all). Applies across all three views.
   const [statusFilter, setStatusFilter] = useState<string>('');
+  // Service (Phase) filter ('' = all). Resolved via getTaskServiceName so it
+  // honors the project-owned deliverable's service link first, then falls
+  // back to the task's phase / legacy serviceType.
+  const [phaseFilter, setPhaseFilter] = useState<string>('');
   const didAutoExpand = useRef(false);
 
   // Don't pass serviceId to the server anymore; we filter client-side.
@@ -432,7 +436,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     // Inline the filter-active check (the memoized isFilterActive const
     // is declared later in the component — referencing it here would hit
     // its TDZ during render).
-    const filterActive = !!serviceFilter || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter;
+    const filterActive = !!serviceFilter || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter || !!phaseFilter;
     if (!filterActive || !data) return;
     const keys = new Set<string>();
     const addZones = (nodes: ZoneNode[]) => {
@@ -447,7 +451,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     }
     setExpandedIds((prev) => new Set([...prev, ...keys]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, data]);
+  }, [serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, data]);
 
   const toggleExpand = useCallback((key: string) => {
     setExpandedIds((prev) => {
@@ -527,12 +531,38 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     return ordered;
   }, [data?.tasks, data?.templates, projectId]);
 
+  // Same construction as availableServices but resolved via getTaskServiceName
+  // — the Service filter only offers values that actually appear on tasks
+  // currently in scope. Picks up the project-owned deliverable's service
+  // (post-refactor) and falls back to the task's phase / serviceType.
+  const availablePhases = useMemo(() => {
+    const allTasks = (data?.tasks ?? []).filter((t: any) =>
+      projectId == null ? true : t.projectId === projectId,
+    );
+    const present = new Set<string>();
+    for (const t of allTasks) {
+      const n = getTaskServiceName(t);
+      if (n) present.add(n);
+    }
+    // Order by the services list returned alongside the board (catalog
+    // sortOrder), then any remaining names alphabetically.
+    const ordered: string[] = [];
+    for (const s of data?.services ?? []) {
+      if (present.has(s.name) && !ordered.includes(s.name)) ordered.push(s.name);
+    }
+    for (const n of Array.from(present).sort((a, b) => a.localeCompare(b))) {
+      if (!ordered.includes(n)) ordered.push(n);
+    }
+    return ordered;
+  }, [data?.tasks, data?.services, projectId]);
+
   // Apply client-side filters before the matrix is built. Order matters:
   // deliverable filter narrows by template-phase; date filters trim by endDate.
   const filteredTasks = useMemo(() => {
     const all = data?.tasks ?? [];
     return all.filter((t: any) => {
       if (statusFilter && t.status !== statusFilter) return false;
+      if (phaseFilter && (getTaskServiceName(t) ?? '__none__') !== phaseFilter) return false;
       if (onlyWithDue && !t.endDate) return false;
       if (dueFrom || dueTo) {
         if (!t.endDate) return false;
@@ -551,7 +581,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       }
       return true;
     });
-  }, [data?.tasks, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter]);
+  }, [data?.tasks, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter]);
 
   const { phaseColumns, directMatrix, hasNoPhase, phaseToService } = useMemo(() => {
     const tasks = filteredTasks;
@@ -772,7 +802,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   // aggregated-tasks list for it. Project rows are kept if any of their
   // child zones survive — collapsing/expanding still works because
   // expandedIds is unaffected.
-  const isFilterActive = !!serviceFilter || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter;
+  const isFilterActive = !!serviceFilter || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter || !!phaseFilter;
   const visibleFlatRows = useMemo(() => {
     if (!isFilterActive) return flatRows;
 
@@ -833,6 +863,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
             { key: 'matrix', label: 'Matrix', sub: 'Zone × Deliverable' },
             { key: 'status', label: 'Status Board', sub: 'Project × Deliverable' },
             { key: 'tasks', label: 'Task Board', sub: 'Project × Task' },
+            { key: 'zone-tasks', label: 'Zone Tasks', sub: 'Zone × Task' },
           ] as const).map((t) => (
             <button
               key={t.key}
@@ -878,6 +909,21 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
         >
           <option value="">All Deliverables</option>
           {availableServices.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+
+        {/* Service (Phase) dropdown — narrows the board to tasks belonging to
+            the chosen Service. Resolved via getTaskServiceName so it honors
+            the project-owned deliverable's service link first. */}
+        <select
+          value={phaseFilter}
+          onChange={(e) => setPhaseFilter(e.target.value)}
+          className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
+          title="Filter by service"
+        >
+          <option value="">All Services</option>
+          {availablePhases.map((name) => (
             <option key={name} value={name}>{name}</option>
           ))}
         </select>
@@ -934,10 +980,10 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
           >
             Collapse All
           </button>
-          {(serviceFilter || dueFrom || dueTo || onlyWithDue || statusFilter) && (
+          {(serviceFilter || dueFrom || dueTo || onlyWithDue || statusFilter || phaseFilter) && (
             <button
               type="button"
-              onClick={() => { setServiceFilter(''); setDueFrom(''); setDueTo(''); setOnlyWithDue(false); setStatusFilter(''); }}
+              onClick={() => { setServiceFilter(''); setDueFrom(''); setDueTo(''); setOnlyWithDue(false); setStatusFilter(''); setPhaseFilter(''); }}
               className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:border-slate-400"
               title="Clear all filters"
             >
@@ -984,6 +1030,210 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
           forcedProjectId={forcedProjectId}
           onOpenTask={(id) => setDrawerTaskId(id)}
         />
+      ) : viewMode === 'zone-tasks' ? (
+        // Zone Tasks view. Rendered inline (not as a separate component) so it
+        // can reuse the Matrix's exact zone hierarchy — same visibleFlatRows
+        // (project headers + nested zone rows + expand/collapse), same depth
+        // indentation, same chevron behavior. Column model mirrors the Task
+        // Board (Deliverable ▸ Task code+name with a two-row header); cells
+        // show the matching task's status pill via TaskStatusCell.
+        (() => {
+          const resolveDeliverable = (t: any): string => getTaskPhaseName(t) ?? 'No Deliverable';
+          const taskKeyOf = (t: any): string => `${t.code ?? ''}||${t.name ?? ''}`;
+
+          // Build column model (deliverable → distinct tasks across all rows).
+          const groupCols = new Map<string, Map<string, { code: string; name: string }>>();
+          for (const t of filteredTasks as any[]) {
+            const d = resolveDeliverable(t);
+            const tk = taskKeyOf(t);
+            if (!groupCols.has(d)) groupCols.set(d, new Map());
+            if (!groupCols.get(d)!.has(tk)) groupCols.get(d)!.set(tk, { code: t.code ?? '', name: t.name ?? '' });
+          }
+          const zoneGroups = Array.from(groupCols.entries())
+            .sort((a, b) => (a[0] === 'No Deliverable' ? 1 : b[0] === 'No Deliverable' ? -1 : a[0].localeCompare(b[0])))
+            .map(([deliverable, colMap]) => ({
+              deliverable,
+              cols: Array.from(colMap.entries())
+                .map(([key, v]) => ({ key, code: v.code, name: v.name }))
+                .sort((x, y) => (x.code || x.name).localeCompare(y.code || y.name)),
+            }));
+          const zoneTotalCols = zoneGroups.reduce((s, g) => s + g.cols.length, 0);
+
+          // Cell map: aggregating self-tasks PLUS descendants so a parent zone
+          // row shows the union of its children's tasks per column (matches the
+          // Matrix's aggregation semantics).
+          const zoneCells = new Map<string, any[]>(); // `${zoneId}|${deliverable}|${taskKey}` → instances
+          for (const t of filteredTasks as any[]) {
+            const zid = t.zone?.id ?? (-(t.projectId ?? 0)); // mirror "synthetic root row id = -projectId"
+            const k = `${zid}|${resolveDeliverable(t)}|${taskKeyOf(t)}`;
+            if (!zoneCells.has(k)) zoneCells.set(k, []);
+            zoneCells.get(k)!.push(t);
+          }
+          const cellFor = (rowId: number, deliverable: string, taskKey: string): any[] => {
+            const ids = zoneDescendants.get(rowId) ?? [rowId];
+            const out: any[] = [];
+            for (const id of ids) {
+              const arr = zoneCells.get(`${id}|${deliverable}|${taskKey}`);
+              if (arr) out.push(...arr);
+            }
+            // Root rows (id < 0) aren't in zoneDescendants; fall back to the
+            // direct lookup so root tasks still appear.
+            if (rowId < 0 && ids.length === 1 && ids[0] === rowId) {
+              const arr = zoneCells.get(`${rowId}|${deliverable}|${taskKey}`);
+              if (arr) out.push(...arr);
+            }
+            // Dedupe (a task could be picked up twice if both fallback paths fire).
+            return Array.from(new Map(out.map((t) => [t.id, t])).values());
+          };
+          // One uniform vertical grid line between every column — the
+          // deliverable grouping is already conveyed by the header row 1
+          // spanning each deliverable name across its task columns + its
+          // slate background, so layering bold-vs-thin lines here just read
+          // as inconsistency. (`ci` is kept in the signature for symmetry
+          // with future per-column customisation.)
+          const leafBorder = (_ci: number) => 'border-l border-slate-300';
+
+          return zoneTotalCols === 0 || visibleFlatRows.length === 0 ? (
+            <div className="rounded-[14px] border border-slate-200 bg-white py-12 text-center text-sm text-slate-400 italic">
+              No tasks to display. Try clearing filters or adding tasks under a Deliverable.
+            </div>
+          ) : (
+            <div className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
+              <table className="w-max text-[12px] border-collapse">
+                <thead>
+                  <tr className="bg-slate-200/80 text-[11px] uppercase tracking-wider text-slate-800">
+                    <th
+                      rowSpan={2}
+                      className="sticky left-0 top-0 z-30 bg-slate-200/80 px-4 py-2.5 text-left font-bold text-slate-700 min-w-[300px] border-r border-slate-300"
+                    >
+                      Zone
+                    </th>
+                    {zoneGroups.map((g) => (
+                      <th
+                        key={g.deliverable}
+                        colSpan={g.cols.length}
+                        className="sticky top-0 z-20 bg-slate-200/80 px-3 py-2 text-center font-extrabold text-slate-800 border-l border-slate-300"
+                        title={g.deliverable}
+                      >
+                        <span className="block truncate">{g.deliverable}</span>
+                      </th>
+                    ))}
+                  </tr>
+                  <tr className="bg-white text-[10px] text-slate-700">
+                    {zoneGroups.map((g) =>
+                      g.cols.map((c, ci) => (
+                        <th
+                          key={`${g.deliverable}|${c.key}`}
+                          className={cn(
+                            'sticky top-[40px] z-20 bg-white px-2 py-2 text-left align-bottom min-w-[110px] max-w-[200px] border-b border-slate-200',
+                            leafBorder(ci),
+                          )}
+                          title={`${c.code ? c.code + ' · ' : ''}${c.name}`}
+                        >
+                          {c.code && <span className="block font-mono text-[9px] text-slate-500 truncate">{c.code}</span>}
+                          <span className="block truncate normal-case font-semibold text-slate-700">{c.name}</span>
+                        </th>
+                      )),
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleFlatRows.map((row) => {
+                    if (row.type === 'project') {
+                      const pc = projectColorMap.get(row.id) ?? PROJECT_COLORS[0];
+                      const agg = projectHealth.get(row.id) ?? { critical: 0, warning: 0, ok: 0 };
+                      return (
+                        <tr
+                          key={row.key}
+                          className={cn('border-t border-slate-200 cursor-pointer hover:brightness-95 transition-all', pc.bg)}
+                          onClick={() => toggleExpand(row.key)}
+                        >
+                          <td
+                            className={cn('sticky left-0 z-10 px-4 py-2.5 border-r', pc.bg, pc.border)}
+                            colSpan={zoneTotalCols + 1}
+                          >
+                            <div className="flex items-center gap-2">
+                              <ChevronRight
+                                className={cn(
+                                  'h-4 w-4 text-slate-400 transition-transform duration-150',
+                                  expandedIds.has(row.key) && 'rotate-90',
+                                )}
+                              />
+                              <FolderKanban className={cn('h-4 w-4', pc.icon)} />
+                              <span className="font-semibold text-slate-700">{row.name}</span>
+                              {row.number && (
+                                <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium border', pc.border, 'text-slate-600 bg-white/60')}>
+                                  {row.number}
+                                </span>
+                              )}
+                              <HealthBadge agg={agg} size="md" />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    }
+                    const zc = ZONE_COLORS[row.zoneType ?? ''] ?? ZONE_COLORS.zone;
+                    const anyExpanded = expandedZones.has(row.id) || (row.hasChildren && expandedIds.has(row.key));
+                    const expandFully = () => {
+                      toggleZoneExpand(row.id);
+                      if (row.hasChildren) toggleExpand(row.key);
+                    };
+                    return (
+                      <tr
+                        key={row.key}
+                        className="group border-t border-slate-100 hover:bg-blue-50/50 transition-colors"
+                      >
+                        <td
+                          className={cn(
+                            'sticky left-0 z-10 bg-white group-hover:bg-blue-100/70 px-4 py-2 border-r border-slate-300 border-l-[3px] cursor-pointer transition-colors',
+                            zc.border,
+                          )}
+                          onClick={expandFully}
+                          aria-label={anyExpanded ? 'Collapse this zone' : 'Expand this zone'}
+                        >
+                          <div
+                            className="flex items-center gap-1.5"
+                            style={{ paddingLeft: `${row.depth * 20}px` }}
+                          >
+                            <ChevronRight
+                              className={cn(
+                                'h-3.5 w-3.5 shrink-0 transition-transform duration-150',
+                                anyExpanded ? 'rotate-90 text-blue-600' : 'text-slate-400',
+                              )}
+                            />
+                            <span
+                              className={cn(
+                                'truncate text-[13px]',
+                                row.hasChildren ? 'font-semibold text-slate-700' : 'text-slate-600',
+                              )}
+                            >
+                              {row.name}
+                            </span>
+                            {row.zoneType && (
+                              <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium capitalize shrink-0', zc.badge)}>
+                                {row.zoneType}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        {zoneGroups.map((g) =>
+                          g.cols.map((c, ci) => (
+                            <td
+                              key={`${g.deliverable}|${c.key}`}
+                              className={cn('px-2 py-1.5 text-center align-top border-b border-slate-200', leafBorder(ci))}
+                            >
+                              <TaskStatusCell tasks={cellFor(row.id, g.deliverable, c.key)} onOpenTask={(id) => setDrawerTaskId(id)} />
+                            </td>
+                          )),
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()
       ) : (
         <div className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
             {/* w-max + min-w-full: grow to content (so column min-widths are
@@ -1565,3 +1815,4 @@ function TaskStatusCell({ tasks, onOpenTask }: { tasks: any[]; onOpenTask: (id: 
     </button>
   );
 }
+

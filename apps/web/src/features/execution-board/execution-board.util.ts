@@ -14,9 +14,10 @@ export interface TaskLike {
    * The AUTHORITATIVE, project-owned Deliverable (first-class entity). Its
    * name belongs to the project — renaming it changes the deliverable for
    * the PM and the customer everywhere. Takes top priority over the legacy
-   * catalog-template link.
+   * catalog-template link. The optional `service` is the Service (Phase)
+   * the project deliverable belongs to — surfaced to the Service filter.
    */
-  projectDeliverable?: { name: string } | null;
+  projectDeliverable?: { name: string; service?: { name: string } | null } | null;
   /**
    * The legacy catalog deliverable link (deliverable_template_id). Kept for
    * provenance / back-compat; used only when no projectDeliverable is set.
@@ -63,6 +64,24 @@ export function getTaskPhaseName(task: TaskLike): string | null {
   const m = task.description?.match(SERVICE_RE);
   if (m) return m[1];
   if (task.phase?.name) return task.phase.name;
+  return null;
+}
+
+/**
+ * Canonical Service (Phase) label for a task — used by the Service filter on
+ * the Execution Board. A "Service" is one of the company's offerings (BIM
+ * Coordination, BIM Management, etc.) and stays a global catalog item;
+ * deliverables belong to a service. Priority:
+ *   1. task.projectDeliverable.service.name — the project-owned deliverable's
+ *      service link, which is the authoritative source post-refactor.
+ *   2. task.phase.name — direct phase on the task (root tasks and legacy data).
+ *   3. task.serviceType.name — legacy ServiceType FK; thinly used.
+ *   4. null → "No Service" bucket.
+ */
+export function getTaskServiceName(task: TaskLike): string | null {
+  if (task.projectDeliverable?.service?.name) return task.projectDeliverable.service.name;
+  if (task.phase?.name) return task.phase.name;
+  if (task.serviceType?.name) return task.serviceType.name;
   return null;
 }
 

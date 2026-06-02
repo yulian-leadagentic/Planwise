@@ -1,5 +1,6 @@
 import {
   getTaskPhaseName,
+  getTaskServiceName,
   buildZoneDescendants,
   buildTaskMatrix,
   aggregateCellTasks,
@@ -49,6 +50,35 @@ describe('getTaskPhaseName', () => {
 
   it('matches only the strict full-string [SERVICE:...] form', () => {
     expect(getTaskPhaseName({ id: 1, zoneId: 1, description: 'hi [SERVICE:X]' })).toBeNull();
+  });
+});
+
+describe('getTaskServiceName', () => {
+  it('prefers the project deliverable\'s service (the authoritative link)', () => {
+    expect(
+      getTaskServiceName({
+        id: 1,
+        zoneId: 1,
+        projectDeliverable: { name: 'Critical Report', service: { name: 'BIM Coordination' } },
+        phase: { name: 'Other Phase' },
+      }),
+    ).toBe('BIM Coordination');
+  });
+
+  it('falls back to task.phase.name', () => {
+    expect(
+      getTaskServiceName({ id: 1, zoneId: 1, phase: { name: 'BIM Management' } }),
+    ).toBe('BIM Management');
+  });
+
+  it('falls back to legacy serviceType', () => {
+    expect(
+      getTaskServiceName({ id: 1, zoneId: 1, serviceType: { name: 'Modeling' } }),
+    ).toBe('Modeling');
+  });
+
+  it('returns null when no service signal is present', () => {
+    expect(getTaskServiceName({ id: 1, zoneId: 1 })).toBeNull();
   });
 });
 
