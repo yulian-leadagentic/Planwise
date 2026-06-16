@@ -57,18 +57,15 @@ export class CreateTimeEntryDto {
   completionPct?: number;
 
   /**
-   * When the service detects this entry overlaps with another entry on a
-   * DIFFERENT task on the same day, it normally rejects with
-   * `code: 'CROSS_TASK_OVERLAP'` so the client can show a confirm dialog.
-   * The client then retries the same payload with `confirmOverlap: true`
-   * to bypass the soft check.
-   *
-   * SAME-task overlaps are always rejected — no override flag honors them.
-   * Reporting twice on the same task for the same minutes would double-
-   * count and is treated as a data-entry mistake, not a workflow choice.
+   * @deprecated 2026-06-14 — no-overlap policy is now hard. Cross-task and
+   * same-task overlaps both reject with 409 and no flag bypasses them.
+   * Field kept on the DTO so existing clients sending it don't get a
+   * "property does not exist on type" 400 from `forbidNonWhitelisted: true`.
+   * Will be removed after one release cycle.
    */
   @ApiPropertyOptional({
-    description: 'Set to true to acknowledge a cross-task overlap and save anyway',
+    description: 'Deprecated. Has no effect — overlapping time entries are now hard-rejected.',
+    deprecated: true,
   })
   @IsOptional()
   @IsBoolean()
