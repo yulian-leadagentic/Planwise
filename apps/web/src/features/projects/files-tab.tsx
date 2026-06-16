@@ -110,9 +110,6 @@ export function FilesTab({ projectId }: { projectId: number }) {
   const queryClient = useQueryClient();
   const [showAddLink, setShowAddLink] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  // Source filter pill — All / Project / Task. Default All; the filter is
-  // client-side so swapping doesn't refetch.
-  const [sourceFilter, setSourceFilter] = useState<'all' | 'project' | 'task'>('all');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: files = [], isLoading } = useQuery<ProjectFile[]>({
@@ -120,24 +117,19 @@ export function FilesTab({ projectId }: { projectId: number }) {
     queryFn: () => client.get(`/projects/${projectId}/files`).then((r) => r.data?.data ?? r.data),
   });
 
-  // Counts for the filter pills — driven from the unfiltered list so the
-  // counts stay stable as the user clicks between tabs.
-  const projectCount = files.filter((f) => f.source === 'project').length;
-  const taskCount = files.filter((f) => f.source === 'task').length;
-  const visibleFiles = sourceFilter === 'all'
-    ? files
-    : files.filter((f) => f.source === sourceFilter);
-
-  // Favorites: pinned to top of the list. Persisted locally per project
-  // (see useFavorites — server-side persistence is a planned follow-up).
+  // Favorites: pinned to top of EACH section list. Persisted locally per
+  // project (see useFavorites — server-side persistence is a planned follow-up).
   const { favorites, toggleFavorite } = useFavorites(projectId);
-  const sortedFiles = [...visibleFiles].sort((a, b) => {
+  const sortBySource = (a: ProjectFile, b: ProjectFile) => {
     const aFav = favorites.has(a.id) ? 1 : 0;
     const bFav = favorites.has(b.id) ? 1 : 0;
     if (aFav !== bFav) return bFav - aFav;
-    // Stable secondary sort by createdAt desc (newest first within each group)
     return (b.createdAt ?? '').localeCompare(a.createdAt ?? '');
-  });
+  };
+  // Split into two sections: directly-attached project files and files
+  // uploaded to specific tasks. Each section is independently sorted.
+  const projectFiles = files.filter((f) => f.source === 'project').sort(sortBySource);
+  const taskFiles = files.filter((f) => f.source === 'task').sort(sortBySource);
 
   const upload = useMutation({
     mutationFn: async (file: File) => {
@@ -244,34 +236,6 @@ export function FilesTab({ projectId }: { projectId: number }) {
         )}
       </div>
 
-      {/* Source filter pills. Counts come from the unfiltered list so
-          they don't blink to zero when the user picks one. */}
-      {!isLoading && files.length > 0 && (
-        <div className="flex items-center gap-2 text-[12px]">
-          <span className="text-slate-400 font-semibold uppercase tracking-wider text-[10px]">Source</span>
-          {([
-            { key: 'all',     label: 'All',     count: files.length },
-            { key: 'project', label: 'Project', count: projectCount },
-            { key: 'task',    label: 'Task',    count: taskCount },
-          ] as const).map((pill) => (
-            <button
-              key={pill.key}
-              type="button"
-              onClick={() => setSourceFilter(pill.key)}
-              disabled={pill.count === 0 && pill.key !== 'all'}
-              className={cn(
-                'rounded-full px-3 py-1 text-[12px] font-medium border transition-colors',
-                sourceFilter === pill.key
-                  ? 'border-blue-500 bg-blue-50 text-blue-700'
-                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-400 disabled:opacity-40 disabled:cursor-not-allowed',
-              )}
-            >
-              {pill.label} <span className="text-slate-400">({pill.count})</span>
-            </button>
-          ))}
-        </div>
-      )}
-
       {isLoading ? (
         <div className="py-12 text-center text-sm text-slate-400">Loading files...</div>
       ) : files.length === 0 ? (
@@ -282,211 +246,18 @@ export function FilesTab({ projectId }: { projectId: number }) {
             {canWrite ? 'Upload a file or paste a link to a shared location' : 'Files will appear here once added'}
           </p>
         </div>
-      ) : sortedFiles.length === 0 ? (
-        <div className="rounded-[14px] border border-dashed border-slate-200 bg-slate-50/40 p-10 text-center">
-          <p className="text-sm text-slate-500">
-            No <span className="font-semibold">{sourceFilter}</span> files match.{' '}
-            <button
-              type="button"
-              onClick={() => setSourceFilter('all')}
-              className="text-blue-600 hover:underline"
-            >
-              Show all
-            </button>
-          </p>
-        </div>
       ) : (
-        <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
-                <th className="px-2 py-2 text-center font-semibold w-10"></th>
-                <th className="px-4 py-2 text-left font-semibold">Name</th>
-                <th className="px-4 py-2 text-left font-semibold w-32">Type</th>
-                <th className="px-4 py-2 text-left font-semibold w-44">Source</th>
-                <th className="px-4 py-2 text-left font-semibold w-40">Added by</th>
-                <th className="px-4 py-2 text-left font-semibold w-32">Uploaded</th>
-                <th className="px-4 py-2 text-right font-semibold w-32"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedFiles.map((f) => {
-                const provider: LinkProvider = f.kind === 'link' ? detectLinkProvider(f.url) : 'generic';
-                const isCloudLink = provider !== 'generic';
-                const isFavorite = favorites.has(f.id);
-                const openable = f.kind === 'link' && isHttpUrl(f.url);
-                return (
-                <tr key={f.id} className={cn(
-                  'border-t border-slate-100 hover:bg-slate-50/40',
-                  isFavorite && 'bg-yellow-50/30',
-                )}>
-                  {/* Favorite toggle — pins file to top of list. Persisted
-                      to localStorage per project (see useFavorites). */}
-                  <td className="px-2 py-3 text-center">
-                    <button
-                      onClick={() => toggleFavorite(f.id)}
-                      className={cn(
-                        'p-1 rounded transition-colors',
-                        isFavorite
-                          ? 'text-yellow-500 hover:text-yellow-600'
-                          : 'text-slate-300 hover:text-yellow-500',
-                      )}
-                      title={isFavorite ? 'Unpin from top' : 'Pin to top'}
-                      aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-                    >
-                      <Star className={cn('h-4 w-4', isFavorite && 'fill-yellow-500')} />
-                    </button>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-start gap-3">
-                      {/* Bigger, bolder file-type icon — easier to scan visually. */}
-                      <div className={cn(
-                        'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg shadow-sm border',
-                        f.kind === 'upload' ? 'bg-blue-100 text-blue-700 border-blue-200'
-                          : provider === 'google-drive' ? 'bg-yellow-100 text-yellow-800 border-yellow-200'
-                          : 'bg-violet-100 text-violet-700 border-violet-200',
-                      )}>
-                        {f.kind === 'upload' ? <FileText className="h-5 w-5" /> :
-                          isCloudLink ? <HardDrive className="h-5 w-5" /> :
-                          <LinkIcon className="h-5 w-5" />}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        {/* File name is the click target. For links it opens
-                            the URL in a new tab; for uploads it triggers the
-                            download. URL itself is hidden — surfaced only on
-                            hover via the title attribute. */}
-                        {openable ? (
-                          <a
-                            href={f.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title={f.url}
-                            className="font-medium text-slate-800 hover:text-blue-600 hover:underline truncate block"
-                          >
-                            {f.name}
-                          </a>
-                        ) : f.kind === 'upload' ? (
-                          <button
-                            type="button"
-                            onClick={() => handleDownload(f)}
-                            title={`Download ${f.name}`}
-                            className="font-medium text-slate-800 hover:text-blue-600 hover:underline truncate block text-left"
-                          >
-                            {f.name}
-                          </button>
-                        ) : (
-                          <p className="font-medium text-slate-800 truncate" title={f.url}>{f.name}</p>
-                        )}
-                        {/* Metadata row: size + mime for uploads, nothing for
-                            links (URL moved into hover tooltip per
-                            customer request — too noisy when shown inline). */}
-                        {f.kind === 'upload' && (
-                          <p className="text-[11px] text-slate-500 mt-0.5">
-                            {formatBytes(f.fileSize)}
-                            {f.mimeType ? ` · ${f.mimeType}` : ''}
-                          </p>
-                        )}
-                        {f.description && (
-                          <p className="text-[12px] text-slate-600 mt-1">{f.description}</p>
-                        )}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={cn(
-                      'rounded-full px-2 py-0.5 text-[11px] font-semibold',
-                      f.kind === 'upload' ? 'bg-blue-50 text-blue-700'
-                        : provider === 'google-drive' ? 'bg-yellow-50 text-yellow-700'
-                        : 'bg-violet-50 text-violet-700',
-                    )}>
-                      {f.kind === 'upload' ? 'Upload' : PROVIDER_LABEL[provider]}
-                    </span>
-                  </td>
-                  {/* Source badge — tells the user whether the file was
-                      attached directly to the project (Project) or uploaded
-                      to a specific task (Task: <name>). The Task variant is
-                      clickable and opens the task drawer. */}
-                  <td className="px-4 py-3">
-                    {f.source === 'task' && f.taskId ? (
-                      <span
-                        className="inline-flex items-center gap-1 rounded-full bg-indigo-50 text-indigo-700 px-2 py-0.5 text-[11px] font-semibold"
-                        title={`Uploaded to task: ${f.taskName ?? `#${f.taskId}`}`}
-                      >
-                        <span className="opacity-60">Task:</span>
-                        <span className="truncate max-w-[150px]">{f.taskName ?? `#${f.taskId}`}</span>
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center rounded-full bg-slate-100 text-slate-600 px-2 py-0.5 text-[11px] font-semibold">
-                        Project
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {f.uploader && (
-                      <div className="flex items-center gap-2">
-                        <UserAvatar firstName={f.uploader.firstName} lastName={f.uploader.lastName} avatarUrl={f.uploader.avatarUrl} size="sm" />
-                        <span className="text-[12px] text-slate-700">{f.uploader.firstName} {f.uploader.lastName}</span>
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-[12px] text-slate-600">
-                    {formatUploadDate(f.createdAt)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-1">
-                      {f.kind === 'upload' ? (
-                        <button
-                          onClick={() => handleDownload(f)}
-                          className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
-                          title="Download"
-                        >
-                          <Download className="h-3.5 w-3.5" />
-                        </button>
-                      ) : (
-                        <>
-                          {isHttpUrl(f.url) && (
-                            <a
-                              href={f.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
-                              title="Open link"
-                            >
-                              <ExternalLink className="h-3.5 w-3.5" />
-                            </a>
-                          )}
-                          <button
-                            onClick={() => handleCopy(f.id, f.url)}
-                            className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
-                            title="Copy path"
-                          >
-                            {copiedId === f.id ? (
-                              <Check className="h-3.5 w-3.5 text-green-600" />
-                            ) : (
-                              <Copy className="h-3.5 w-3.5" />
-                            )}
-                          </button>
-                        </>
-                      )}
-                      {canDelete && (
-                        <button
-                          onClick={() => {
-                            if (confirm(`Remove "${f.name}"?`)) remove.mutate(f);
-                          }}
-                          className="p-1.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-600"
-                          title="Remove"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <FilesSections
+          projectFiles={projectFiles}
+          taskFiles={taskFiles}
+          favorites={favorites}
+          toggleFavorite={toggleFavorite}
+          handleDownload={handleDownload}
+          handleCopy={handleCopy}
+          copiedId={copiedId}
+          canDelete={canDelete}
+          onRemove={(f) => { if (confirm(`Remove "${f.name}"?`)) remove.mutate(f); }}
+        />
       )}
 
       {showAddLink && (
@@ -498,6 +269,394 @@ export function FilesTab({ projectId }: { projectId: number }) {
     </div>
   );
 }
+
+/**
+ * Renders two clearly separated panels — Project Files and Task Files —
+ * each with its own header, count, and table. Empty section gets a thin
+ * placeholder so the layout reads as "two boxes" even when one is empty,
+ * which is what the customer asked for: a visible separation between
+ * project-attached files and task-attached files.
+ */
+function FilesSections({
+  projectFiles,
+  taskFiles,
+  favorites,
+  toggleFavorite,
+  handleDownload,
+  handleCopy,
+  copiedId,
+  canDelete,
+  onRemove,
+}: {
+  projectFiles: ProjectFile[];
+  taskFiles: ProjectFile[];
+  favorites: Set<string>;
+  toggleFavorite: (id: string) => void;
+  handleDownload: (file: ProjectFile) => void;
+  handleCopy: (id: string, url: string) => void;
+  copiedId: string | null;
+  canDelete: boolean;
+  onRemove: (file: ProjectFile) => void;
+}) {
+  return (
+    <div className="space-y-6">
+      <SectionPanel
+        title="Project Files"
+        subtitle="Files attached directly to the project"
+        count={projectFiles.length}
+        accent="slate"
+        files={projectFiles}
+        emptyHint="No project-level files yet. Upload one above or paste a link."
+        favorites={favorites}
+        toggleFavorite={toggleFavorite}
+        handleDownload={handleDownload}
+        handleCopy={handleCopy}
+        copiedId={copiedId}
+        canDelete={canDelete}
+        onRemove={onRemove}
+      />
+      <SectionPanel
+        title="Task Files"
+        subtitle="Files attached to individual tasks in this project"
+        count={taskFiles.length}
+        accent="indigo"
+        files={taskFiles}
+        groupByTask
+        emptyHint="No task attachments yet. They appear here when someone adds a file from a task drawer."
+        favorites={favorites}
+        toggleFavorite={toggleFavorite}
+        handleDownload={handleDownload}
+        handleCopy={handleCopy}
+        copiedId={copiedId}
+        canDelete={canDelete}
+        onRemove={onRemove}
+      />
+    </div>
+  );
+}
+
+function SectionPanel({
+  title,
+  subtitle,
+  count,
+  accent,
+  files,
+  emptyHint,
+  groupByTask,
+  favorites,
+  toggleFavorite,
+  handleDownload,
+  handleCopy,
+  copiedId,
+  canDelete,
+  onRemove,
+}: {
+  title: string;
+  subtitle: string;
+  count: number;
+  accent: 'slate' | 'indigo';
+  files: ProjectFile[];
+  emptyHint: string;
+  groupByTask?: boolean;
+  favorites: Set<string>;
+  toggleFavorite: (id: string) => void;
+  handleDownload: (file: ProjectFile) => void;
+  handleCopy: (id: string, url: string) => void;
+  copiedId: string | null;
+  canDelete: boolean;
+  onRemove: (file: ProjectFile) => void;
+}) {
+  // When the Task section is grouped, build a [taskName, taskFiles[]] list,
+  // ordered by the first appearance of each task (which is already
+  // newest-first because the parent sort is createdAt desc). Within each
+  // task the favorites bubble to the top via the parent sort.
+  const grouped: Array<{ key: string; label: string; rows: ProjectFile[] }> = [];
+  if (groupByTask) {
+    const map = new Map<string, ProjectFile[]>();
+    for (const f of files) {
+      const key = `${f.taskId ?? 0}|${f.taskName ?? ''}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(f);
+    }
+    for (const [key, rows] of map.entries()) {
+      const label = rows[0]?.taskName ?? `Task #${rows[0]?.taskId ?? '?'}`;
+      grouped.push({ key, label, rows });
+    }
+  }
+
+  return (
+    <section className={cn(
+      'rounded-[14px] border bg-white overflow-hidden',
+      accent === 'indigo' ? 'border-indigo-100' : 'border-slate-200',
+    )}>
+      <header className={cn(
+        'flex items-baseline justify-between gap-3 px-5 py-3 border-b',
+        accent === 'indigo' ? 'bg-indigo-50/50 border-indigo-100' : 'bg-slate-50 border-slate-200',
+      )}>
+        <div>
+          <h4 className={cn(
+            'text-[13px] font-bold uppercase tracking-wider',
+            accent === 'indigo' ? 'text-indigo-700' : 'text-slate-700',
+          )}>
+            {title}
+            <span className={cn(
+              'ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold',
+              accent === 'indigo' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-700',
+            )}>
+              {count}
+            </span>
+          </h4>
+          <p className="text-[11px] text-slate-500 mt-0.5">{subtitle}</p>
+        </div>
+      </header>
+      {files.length === 0 ? (
+        <div className="p-6 text-center text-[12px] text-slate-400 italic">
+          {emptyHint}
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50/60 text-[11px] uppercase tracking-wider text-slate-500">
+                <th className="px-2 py-2 text-center font-semibold w-10"></th>
+                <th className="px-4 py-2 text-left font-semibold">Name</th>
+                <th className="px-4 py-2 text-left font-semibold w-32">Type</th>
+                <th className="px-4 py-2 text-left font-semibold w-40">Added by</th>
+                <th className="px-4 py-2 text-left font-semibold w-32">Uploaded</th>
+                <th className="px-4 py-2 text-right font-semibold w-32"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {groupByTask ? (
+                grouped.map((g) => (
+                  <FileGroupRows
+                    key={g.key}
+                    label={g.label}
+                    rows={g.rows}
+                    favorites={favorites}
+                    toggleFavorite={toggleFavorite}
+                    handleDownload={handleDownload}
+                    handleCopy={handleCopy}
+                    copiedId={copiedId}
+                    canDelete={canDelete}
+                    onRemove={onRemove}
+                  />
+                ))
+              ) : (
+                files.map((f) => (
+                  <FileRow
+                    key={f.id}
+                    f={f}
+                    favorites={favorites}
+                    toggleFavorite={toggleFavorite}
+                    handleDownload={handleDownload}
+                    handleCopy={handleCopy}
+                    copiedId={copiedId}
+                    canDelete={canDelete}
+                    onRemove={onRemove}
+                  />
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function FileGroupRows({
+  label,
+  rows,
+  ...rest
+}: {
+  label: string;
+  rows: ProjectFile[];
+  favorites: Set<string>;
+  toggleFavorite: (id: string) => void;
+  handleDownload: (file: ProjectFile) => void;
+  handleCopy: (id: string, url: string) => void;
+  copiedId: string | null;
+  canDelete: boolean;
+  onRemove: (file: ProjectFile) => void;
+}) {
+  // Sub-header row per task, then the files underneath it. The label is
+  // not a button to keep this list compact; clicking the task name on the
+  // file row chip in the future would open the drawer.
+  return (
+    <>
+      <tr className="bg-indigo-50/40">
+        <td colSpan={6} className="px-4 py-2 text-[12px] font-semibold text-indigo-800">
+          {label} <span className="font-normal text-indigo-600">({rows.length})</span>
+        </td>
+      </tr>
+      {rows.map((f) => (
+        <FileRow key={f.id} f={f} {...rest} />
+      ))}
+    </>
+  );
+}
+
+function FileRow({
+  f,
+  favorites,
+  toggleFavorite,
+  handleDownload,
+  handleCopy,
+  copiedId,
+  canDelete,
+  onRemove,
+}: {
+  f: ProjectFile;
+  favorites: Set<string>;
+  toggleFavorite: (id: string) => void;
+  handleDownload: (file: ProjectFile) => void;
+  handleCopy: (id: string, url: string) => void;
+  copiedId: string | null;
+  canDelete: boolean;
+  onRemove: (file: ProjectFile) => void;
+}) {
+  const provider: LinkProvider = f.kind === 'link' ? detectLinkProvider(f.url) : 'generic';
+  const isCloudLink = provider !== 'generic';
+  const isFavorite = favorites.has(f.id);
+  const openable = f.kind === 'link' && isHttpUrl(f.url);
+  return (
+    <tr className={cn(
+      'border-t border-slate-100 hover:bg-slate-50/40',
+      isFavorite && 'bg-yellow-50/30',
+    )}>
+      <td className="px-2 py-3 text-center">
+        <button
+          onClick={() => toggleFavorite(f.id)}
+          className={cn(
+            'p-1 rounded transition-colors',
+            isFavorite ? 'text-yellow-500 hover:text-yellow-600' : 'text-slate-300 hover:text-yellow-500',
+          )}
+          title={isFavorite ? 'Unpin from top' : 'Pin to top'}
+          aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+        >
+          <Star className={cn('h-4 w-4', isFavorite && 'fill-yellow-500')} />
+        </button>
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex items-start gap-3">
+          <div className={cn(
+            'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg shadow-sm border',
+            f.kind === 'upload' ? 'bg-blue-100 text-blue-700 border-blue-200'
+              : provider === 'google-drive' ? 'bg-yellow-100 text-yellow-800 border-yellow-200'
+              : 'bg-violet-100 text-violet-700 border-violet-200',
+          )}>
+            {f.kind === 'upload' ? <FileText className="h-5 w-5" /> :
+              isCloudLink ? <HardDrive className="h-5 w-5" /> :
+              <LinkIcon className="h-5 w-5" />}
+          </div>
+          <div className="min-w-0 flex-1">
+            {openable ? (
+              <a
+                href={f.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={f.url}
+                className="font-medium text-slate-800 hover:text-blue-600 hover:underline truncate block"
+              >
+                {f.name}
+              </a>
+            ) : f.kind === 'upload' ? (
+              <button
+                type="button"
+                onClick={() => handleDownload(f)}
+                title={`Download ${f.name}`}
+                className="font-medium text-slate-800 hover:text-blue-600 hover:underline truncate block text-left"
+              >
+                {f.name}
+              </button>
+            ) : (
+              <p className="font-medium text-slate-800 truncate" title={f.url}>{f.name}</p>
+            )}
+            {f.kind === 'upload' && (
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                {formatBytes(f.fileSize)}
+                {f.mimeType ? ` · ${f.mimeType}` : ''}
+              </p>
+            )}
+            {f.description && (
+              <p className="text-[12px] text-slate-600 mt-1">{f.description}</p>
+            )}
+          </div>
+        </div>
+      </td>
+      <td className="px-4 py-3">
+        <span className={cn(
+          'rounded-full px-2 py-0.5 text-[11px] font-semibold',
+          f.kind === 'upload' ? 'bg-blue-50 text-blue-700'
+            : provider === 'google-drive' ? 'bg-yellow-50 text-yellow-700'
+            : 'bg-violet-50 text-violet-700',
+        )}>
+          {f.kind === 'upload' ? 'Upload' : PROVIDER_LABEL[provider]}
+        </span>
+      </td>
+      <td className="px-4 py-3">
+        {f.uploader && (
+          <div className="flex items-center gap-2">
+            <UserAvatar firstName={f.uploader.firstName} lastName={f.uploader.lastName} avatarUrl={f.uploader.avatarUrl} size="sm" />
+            <span className="text-[12px] text-slate-700">{f.uploader.firstName} {f.uploader.lastName}</span>
+          </div>
+        )}
+      </td>
+      <td className="px-4 py-3 text-[12px] text-slate-600">
+        {formatUploadDate(f.createdAt)}
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex items-center justify-end gap-1">
+          {f.kind === 'upload' ? (
+            <button
+              onClick={() => handleDownload(f)}
+              className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
+              title="Download"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </button>
+          ) : (
+            <>
+              {isHttpUrl(f.url) && (
+                <a
+                  href={f.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
+                  title="Open link"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              )}
+              <button
+                onClick={() => handleCopy(f.id, f.url)}
+                className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
+                title="Copy path"
+              >
+                {copiedId === f.id ? (
+                  <Check className="h-3.5 w-3.5 text-green-600" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </>
+          )}
+          {canDelete && (
+            <button
+              onClick={() => onRemove(f)}
+              className="p-1.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-600"
+              title="Remove"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 
 function AddLinkModal({ projectId, onClose }: { projectId: number; onClose: () => void }) {
   const queryClient = useQueryClient();
