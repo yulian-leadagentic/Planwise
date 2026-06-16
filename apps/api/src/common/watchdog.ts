@@ -21,9 +21,12 @@
 import * as http from 'http';
 import { Logger } from 'nestjs-pino';
 
-const PROBE_INTERVAL_MS = 30_000;
-const PROBE_TIMEOUT_MS = 10_000;
-const MAX_CONSECUTIVE_FAILURES = 3;
+// Tightened on 2026-06-14 after recurring wedges where the previous 90s
+// window meant users were stuck a full minute+ before auto-restart kicked
+// in. 20s × 2 = ~40s to recovery — fast enough that humans don't notice.
+const PROBE_INTERVAL_MS = 20_000;
+const PROBE_TIMEOUT_MS = 8_000;
+const MAX_CONSECUTIVE_FAILURES = 2;
 
 export function startWatchdog(port: number | string, logger: Logger): void {
   let consecutiveFailures = 0;

@@ -57,17 +57,27 @@ export class PresenceService {
   /** Prune entries older than TTL. Runs every minute. */
   @Cron(CronExpression.EVERY_MINUTE)
   sweep() {
-    const now = Date.now();
+    const startedAt = Date.now();
     let removed = 0;
+    let totalEntries = 0;
     for (const [projectId, entries] of this.map.entries()) {
       for (const [userId, entry] of entries.entries()) {
-        if (now - entry.lastSeenAt > this.TTL_MS) {
+        totalEntries++;
+        if (startedAt - entry.lastSeenAt > this.TTL_MS) {
           entries.delete(userId);
           removed++;
         }
       }
       if (entries.size === 0) this.map.delete(projectId);
     }
-    if (removed > 0) this.logger.debug(`Pruned ${removed} stale presence entries`);
+    const tookMs = Date.now() - startedAt;
+    // Always log: presence sweep is the only EVERY_MINUTE cron we have,
+    // so its log line is a useful "API is still healthy" heartbeat. If
+    // these lines stop appearing in Railway logs we know the scheduler
+    // (or the event loop) has died.
+    this.logger.log(
+      `cron sweep — entries=${totalEntries} pruned=${removed} tookMs=${tookMs}`,
+      'PresenceCron',
+    );
   }
 }

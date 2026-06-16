@@ -11,6 +11,7 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor';
 import { startWatchdog } from './common/watchdog';
+import { startVitalsLogger } from './common/vitals';
 
 async function bootstrap() {
   // bufferLogs: true so early-boot logs go through pino once it's wired
@@ -70,8 +71,33 @@ async function bootstrap() {
   // can roll pods without dropping in-flight requests.
   app.enableShutdownHooks();
 
+  // HTTP-server-level hard timeouts. Nest's TimeoutInterceptor wraps the
+  // rxjs pipeline, but if a TCP socket gets stuck at a lower layer (a
+  // hanging DB driver write, a stalled response stream, anything below
+  // the controller) Nest can't see it. Set socket-level timeouts so any
+  // request stuck for >45s is killed at the OS level. Headers timeout
+  // protects against slowloris-style clients that send headers slowly.
+  const httpServer: any = app.getHttpAdapter().getInstance();
+  if (httpServer?.server) {
+    httpServer.server.requestTimeout = 45_000;
+    httpServer.server.headersTimeout = 30_000;
+    httpServer.server.keepAliveTimeout = 65_000;
+  }
+
   const port = process.env.PORT || 3000;
   await app.listen(port);
+
+  // The underlying http.Server is only created after listen() — re-apply
+  // here so the values stick. (Express's getHttpAdapter().getInstance()
+  // returns the express app; the server is on .httpServer or as a
+  // sibling on the adapter.)
+  const adapter: any = app.getHttpAdapter();
+  const realServer = adapter.httpServer || adapter.server;
+  if (realServer) {
+    realServer.requestTimeout = 45_000;
+    realServer.headersTimeout = 30_000;
+    realServer.keepAliveTimeout = 65_000;
+  }
 
   const logger = app.get(Logger);
   logger.log(`Application running on port ${port}`, 'Bootstrap');
@@ -93,9 +119,13 @@ async function bootstrap() {
   });
 
   // Self-probing watchdog: if our own HTTP listener stops responding to a
-  // localhost probe of /api/v1/health/live for ~1.5min, exit(1) so Railway
+  // localhost probe of /api/v1/health/live for ~40s, exit(1) so Railway
   // restarts us. Catches the 2026-06-10 freeze pattern (HTTP wedged, container
-  // alive).
+  // alive). Tightened on 2026-06-14 after repeat incidents.
   startWatchdog(port, logger);
+
+  // Vitals logger — emits event-loop / heap / handle stats every 30s so the
+  // log line just before a wedge tells us what subsystem hit the wall.
+  startVitalsLogger(logger);
 }
 bootstrap();
