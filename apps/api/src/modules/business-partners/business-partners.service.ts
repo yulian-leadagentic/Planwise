@@ -73,10 +73,133 @@ export class BusinessPartnersService {
       this.prisma.businessPartner.count({ where }),
     ]);
 
+    const enriched = query.withProjects
+      ? await this.attachProjectsForContacts(data as any[])
+      : data;
+
     return {
-      data,
+      data: enriched,
       meta: { total, page, perPage, totalPages: Math.ceil(total / perPage) },
     };
+  }
+
+  /**
+   * For each BP in the page, compute the projects they touch. Two paths:
+   *   1. Direct — project_partner_roles rows where party_id = bp.id.
+   *      (Project leaders, BIM leads, customer-org wired via partyId, etc.)
+   *   2. Indirect via employer — for a person BP that has a worker_of
+   *      relationship with an organization, every project where THAT
+   *      organization carries the `customer` project role.
+   * Results are merged + de-duped per BP, split active vs archived using
+   * project.status, and capped to keep the response light.
+   */
+  private async attachProjectsForContacts<T extends { id: number; partnerType: string; outgoingRelationships?: any[] }>(
+    partners: T[],
+  ): Promise<Array<T & { projectCount: { active: number; archived: number }; projects: Array<{ id: number; name: string; number: string | null; status: string; role: string | null; via: 'direct' | 'employer' }> }>> {
+    if (partners.length === 0) return partners as any;
+
+    // Resolve the project role-type id that means "customer", so we know
+    // which project_partner_roles indicate an org is the project's customer.
+    const customerRole = await this.prisma.projectRoleType.findUnique({
+      where: { code: 'customer' },
+      select: { id: true },
+    });
+
+    // For PERSONS — collect each one's worker_of employer org ids, so we can
+    // look up "projects where this org is the customer" in one query.
+    const employerByPerson = new Map<number, number[]>();
+    const allEmployerIds = new Set<number>();
+    for (const p of partners) {
+      if (p.partnerType !== 'person') continue;
+      const employers: number[] = [];
+      for (const r of p.outgoingRelationships ?? []) {
+        if (r?.relationshipType?.code === 'worker_of' && r?.targetType === 'organization') {
+          employers.push(r.targetId);
+          allEmployerIds.add(r.targetId);
+        }
+      }
+      if (employers.length) employerByPerson.set(p.id, employers);
+    }
+
+    // Direct project_partner_roles for every BP in the page.
+    const partnerIds = partners.map((p) => p.id);
+    const directRoles = await this.prisma.projectPartnerRole.findMany({
+      where: {
+        partyId: { in: partnerIds },
+        validTo: { gt: new Date() },
+      },
+      include: {
+        role: { select: { code: true, name: true } },
+        project: { select: { id: true, name: true, number: true, status: true, deletedAt: true } },
+      },
+    });
+
+    // Indirect — projects where any of the employer orgs are the customer.
+    // We restrict to the `customer` role-type to avoid pulling unrelated
+    // assignments (e.g. an org happens to also be a supplier on a project).
+    const employerCustomerRoles = allEmployerIds.size === 0 || !customerRole
+      ? []
+      : await this.prisma.projectPartnerRole.findMany({
+          where: {
+            partyId: { in: Array.from(allEmployerIds) },
+            roleId: customerRole.id,
+            validTo: { gt: new Date() },
+          },
+          include: {
+            project: { select: { id: true, name: true, number: true, status: true, deletedAt: true } },
+          },
+        });
+    // employerOrgId → projects[]
+    const orgProjects = new Map<number, Array<{ id: number; name: string; number: string | null; status: string }>>();
+    for (const r of employerCustomerRoles) {
+      const p = r.project;
+      if (!p || p.deletedAt) continue;
+      const arr = orgProjects.get(r.partyId) ?? [];
+      arr.push({ id: p.id, name: p.name, number: p.number, status: p.status });
+      orgProjects.set(r.partyId, arr);
+    }
+
+    type ProjectEntry = { id: number; name: string; number: string | null; status: string; role: string | null; via: 'direct' | 'employer' };
+    const ACTIVE_STATUSES = new Set(['active', 'draft', 'on_hold']);
+
+    // Build per-BP project list with dedupe (direct > employer when same id).
+    const byBp = new Map<number, Map<number, ProjectEntry>>();
+    for (const r of directRoles) {
+      const p = r.project;
+      if (!p || p.deletedAt) continue;
+      const m = byBp.get(r.partyId) ?? new Map<number, ProjectEntry>();
+      m.set(p.id, {
+        id: p.id, name: p.name, number: p.number, status: p.status,
+        role: r.role?.name ?? r.role?.code ?? null,
+        via: 'direct',
+      });
+      byBp.set(r.partyId, m);
+    }
+    for (const [personId, employers] of employerByPerson) {
+      const m = byBp.get(personId) ?? new Map<number, ProjectEntry>();
+      for (const orgId of employers) {
+        for (const proj of orgProjects.get(orgId) ?? []) {
+          if (!m.has(proj.id)) {
+            m.set(proj.id, { ...proj, role: 'Customer contact', via: 'employer' });
+          }
+        }
+      }
+      if (m.size) byBp.set(personId, m);
+    }
+
+    return partners.map((bp) => {
+      const projects = Array.from(byBp.get(bp.id)?.values() ?? []);
+      let active = 0, archived = 0;
+      for (const p of projects) (ACTIVE_STATUSES.has(p.status) ? active++ : archived++);
+      // Stable ordering: active first, then by name.
+      projects.sort((a, b) => {
+        const aActive = ACTIVE_STATUSES.has(a.status) ? 0 : 1;
+        const bActive = ACTIVE_STATUSES.has(b.status) ? 0 : 1;
+        if (aActive !== bActive) return aActive - bActive;
+        return a.name.localeCompare(b.name);
+      });
+      return { ...bp, projectCount: { active, archived }, projects } as any;
+    });
   }
 
   async findOne(id: number) {

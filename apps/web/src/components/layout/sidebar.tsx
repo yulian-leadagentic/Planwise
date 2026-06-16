@@ -1,7 +1,7 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useMemo } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { NAV_ITEMS } from '@/lib/constants';
+import { NAV_ITEMS, type NavItem } from '@/lib/constants';
 import { useUIStore } from '@/stores/ui.store';
 import { useIsDesktop } from '@/hooks/use-media-query';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -18,6 +18,7 @@ const NAV_MODULE_MAP: Record<string, string> = {
   '/time': 'time',
   '/contracts': 'contracts',
   '/partners': 'partners',
+  '/contacts': 'partners',
   '/reports': 'reports',
   '/templates': 'templates',
   '/admin': 'admin',
@@ -63,24 +64,7 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
         {visibleNavItems.map((item) => (
-          <NavLink
-            key={item.href}
-            to={item.href}
-            end={item.href === '/'}
-            className={({ isActive }) =>
-              cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                isActive
-                  ? 'bg-sidebar-accent text-sidebar-primary'
-                  : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-                isCollapsed && 'justify-center px-2',
-              )
-            }
-            title={isCollapsed ? item.label : undefined}
-          >
-            <item.icon className="h-5 w-5 shrink-0" />
-            {!isCollapsed && <span>{item.label}</span>}
-          </NavLink>
+          <SidebarNavLink key={item.href} item={item} isCollapsed={isCollapsed} />
         ))}
       </nav>
 
@@ -99,4 +83,54 @@ export function Sidebar() {
       )}
     </aside>
   );
+}
+
+/**
+ * NavLink wrapper that decides active-state with the search params in mind —
+ * not just the pathname. Two items with the same pathname but different tab=
+ * queries (e.g. /partners vs /partners?tab=contacts) used to highlight both
+ * at once because the default NavLink ignores the query string. This compares
+ * the item's full target (pathname + tab) against the current URL:
+ *   • A plain href like /partners is active when no `tab` query is present
+ *     (or it's the implicit default).
+ *   • A tab-specific href like /partners?tab=contacts is active only when
+ *     the URL's `tab=` matches.
+ */
+function SidebarNavLink({ item, isCollapsed }: { item: NavItem; isCollapsed: boolean }) {
+  const location = useLocation();
+  const target = parseHref(item.href);
+  const currentTab = new URLSearchParams(location.search).get('tab');
+  const pathMatches = location.pathname === target.pathname;
+  const isActive = pathMatches && (
+    target.tab === null
+      ? currentTab === null
+      : currentTab === target.tab
+  );
+  const Icon = item.icon;
+  return (
+    <NavLink
+      to={item.href}
+      end={item.href === '/'}
+      className={cn(
+        'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+        isActive
+          ? 'bg-sidebar-accent text-sidebar-primary'
+          : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+        isCollapsed && 'justify-center px-2',
+      )}
+      title={isCollapsed ? item.label : undefined}
+    >
+      <Icon className="h-5 w-5 shrink-0" />
+      {!isCollapsed && <span>{item.label}</span>}
+    </NavLink>
+  );
+}
+
+function parseHref(href: string): { pathname: string; tab: string | null } {
+  // Treat the href string as a path + optional ?tab= query. We don't need a
+  // full URL parser — a single ? split is enough for the limited shape used
+  // in NAV_ITEMS.
+  const [pathname, search = ''] = href.split('?');
+  const tab = new URLSearchParams(search).get('tab');
+  return { pathname, tab };
 }

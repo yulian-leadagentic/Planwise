@@ -12,6 +12,7 @@ import {
   Activity,
   Grid3X3,
   ListChecks,
+  UserCircle2,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -60,6 +61,10 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Time', href: '/time', icon: Clock },
   { label: 'Contracts', href: '/contracts', icon: FileText },
   { label: 'Partners', href: '/partners', icon: Briefcase },
+  // Dedicated contacts surface — not a tab inside Partners. Has its own
+  // page with view toggles (List · By Project · By Customer), filters,
+  // and project enrichment.
+  { label: 'Contacts', href: '/contacts', icon: UserCircle2 },
   // Internal staff used to live here as "People". Moved into the Admin
   // landing page as the "Employees" card — that's a more natural home
   // since it manages login accounts + role assignments.

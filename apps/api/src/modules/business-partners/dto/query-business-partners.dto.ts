@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsEnum, IsString, IsInt, Min } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsOptional, IsEnum, IsString, IsInt, Min, IsBoolean } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 import { PartnerType } from '@prisma/client';
 
 export class QueryBusinessPartnersDto {
@@ -39,4 +39,17 @@ export class QueryBusinessPartnersDto {
   @IsInt()
   @Min(1)
   perPage?: number = 50;
+
+  /**
+   * When true, each returned partner is enriched with the projects they
+   * touch — either directly (project_partner_roles.party_id = bp.id) or
+   * indirectly via their worker_of employer being the project's customer.
+   * Adds two passes after the main query; opt-in so the cheap callers
+   * (e.g. relationship pickers) aren't slowed down.
+   */
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === '1')
+  @IsBoolean()
+  withProjects?: boolean;
 }
