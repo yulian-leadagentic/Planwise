@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  FileText, Link as LinkIcon, Upload, Trash2, Download, Copy, Check, Plus, ExternalLink, X, HardDrive,
+  FileText, Link as LinkIcon, Upload, Trash2, Download, Copy, Check, Plus, ExternalLink, X, HardDrive, Star,
 } from 'lucide-react';
 
 // Recognise common cloud-storage URLs so we can show a friendlier icon /
@@ -54,6 +54,46 @@ function isHttpUrl(url: string): boolean {
   return /^https?:\/\//i.test(url);
 }
 
+function formatUploadDate(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(+d)) return '';
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/**
+ * Per-project + per-user favorite-file set, persisted to localStorage.
+ * Server-side persistence is a follow-up task; for now this gives users
+ * the "pin to top" behaviour without a schema migration. Keyed by project
+ * so favorites don't bleed between projects.
+ */
+function useFavorites(projectId: number) {
+  const storageKey = `planwise:project-${projectId}:favorite-files`;
+  const [favorites, setFavorites] = useState<Set<number>>(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return new Set();
+      const parsed = JSON.parse(raw);
+      return new Set(Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'number') : []);
+    } catch {
+      return new Set();
+    }
+  });
+  const toggleFavorite = (fileId: number) => {
+    setFavorites((prev) => {
+      const next = new Set(prev);
+      if (next.has(fileId)) next.delete(fileId);
+      else next.add(fileId);
+      try {
+        localStorage.setItem(storageKey, JSON.stringify([...next]));
+      } catch {
+        // localStorage full / disabled — fail silently, the in-memory state still works
+      }
+      return next;
+    });
+  };
+  return { favorites, toggleFavorite };
+}
+
 export function FilesTab({ projectId }: { projectId: number }) {
   const { can, isAdmin } = usePermissions();
   const canWrite = isAdmin || can('projects/files', 'write');
@@ -66,6 +106,17 @@ export function FilesTab({ projectId }: { projectId: number }) {
   const { data: files = [], isLoading } = useQuery<ProjectFile[]>({
     queryKey: ['projects', projectId, 'files'],
     queryFn: () => client.get(`/projects/${projectId}/files`).then((r) => r.data?.data ?? r.data),
+  });
+
+  // Favorites: pinned to top of the list. Persisted locally per project
+  // (see useFavorites — server-side persistence is a planned follow-up).
+  const { favorites, toggleFavorite } = useFavorites(projectId);
+  const sortedFiles = [...files].sort((a, b) => {
+    const aFav = favorites.has(a.id) ? 1 : 0;
+    const bFav = favorites.has(b.id) ? 1 : 0;
+    if (aFav !== bFav) return bFav - aFav;
+    // Stable secondary sort by createdAt desc (newest first within each group)
+    return (b.createdAt ?? '').localeCompare(a.createdAt ?? '');
   });
 
   const upload = useMutation({
@@ -173,35 +224,86 @@ export function FilesTab({ projectId }: { projectId: number }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
+                <th className="px-2 py-2 text-center font-semibold w-10"></th>
                 <th className="px-4 py-2 text-left font-semibold">Name</th>
                 <th className="px-4 py-2 text-left font-semibold w-32">Type</th>
                 <th className="px-4 py-2 text-left font-semibold w-40">Added by</th>
-                <th className="px-4 py-2 text-right font-semibold w-44"></th>
+                <th className="px-4 py-2 text-left font-semibold w-32">Uploaded</th>
+                <th className="px-4 py-2 text-right font-semibold w-32"></th>
               </tr>
             </thead>
             <tbody>
-              {files.map((f) => {
+              {sortedFiles.map((f) => {
                 const provider: LinkProvider = f.kind === 'link' ? detectLinkProvider(f.url) : 'generic';
                 const isCloudLink = provider !== 'generic';
+                const isFavorite = favorites.has(f.id);
+                const openable = f.kind === 'link' && isHttpUrl(f.url);
                 return (
-                <tr key={f.id} className="border-t border-slate-100 hover:bg-slate-50/40">
+                <tr key={f.id} className={cn(
+                  'border-t border-slate-100 hover:bg-slate-50/40',
+                  isFavorite && 'bg-yellow-50/30',
+                )}>
+                  {/* Favorite toggle — pins file to top of list. Persisted
+                      to localStorage per project (see useFavorites). */}
+                  <td className="px-2 py-3 text-center">
+                    <button
+                      onClick={() => toggleFavorite(f.id)}
+                      className={cn(
+                        'p-1 rounded transition-colors',
+                        isFavorite
+                          ? 'text-yellow-500 hover:text-yellow-600'
+                          : 'text-slate-300 hover:text-yellow-500',
+                      )}
+                      title={isFavorite ? 'Unpin from top' : 'Pin to top'}
+                      aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                    >
+                      <Star className={cn('h-4 w-4', isFavorite && 'fill-yellow-500')} />
+                    </button>
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex items-start gap-3">
+                      {/* Bigger, bolder file-type icon — easier to scan visually. */}
                       <div className={cn(
-                        'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                        f.kind === 'upload' ? 'bg-blue-50 text-blue-600'
-                          : provider === 'google-drive' ? 'bg-yellow-50 text-yellow-700'
-                          : 'bg-violet-50 text-violet-600',
+                        'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg shadow-sm border',
+                        f.kind === 'upload' ? 'bg-blue-100 text-blue-700 border-blue-200'
+                          : provider === 'google-drive' ? 'bg-yellow-100 text-yellow-800 border-yellow-200'
+                          : 'bg-violet-100 text-violet-700 border-violet-200',
                       )}>
-                        {f.kind === 'upload' ? <FileText className="h-4 w-4" /> :
-                          isCloudLink ? <HardDrive className="h-4 w-4" /> :
-                          <LinkIcon className="h-4 w-4" />}
+                        {f.kind === 'upload' ? <FileText className="h-5 w-5" /> :
+                          isCloudLink ? <HardDrive className="h-5 w-5" /> :
+                          <LinkIcon className="h-5 w-5" />}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="font-medium text-slate-800 truncate">{f.name}</p>
-                        {f.kind === 'link' ? (
-                          <p className="text-[11px] text-slate-500 mt-0.5 break-all font-mono">{f.url}</p>
+                        {/* File name is the click target. For links it opens
+                            the URL in a new tab; for uploads it triggers the
+                            download. URL itself is hidden — surfaced only on
+                            hover via the title attribute. */}
+                        {openable ? (
+                          <a
+                            href={f.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={f.url}
+                            className="font-medium text-slate-800 hover:text-blue-600 hover:underline truncate block"
+                          >
+                            {f.name}
+                          </a>
+                        ) : f.kind === 'upload' ? (
+                          <button
+                            type="button"
+                            onClick={() => handleDownload(f)}
+                            title={`Download ${f.name}`}
+                            className="font-medium text-slate-800 hover:text-blue-600 hover:underline truncate block text-left"
+                          >
+                            {f.name}
+                          </button>
                         ) : (
+                          <p className="font-medium text-slate-800 truncate" title={f.url}>{f.name}</p>
+                        )}
+                        {/* Metadata row: size + mime for uploads, nothing for
+                            links (URL moved into hover tooltip per
+                            customer request — too noisy when shown inline). */}
+                        {f.kind === 'upload' && (
                           <p className="text-[11px] text-slate-500 mt-0.5">
                             {formatBytes(f.fileSize)}
                             {f.mimeType ? ` · ${f.mimeType}` : ''}
@@ -230,6 +332,9 @@ export function FilesTab({ projectId }: { projectId: number }) {
                         <span className="text-[12px] text-slate-700">{f.uploader.firstName} {f.uploader.lastName}</span>
                       </div>
                     )}
+                  </td>
+                  <td className="px-4 py-3 text-[12px] text-slate-600">
+                    {formatUploadDate(f.createdAt)}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1">

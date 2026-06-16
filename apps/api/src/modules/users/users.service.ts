@@ -323,6 +323,22 @@ export class UsersService {
       data.password = await bcrypt.hash(dto.password, 12);
     }
 
+    // Coerce date-only strings ("2026-06-14") to Date so Prisma accepts them
+    // as DateTime. Frontend sends date-only because the input is <input type="date">,
+    // but Prisma's DateTime field rejects anything that's not a full ISO-8601.
+    // Empty string is treated as null (user cleared the field). Same logic as
+    // create() above, kept consistent so both paths handle dates identically.
+    for (const field of ['employmentDate', 'employmentEndDate'] as const) {
+      if (field in data) {
+        const v = data[field];
+        if (v === '' || v == null) {
+          data[field] = null;
+        } else if (typeof v === 'string') {
+          data[field] = new Date(v);
+        }
+      }
+    }
+
     return this.prisma.user.update({
       where: { id },
       data,

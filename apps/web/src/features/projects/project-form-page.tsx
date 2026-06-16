@@ -75,11 +75,15 @@ export function ProjectFormPage() {
   const isEdit = !!id;
   const projectId = Number(id);
 
-  const { isAdmin } = usePermissions();
+  const { isAdmin, can } = usePermissions();
   // Only admins can change the customer of an existing project. For non-admins
   // the field stays locked (as before) — there are downstream invariants (BP
   // relationships, billing) we don't want random PMs reshuffling.
   const canChangeCustomer = !isEdit || isAdmin;
+  // Same finance gate used everywhere else (Cost tab, project list Budget
+  // column, project detail header). Non-finance users can't see or set the
+  // project budget — the input is hidden entirely.
+  const showFinance = can('finance', 'read');
 
   const { data: project, isLoading: projectLoading } = useProject(isEdit ? projectId : 0);
   const { data: projectTypes } = useProjectTypes();
@@ -600,25 +604,30 @@ export function ProjectFormPage() {
 
             {/* Section 2: Budget & Schedule */}
             <div className="p-6">
-              <h2 className={sectionHeadingClass}>BUDGET & SCHEDULE</h2>
+              <h2 className={sectionHeadingClass}>
+                {showFinance ? 'BUDGET & SCHEDULE' : 'SCHEDULE'}
+              </h2>
 
-              <div className="mt-4 grid grid-cols-3 gap-4">
-                {/* Budget */}
-                <div>
-                  <label className={labelClass}>Budget</label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">
-                      &#8362;
-                    </span>
-                    <input
-                      {...register('budget')}
-                      type="number"
-                      step="0.01"
-                      placeholder="0.00"
-                      className="w-full pl-7 pr-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
-                    />
+              <div className={`mt-4 grid gap-4 ${showFinance ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                {/* Budget — finance-gated. Same gate that hides the Cost tab
+                    and Budget column on the project list. */}
+                {showFinance && (
+                  <div>
+                    <label className={labelClass}>Budget</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">
+                        &#8362;
+                      </span>
+                      <input
+                        {...register('budget')}
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        className="w-full pl-7 pr-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Start Date */}
                 <div>

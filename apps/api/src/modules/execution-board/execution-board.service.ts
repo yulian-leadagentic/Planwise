@@ -75,7 +75,18 @@ export class ExecutionBoardService {
           // so a task lands in the SAME deliverable column the user sees
           // in the table (previously the board ignored this and used the
           // legacy [SERVICE:xxx] marker / phase, so the two views drifted).
-          deliverableTemplate: { select: { id: true, name: true } },
+          deliverableTemplate: {
+            select: {
+              id: true,
+              name: true,
+              // phase included so the frontend's getTaskServiceName can fall
+              // back to it when projectDeliverable.service is null (a common
+              // case for ad-hoc / template-less project deliverables). Without
+              // this fallback the Service filter drops every task whose
+              // deliverable wasn't created with an explicit service link.
+              phase: { select: { id: true, name: true, color: true } },
+            },
+          },
           // projectDeliverable is the AUTHORITATIVE, project-owned deliverable
           // (first-class entity). Its name/order/service belong to the project
           // and are what the PM and customer see. The board resolves columns

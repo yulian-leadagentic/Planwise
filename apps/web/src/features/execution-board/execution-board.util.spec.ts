@@ -65,6 +65,21 @@ describe('getTaskServiceName', () => {
     ).toBe('BIM Coordination');
   });
 
+  it('falls back to deliverableTemplate.phase.name when the project-deliverable has no service link', () => {
+    // Regression for: zoned tasks with an ad-hoc projectDeliverable (no service)
+    // were silently excluded from the Service filter. Catalog templates carry
+    // a phase, so we use that as the fallback before reaching task.phase.
+    expect(
+      getTaskServiceName({
+        id: 1,
+        zoneId: 1,
+        projectDeliverable: { name: 'Critical Report', service: null },
+        deliverableTemplate: { name: 'Critical Report', phase: { name: 'BIM Coordination' } },
+        phase: { name: 'Other Phase' },
+      }),
+    ).toBe('BIM Coordination');
+  });
+
   it('falls back to task.phase.name', () => {
     expect(
       getTaskServiceName({ id: 1, zoneId: 1, phase: { name: 'BIM Management' } }),

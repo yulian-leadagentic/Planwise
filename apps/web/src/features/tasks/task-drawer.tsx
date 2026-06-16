@@ -14,6 +14,7 @@ import { queryKeys } from '@/lib/query-keys';
 import { TimeEntryForm } from '@/features/time/time-entry-form';
 import { useAllowedTransitions } from '@/hooks/use-allowed-transitions';
 import { STATUS_LABEL } from '@/lib/task-constants';
+import { usePermissions } from '@/hooks/use-permissions';
 import client from '@/api/client';
 
 interface TaskDrawerProps {
@@ -338,16 +339,44 @@ function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any
   );
 }
 
-function TaskDetailsTab({ task, onUpdate: _onUpdate }: { task: any; onUpdate: (field: string, value: any) => void }) {
+function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: string, value: any) => void }) {
+  const dueDateValue = task.endDate ? String(task.endDate).slice(0, 10) : '';
+  // Permission-gated due-date editing. Workers without tasks:write see the
+  // value but can't change it — managers (admin or anyone with the write
+  // permission) get the editable input. Display label stays consistent
+  // either way so the layout doesn't jump between users.
+  const { can, isAdmin } = usePermissions();
+  const canEditDueDate = isAdmin || can('tasks', 'write');
   return (
     <div className="space-y-4">
       {/* Project Info leads the tab — the parent project's metadata is the
-          primary content here. The duplicate "Task details" + Planning fields
-          block was removed (the header already shows the task code, status,
-          priority, hours, due date, and % complete; the description was the
-          only unique field and rarely used). The remaining task-specific info
-          (assignees, zone, service, deliverable) follows below. */}
+          primary content here. */}
       {task.projectId && <TaskProjectInfoBlock projectId={task.projectId} />}
+
+      {/* Editable Due Date — gated on tasks:write. Without permission, we
+          render a read-only span so users can still SEE the due date but
+          can't change it. */}
+      <div className="flex items-center gap-2">
+        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider w-20 shrink-0">Due Date</label>
+        {canEditDueDate ? (
+          <input
+            type="date"
+            key={`due-${task.id}-${dueDateValue}`}
+            defaultValue={dueDateValue}
+            onBlur={(e) => {
+              const v = e.target.value;
+              // Empty → null (clear the date). Otherwise pass the ISO yyyy-mm-dd
+              // through unchanged; the API's @IsDateString accepts it as-is.
+              if (v !== dueDateValue) onUpdate('endDate', v || null);
+            }}
+            className="rounded-md border border-slate-200 px-2 py-1 text-sm focus:border-blue-400 focus:outline-none"
+          />
+        ) : (
+          <span className="text-sm text-slate-700">
+            {dueDateValue || <span className="text-slate-400 italic">no due date</span>}
+          </span>
+        )}
+      </div>
 
       <AssigneeManager taskId={task.id} assignees={task.assignees} />
 
@@ -390,7 +419,6 @@ function TaskProjectInfoBlock({ projectId }: { projectId: number }) {
   const fields: Array<{ label: string; value: string | null; isLink?: boolean }> = [
     { label: 'Weekly Meeting', value: fmtVal(project.weeklyMeetingDay) },
     { label: 'Authoring Tool', value: fmtVal(project.authoringToolVersion) },
-    { label: 'File Hub', value: fmtVal(project.fileSystemLink), isLink: true },
   ];
 
   return (

@@ -21,8 +21,10 @@ export interface TaskLike {
   /**
    * The legacy catalog deliverable link (deliverable_template_id). Kept for
    * provenance / back-compat; used only when no projectDeliverable is set.
+   * The optional `phase` is a Service-name fallback for tasks whose
+   * projectDeliverable has no service link (common for ad-hoc deliverables).
    */
-  deliverableTemplate?: { name: string } | null;
+  deliverableTemplate?: { name: string; phase?: { name: string } | null } | null;
   serviceType?: { name: string } | null;
   /**
    * The Phase relation (DB) — surfaced in the UI as the column label
@@ -74,12 +76,19 @@ export function getTaskPhaseName(task: TaskLike): string | null {
  * deliverables belong to a service. Priority:
  *   1. task.projectDeliverable.service.name — the project-owned deliverable's
  *      service link, which is the authoritative source post-refactor.
- *   2. task.phase.name — direct phase on the task (root tasks and legacy data).
- *   3. task.serviceType.name — legacy ServiceType FK; thinly used.
- *   4. null → "No Service" bucket.
+ *   2. task.deliverableTemplate.phase.name — catalog-template fallback. Used
+ *      when a task IS linked to a deliverable but the deliverable wasn't
+ *      created with an explicit service link (the most common cause of the
+ *      "Service filter ignores zoned tasks" bug — ad-hoc ProjectDeliverables
+ *      get a null serviceId, so without this fallback every zoned task that
+ *      uses one is dropped from any Service filter).
+ *   3. task.phase.name — direct phase on the task (root tasks and legacy data).
+ *   4. task.serviceType.name — legacy ServiceType FK; thinly used.
+ *   5. null → "No Service" bucket.
  */
 export function getTaskServiceName(task: TaskLike): string | null {
   if (task.projectDeliverable?.service?.name) return task.projectDeliverable.service.name;
+  if (task.deliverableTemplate?.phase?.name) return task.deliverableTemplate.phase.name;
   if (task.phase?.name) return task.phase.name;
   if (task.serviceType?.name) return task.serviceType.name;
   return null;

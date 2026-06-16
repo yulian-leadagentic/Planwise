@@ -181,7 +181,7 @@ function csvCell(v: string | number | null | undefined): string {
 function downloadCsv(filename: string, rows: Row[]) {
   const header = [
     'Date', 'From', 'To', 'Hours', 'Employee', 'Project', 'Zone',
-    'Service', 'Deliverable', 'Assignment Name', 'Description', 'Cost', 'Currency',
+    'Service', 'Deliverable', 'Task', 'Description', 'Cost', 'Currency',
   ];
   const lines = [header.map(csvCell).join(',')];
   for (const r of rows) {
@@ -579,7 +579,7 @@ export function TimesheetReportPage() {
                 <th className="px-3 py-2 text-left font-semibold">Zones</th>
                 <th className="px-3 py-2 text-left font-semibold">Service</th>
                 <th className="px-3 py-2 text-left font-semibold">Deliverable</th>
-                <th className="px-3 py-2 text-left font-semibold">Assignment Name</th>
+                <th className="px-3 py-2 text-left font-semibold">Task</th>
                 <th className="px-3 py-2 text-left font-semibold">Description</th>
                 {/* Cost column hidden for non-finance users. Row cells
                     below are conditionally rendered to stay aligned. */}

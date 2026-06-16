@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Plus, X, Home, Building2, Clock } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, X, Home, Building2, Clock, Pencil } from 'lucide-react';
+import { TaskDrawer } from '@/features/tasks/task-drawer';
 import { PageHeader } from '@/components/shared/page-header';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
@@ -47,6 +48,10 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
   const [taskStatus, setTaskStatus] = useState<string>('in_progress');
   const [showQuickTask, setShowQuickTask] = useState(false);
   const [quickTaskName, setQuickTaskName] = useState('');
+  // Task being edited in the drawer. The "+ Quick Task" button creates a
+  // task; this lets the user open the SELECTED task to edit it properly
+  // (name, due date, assignees, etc.) without leaving the timesheet.
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   // Bypass the blanket useCreateTimeEntry hook and drive the request
   // directly so we can intercept the CROSS_TASK_OVERLAP error and show
   // the Save-anyway confirmation. The hook always toasts on error,
@@ -183,12 +188,28 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-[12px] font-semibold text-slate-600">Task</label>
-              {projectId && (
-                <button type="button" onClick={() => setShowQuickTask(!showQuickTask)}
-                  className="text-[11px] font-semibold text-blue-600 hover:text-blue-700">
-                  + Quick Task
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {/* Edit the currently selected task — opens the task drawer
+                    so users can rename / set due date / assignees on a Quick
+                    Task they just created (or any task already selected). */}
+                {taskId && (
+                  <button
+                    type="button"
+                    onClick={() => setEditingTaskId(Number(taskId))}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-blue-700"
+                    title="Edit selected task"
+                  >
+                    <Pencil className="h-3 w-3" />
+                    Edit
+                  </button>
+                )}
+                {projectId && (
+                  <button type="button" onClick={() => setShowQuickTask(!showQuickTask)}
+                    className="text-[11px] font-semibold text-blue-600 hover:text-blue-700">
+                    + Quick Task
+                  </button>
+                )}
+              </div>
             </div>
             {showQuickTask ? (
               <div className="flex gap-2">
@@ -312,6 +333,13 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
           when overlap.withConfirm caught a CROSS_TASK_OVERLAP from the
           backend; otherwise it's null. */}
       {overlap.dialog}
+
+      {/* Task drawer for editing the selected task — opened by the pencil
+          icon next to the Task selector. Reuses the standard TaskDrawer so
+          edits propagate everywhere through React Query invalidation. */}
+      {editingTaskId !== null && (
+        <TaskDrawer taskId={editingTaskId} onClose={() => setEditingTaskId(null)} />
+      )}
     </div>
   );
 }

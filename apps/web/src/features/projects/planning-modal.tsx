@@ -365,7 +365,7 @@ function TaskAttachmentButton({ taskId, projectId }: { taskId: number; projectId
       for (const file of Array.from(files)) {
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('folder', 'task-attachments');
+        formData.append('folder', 'tasks');
         const uploadResult = await client.post('/files/upload', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
         }).then((r) => r.data?.data ?? r.data);

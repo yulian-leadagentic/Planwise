@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ConflictException, BadRequestException }
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { QueryProjectsDto } from './dto/query-projects.dto';
@@ -12,6 +13,7 @@ import { NumberRangesService } from '../number-ranges/number-ranges.service';
 export class ProjectsService {
   constructor(
     private prisma: PrismaService,
+    private access: ProjectAccessService,
     private bpRelationships: BusinessPartnerRelationshipsService,
     private numberRanges: NumberRangesService,
   ) {}
@@ -226,8 +228,29 @@ export class ProjectsService {
     return project;
   }
 
-  async findAll(query: QueryProjectsDto) {
+  async findAll(query: QueryProjectsDto, userId?: number, roleId?: number | null) {
     const where: Prisma.ProjectWhereInput = {};
+
+    // Project visibility scope. Admins (roleId=1) see everything; everyone
+    // else only sees projects they're a member/leader/creator of. Same
+    // accessor the execution board uses, so the two views agree. Falling
+    // back to "show all" when userId isn't passed keeps backwards-compat
+    // for any internal callers (seeds, scripts) that didn't supply it.
+    if (userId != null) {
+      const accessible = await this.access.getAccessibleProjectIds(userId, roleId);
+      if (!accessible.all) {
+        // No accessible projects → return empty result immediately rather
+        // than passing `{ in: [] }` which Prisma treats as "match nothing"
+        // anyway but is clearer to short-circuit here.
+        if (accessible.projectIds.length === 0) {
+          return {
+            data: [],
+            meta: { total: 0, page: query.page ?? 1, perPage: query.perPage ?? 20, totalPages: 0 },
+          };
+        }
+        where.id = { in: accessible.projectIds };
+      }
+    }
 
     if (query.status) {
       where.status = query.status;

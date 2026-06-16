@@ -193,8 +193,10 @@ export function ProjectDetailPage() {
               <span className="text-slate-500 text-xs">{memberCount} members</span>
             </div>
 
-            {/* Budget */}
-            {project.budget != null && (
+            {/* Budget — gated by finance permission. Same gate used by the
+                Cost tab and labor-cost endpoints, so non-finance users don't
+                see project value anywhere. */}
+            {showFinance && project.budget != null && (
               <>
                 <span className="text-slate-300">|</span>
                 <div className="flex items-center gap-1">
@@ -973,123 +975,6 @@ function TeamTableView({ team }: { team: ProjectTeamData }) {
   );
 }
 
-/**
- * Editor for the File Management / Hub Links field on Project Info.
- * Persists as newline-delimited "Label | URL" pairs inside the single
- * `fileSystemLink` column — no schema change needed for what's
- * essentially a small per-project KV. Users see one row per link with
- * label + URL inputs and a trash icon; "+ Add Link" appends a row.
- * Empty rows are stripped on commit.
- */
-function HubLinksEditor({
-  value,
-  onChange,
-  onCommit,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  onCommit: () => void;
-}) {
-  // Parse the stored blob into rows on each render. Cheap (< 100 chars
-  // typical) and keeps the component stateless — the parent's `value`
-  // is the single source of truth.
-  const rows = parseHubLinks(value);
-
-  const serialize = (next: Array<{ label: string; url: string }>) =>
-    next
-      .filter((r) => r.label.trim() || r.url.trim())
-      .map((r) => (r.label.trim() ? `${r.label.trim()} | ${r.url.trim()}` : r.url.trim()))
-      .join('\n');
-
-  const updateRow = (i: number, patch: Partial<{ label: string; url: string }>) => {
-    const next = rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r));
-    onChange(serialize(next));
-  };
-  const removeRow = (i: number) => {
-    const next = rows.filter((_, idx) => idx !== i);
-    onChange(serialize(next));
-    // Removing is a deliberate action — commit immediately so it sticks
-    // even if the user navigates away without touching another field.
-    setTimeout(onCommit, 0);
-  };
-  const addRow = () => {
-    const next = [...rows, { label: '', url: '' }];
-    onChange(serialize(next));
-  };
-
-  const linkInputCls = 'w-full rounded-md border border-slate-200 px-2 py-1.5 text-[12px] focus:border-blue-400 focus:outline-none';
-
-  return (
-    <div className="space-y-2">
-      {rows.length === 0 ? (
-        <p className="text-[11px] text-slate-400 italic">No links yet — add one below.</p>
-      ) : (
-        rows.map((r, i) => (
-          <div key={i} className="grid grid-cols-[160px_1fr_auto] gap-2 items-center">
-            <input
-              type="text"
-              value={r.label}
-              placeholder="Label (e.g. BIM 360)"
-              onChange={(e) => updateRow(i, { label: e.target.value })}
-              onBlur={onCommit}
-              className={linkInputCls}
-            />
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={r.url}
-                placeholder="https://…"
-                onChange={(e) => updateRow(i, { url: e.target.value })}
-                onBlur={onCommit}
-                className={linkInputCls}
-              />
-              {r.url && /^https?:\/\//.test(r.url) && (
-                <a
-                  href={r.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[11px] text-blue-600 hover:underline whitespace-nowrap"
-                  title="Open link"
-                >
-                  Open →
-                </a>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => removeRow(i)}
-              className="rounded p-1 text-slate-400 hover:text-red-600 hover:bg-red-50"
-              aria-label="Remove link"
-              title="Remove link"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        ))
-      )}
-      <button
-        type="button"
-        onClick={addRow}
-        className="inline-flex items-center gap-1 rounded-md border border-dashed border-slate-300 px-3 py-1.5 text-[12px] font-semibold text-slate-600 hover:border-blue-400 hover:text-blue-600"
-      >
-        <Plus className="h-3.5 w-3.5" />
-        Add Link
-      </button>
-    </div>
-  );
-}
-
-/** Parse the stored newline-delimited "Label | URL" blob. */
-function parseHubLinks(raw: string): Array<{ label: string; url: string }> {
-  if (!raw?.trim()) return [];
-  return raw.split('\n').map((line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return { label: '', url: '' };
-    const sep = trimmed.indexOf('|');
-    if (sep === -1) return { label: '', url: trimmed };
-    return { label: trimmed.slice(0, sep).trim(), url: trimmed.slice(sep + 1).trim() };
-  }).filter((r) => r.label || r.url);
-}
 
 /* ─── Section + small subcomponents ───────────────────────────────────────── */
 
@@ -2074,7 +1959,6 @@ function ProjectInfoTab({ projectId, project }: { projectId: number; project: an
   const [form, setForm] = useState({
     authoringToolVersion: project?.authoringToolVersion ?? '',
     weeklyMeetingDay: project?.weeklyMeetingDay ?? '',
-    fileSystemLink: project?.fileSystemLink ?? '',
     servicesPerContract: project?.servicesPerContract ?? '',
   });
 
@@ -2084,10 +1968,9 @@ function ProjectInfoTab({ projectId, project }: { projectId: number; project: an
     setForm({
       authoringToolVersion: project?.authoringToolVersion ?? '',
       weeklyMeetingDay: project?.weeklyMeetingDay ?? '',
-      fileSystemLink: project?.fileSystemLink ?? '',
       servicesPerContract: project?.servicesPerContract ?? '',
     });
-  }, [project?.id, project?.authoringToolVersion, project?.weeklyMeetingDay, project?.fileSystemLink, project?.servicesPerContract]);
+  }, [project?.id, project?.authoringToolVersion, project?.weeklyMeetingDay, project?.servicesPerContract]);
 
   const commitField = (field: keyof typeof form) => {
     const cur = (project?.[field] ?? '') as string;
@@ -2125,20 +2008,6 @@ function ProjectInfoTab({ projectId, project }: { projectId: number; project: an
               onChange={(e) => setForm((f) => ({ ...f, authoringToolVersion: e.target.value }))}
               onBlur={() => commitField('authoringToolVersion')}
               className={inputCls}
-            />
-          </div>
-          <div className="md:col-span-2">
-            <label className="text-[12px] font-semibold text-slate-600 mb-1.5 block">File Management System / Hub Links</label>
-            {/* Multi-link list. Stored as newline-delimited "Label | URL"
-                pairs in the same servicesPerContract-style free-text
-                column we already have — no schema change. New rows are
-                added via the "+ Add Link" button and removed via the
-                trash icon. Plain text without a "|" is treated as a
-                bare URL with no label. */}
-            <HubLinksEditor
-              value={form.fileSystemLink}
-              onChange={(v) => setForm((f) => ({ ...f, fileSystemLink: v }))}
-              onCommit={() => commitField('fileSystemLink')}
             />
           </div>
           <div className="md:col-span-2">

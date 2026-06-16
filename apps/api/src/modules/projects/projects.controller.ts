@@ -40,8 +40,8 @@ export class ProjectsController {
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiPaginated()
   @ApiOperation({ summary: 'List projects with filters and pagination' })
-  findAll(@Query() query: QueryProjectsDto) {
-    return this.projectsService.findAll(query);
+  findAll(@CurrentUser() user: any, @Query() query: QueryProjectsDto) {
+    return this.projectsService.findAll(query, user.id, user.roleId);
   }
 
   // Static route MUST precede `:id` so it isn't swallowed by the param route.
