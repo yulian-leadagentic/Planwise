@@ -39,7 +39,16 @@ export function usePermissions() {
     return false;
   };
 
-  const isAdmin = user?.role?.name === 'Admin' || user?.roleName === 'Admin';
+  // isAdmin: case-insensitive name match OR roleId === 1 (the backend
+  // ProjectAccessService convention — the seed creates Admin as the first
+  // role, so id=1 is the durable signal even if the display name varies).
+  // Falling back to name-based match keeps any non-seeded admins working.
+  const roleName = String(user?.role?.name ?? user?.roleName ?? '').toLowerCase();
+  const isAdmin =
+    user?.roleId === 1 ||
+    user?.role?.id === 1 ||
+    roleName === 'admin' ||
+    roleName === 'administrator';
 
   return { can, isAdmin, user };
 }

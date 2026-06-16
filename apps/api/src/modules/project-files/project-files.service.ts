@@ -18,14 +18,75 @@ export class ProjectFilesService {
     this.uploadDir = config.get('UPLOAD_DIR', './uploads');
   }
 
+  /**
+   * Project Files tab listing — unions per-project files with task-level
+   * attachments so the customer sees ONE place for everything tied to the
+   * project, while task attachments remain editable from the task drawer.
+   *
+   * Shape per row:
+   *   { id, kind, name, url, fileSize, mimeType, description, createdAt,
+   *     uploader, source: 'project' | 'task', taskId?, taskName? }
+   *
+   * `id` is namespaced (`p-123` / `t-456`) so the frontend can hand it
+   * back without collisions when calling delete / download. Task-attachment
+   * IDs are NOT exposed as bare numbers here — those endpoints already
+   * exist on /tasks/attachments/:id and the client uses the namespaced id
+   * to route correctly.
+   */
   async list(projectId: number) {
-    return this.prisma.projectFile.findMany({
-      where: { projectId },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        uploader: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
-      },
-    });
+    const [projectFiles, taskAttachments] = await Promise.all([
+      this.prisma.projectFile.findMany({
+        where: { projectId },
+        include: {
+          uploader: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+        },
+      }),
+      this.prisma.taskAttachment.findMany({
+        where: { task: { projectId } },
+        include: {
+          uploader: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+          task: { select: { id: true, name: true } },
+        },
+      }),
+    ]);
+
+    const rows = [
+      ...projectFiles.map((f: any) => ({
+        id: `p-${f.id}`,
+        rawId: f.id,
+        source: 'project' as const,
+        kind: f.kind,
+        name: f.name,
+        url: f.url,
+        fileSize: f.fileSize,
+        mimeType: f.mimeType,
+        description: f.description,
+        createdAt: f.createdAt,
+        uploader: f.uploader,
+      })),
+      ...taskAttachments.map((a: any) => ({
+        id: `t-${a.id}`,
+        rawId: a.id,
+        source: 'task' as const,
+        // Task attachments are always uploads (the table only stores uploads
+        // today). Hard-code `upload` so the UI renders the right icon/badge.
+        kind: 'upload',
+        name: a.fileName,
+        url: a.fileUrl,
+        fileSize: a.fileSize,
+        mimeType: a.mimeType,
+        description: null,
+        createdAt: a.createdAt,
+        uploader: a.uploader,
+        taskId: a.taskId,
+        taskName: a.task?.name ?? null,
+      })),
+    ];
+
+    // Sort once across the union so the "newest" view is consistent
+    // regardless of source.
+    rows.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+    return rows;
   }
 
   async findOne(projectId: number, id: number) {

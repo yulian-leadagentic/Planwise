@@ -30,7 +30,16 @@ import { cn } from '@/lib/utils';
 import { UserAvatar } from '@/components/shared/user-avatar';
 
 interface ProjectFile {
-  id: number;
+  /** Namespaced id from the API: `p-<n>` for ProjectFile, `t-<n>` for TaskAttachment. */
+  id: string;
+  rawId: number;
+  /** Where the file came from. Drives the Source badge + which API endpoint
+   *  the delete/download calls hit. */
+  source: 'project' | 'task';
+  /** Present only for source='task' — the task this attachment lives under.
+   *  Used to render a clickable badge that opens the task drawer. */
+  taskId?: number;
+  taskName?: string | null;
   kind: 'upload' | 'link';
   name: string;
   url: string;
@@ -68,17 +77,17 @@ function formatUploadDate(iso: string): string {
  */
 function useFavorites(projectId: number) {
   const storageKey = `planwise:project-${projectId}:favorite-files`;
-  const [favorites, setFavorites] = useState<Set<number>>(() => {
+  const [favorites, setFavorites] = useState<Set<string>>(() => {
     try {
       const raw = localStorage.getItem(storageKey);
       if (!raw) return new Set();
       const parsed = JSON.parse(raw);
-      return new Set(Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'number') : []);
+      return new Set(Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : []);
     } catch {
       return new Set();
     }
   });
-  const toggleFavorite = (fileId: number) => {
+  const toggleFavorite = (fileId: string) => {
     setFavorites((prev) => {
       const next = new Set(prev);
       if (next.has(fileId)) next.delete(fileId);
@@ -100,7 +109,10 @@ export function FilesTab({ projectId }: { projectId: number }) {
   const canDelete = isAdmin || can('projects/files', 'delete');
   const queryClient = useQueryClient();
   const [showAddLink, setShowAddLink] = useState(false);
-  const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  // Source filter pill — All / Project / Task. Default All; the filter is
+  // client-side so swapping doesn't refetch.
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'project' | 'task'>('all');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: files = [], isLoading } = useQuery<ProjectFile[]>({
@@ -108,10 +120,18 @@ export function FilesTab({ projectId }: { projectId: number }) {
     queryFn: () => client.get(`/projects/${projectId}/files`).then((r) => r.data?.data ?? r.data),
   });
 
+  // Counts for the filter pills — driven from the unfiltered list so the
+  // counts stay stable as the user clicks between tabs.
+  const projectCount = files.filter((f) => f.source === 'project').length;
+  const taskCount = files.filter((f) => f.source === 'task').length;
+  const visibleFiles = sourceFilter === 'all'
+    ? files
+    : files.filter((f) => f.source === sourceFilter);
+
   // Favorites: pinned to top of the list. Persisted locally per project
   // (see useFavorites — server-side persistence is a planned follow-up).
   const { favorites, toggleFavorite } = useFavorites(projectId);
-  const sortedFiles = [...files].sort((a, b) => {
+  const sortedFiles = [...visibleFiles].sort((a, b) => {
     const aFav = favorites.has(a.id) ? 1 : 0;
     const bFav = favorites.has(b.id) ? 1 : 0;
     if (aFav !== bFav) return bFav - aFav;
@@ -134,8 +154,16 @@ export function FilesTab({ projectId }: { projectId: number }) {
     onError: (err: any) => notify.apiError(err, 'Failed to upload file'),
   });
 
+  // Delete dispatches by source. Project files use the existing per-project
+  // endpoint; task attachments use the global /tasks/attachments/:id route.
+  // Either way the list invalidates and the row vanishes from this view.
   const remove = useMutation({
-    mutationFn: (fileId: number) => client.delete(`/projects/${projectId}/files/${fileId}`).then((r) => r.data),
+    mutationFn: async (file: ProjectFile) => {
+      if (file.source === 'task') {
+        return client.delete(`/tasks/attachments/${file.rawId}`).then((r) => r.data);
+      }
+      return client.delete(`/projects/${projectId}/files/${file.rawId}`).then((r) => r.data);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'files'] });
       notify.success('File removed', { code: 'PROJ-FILE-DELETE-200' });
@@ -149,7 +177,7 @@ export function FilesTab({ projectId }: { projectId: number }) {
     if (e.target.value) e.target.value = '';
   };
 
-  const handleCopy = async (id: number, url: string) => {
+  const handleCopy = async (id: string, url: string) => {
     try {
       await navigator.clipboard.writeText(url);
       setCopiedId(id);
@@ -161,7 +189,14 @@ export function FilesTab({ projectId }: { projectId: number }) {
 
   const handleDownload = async (file: ProjectFile) => {
     try {
-      const res = await client.get(`/projects/${projectId}/files/${file.id}/download`, { responseType: 'blob' });
+      if (file.source === 'task') {
+        // Task attachments are stored as plain URLs (fileUrl) — open in a
+        // new tab. They live under the same /uploads/* path the backend
+        // serves, so authentication via cookie carries through.
+        if (file.url) window.open(file.url, '_blank', 'noopener');
+        return;
+      }
+      const res = await client.get(`/projects/${projectId}/files/${file.rawId}/download`, { responseType: 'blob' });
       const blob = new Blob([res.data], { type: file.mimeType || 'application/octet-stream' });
       const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -209,6 +244,34 @@ export function FilesTab({ projectId }: { projectId: number }) {
         )}
       </div>
 
+      {/* Source filter pills. Counts come from the unfiltered list so
+          they don't blink to zero when the user picks one. */}
+      {!isLoading && files.length > 0 && (
+        <div className="flex items-center gap-2 text-[12px]">
+          <span className="text-slate-400 font-semibold uppercase tracking-wider text-[10px]">Source</span>
+          {([
+            { key: 'all',     label: 'All',     count: files.length },
+            { key: 'project', label: 'Project', count: projectCount },
+            { key: 'task',    label: 'Task',    count: taskCount },
+          ] as const).map((pill) => (
+            <button
+              key={pill.key}
+              type="button"
+              onClick={() => setSourceFilter(pill.key)}
+              disabled={pill.count === 0 && pill.key !== 'all'}
+              className={cn(
+                'rounded-full px-3 py-1 text-[12px] font-medium border transition-colors',
+                sourceFilter === pill.key
+                  ? 'border-blue-500 bg-blue-50 text-blue-700'
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-400 disabled:opacity-40 disabled:cursor-not-allowed',
+              )}
+            >
+              {pill.label} <span className="text-slate-400">({pill.count})</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {isLoading ? (
         <div className="py-12 text-center text-sm text-slate-400">Loading files...</div>
       ) : files.length === 0 ? (
@@ -219,6 +282,19 @@ export function FilesTab({ projectId }: { projectId: number }) {
             {canWrite ? 'Upload a file or paste a link to a shared location' : 'Files will appear here once added'}
           </p>
         </div>
+      ) : sortedFiles.length === 0 ? (
+        <div className="rounded-[14px] border border-dashed border-slate-200 bg-slate-50/40 p-10 text-center">
+          <p className="text-sm text-slate-500">
+            No <span className="font-semibold">{sourceFilter}</span> files match.{' '}
+            <button
+              type="button"
+              onClick={() => setSourceFilter('all')}
+              className="text-blue-600 hover:underline"
+            >
+              Show all
+            </button>
+          </p>
+        </div>
       ) : (
         <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
           <table className="w-full text-sm">
@@ -227,6 +303,7 @@ export function FilesTab({ projectId }: { projectId: number }) {
                 <th className="px-2 py-2 text-center font-semibold w-10"></th>
                 <th className="px-4 py-2 text-left font-semibold">Name</th>
                 <th className="px-4 py-2 text-left font-semibold w-32">Type</th>
+                <th className="px-4 py-2 text-left font-semibold w-44">Source</th>
                 <th className="px-4 py-2 text-left font-semibold w-40">Added by</th>
                 <th className="px-4 py-2 text-left font-semibold w-32">Uploaded</th>
                 <th className="px-4 py-2 text-right font-semibold w-32"></th>
@@ -325,6 +402,25 @@ export function FilesTab({ projectId }: { projectId: number }) {
                       {f.kind === 'upload' ? 'Upload' : PROVIDER_LABEL[provider]}
                     </span>
                   </td>
+                  {/* Source badge — tells the user whether the file was
+                      attached directly to the project (Project) or uploaded
+                      to a specific task (Task: <name>). The Task variant is
+                      clickable and opens the task drawer. */}
+                  <td className="px-4 py-3">
+                    {f.source === 'task' && f.taskId ? (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full bg-indigo-50 text-indigo-700 px-2 py-0.5 text-[11px] font-semibold"
+                        title={`Uploaded to task: ${f.taskName ?? `#${f.taskId}`}`}
+                      >
+                        <span className="opacity-60">Task:</span>
+                        <span className="truncate max-w-[150px]">{f.taskName ?? `#${f.taskId}`}</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center rounded-full bg-slate-100 text-slate-600 px-2 py-0.5 text-[11px] font-semibold">
+                        Project
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     {f.uploader && (
                       <div className="flex items-center gap-2">
@@ -375,7 +471,7 @@ export function FilesTab({ projectId }: { projectId: number }) {
                       {canDelete && (
                         <button
                           onClick={() => {
-                            if (confirm(`Remove "${f.name}"?`)) remove.mutate(f.id);
+                            if (confirm(`Remove "${f.name}"?`)) remove.mutate(f);
                           }}
                           className="p-1.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-600"
                           title="Remove"
