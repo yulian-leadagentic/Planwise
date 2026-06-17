@@ -163,7 +163,7 @@ export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerP
             <div className="flex-1 overflow-y-auto px-5 py-4">
               {tab === 'details' && <TaskDetailsTab task={task as any} onUpdate={(f, v) => updateTask.mutate({ field: f, value: v })} />}
               {tab === 'time' && !hideTimeTab && <TaskTimeTab taskId={taskId!} />}
-              {tab === 'files' && <TaskFilesTab taskId={taskId!} />}
+              {tab === 'files' && <TaskFilesTab taskId={taskId!} projectId={(task as any).projectId} />}
               {tab === 'discussion' && <TaskDiscussionTab taskId={taskId!} />}
             </div>
           </>

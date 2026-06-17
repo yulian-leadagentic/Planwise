@@ -1,23 +1,47 @@
 import { useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Upload, Trash2, Download, FileText } from 'lucide-react';
+import { Upload, Trash2, Download, FileText, FolderOpen, ExternalLink, Link as LinkIcon } from 'lucide-react';
 import { tasksApi } from '@/api/tasks.api';
+import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
 import { UserAvatar } from '@/components/shared/user-avatar';
+import { cn } from '@/lib/utils';
 
 /**
- * Task-scoped files view inside the task drawer. Uploads here create a
- * TaskAttachment row tied to THIS task (folder='tasks' on the upload),
- * which then surfaces under "TASK FILES" → "<task name>" group in the
- * project Files tab. The previous version embedded the PROJECT FilesTab
- * here, which silently routed uploads to ProjectFile — so files vanished
- * from any per-task view.
+ * Task-scoped files view inside the task drawer. Two panels:
+ *   1. THIS TASK'S FILES — TaskAttachment rows for the open task.
+ *      Editable: upload, delete.
+ *   2. PROJECT FILES — read-only context of the parent project's
+ *      directly-attached files (ProjectFile rows). Helpful so the
+ *      assignee sees the briefs/templates/etc. attached to the project
+ *      without leaving the drawer. To manage them, click through to the
+ *      project Files tab via the header link.
+ *
+ * Uploads always create a TaskAttachment for THIS task — never a
+ * ProjectFile. Comment-level attachments live in the Discussion tab and
+ * are filtered out of both panels here.
  */
 interface TaskAttachment {
   id: number;
   fileName: string;
   fileUrl: string;
+  fileSize: number | null;
+  mimeType: string | null;
+  createdAt: string;
+  uploader?: { id: number; firstName: string; lastName: string };
+}
+
+interface ProjectFile {
+  id: string;
+  rawId: number;
+  source: 'project' | 'task';
+  taskId?: number;
+  taskName?: string | null;
+  kind: 'upload' | 'link';
+  name: string;
+  url: string;
   fileSize: number | null;
   mimeType: string | null;
   createdAt: string;
@@ -37,7 +61,7 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-export function TaskFilesTab({ taskId }: { taskId: number }) {
+export function TaskFilesTab({ taskId, projectId }: { taskId: number; projectId?: number }) {
   const qc = useQueryClient();
   const { can, isAdmin } = usePermissions();
   const canWrite = isAdmin || can('tasks', 'write');
@@ -48,6 +72,19 @@ export function TaskFilesTab({ taskId }: { taskId: number }) {
     queryKey: ['task-attachments', taskId],
     queryFn: () => tasksApi.getAttachments(taskId).then((r: any) => r?.data ?? r ?? []),
   });
+
+  // Project files for context — only the ones DIRECTLY attached to the
+  // project (source='project'), so we don't double-list other tasks'
+  // attachments in the bottom panel. Cached for 60s so toggling between
+  // sibling tasks in the same project doesn't refetch.
+  const { data: projectFilesRaw = [] } = useQuery<ProjectFile[]>({
+    queryKey: ['projects', projectId, 'files'],
+    enabled: projectId != null,
+    queryFn: () =>
+      client.get(`/projects/${projectId}/files`).then((r) => r.data?.data ?? r.data),
+    staleTime: 60_000,
+  });
+  const projectFiles = projectFilesRaw.filter((f) => f.source === 'project');
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['task-attachments', taskId] });
@@ -102,12 +139,12 @@ export function TaskFilesTab({ taskId }: { taskId: number }) {
   };
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-5">
       <header className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-bold text-slate-900">Task Files</h3>
+          <h3 className="text-sm font-bold text-slate-900">This Task's Files</h3>
           <p className="text-[12px] text-slate-500 mt-0.5">
-            Files attached to this task — they also appear under{' '}
+            Attached to this task — also visible under{' '}
             <span className="font-medium">Project → Files → Task Files</span>.
           </p>
         </div>
@@ -195,6 +232,74 @@ export function TaskFilesTab({ taskId }: { taskId: number }) {
             </li>
           ))}
         </ul>
+      )}
+
+      {/* Project files panel — read-only context of the parent project's
+          directly-attached files. Lets the assignee see briefs, drawings,
+          contract refs without leaving the task drawer. To upload/delete,
+          the user goes to the project Files tab via the header link. */}
+      {projectId != null && (
+        <section className="rounded-md border border-slate-200 bg-slate-50/40 overflow-hidden">
+          <header className="flex items-center justify-between px-3 py-2 border-b border-slate-200 bg-slate-100/60">
+            <div className="flex items-center gap-2">
+              <FolderOpen className="h-3.5 w-3.5 text-slate-500" />
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600">Project Files</span>
+              <span className="text-[10px] font-semibold rounded-full bg-slate-200 text-slate-700 px-1.5 py-0.5">
+                {projectFiles.length}
+              </span>
+            </div>
+            <Link
+              to={`/projects/${projectId}?tab=files`}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700"
+              title="Open the project's Files tab to upload or manage"
+            >
+              Manage <ExternalLink className="h-3 w-3" />
+            </Link>
+          </header>
+          {projectFiles.length === 0 ? (
+            <div className="px-3 py-4 text-center text-[11px] text-slate-400 italic">
+              No project-level files yet.
+            </div>
+          ) : (
+            <ul className="divide-y divide-slate-200/60">
+              {projectFiles.map((f) => (
+                <li key={f.id} className="flex items-center gap-3 px-3 py-2 hover:bg-white/60">
+                  <div className={cn(
+                    'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border',
+                    f.kind === 'upload'
+                      ? 'bg-blue-50 text-blue-700 border-blue-200'
+                      : 'bg-violet-50 text-violet-700 border-violet-200',
+                  )}>
+                    {f.kind === 'upload' ? <FileText className="h-3.5 w-3.5" /> : <LinkIcon className="h-3.5 w-3.5" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <a
+                      href={f.kind === 'link' ? f.url : `/api/v1/projects/${projectId}/files/${f.rawId}/download`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={f.url}
+                      className="font-medium text-slate-700 hover:text-blue-600 hover:underline truncate block text-[12px]"
+                    >
+                      {f.name}
+                    </a>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      {f.kind === 'upload' ? formatBytes(f.fileSize) : 'Link'}
+                      {' · '}{formatDate(f.createdAt)}
+                    </p>
+                  </div>
+                  {f.uploader && (
+                    <UserAvatar
+                      firstName={f.uploader.firstName}
+                      lastName={f.uploader.lastName}
+                      avatarUrl={null}
+                      size="sm"
+                    />
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       )}
     </div>
   );
