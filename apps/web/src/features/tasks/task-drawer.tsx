@@ -132,7 +132,10 @@ export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerP
             </div>
 
             {/* Health banner */}
-            <TaskHealthBanner task={task} />
+            <TaskHealthBanner
+              task={task}
+              onUpdateDueDate={(value) => updateTask.mutate({ field: 'endDate', value })}
+            />
 
             {/* Tabs — Time is hidden when this drawer is opened from a
                 manager-facing surface (e.g. the project Kanban) so logging
@@ -186,7 +189,7 @@ function StatusSelect({ currentStatus, onChange }: { currentStatus: string; onCh
   );
 }
 
-function TaskHealthBanner({ task }: { task: any }) {
+function TaskHealthBanner({ task, onUpdateDueDate }: { task: any; onUpdateDueDate: (value: string | null) => void }) {
   const health = getTaskHealth(task);
   if (health.level === 'ok' && health.reasons.length === 0) {
     return (
@@ -195,11 +198,7 @@ function TaskHealthBanner({ task }: { task: any }) {
           <Clock className="h-3 w-3" /> {health.loggedHours}h / {health.estimatedHours}h
         </span>
         <span className="tabular-nums font-semibold text-blue-600">{health.computedPct}% complete</span>
-        {task.endDate && (
-          <span className="flex items-center gap-1 ml-auto">
-            <Calendar className="h-3 w-3" /> Due {formatDate(task.endDate.split('T')[0])}
-          </span>
-        )}
+        <span className="ml-auto"><DueDateChip task={task} onUpdate={onUpdateDueDate} /></span>
       </div>
     );
   }
@@ -224,14 +223,67 @@ function TaskHealthBanner({ task }: { task: any }) {
             <Clock className="h-3 w-3" /> {health.loggedHours}h / {health.estimatedHours}h
           </span>
           <span className="tabular-nums font-semibold">{health.computedPct}% complete</span>
-          {task.endDate && (
-            <span className="flex items-center gap-1">
-              <Calendar className="h-3 w-3" /> {formatDate(task.endDate.split('T')[0])}
-            </span>
-          )}
+          <DueDateChip task={task} onUpdate={onUpdateDueDate} />
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Inline-editable due-date chip. Click to edit when the user has
+ * permission (admin OR tasks:write OR tasks:edit-due-date); otherwise
+ * it's a read-only span. Saves on blur or Enter, cancels on Escape.
+ *
+ * The "tasks:edit-due-date" check is the requested fine-grained
+ * authorization hook — an admin can grant exactly this without giving
+ * the full tasks:write power. Falls back to tasks:write so existing
+ * roles keep working unchanged.
+ */
+function DueDateChip({ task, onUpdate }: { task: any; onUpdate: (value: string | null) => void }) {
+  const { can, isAdmin } = usePermissions();
+  const canEdit = isAdmin || can('tasks', 'write') || can('tasks/edit-due-date', 'write');
+  const [editing, setEditing] = useState(false);
+  const dueDateValue = task.endDate ? String(task.endDate).slice(0, 10) : '';
+
+  if (!task.endDate && !canEdit) return null;
+
+  if (editing && canEdit) {
+    return (
+      <input
+        type="date"
+        autoFocus
+        defaultValue={dueDateValue}
+        onBlur={(e) => {
+          const v = e.target.value;
+          if (v !== dueDateValue) onUpdate(v || null);
+          setEditing(false);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.currentTarget.value = dueDateValue; setEditing(false); }
+          if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
+        }}
+        className="rounded border border-blue-300 bg-white px-1.5 py-0.5 text-[11px] focus:outline-none focus:border-blue-500"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => canEdit && setEditing(true)}
+      disabled={!canEdit}
+      className={cn(
+        'inline-flex items-center gap-1 rounded px-1 py-0.5',
+        canEdit ? 'hover:bg-white/60 cursor-pointer' : 'cursor-default',
+      )}
+      title={canEdit ? 'Click to change due date' : ''}
+    >
+      <Calendar className="h-3 w-3" />
+      {task.endDate ? formatDate(task.endDate.split('T')[0]) : (
+        <span className="italic text-slate-400">set due date</span>
+      )}
+    </button>
   );
 }
 
@@ -342,12 +394,16 @@ function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any
 
 function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: string, value: any) => void }) {
   const dueDateValue = task.endDate ? String(task.endDate).slice(0, 10) : '';
-  // Permission-gated due-date editing. Workers without tasks:write see the
-  // value but can't change it — managers (admin or anyone with the write
-  // permission) get the editable input. Display label stays consistent
-  // either way so the layout doesn't jump between users.
+  // Permission-gated due-date editing. Three accepted sources:
+  //   - Admin (roleId=1) — always
+  //   - tasks:write — general edit power
+  //   - tasks/edit-due-date:write — the new fine-grained option requested
+  //     2026-06-17, lets an admin grant exactly "can change due dates"
+  //     without handing out full tasks:write.
+  // First match wins; matching against either keeps existing roles
+  // working with no migration needed.
   const { can, isAdmin } = usePermissions();
-  const canEditDueDate = isAdmin || can('tasks', 'write');
+  const canEditDueDate = isAdmin || can('tasks', 'write') || can('tasks/edit-due-date', 'write');
   return (
     <div className="space-y-4">
       {/* Project Info leads the tab — the parent project's metadata is the

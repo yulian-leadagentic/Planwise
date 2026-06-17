@@ -40,6 +40,10 @@ async function main() {
     { name: 'Project Planning', route: 'project-planning', icon: 'Layers', sortOrder: 41, parentId: projectsMod?.id },
     { name: 'Task Approval', route: 'task-approval', icon: 'CheckCircle', sortOrder: 21, parentId: tasksMod?.id },
     { name: 'Task Reassignment', route: 'task-reassignment', icon: 'UserPlus', sortOrder: 22, parentId: tasksMod?.id },
+    // Fine-grained gate (added 2026-06-17). Lets an admin grant
+    // "can change due dates" without giving full Tasks write.
+    // usePermissions.can('tasks/edit-due-date', 'write') checks this.
+    { name: 'Task: Edit Due Date', route: 'tasks/edit-due-date', icon: 'Calendar', sortOrder: 23, parentId: tasksMod?.id },
     { name: 'Time Approval', route: 'time-approval', icon: 'Clock', sortOrder: 31, parentId: timeMod?.id },
     { name: 'Task Templates', route: 'task-templates', icon: 'BookOpen', sortOrder: 81, parentId: templatesMod?.id },
     { name: 'Zone Templates', route: 'zone-templates', icon: 'Map', sortOrder: 82, parentId: templatesMod?.id },
