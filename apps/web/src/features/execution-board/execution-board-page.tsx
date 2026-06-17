@@ -495,6 +495,26 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   // The dropdown filters by DELIVERABLE — the small pill below each column
   // header.
   //
+  // Deliverable name → Service-name map, derived from templates alone so it
+  // can be used by the Service-filter pipeline (availablePhases + filter
+  // predicate) without a dependency cycle. Mirrors the lookup the
+  // column-header badges use, so a task that shows up under a
+  // "BIM Coordination" column resolves to "BIM Coordination" for the
+  // filter too — even when its own FK chain doesn't carry the service
+  // link (ad-hoc project deliverables, legacy rows).
+  //
+  // Declared HERE — above availablePhases / filteredTasks — because both
+  // useMemo deps arrays reference it. A TDZ-shaped bug was introduced
+  // once before (commit 8fcaaff) by declaring a similar map after the
+  // memos that read it.
+  const deliverableNameToService = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const tpl of data?.templates ?? []) {
+      if (tpl.phase?.name) m.set(tpl.name, tpl.phase.name);
+    }
+    return m;
+  }, [data?.templates]);
+
   // X3 — narrow the option list to deliverables that ACTUALLY appear in
   // the projects currently in scope. Previously the dropdown was built
   // from ALL tasks across ALL projects; picking a name that exists only
@@ -557,20 +577,6 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     }
     return ordered;
   }, [data?.tasks, data?.services, projectId, deliverableNameToService]);
-
-  // Deliverable name → Service-name map, derived from templates alone so it
-  // can be used INSIDE the Service-filter pipeline without a dependency
-  // cycle. Mirrors the lookup the column-header badges use, so a task that
-  // shows up under a "BIM Coordination" column resolves to "BIM Coordination"
-  // for the filter too — even when its own FK chain doesn't carry the
-  // service link (ad-hoc project deliverables, legacy rows).
-  const deliverableNameToService = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const tpl of data?.templates ?? []) {
-      if (tpl.phase?.name) m.set(tpl.name, tpl.phase.name);
-    }
-    return m;
-  }, [data?.templates]);
 
   // Apply client-side filters before the matrix is built. Order matters:
   // deliverable filter narrows by template-phase; date filters trim by endDate.
