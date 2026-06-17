@@ -7,6 +7,7 @@ import { ProjectSelect } from '@/components/shared/project-select';
 import { EmptyState } from '@/components/shared/empty-state';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
+import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
 import { getTaskHealth, aggregateHealth, type TaskHealth } from '@/lib/task-health';
 import { STATUS_DOT, STATUS_PILL, STATUS_LABEL, formatShortDate } from '@/lib/task-constants';
 import { queryKeys } from '@/lib/query-keys';
@@ -361,9 +362,13 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   //                status-colored chips in each cell.
   // All three share the same filter state so swapping views keeps context.
   const [viewMode, setViewMode] = useState<'matrix' | 'status' | 'tasks' | 'zone-tasks'>('matrix');
-  // Service filter is now a STRING (the service name from getTaskPhaseName)
-  // and applied client-side — see the explanation in execution-board.service.ts.
-  const [serviceFilter, setServiceFilter] = useState<string>('');
+  // Deliverable + Service filters are MULTI-SELECT sets of names — empty
+  // set means "no filter (all)". Migrated from single-value strings as
+  // part of #50 so users can compare several services or deliverables at
+  // once. The matrix narrows to the OR of selected values. `serviceFilter`
+  // keeps its name (it's the deliverable-column filter) to avoid a wider
+  // rename; the displayed label is "Deliverables".
+  const [serviceFilter, setServiceFilter] = useState<Set<string>>(new Set());
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [expandedZones, setExpandedZones] = useState<Set<number>>(new Set());
   // Track newly-expanded rows so we can scroll their expanded content into
@@ -399,7 +404,9 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   // Service (Phase) filter ('' = all). Resolved via getTaskServiceName so it
   // honors the project-owned deliverable's service link first, then falls
   // back to the task's phase / legacy serviceType.
-  const [phaseFilter, setPhaseFilter] = useState<string>('');
+  // Multi-select set of service names — empty = no filter (all services).
+  // See `serviceFilter` above for the parallel deliverable-name set.
+  const [phaseFilter, setPhaseFilter] = useState<Set<string>>(new Set());
   const didAutoExpand = useRef(false);
 
   // Don't pass serviceId to the server anymore; we filter client-side.
@@ -438,7 +445,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     // Inline the filter-active check (the memoized isFilterActive const
     // is declared later in the component — referencing it here would hit
     // its TDZ during render).
-    const filterActive = !!serviceFilter || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter || !!phaseFilter;
+    const filterActive = serviceFilter.size > 0 || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter || phaseFilter.size > 0;
     if (!filterActive || !data) return;
     const keys = new Set<string>();
     const addZones = (nodes: ZoneNode[]) => {
@@ -584,7 +591,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     const all = data?.tasks ?? [];
     return all.filter((t: any) => {
       if (statusFilter && t.status !== statusFilter) return false;
-      if (phaseFilter && (getTaskServiceName(t, deliverableNameToService) ?? '__none__') !== phaseFilter) return false;
+      if (phaseFilter.size > 0 && !phaseFilter.has(getTaskServiceName(t, deliverableNameToService) ?? '__none__')) return false;
       if (onlyWithDue && !t.endDate) return false;
       if (dueFrom || dueTo) {
         if (!t.endDate) return false;
@@ -592,14 +599,14 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
         if (dueFrom && d < dueFrom) return false;
         if (dueTo && d > dueTo) return false;
       }
-      if (serviceFilter) {
-        // serviceFilter is a deliverable column value straight from the
-        // dropdown, which now lists getTaskPhaseName values. Match STRICTLY
-        // on the same dimension the board uses to build columns, so the
-        // filter is exactly consistent with what's rendered. A zone only
-        // survives if it genuinely owns a task in this exact column — no
-        // phase-vs-marker false positives (the מרתף-under-תאום-מערכות bug).
-        if ((getTaskPhaseName(t) ?? '__none__') !== serviceFilter) return false;
+      if (serviceFilter.size > 0) {
+        // serviceFilter is a SET of deliverable column values straight from
+        // the multi-select. Match STRICTLY on the same dimension the board
+        // uses to build columns, so the filter is exactly consistent with
+        // what's rendered. A zone only survives if it genuinely owns a task
+        // in any of the selected columns — no phase-vs-marker false
+        // positives (the מרתף-under-תאום-מערכות bug).
+        if (!serviceFilter.has(getTaskPhaseName(t) ?? '__none__')) return false;
       }
       return true;
     });
@@ -824,7 +831,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   // aggregated-tasks list for it. Project rows are kept if any of their
   // child zones survive — collapsing/expanding still works because
   // expandedIds is unaffected.
-  const isFilterActive = !!serviceFilter || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter || !!phaseFilter;
+  const isFilterActive = serviceFilter.size > 0 || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter || phaseFilter.size > 0;
   const visibleFlatRows = useMemo(() => {
     if (!isFilterActive) return flatRows;
 
@@ -919,38 +926,29 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
             className="w-64"
           />
         )}
-        {/* Service (Phase) dropdown — narrows the board to tasks belonging to
-            the chosen Service. Resolved via getTaskServiceName so it honors
-            the project-owned deliverable's service link first.
-            Ordered Project → Service → Deliverable (#51) so the filters
-            follow the conceptual drill-down. */}
-        <select
-          value={phaseFilter}
-          onChange={(e) => setPhaseFilter(e.target.value)}
-          className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
+        {/* Service (Phase) multi-select — narrows the board to tasks
+            belonging to any of the selected Services. Resolved via
+            getTaskServiceName so it honors the project-owned deliverable's
+            service link first. Ordered Project → Service → Deliverable
+            (#51); multi-select per #50. */}
+        <MultiSelectFilter
+          options={availablePhases.map((name) => ({ value: name, label: name }))}
+          selected={phaseFilter}
+          onChange={setPhaseFilter}
+          placeholder="Services"
           title="Filter by service"
-        >
-          <option value="">All Services</option>
-          {availablePhases.map((name) => (
-            <option key={name} value={name}>{name}</option>
-          ))}
-        </select>
+        />
 
-        {/* Deliverable dropdown — lists the distinct deliverable names (the
-            small pill under each column header) that have tasks in scope.
-            Picking one narrows the matrix to columns whose deliverable
-            matches. */}
-        <select
-          value={serviceFilter}
-          onChange={(e) => setServiceFilter(e.target.value)}
-          className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
+        {/* Deliverable multi-select — the small pill under each column
+            header. Picking some narrows the matrix to columns whose
+            deliverable is in the selection. */}
+        <MultiSelectFilter
+          options={availableServices.map((name) => ({ value: name, label: name }))}
+          selected={serviceFilter}
+          onChange={setServiceFilter}
+          placeholder="Deliverables"
           title="Filter by deliverable"
-        >
-          <option value="">All Deliverables</option>
-          {availableServices.map((name) => (
-            <option key={name} value={name}>{name}</option>
-          ))}
-        </select>
+        />
 
         {/* General task-status filter — applies across all three views. */}
         <select
@@ -1004,10 +1002,10 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
           >
             Collapse All
           </button>
-          {(serviceFilter || dueFrom || dueTo || onlyWithDue || statusFilter || phaseFilter) && (
+          {(serviceFilter.size > 0 || dueFrom || dueTo || onlyWithDue || statusFilter || phaseFilter.size > 0) && (
             <button
               type="button"
-              onClick={() => { setServiceFilter(''); setDueFrom(''); setDueTo(''); setOnlyWithDue(false); setStatusFilter(''); setPhaseFilter(''); }}
+              onClick={() => { setServiceFilter(new Set()); setDueFrom(''); setDueTo(''); setOnlyWithDue(false); setStatusFilter(''); setPhaseFilter(new Set()); }}
               className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:border-slate-400"
               title="Clear all filters"
             >
