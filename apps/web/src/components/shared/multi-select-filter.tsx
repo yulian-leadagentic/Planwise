@@ -116,7 +116,10 @@ export function MultiSelectFilter<T extends string | number>({
         // start-0 lines the popover with the trigger's logical-start edge
         // in both LTR (left) and RTL (right) layouts, avoiding the off-screen
         // clip we hit with hard-coded left-0.
-        <div dir="ltr" className="absolute start-0 top-full z-30 mt-1 w-72 rounded-md border border-slate-200 bg-white shadow-lg">
+        // z-50 beats sticky page headers (the Execution Board's ZONE
+        // column header sits at ~z-40 and was obscuring the first rows
+        // of the project dropdown).
+        <div dir="ltr" className="absolute start-0 top-full z-50 mt-1 w-72 rounded-md border border-slate-200 bg-white shadow-lg">
           {/* Search + clear-all */}
           <div className="flex items-center gap-2 border-b border-slate-100 px-2 py-1.5">
             <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" />
