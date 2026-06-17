@@ -110,8 +110,30 @@ export function TaskChecklist({ taskId }: { taskId: number }) {
       </ul>
 
       {canWrite && (
-        <div className="flex items-center gap-2 px-3 py-2 border-t border-slate-100 bg-slate-50/50">
-          <Plus className="h-3.5 w-3.5 text-slate-400" />
+        // Add-row redesigned per user feedback (#54):
+        //   1. The previous bg-slate-50/50 + bg-transparent input read as
+        //      pure greyed-out chrome — users didn't realize they could
+        //      type into it.
+        //   2. The Plus icon was a passive decoration; clicking it did
+        //      nothing. Users intuitively reached for it to "start a new
+        //      task" and got no response.
+        // Fix:
+        //   • Wrap the input in a real white field with a visible border so
+        //     it looks like an input.
+        //   • Make the leading + icon a real button: click it to focus the
+        //     input (= "initiate a new item"). Same effect as Tab-into.
+        //   • Show the "Add" button always; disable when empty instead of
+        //     hiding, so users see what their next action is.
+        <div className="flex items-center gap-2 px-3 py-2 border-t border-slate-100 bg-white">
+          <button
+            type="button"
+            onClick={() => inputRef.current?.focus()}
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-600 hover:bg-blue-100 hover:text-blue-700"
+            title="Add a new item"
+            aria-label="Start typing a new checklist item"
+          >
+            <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
+          </button>
           <input
             ref={inputRef}
             type="text"
@@ -125,19 +147,17 @@ export function TaskChecklist({ taskId }: { taskId: number }) {
             }}
             placeholder="Add a checklist item…"
             maxLength={500}
-            className="flex-1 bg-transparent text-[13px] focus:outline-none placeholder:text-slate-400"
+            className="flex-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[13px] text-slate-700 focus:border-blue-400 focus:outline-none placeholder:text-slate-400 disabled:bg-slate-50"
             disabled={addItem.isPending}
           />
-          {newItemText.trim() && (
-            <button
-              type="button"
-              onClick={submit}
-              disabled={addItem.isPending}
-              className="text-[12px] font-semibold text-blue-600 hover:text-blue-700 disabled:opacity-50"
-            >
-              Add
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={submit}
+            disabled={addItem.isPending || !newItemText.trim()}
+            className="rounded-md bg-blue-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed"
+          >
+            Add
+          </button>
         </div>
       )}
     </div>
