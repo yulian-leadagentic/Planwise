@@ -1,13 +1,13 @@
 import { useState, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Plus, X, Home, Building2, Clock, Pencil } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, X, Home, Building2, Clock, Pencil, Trash2 } from 'lucide-react';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { PageHeader } from '@/components/shared/page-header';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { timeApi, type TimeEntryPayload } from '@/api/time.api';
-import { useClockStatus, useClockIn, useClockOut, useWeeklyGrid } from '@/hooks/use-time';
+import { useClockStatus, useClockIn, useClockOut, useWeeklyGrid, useDeleteTimeEntry } from '@/hooks/use-time';
 import { useOverlapConfirm } from './overlap-confirm';
 import { format, addDays, startOfWeek } from '@/lib/date-utils';
 import { minutesToDisplay } from '@/types';
@@ -490,6 +490,16 @@ function WeekView() {
   const [showEntryForm, setShowEntryForm] = useState<{ date: string; startTime: string; endTime: string } | null>(null);
   const [selecting, setSelecting] = useState<{ dayIdx: number; startHour: number } | null>(null);
   const [selectEnd, setSelectEnd] = useState<number | null>(null);
+  // Delete-entry mutation: toasts + 'time' query invalidation are wired
+  // inside the hook (see useDeleteTimeEntry in @/hooks/use-time).
+  const deleteEntry = useDeleteTimeEntry();
+  const handleDeleteEntry = (e: React.MouseEvent, entry: { id: number; startTime?: string; endTime?: string; minutes?: number; project?: { name?: string }; task?: { name?: string } }) => {
+    e.stopPropagation();
+    const label = `${entry.startTime ?? ''}–${entry.endTime ?? ''} · ${entry.project?.name ?? 'no project'}${entry.task?.name ? ' / ' + entry.task.name : ''}`;
+    if (confirm(`Delete this time entry?\n\n${label}`)) {
+      deleteEntry.mutate(entry.id);
+    }
+  };
 
   const weekStart = useMemo(() => {
     const today = new Date();
@@ -738,9 +748,23 @@ function WeekView() {
                           const timeLabel = `${entry.startTime ?? '?'} – ${entry.endTime ?? '?'}`;
                           return (
                             <div key={entry.id}
-                              className="absolute left-0.5 right-0.5 rounded-md bg-blue-600 text-white px-2 py-1 overflow-hidden z-10 cursor-pointer hover:bg-blue-700 shadow-sm"
+                              className="group absolute left-0.5 right-0.5 rounded-md bg-blue-600 text-white px-2 py-1 overflow-hidden z-10 cursor-pointer hover:bg-blue-700 shadow-sm"
                               style={{ top: `${offsetInCell}px`, height: `${blockHeight}px` }}
                               title={`${timeLabel}\n${projectName}\n${taskName}\n${durationHours.toFixed(2)} hrs`}>
+                              {/* Delete affordance — hover-reveals top-right; click prompts
+                                  confirm + invalidates the time query. Stops the parent
+                                  mousedown from starting a fresh cell-drag selection. */}
+                              <button
+                                type="button"
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => handleDeleteEntry(e, entry)}
+                                disabled={deleteEntry.isPending}
+                                className="absolute top-0.5 right-0.5 rounded p-0.5 text-white/70 hover:text-white hover:bg-blue-800/40 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                                title="Delete this time entry"
+                                aria-label="Delete time entry"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
                               <p className="text-[10px] font-medium opacity-90">{timeLabel}</p>
                               <p className="text-[11px] font-bold truncate">{projectName || 'No project'}</p>
                               {blockHeight > 50 && taskName && <p className="text-[10px] truncate opacity-80">{taskName}</p>}
@@ -779,12 +803,25 @@ function WeekView() {
             <h3 className="text-[13px] font-semibold text-slate-700 mb-2">Entries this week ({allEntries.length})</h3>
             <div className="space-y-1">
               {allEntries.map((e: any) => (
-                <div key={e.id} className="flex items-center gap-3 rounded-md bg-slate-50 px-3 py-2 text-[12px]">
+                <div key={e.id} className="group flex items-center gap-3 rounded-md bg-slate-50 px-3 py-2 text-[12px]">
                   <span className="text-slate-500 w-20">{e._date}</span>
                   <span className="text-slate-500 w-16">{e.startTime ?? '-'} - {e.endTime ?? '-'}</span>
                   <span className="font-medium text-slate-700">{minutesToDisplay(e.minutes)}</span>
                   <span className="text-slate-600 flex-1 truncate">{e.project?.name ?? ''} {e.task?.name ? `/ ${e.task.name}` : ''}</span>
                   {e.location && <span className="text-[10px] text-slate-400">{e.location === 'home' ? '🏠' : '🏢'}</span>}
+                  {/* Same delete affordance on the list view — hover-revealed
+                      so the row stays clean unless the user actively wants
+                      to act on it. */}
+                  <button
+                    type="button"
+                    onClick={(ev) => handleDeleteEntry(ev, e)}
+                    disabled={deleteEntry.isPending}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity rounded p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-30"
+                    title="Delete this time entry"
+                    aria-label="Delete time entry"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               ))}
             </div>
