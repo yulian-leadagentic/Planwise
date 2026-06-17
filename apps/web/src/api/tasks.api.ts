@@ -130,6 +130,6 @@ export const tasksApi = {
       return Array.isArray(d) ? d : (d?.data ?? []);
     }),
 
-  addComment: (taskId: number, payload: { content: string; parentId?: number }) =>
+  addComment: (taskId: number, payload: { content: string; parentId?: number; attachmentIds?: number[] }) =>
     client.post(`/tasks/${taskId}/comments`, payload).then((r) => r.data),
 };

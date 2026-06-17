@@ -42,7 +42,11 @@ export class ProjectFilesService {
         },
       }),
       this.prisma.taskAttachment.findMany({
-        where: { task: { projectId } },
+        // Comment-level attachments (commentId IS NOT NULL) belong to the
+        // Discussion thread of their task — they shouldn't appear in the
+        // top-level project Files list. Otherwise every casual screenshot
+        // pasted into a comment ends up cluttering the file inventory.
+        where: { task: { projectId }, commentId: null },
         include: {
           uploader: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
           task: { select: { id: true, name: true } },

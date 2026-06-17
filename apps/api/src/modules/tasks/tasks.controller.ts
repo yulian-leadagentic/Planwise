@@ -231,7 +231,7 @@ export class TasksController {
   async addComment(
     @Param('id', ParseIntPipe) taskId: number,
     @CurrentUser() user: any,
-    @Body() body: { content: string; parentId?: number },
+    @Body() body: { content: string; parentId?: number; attachmentIds?: number[] },
   ) {
     await this.access.assertTaskAccess(user.id, taskId, user.roleId);
     return this.tasksService.addComment(taskId, user.id, body);

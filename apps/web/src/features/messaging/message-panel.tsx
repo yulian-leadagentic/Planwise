@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { MessageSquare, Send, Reply, Pencil, Trash2, AtSign, ChevronDown, ChevronRight, CheckCircle, Sparkles, XCircle, Users, UserPlus, Search, Check } from 'lucide-react';
+import { MessageSquare, Send, Reply, Pencil, Trash2, AtSign, ChevronDown, ChevronRight, CheckCircle, Sparkles, XCircle, Users, UserPlus, Search, Check, Paperclip, FileText, X } from 'lucide-react';
+import { notify } from '@/lib/notify';
 import { useMessages, useCreateMessage, useDeleteMessage } from '@/hooks/use-messages';
 import { cn } from '@/lib/utils';
 import { formatRelative } from '@/lib/date-utils';
@@ -88,6 +89,14 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
   const [mentionSearch, setMentionSearch] = useState<string | null>(null);
   const [mentionedUsers, setMentionedUsers] = useState<{ id: number; name: string }[]>([]);
   const [showRecipientPicker, setShowRecipientPicker] = useState(false);
+  // Attachments — files chosen via the paperclip icon. Upload happens on
+  // submit (one round-trip per file via /files/upload), then their
+  // descriptors are sent alongside the message create payload. Stored
+  // in Message.metadata.attachments on the server so existing readers
+  // keep working.
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const createMessage = useCreateMessage();
 
@@ -131,24 +140,64 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
     textarea.focus();
   };
 
-  const handleSubmit = () => {
-    if (!content.trim()) return;
+  const handleSubmit = async () => {
+    if (!content.trim() && pendingFiles.length === 0) return;
+    let attachments: Array<{ fileName: string; fileUrl: string; fileSize?: number; mimeType?: string }> = [];
+    if (pendingFiles.length > 0) {
+      setUploading(true);
+      try {
+        for (const f of pendingFiles) {
+          const fd = new FormData();
+          fd.append('file', f);
+          fd.append('folder', 'attachments');
+          const res = await client.post('/files/upload', fd, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          const data = res.data?.data ?? res.data;
+          attachments.push({
+            fileName: f.name,
+            fileUrl: data.url,
+            fileSize: f.size,
+            mimeType: f.type || undefined,
+          });
+        }
+      } catch (err: any) {
+        notify.apiError(err, 'Failed to upload attachment');
+        setUploading(false);
+        return;
+      }
+      setUploading(false);
+    }
     createMessage.mutate(
       {
         entityType,
         entityId,
         parentId,
-        content: content.trim(),
+        content: content.trim() || '(attachment)',
         mentionedUserIds: mentionedUsers.map((u) => u.id),
+        ...(attachments.length > 0 ? { attachments } : {}),
       },
       {
         onSuccess: () => {
           setContent('');
           setMentionedUsers([]);
+          setPendingFiles([]);
           onSent?.();
         },
       },
     );
+  };
+
+  const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      setPendingFiles((prev) => [...prev, ...Array.from(files)]);
+    }
+    if (e.target.value) e.target.value = '';
+  };
+
+  const removePendingFile = (idx: number) => {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== idx));
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -218,7 +267,50 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
         </div>
       </div>
 
+      {/* Pending attachment chips — render above the textarea so they're
+          visible while the user is typing. Click ✕ to drop one before
+          send. Files upload only on submit, not when picked. */}
+      {pendingFiles.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-blue-100 bg-blue-50/40 px-2 py-1.5">
+          {pendingFiles.map((f, i) => (
+            <span
+              key={`${f.name}-${i}`}
+              className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-white px-2 py-0.5 text-[11px] text-slate-700"
+              title={`${f.name} (${(f.size / 1024).toFixed(0)} KB)`}
+            >
+              <FileText className="h-3 w-3 text-blue-500" />
+              <span className="truncate max-w-[160px]">{f.name}</span>
+              <button
+                type="button"
+                onClick={() => removePendingFile(i)}
+                className="ml-0.5 text-slate-400 hover:text-red-500"
+                aria-label={`Remove ${f.name}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="flex items-end gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          onChange={handleFilePick}
+          className="hidden"
+        />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading || createMessage.isPending}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50 shrink-0"
+          title="Attach files"
+          aria-label="Attach files"
+        >
+          <Paperclip className="h-4 w-4" />
+        </button>
         <textarea
           ref={textareaRef}
           value={content}
@@ -231,12 +323,50 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
         />
         <button
           onClick={handleSubmit}
-          disabled={!content.trim() || createMessage.isPending}
+          disabled={(!content.trim() && pendingFiles.length === 0) || createMessage.isPending || uploading}
           className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 shrink-0"
+          title={uploading ? 'Uploading...' : 'Send'}
         >
           <Send className="h-4 w-4" />
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Renders the attachment chips below a message bubble. Read from the
+ * message.metadata.attachments JSON array. Each chip links to the file
+ * URL — task attachments live under /uploads/* which the backend serves
+ * with cookie auth, so a plain <a> works.
+ */
+export function MessageAttachments({ metadata }: { metadata: any }) {
+  const attachments = Array.isArray(metadata?.attachments) ? metadata.attachments : [];
+  if (attachments.length === 0) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      {attachments.map((a: any, i: number) => (
+        <a
+          key={`${a.fileUrl}-${i}`}
+          href={a.fileUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700"
+          title={a.fileName}
+        >
+          <FileText className="h-3 w-3 text-blue-500" />
+          <span className="truncate max-w-[200px]">{a.fileName}</span>
+          {a.fileSize ? (
+            <span className="text-slate-400 ml-0.5">
+              {a.fileSize < 1024
+                ? `${a.fileSize}B`
+                : a.fileSize < 1024 * 1024
+                  ? `${(a.fileSize / 1024).toFixed(0)}KB`
+                  : `${(a.fileSize / 1024 / 1024).toFixed(1)}MB`}
+            </span>
+          ) : null}
+        </a>
+      ))}
     </div>
   );
 }
@@ -452,6 +582,11 @@ function MessageItem({ message, entityType, entityId, depth = 0 }: {
             )}
           </div>
           <p className="text-[13px] text-slate-700 mt-0.5 whitespace-pre-wrap break-words">{message.content}</p>
+
+          {/* Attachment chips — files attached when the user sent the
+              message. metadata.attachments is an array of {fileName,
+              fileUrl, fileSize, mimeType}; empty / missing renders nothing. */}
+          <MessageAttachments metadata={message.metadata} />
 
           {/* Mentions */}
           {message.mentions?.length > 0 && (

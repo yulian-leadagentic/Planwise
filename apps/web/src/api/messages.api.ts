@@ -1,11 +1,19 @@
 import client from './client';
 
+export interface MessageAttachmentPayload {
+  fileName: string;
+  fileUrl: string;
+  fileSize?: number;
+  mimeType?: string;
+}
+
 export interface CreateMessagePayload {
   entityType: 'project' | 'task' | 'zone';
   entityId: number;
   parentId?: number;
   content: string;
   mentionedUserIds?: number[];
+  attachments?: MessageAttachmentPayload[];
 }
 
 export const messagesApi = {

@@ -9,6 +9,30 @@ import { QueryProjectsDto } from './dto/query-projects.dto';
 import { BusinessPartnerRelationshipsService } from '../business-partner-relationships/business-partner-relationships.service';
 import { NumberRangesService } from '../number-ranges/number-ranges.service';
 
+/**
+ * True when the caller can see financial data. Mirrors the frontend's
+ * finance:read gate so the same user sees the same surfaces top-to-bottom
+ * (no "I can't see budget on the row but I can scrape it from
+ * /projects/:id directly via DevTools" gap).
+ */
+function callerCanReadFinance(user: any): boolean {
+  if (!user) return false;
+  if (user.roleId === 1) return true;
+  const mods: any[] = user.roleModules ?? [];
+  return mods.some((rm) => {
+    const route = rm.module?.route ?? '';
+    const name = (rm.module?.name ?? '').toLowerCase();
+    return (route === 'finance' || route === '/finance' || name === 'finance') && !!rm.canRead;
+  });
+}
+
+/** Strip budget fields from a project payload. Pure — never mutates. */
+function omitBudget<T extends Record<string, any>>(p: T): Omit<T, 'budget' | 'estimatedValue'> {
+  if (!p) return p as any;
+  const { budget: _b, estimatedValue: _e, ...rest } = p;
+  return rest as any;
+}
+
 @Injectable()
 export class ProjectsService {
   constructor(
@@ -228,7 +252,7 @@ export class ProjectsService {
     return project;
   }
 
-  async findAll(query: QueryProjectsDto, userId?: number, roleId?: number | null) {
+  async findAll(query: QueryProjectsDto, userId?: number, roleId?: number | null, caller?: any) {
     const where: Prisma.ProjectWhereInput = {};
 
     // Project visibility scope. Admins (roleId=1) see everything; everyone
@@ -236,6 +260,8 @@ export class ProjectsService {
     // accessor the execution board uses, so the two views agree. Falling
     // back to "show all" when userId isn't passed keeps backwards-compat
     // for any internal callers (seeds, scripts) that didn't supply it.
+    const hasFinance = callerCanReadFinance(caller);
+
     if (userId != null) {
       const accessible = await this.access.getAccessibleProjectIds(userId, roleId);
       if (!accessible.all) {
@@ -327,7 +353,10 @@ export class ProjectsService {
     ]);
 
     return {
-      data,
+      // Strip budget + estimatedValue when the caller lacks finance:read.
+      // This is the response-shaping side of the gate; the UI side lives
+      // in project-list-page.tsx / project-detail-page.tsx.
+      data: hasFinance ? data : data.map((p: any) => omitBudget(p)),
       meta: {
         total,
         page: query.page ?? 1,
@@ -337,7 +366,7 @@ export class ProjectsService {
     };
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, caller?: any) {
     const project = await this.prisma.project.findFirst({
       where: { id },
       include: {
@@ -360,7 +389,7 @@ export class ProjectsService {
       throw new NotFoundException('Project not found');
     }
 
-    return project;
+    return callerCanReadFinance(caller) ? project : omitBudget(project);
   }
 
   async update(id: number, dto: UpdateProjectDto) {

@@ -1195,6 +1195,11 @@ model ProjectDeliverable {
 model TaskAttachment {
   id         Int      @id @default(autoincrement())
   taskId     Int      @map("task_id")
+  /// Optional FK to TaskComment. When set the attachment was uploaded as
+  /// part of a Discussion comment (rendered as chips below that comment).
+  /// When null it's a task-level attachment shown in the drawer's Files
+  /// section. Reusing one table avoids forking the upload pipeline.
+  commentId  Int?     @map("comment_id")
   fileName   String   @map("file_name") @db.VarChar(255)
   fileUrl    String   @map("file_url") @db.VarChar(500)
   fileSize   Int?     @map("file_size")
@@ -1202,10 +1207,12 @@ model TaskAttachment {
   uploadedBy Int      @map("uploaded_by")
   createdAt  DateTime @default(now()) @map("created_at")
 
-  task     Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  uploader User @relation(fields: [uploadedBy], references: [id])
+  task     Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  comment  TaskComment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  uploader User         @relation(fields: [uploadedBy], references: [id])
 
   @@index([taskId])
+  @@index([commentId])
   @@map("task_attachments")
 }
 
@@ -1276,10 +1283,11 @@ model TaskComment {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  task    Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  user    User          @relation(fields: [userId], references: [id])
-  parent  TaskComment?  @relation("CommentThread", fields: [parentId], references: [id])
-  replies TaskComment[] @relation("CommentThread")
+  task        Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user        User             @relation(fields: [userId], references: [id])
+  parent      TaskComment?     @relation("CommentThread", fields: [parentId], references: [id])
+  replies     TaskComment[]    @relation("CommentThread")
+  attachments TaskAttachment[]
 
   @@index([taskId])
   @@map("task_comments")

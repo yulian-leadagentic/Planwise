@@ -558,13 +558,22 @@ export class TasksService {
   }
 
   async getComments(taskId: number) {
+    const attachmentInclude = {
+      uploader: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+    };
     return this.prisma.taskComment.findMany({
       where: { taskId, parentId: null },
       include: {
         user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+        // Per-comment attachments (commentId IS NOT NULL on TaskAttachment).
+        // Task-level attachments (commentId IS NULL) stay on the task's own
+        // Files section, not here — so the Discussion shows only chips
+        // that the comment author actually attached to their message.
+        attachments: { include: attachmentInclude, orderBy: { createdAt: 'asc' } },
         replies: {
           include: {
             user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+            attachments: { include: attachmentInclude, orderBy: { createdAt: 'asc' } },
           },
           orderBy: { createdAt: 'asc' },
         },
@@ -573,10 +582,22 @@ export class TasksService {
     });
   }
 
-  async addComment(taskId: number, userId: number, data: { content: string; parentId?: number }) {
+  async addComment(
+    taskId: number,
+    userId: number,
+    data: { content: string; parentId?: number; attachmentIds?: number[] },
+  ) {
     await this.findOne(taskId);
 
-    return this.prisma.taskComment.create({
+    // Create the comment first, then promote any pre-uploaded task-level
+    // attachments to belong to it. The frontend flow is:
+    //   1. user picks files in the composer
+    //   2. /files/upload → urls
+    //   3. POST /tasks/:id/attachments per file → ids (task-level so far)
+    //   4. POST /tasks/:id/comments with { content, attachmentIds }
+    //   5. server sets commentId on those rows so they render with the
+    //      comment instead of in the standalone Files section
+    const comment = await this.prisma.taskComment.create({
       data: {
         taskId,
         userId,
@@ -585,6 +606,32 @@ export class TasksService {
       },
       include: {
         user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+      },
+    });
+
+    if (data.attachmentIds && data.attachmentIds.length > 0) {
+      await this.prisma.taskAttachment.updateMany({
+        where: {
+          id: { in: data.attachmentIds },
+          taskId,
+          commentId: null,
+          uploadedBy: userId,
+        },
+        data: { commentId: comment.id },
+      });
+    }
+
+    // Re-read with attachments so the client gets the full payload back.
+    return this.prisma.taskComment.findUnique({
+      where: { id: comment.id },
+      include: {
+        user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+        attachments: {
+          include: {
+            uploader: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
       },
     });
   }
@@ -607,8 +654,11 @@ export class TasksService {
   // ─── Attachments ────────────────────────────────────────────────────────
 
   async getAttachments(taskId: number) {
+    // Only task-level attachments — comment-level ones (commentId IS NOT NULL)
+    // show up under their parent comment in the Discussion, not in the
+    // task's Files section.
     return this.prisma.taskAttachment.findMany({
-      where: { taskId },
+      where: { taskId, commentId: null },
       include: {
         uploader: { select: { id: true, firstName: true, lastName: true } },
       },

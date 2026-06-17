@@ -29,6 +29,17 @@ export class MessagesService {
   ) {}
 
   async create(userId: number, dto: CreateMessageDto) {
+    // Attachments are stashed inside the metadata JSON column. Reusing
+    // metadata avoids a schema migration and keeps the existing UI
+    // readers (which spread metadata into a single object) working as
+    // long as they don't clobber the attachments key.
+    // Prisma's Json typing rejects nested DTO classes — cast through
+    // Prisma.JsonObject which it accepts. The shape is plain
+    // { attachments: [...] } so JSON serialization is safe.
+    const metadata =
+      dto.attachments && dto.attachments.length > 0
+        ? ({ attachments: dto.attachments.map((a) => ({ ...a })) } as Prisma.JsonObject)
+        : undefined;
     const message = await this.prisma.message.create({
       data: {
         entityType: dto.entityType,
@@ -37,6 +48,7 @@ export class MessagesService {
         authorId: userId,
         type: 'user',
         content: dto.content,
+        ...(metadata ? { metadata } : {}),
       },
       include: messageInclude,
     });

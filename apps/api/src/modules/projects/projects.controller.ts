@@ -41,7 +41,7 @@ export class ProjectsController {
   @ApiPaginated()
   @ApiOperation({ summary: 'List projects with filters and pagination' })
   findAll(@CurrentUser() user: any, @Query() query: QueryProjectsDto) {
-    return this.projectsService.findAll(query, user.id, user.roleId);
+    return this.projectsService.findAll(query, user.id, user.roleId, user);
   }
 
   // Static route MUST precede `:id` so it isn't swallowed by the param route.
@@ -55,8 +55,8 @@ export class ProjectsController {
   @Get(':id')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get project by ID' })
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.projectsService.findOne(id);
+  findOne(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    return this.projectsService.findOne(id, user);
   }
 
   // Budget + cost endpoints are gated behind the Finance module
