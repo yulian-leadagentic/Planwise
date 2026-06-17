@@ -84,13 +84,30 @@ export function getTaskPhaseName(task: TaskLike): string | null {
  *      uses one is dropped from any Service filter).
  *   3. task.phase.name — direct phase on the task (root tasks and legacy data).
  *   4. task.serviceType.name — legacy ServiceType FK; thinly used.
- *   5. null → "No Service" bucket.
+ *   5. OPTIONAL deliverableNameToService fallback — when the column-header
+ *      derivation (templates keyed by deliverable name) knows the service
+ *      but the task's own FK chain doesn't. Without this, a project-owned
+ *      deliverable created without a service link renders its column badge
+ *      from the matching template, but its tasks are invisible to the
+ *      filter dropdown. Passing the same map both sides use keeps them
+ *      in sync.
+ *   6. null → "No Service" bucket.
  */
-export function getTaskServiceName(task: TaskLike): string | null {
+export function getTaskServiceName(
+  task: TaskLike,
+  deliverableNameToService?: Map<string, string>,
+): string | null {
   if (task.projectDeliverable?.service?.name) return task.projectDeliverable.service.name;
   if (task.deliverableTemplate?.phase?.name) return task.deliverableTemplate.phase.name;
   if (task.phase?.name) return task.phase.name;
   if (task.serviceType?.name) return task.serviceType.name;
+  if (deliverableNameToService) {
+    const delivName = getTaskPhaseName(task);
+    if (delivName) {
+      const svc = deliverableNameToService.get(delivName);
+      if (svc) return svc;
+    }
+  }
   return null;
 }
 

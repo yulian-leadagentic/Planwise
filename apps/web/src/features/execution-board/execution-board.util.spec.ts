@@ -95,6 +95,40 @@ describe('getTaskServiceName', () => {
   it('returns null when no service signal is present', () => {
     expect(getTaskServiceName({ id: 1, zoneId: 1 })).toBeNull();
   });
+
+  it('falls back to deliverable-name → service map when task has no FK chain', () => {
+    // Mirrors the real-world case: a project-owned deliverable named "דוח קריטי"
+    // was created without an explicit service link. The column header badge
+    // shows "BIM Coordination" because the matching catalog template carries
+    // that phase. Without the map argument the filter ignores it; with it,
+    // the task resolves correctly so the filter dropdown lists it.
+    const map = new Map([
+      ['דוח קריטי', 'BIM Coordination'],
+      ['התנעה', 'BIM Management'],
+    ]);
+    expect(
+      getTaskServiceName(
+        { id: 1, zoneId: 1, projectDeliverable: { name: 'דוח קריטי' } },
+        map,
+      ),
+    ).toBe('BIM Coordination');
+  });
+
+  it('FK chain wins over deliverable-name map', () => {
+    const map = new Map([['Critical Report', 'BIM Coordination']]);
+    // Task's own service link should always beat the name-based fallback,
+    // so an explicit override (the source of truth post-refactor) is honored.
+    expect(
+      getTaskServiceName(
+        {
+          id: 1,
+          zoneId: 1,
+          projectDeliverable: { name: 'Critical Report', service: { name: 'Override' } },
+        },
+        map,
+      ),
+    ).toBe('Override');
+  });
 });
 
 describe('buildZoneDescendants', () => {

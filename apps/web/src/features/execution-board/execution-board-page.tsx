@@ -543,7 +543,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     );
     const present = new Set<string>();
     for (const t of allTasks) {
-      const n = getTaskServiceName(t);
+      const n = getTaskServiceName(t, deliverableNameToService);
       if (n) present.add(n);
     }
     // Order by the services list returned alongside the board (catalog
@@ -556,7 +556,21 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       if (!ordered.includes(n)) ordered.push(n);
     }
     return ordered;
-  }, [data?.tasks, data?.services, projectId]);
+  }, [data?.tasks, data?.services, projectId, deliverableNameToService]);
+
+  // Deliverable name → Service-name map, derived from templates alone so it
+  // can be used INSIDE the Service-filter pipeline without a dependency
+  // cycle. Mirrors the lookup the column-header badges use, so a task that
+  // shows up under a "BIM Coordination" column resolves to "BIM Coordination"
+  // for the filter too — even when its own FK chain doesn't carry the
+  // service link (ad-hoc project deliverables, legacy rows).
+  const deliverableNameToService = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const tpl of data?.templates ?? []) {
+      if (tpl.phase?.name) m.set(tpl.name, tpl.phase.name);
+    }
+    return m;
+  }, [data?.templates]);
 
   // Apply client-side filters before the matrix is built. Order matters:
   // deliverable filter narrows by template-phase; date filters trim by endDate.
@@ -564,7 +578,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     const all = data?.tasks ?? [];
     return all.filter((t: any) => {
       if (statusFilter && t.status !== statusFilter) return false;
-      if (phaseFilter && (getTaskServiceName(t) ?? '__none__') !== phaseFilter) return false;
+      if (phaseFilter && (getTaskServiceName(t, deliverableNameToService) ?? '__none__') !== phaseFilter) return false;
       if (onlyWithDue && !t.endDate) return false;
       if (dueFrom || dueTo) {
         if (!t.endDate) return false;
@@ -583,7 +597,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       }
       return true;
     });
-  }, [data?.tasks, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter]);
+  }, [data?.tasks, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, deliverableNameToService]);
 
   const { phaseColumns, directMatrix, hasNoPhase, phaseToService } = useMemo(() => {
     const tasks = filteredTasks;
