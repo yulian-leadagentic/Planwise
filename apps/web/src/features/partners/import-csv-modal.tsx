@@ -159,18 +159,54 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+          {/* Footer:
+             • Always show Close + the main action button
+             • When a dry run came back clean (no errors, has would-create rows)
+               surface a prominent green "Import for real" button next to
+               the dry-run button so the user doesn't have to find the
+               checkbox to flip dryRun off.
+             • If no file is picked, the main button shows a HINT
+               instead of being silently dim — that was the "press it and
+               nothing happens" complaint (user thought it was broken).
+          */}
+          <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100">
             <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Close</button>
-            <button
-              onClick={() => importMutation.mutate()}
-              disabled={!file || importMutation.isPending}
-              className={cn(
-                'text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50',
-                dryRun ? 'bg-slate-700 hover:bg-slate-800' : 'bg-blue-600 hover:bg-blue-700',
-              )}
-            >
-              {importMutation.isPending ? 'Processing...' : dryRun ? 'Run Dry Run' : 'Import'}
-            </button>
+
+            {!file ? (
+              <span className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-1.5 font-medium">
+                Choose a CSV file first ↑
+              </span>
+            ) : (
+              <>
+                <button
+                  onClick={() => { setDryRun(true); importMutation.mutate(); }}
+                  disabled={importMutation.isPending}
+                  className="bg-slate-700 hover:bg-slate-800 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
+                  title="Validate the file without writing anything"
+                >
+                  {importMutation.isPending && dryRun ? 'Validating…' : 'Run Dry Run'}
+                </button>
+                <button
+                  onClick={() => { setDryRun(false); importMutation.mutate(); }}
+                  disabled={importMutation.isPending}
+                  className={cn(
+                    'text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50',
+                    // Pulse the green button when a clean dry-run just landed
+                    // so users see what to click next.
+                    result && result.summary.errors === 0 && result.summary.created > 0
+                      ? 'bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-200'
+                      : 'bg-blue-600 hover:bg-blue-700',
+                  )}
+                  title="Actually create the rows"
+                >
+                  {importMutation.isPending && !dryRun
+                    ? 'Importing…'
+                    : result && result.summary.errors === 0
+                      ? `Import ${result.summary.created} rows`
+                      : 'Import'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
