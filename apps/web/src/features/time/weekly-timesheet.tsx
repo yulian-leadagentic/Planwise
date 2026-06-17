@@ -12,6 +12,7 @@ import { useOverlapConfirm } from './overlap-confirm';
 import { format, addDays, startOfWeek } from '@/lib/date-utils';
 import { minutesToDisplay } from '@/types';
 import client from '@/api/client';
+import { useAuthStore } from '@/stores/auth.store';
 
 const HOURS = Array.from({ length: 13 }, (_, i) => i + 7); // 7:00 - 19:00
 const HOUR_HEIGHT = 48; // px per hour row
@@ -62,6 +63,10 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
   const overlap = useOverlapConfirm();
   const [submitting, setSubmitting] = useState(false);
   const queryClient = useQueryClient();
+  // Needed for quick-task creation so we can assign the new task to the
+  // current user — otherwise /tasks/mine wouldn't return it and the
+  // dropdown couldn't pre-select it after creation.
+  const currentUserId = useAuthStore((s) => s.user?.id);
 
   // Fetch user's projects
   const { data: projectsData } = useQuery({
@@ -89,41 +94,19 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
   const totalMinutes = Math.max(0, timeToMinutes(end) - timeToMinutes(start));
   const totalHours = (totalMinutes / 60).toFixed(2);
 
-  const handleCreateQuickTask = async () => {
-    if (!quickTaskName.trim() || !projectId) return;
-    try {
-      // Get first zone of the project to attach the task
-      const planRes = await client.get(`/projects/${projectId}/planning-data`);
-      const pd = planRes.data?.data ?? planRes.data;
-      const zones = pd?.zones ?? [];
-      const firstZoneId = zones[0]?.id;
-      if (!firstZoneId) { notify.warning('Project has no zones — create one first'); return; }
-
-      const taskRes = await client.post('/tasks', {
-        zoneId: firstZoneId,
-        code: `QT-${Date.now().toString(36).toUpperCase()}`,
-        name: quickTaskName.trim(),
-      });
-      const newTask = taskRes.data?.data ?? taskRes.data;
-      if (newTask?.id) {
-        setTaskId(String(newTask.id));
-        queryClient.invalidateQueries({ queryKey: ['tasks'] });
-        notify.success(`Task "${quickTaskName.trim()}" created`);
-      }
-      setShowQuickTask(false);
-      setQuickTaskName('');
-    } catch (err: any) {
-      notify.apiError(err, 'Failed to create task');
-    }
-  };
-
-  const handleSubmit = async () => {
+  // Save a time entry. Accepts an override taskId so the Quick-Task path
+  // can pass the just-created task's id without waiting for setState to
+  // settle (state updates are async — reading `taskId` here in the same
+  // tick we just called setTaskId would still see the previous value).
+  const doSubmit = async (overrideTaskId?: string) => {
     if (totalMinutes <= 0) { notify.warning('End time must be after start time'); return; }
 
+    const effectiveTaskId = overrideTaskId ?? taskId;
+
     // Update task status if a task is selected
-    if (taskId && taskStatus) {
+    if (effectiveTaskId && taskStatus) {
       try {
-        await client.patch(`/tasks/${taskId}`, { status: taskStatus });
+        await client.patch(`/tasks/${effectiveTaskId}`, { status: taskStatus });
         queryClient.invalidateQueries({ queryKey: ['tasks'] });
         queryClient.invalidateQueries({ queryKey: ['planning'] });
       } catch { /* ignore status update failure */ }
@@ -131,7 +114,7 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
 
     const payloadBase: TimeEntryPayload = {
       projectId: projectId ? Number(projectId) : undefined,
-      taskId: taskId ? Number(taskId) : undefined,
+      taskId: effectiveTaskId ? Number(effectiveTaskId) : undefined,
       date,
       startTime: start,
       endTime: end,
@@ -154,6 +137,79 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
       },
     );
     setSubmitting(false);
+  };
+
+  const handleSubmit = () => doSubmit();
+
+  // Quick-Task: create a task in the project's first zone, ASSIGN the
+  // current user to it (so /tasks/mine includes it and the dropdown can
+  // pre-select it), then immediately log the time entry in one click.
+  // Previously this was a two-step flow (Create task → Save time entry)
+  // where the new task didn't show up in the dropdown because the user
+  // wasn't an assignee, leaving the user stuck on "— Select task —" and
+  // accidentally submitting with no task at all.
+  const handleCreateQuickTaskAndLog = async () => {
+    if (!quickTaskName.trim() || !projectId) return;
+    if (totalMinutes <= 0) { notify.warning('End time must be after start time'); return; }
+
+    setSubmitting(true);
+    try {
+      // 1. Resolve a zone to attach the task to — the project's first.
+      const planRes = await client.get(`/projects/${projectId}/planning-data`);
+      const pd = planRes.data?.data ?? planRes.data;
+      const zones = pd?.zones ?? [];
+      const firstZoneId = zones[0]?.id;
+      if (!firstZoneId) {
+        notify.warning('Project has no zones — create one first');
+        return;
+      }
+
+      // 2. Create the task.
+      const taskRes = await client.post('/tasks', {
+        zoneId: firstZoneId,
+        code: `QT-${Date.now().toString(36).toUpperCase()}`,
+        name: quickTaskName.trim(),
+      });
+      const newTask = taskRes.data?.data ?? taskRes.data;
+      if (!newTask?.id) {
+        notify.warning('Task could not be created');
+        return;
+      }
+
+      // 3. Assign current user — non-fatal if it fails (the task still
+      //    exists; the user can re-assign manually). Without this, the
+      //    user can't see the task in /tasks/mine later.
+      if (currentUserId) {
+        try {
+          await client.post(`/tasks/${newTask.id}/assignees`, { userId: currentUserId });
+        } catch { /* non-fatal */ }
+      }
+
+      // 4. Optimistically inject the new task into the local /tasks/mine
+      //    cache so the dropdown finds the option NOW (the invalidate
+      //    below schedules a refetch but it won't have landed yet).
+      queryClient.setQueryData<any[]>(['tasks', 'mine'], (prev) => {
+        const list = Array.isArray(prev) ? prev : [];
+        if (list.some((t) => t?.id === newTask.id)) return list;
+        return [
+          ...list,
+          { ...newTask, projectId: Number(projectId) },
+        ];
+      });
+      setTaskId(String(newTask.id));
+      setTaskStatus(newTask.status || 'in_progress');
+      setShowQuickTask(false);
+      setQuickTaskName('');
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+
+      // 5. Log the time entry immediately, passing the new task id
+      //    directly (don't rely on the setTaskId above having landed).
+      await doSubmit(String(newTask.id));
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to create task');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -218,8 +274,16 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
                 <input type="text" value={quickTaskName} onChange={(e) => setQuickTaskName(e.target.value)}
                   placeholder="New task name..." autoFocus
                   className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
-                <button type="button" onClick={handleCreateQuickTask} disabled={!quickTaskName.trim()}
-                  className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">Create task</button>
+                {/* One-click flow: creates the task, assigns it to the
+                    current user, sets it as the selected task, and saves
+                    the time entry — all in one go. Replaces the previous
+                    two-step path where the new task wasn't selectable
+                    afterwards because /tasks/mine didn't include it,
+                    leading to users submitting "no task" by accident. */}
+                <button type="button" onClick={handleCreateQuickTaskAndLog} disabled={!quickTaskName.trim() || submitting}
+                  className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                  {submitting ? 'Saving…' : 'Create task & log time'}
+                </button>
                 <button type="button" onClick={() => setShowQuickTask(false)}
                   className="text-sm text-slate-400 px-2">Cancel</button>
               </div>
