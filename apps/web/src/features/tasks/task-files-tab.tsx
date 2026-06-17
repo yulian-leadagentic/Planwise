@@ -140,6 +140,75 @@ export function TaskFilesTab({ taskId, projectId }: { taskId: number; projectId?
 
   return (
     <div className="space-y-5">
+      {/* Project files panel FIRST — context the assignee needs before
+          they look at their own task files. Read-only here; click
+          "Manage →" to add/remove project-level files. */}
+      {projectId != null && (
+        <section className="rounded-md border border-slate-200 bg-slate-50/40 overflow-hidden">
+          <header className="flex items-center justify-between px-3 py-2 border-b border-slate-200 bg-slate-100/60">
+            <div className="flex items-center gap-2">
+              <FolderOpen className="h-3.5 w-3.5 text-slate-500" />
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600">Project Files</span>
+              <span className="text-[10px] font-semibold rounded-full bg-slate-200 text-slate-700 px-1.5 py-0.5">
+                {projectFiles.length}
+              </span>
+            </div>
+            <Link
+              to={`/projects/${projectId}?tab=files`}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700"
+              title="Open the project's Files tab to upload or manage"
+            >
+              Manage <ExternalLink className="h-3 w-3" />
+            </Link>
+          </header>
+          {projectFiles.length === 0 ? (
+            <div className="px-3 py-4 text-center text-[11px] text-slate-400 italic">
+              No project-level files yet.
+            </div>
+          ) : (
+            <ul className="divide-y divide-slate-200/60">
+              {projectFiles.map((f) => (
+                <li key={f.id} className="flex items-center gap-3 px-3 py-2 hover:bg-white/60">
+                  <div className={cn(
+                    'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border',
+                    f.kind === 'upload'
+                      ? 'bg-blue-50 text-blue-700 border-blue-200'
+                      : 'bg-violet-50 text-violet-700 border-violet-200',
+                  )}>
+                    {f.kind === 'upload' ? <FileText className="h-3.5 w-3.5" /> : <LinkIcon className="h-3.5 w-3.5" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <a
+                      href={f.kind === 'link' ? f.url : `/api/v1/projects/${projectId}/files/${f.rawId}/download`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={f.url}
+                      className="font-medium text-slate-700 hover:text-blue-600 hover:underline truncate block text-[12px]"
+                    >
+                      {f.name}
+                    </a>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      {f.kind === 'upload' ? formatBytes(f.fileSize) : 'Link'}
+                      {' · '}{formatDate(f.createdAt)}
+                    </p>
+                  </div>
+                  {f.uploader && (
+                    <UserAvatar
+                      firstName={f.uploader.firstName}
+                      lastName={f.uploader.lastName}
+                      avatarUrl={null}
+                      size="sm"
+                    />
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {/* THIS TASK'S FILES — second panel, with the upload action. Kept
+          below so the user reads "project → my task" top-down. */}
       <header className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-bold text-slate-900">This Task's Files</h3>
@@ -232,74 +301,6 @@ export function TaskFilesTab({ taskId, projectId }: { taskId: number; projectId?
             </li>
           ))}
         </ul>
-      )}
-
-      {/* Project files panel — read-only context of the parent project's
-          directly-attached files. Lets the assignee see briefs, drawings,
-          contract refs without leaving the task drawer. To upload/delete,
-          the user goes to the project Files tab via the header link. */}
-      {projectId != null && (
-        <section className="rounded-md border border-slate-200 bg-slate-50/40 overflow-hidden">
-          <header className="flex items-center justify-between px-3 py-2 border-b border-slate-200 bg-slate-100/60">
-            <div className="flex items-center gap-2">
-              <FolderOpen className="h-3.5 w-3.5 text-slate-500" />
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600">Project Files</span>
-              <span className="text-[10px] font-semibold rounded-full bg-slate-200 text-slate-700 px-1.5 py-0.5">
-                {projectFiles.length}
-              </span>
-            </div>
-            <Link
-              to={`/projects/${projectId}?tab=files`}
-              className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700"
-              title="Open the project's Files tab to upload or manage"
-            >
-              Manage <ExternalLink className="h-3 w-3" />
-            </Link>
-          </header>
-          {projectFiles.length === 0 ? (
-            <div className="px-3 py-4 text-center text-[11px] text-slate-400 italic">
-              No project-level files yet.
-            </div>
-          ) : (
-            <ul className="divide-y divide-slate-200/60">
-              {projectFiles.map((f) => (
-                <li key={f.id} className="flex items-center gap-3 px-3 py-2 hover:bg-white/60">
-                  <div className={cn(
-                    'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border',
-                    f.kind === 'upload'
-                      ? 'bg-blue-50 text-blue-700 border-blue-200'
-                      : 'bg-violet-50 text-violet-700 border-violet-200',
-                  )}>
-                    {f.kind === 'upload' ? <FileText className="h-3.5 w-3.5" /> : <LinkIcon className="h-3.5 w-3.5" />}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <a
-                      href={f.kind === 'link' ? f.url : `/api/v1/projects/${projectId}/files/${f.rawId}/download`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={f.url}
-                      className="font-medium text-slate-700 hover:text-blue-600 hover:underline truncate block text-[12px]"
-                    >
-                      {f.name}
-                    </a>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
-                      {f.kind === 'upload' ? formatBytes(f.fileSize) : 'Link'}
-                      {' · '}{formatDate(f.createdAt)}
-                    </p>
-                  </div>
-                  {f.uploader && (
-                    <UserAvatar
-                      firstName={f.uploader.firstName}
-                      lastName={f.uploader.lastName}
-                      avatarUrl={null}
-                      size="sm"
-                    />
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
       )}
     </div>
   );
