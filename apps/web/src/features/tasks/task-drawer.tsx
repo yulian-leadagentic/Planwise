@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { X, Clock, Paperclip, MessageSquare, UserPlus, ChevronDown, Search, Trash2, AlertCircle, AlertTriangle, Calendar, FileText, Pencil } from 'lucide-react';
-import { FilesTab } from '@/features/projects/files-tab';
+import { TaskFilesTab } from '@/features/tasks/task-files-tab';
 import { MessagePanel } from '@/features/messaging/message-panel';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
@@ -160,7 +160,7 @@ export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerP
             <div className="flex-1 overflow-y-auto px-5 py-4">
               {tab === 'details' && <TaskDetailsTab task={task as any} onUpdate={(f, v) => updateTask.mutate({ field: f, value: v })} />}
               {tab === 'time' && !hideTimeTab && <TaskTimeTab taskId={taskId!} />}
-              {tab === 'files' && (task as any).projectId && <FilesTab projectId={(task as any).projectId} />}
+              {tab === 'files' && <TaskFilesTab taskId={taskId!} />}
               {tab === 'discussion' && <TaskDiscussionTab taskId={taskId!} />}
             </div>
           </>
