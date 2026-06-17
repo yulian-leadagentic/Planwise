@@ -11,6 +11,7 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor';
 import { startWatchdog } from './common/watchdog';
+import { startWedgeKillswitch } from './common/wedge-killswitch';
 import { startVitalsLogger } from './common/vitals';
 
 async function bootstrap() {
@@ -123,6 +124,13 @@ async function bootstrap() {
   // restarts us. Catches the 2026-06-10 freeze pattern (HTTP wedged, container
   // alive). Tightened on 2026-06-14 after repeat incidents.
   startWatchdog(port, logger);
+
+  // Out-of-loop killswitch — runs in worker_threads so it survives a hard
+  // main-thread block (sync CPU work, native deadlock). The in-process
+  // watchdog above can't catch that case because its own timers freeze
+  // alongside everything else. SIGKILLs the process after ~30s of
+  // main-loop unresponsiveness; complements the watchdog, doesn't replace it.
+  startWedgeKillswitch(logger);
 
   // Vitals logger — emits event-loop / heap / handle stats every 30s so the
   // log line just before a wedge tells us what subsystem hit the wall.
