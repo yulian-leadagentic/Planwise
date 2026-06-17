@@ -1,12 +1,13 @@
 import { useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Upload, Trash2, Download, FileText, FolderOpen, ExternalLink, Link as LinkIcon } from 'lucide-react';
+import { Upload, Trash2, Download, FileText, FolderOpen, ExternalLink, Link as LinkIcon, Star } from 'lucide-react';
+import { NavLinkWithReturn } from '@/components/nav/return-route';
 import { tasksApi } from '@/api/tasks.api';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
 import { UserAvatar } from '@/components/shared/user-avatar';
+import { useProjectFileFavorites } from '@/features/projects/use-project-file-favorites';
 import { cn } from '@/lib/utils';
 
 /**
@@ -61,7 +62,16 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-export function TaskFilesTab({ taskId, projectId }: { taskId: number; projectId?: number }) {
+export function TaskFilesTab({
+  taskId,
+  projectId,
+  backLabel,
+}: {
+  taskId: number;
+  projectId?: number;
+  /** Label for the destination's "← Back to {x}" pill. */
+  backLabel?: string;
+}) {
   const qc = useQueryClient();
   const { can, isAdmin } = usePermissions();
   const canWrite = isAdmin || can('tasks', 'write');
@@ -84,7 +94,14 @@ export function TaskFilesTab({ taskId, projectId }: { taskId: number; projectId?
       client.get(`/projects/${projectId}/files`).then((r) => r.data?.data ?? r.data),
     staleTime: 60_000,
   });
-  const projectFiles = projectFilesRaw.filter((f) => f.source === 'project');
+  // Favorites are shared with the project Files tab (same localStorage key
+  // per project), so a star pinned in either place shows up in the other.
+  // Pinned files float to the top of the panel.
+  const { favorites, toggleFavorite } = useProjectFileFavorites(projectId ?? 0);
+  const projectFiles = projectFilesRaw
+    .filter((f) => f.source === 'project')
+    .slice()
+    .sort((a, b) => (favorites.has(b.id) ? 1 : 0) - (favorites.has(a.id) ? 1 : 0));
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['task-attachments', taskId] });
@@ -153,13 +170,14 @@ export function TaskFilesTab({ taskId, projectId }: { taskId: number; projectId?
                 {projectFiles.length}
               </span>
             </div>
-            <Link
+            <NavLinkWithReturn
               to={`/projects/${projectId}?tab=files`}
+              returnLabel={backLabel ?? `task #${taskId}`}
               className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700"
               title="Open the project's Files tab to upload or manage"
             >
               Manage <ExternalLink className="h-3 w-3" />
-            </Link>
+            </NavLinkWithReturn>
           </header>
           {projectFiles.length === 0 ? (
             <div className="px-3 py-4 text-center text-[11px] text-slate-400 italic">
@@ -167,8 +185,31 @@ export function TaskFilesTab({ taskId, projectId }: { taskId: number; projectId?
             </div>
           ) : (
             <ul className="divide-y divide-slate-200/60">
-              {projectFiles.map((f) => (
-                <li key={f.id} className="flex items-center gap-3 px-3 py-2 hover:bg-white/60">
+              {projectFiles.map((f) => {
+                const isFav = favorites.has(f.id);
+                return (
+                <li
+                  key={f.id}
+                  className={cn(
+                    'flex items-center gap-3 px-3 py-2 hover:bg-white/60',
+                    isFav && 'bg-yellow-50/40',
+                  )}
+                >
+                  {/* Star toggles the shared per-project favorite set —
+                      same localStorage key as the project Files tab, so
+                      pinning here surfaces it there and vice-versa. */}
+                  <button
+                    type="button"
+                    onClick={() => toggleFavorite(f.id)}
+                    className={cn(
+                      'shrink-0 p-1 rounded transition-colors',
+                      isFav ? 'text-yellow-500 hover:text-yellow-600' : 'text-slate-300 hover:text-yellow-500',
+                    )}
+                    title={isFav ? 'Unpin from top' : 'Pin to top'}
+                    aria-label={isFav ? 'Remove from favorites' : 'Add to favorites'}
+                  >
+                    <Star className={cn('h-3.5 w-3.5', isFav && 'fill-yellow-500')} />
+                  </button>
                   <div className={cn(
                     'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border',
                     f.kind === 'upload'
@@ -201,7 +242,8 @@ export function TaskFilesTab({ taskId, projectId }: { taskId: number; projectId?
                     />
                   )}
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
         </section>

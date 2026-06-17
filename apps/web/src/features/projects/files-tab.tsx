@@ -3,6 +3,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   FileText, Link as LinkIcon, Upload, Trash2, Download, Copy, Check, Plus, ExternalLink, X, HardDrive, Star,
 } from 'lucide-react';
+// Favorites hook is shared with the task drawer's Project Files panel so
+// a star pinned in one place shows up in the other immediately.
+import { useProjectFileFavorites as useFavorites } from './use-project-file-favorites';
 
 // Recognise common cloud-storage URLs so we can show a friendlier icon /
 // label instead of a generic "Link" pill. Pure heuristics — host-only.
@@ -69,39 +72,6 @@ function formatUploadDate(iso: string): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-/**
- * Per-project + per-user favorite-file set, persisted to localStorage.
- * Server-side persistence is a follow-up task; for now this gives users
- * the "pin to top" behaviour without a schema migration. Keyed by project
- * so favorites don't bleed between projects.
- */
-function useFavorites(projectId: number) {
-  const storageKey = `planwise:project-${projectId}:favorite-files`;
-  const [favorites, setFavorites] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem(storageKey);
-      if (!raw) return new Set();
-      const parsed = JSON.parse(raw);
-      return new Set(Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : []);
-    } catch {
-      return new Set();
-    }
-  });
-  const toggleFavorite = (fileId: string) => {
-    setFavorites((prev) => {
-      const next = new Set(prev);
-      if (next.has(fileId)) next.delete(fileId);
-      else next.add(fileId);
-      try {
-        localStorage.setItem(storageKey, JSON.stringify([...next]));
-      } catch {
-        // localStorage full / disabled — fail silently, the in-memory state still works
-      }
-      return next;
-    });
-  };
-  return { favorites, toggleFavorite };
-}
 
 export function FilesTab({ projectId }: { projectId: number }) {
   const { can, isAdmin } = usePermissions();
