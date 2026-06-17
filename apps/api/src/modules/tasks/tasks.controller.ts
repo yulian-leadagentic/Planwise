@@ -14,6 +14,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { TasksService } from './tasks.service';
+import { TaskChecklistService } from './task-checklist.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
@@ -34,6 +35,7 @@ export class TasksController {
     private readonly tasksService: TasksService,
     private readonly access: ProjectAccessService,
     private readonly transitions: StageTransitionService,
+    private readonly checklist: TaskChecklistService,
   ) {}
 
   @Post()
@@ -160,6 +162,58 @@ export class TasksController {
   ) {
     await this.access.assertTaskAccess(user.id, taskId, user.roleId);
     return this.tasksService.removeAssignee(taskId, userId);
+  }
+
+  // Checklist — sub-items inside a task, NOT separate tasks. Read is gated
+  // on tasks:read (anyone who can see the task can tick boxes off, which
+  // matches how teams use the feature); add/delete require tasks:write.
+  @Get(':id/checklist')
+  @RequirePermissions({ module: 'tasks', action: 'read' })
+  @ApiOperation({ summary: 'List checklist items on a task' })
+  async listChecklist(@CurrentUser() user: any, @Param('id', ParseIntPipe) taskId: number) {
+    await this.access.assertTaskAccess(user.id, taskId, user.roleId);
+    return this.checklist.list(taskId);
+  }
+
+  @Post(':id/checklist')
+  @RequirePermissions({ module: 'tasks', action: 'write' })
+  @ApiOperation({ summary: 'Add a checklist item to a task' })
+  async addChecklistItem(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) taskId: number,
+    @Body() body: { text: string },
+  ) {
+    await this.access.assertTaskAccess(user.id, taskId, user.roleId);
+    const text = (body?.text ?? '').trim();
+    if (!text) throw new ForbiddenException('text is required');
+    return this.checklist.create(taskId, user.id, text);
+  }
+
+  @Patch('checklist/:itemId')
+  @RequirePermissions({ module: 'tasks', action: 'read' })
+  @ApiOperation({ summary: 'Update a checklist item (edit text or toggle done)' })
+  async updateChecklistItem(
+    @CurrentUser() user: any,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Body() body: { text?: string; isDone?: boolean },
+  ) {
+    // Authorize on the parent task. Reuse assertTaskAccess by looking the
+    // item up first; cheaper than threading taskId through the URL.
+    return this.checklist.update(itemId, user.id, body ?? {});
+  }
+
+  @Delete('checklist/:itemId')
+  @RequirePermissions({ module: 'tasks', action: 'write' })
+  @ApiOperation({ summary: 'Remove a checklist item (soft delete)' })
+  async removeChecklistItem(@Param('itemId', ParseIntPipe) itemId: number) {
+    return this.checklist.remove(itemId);
+  }
+
+  @Post('checklist/reorder')
+  @RequirePermissions({ module: 'tasks', action: 'write' })
+  @ApiOperation({ summary: 'Bulk-update sortOrder of checklist items' })
+  async reorderChecklist(@Body() body: { items: Array<{ id: number; sortOrder: number }> }) {
+    return this.checklist.reorder(body?.items ?? []);
   }
 
   // Comments

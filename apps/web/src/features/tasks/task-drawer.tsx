@@ -15,6 +15,7 @@ import { TimeEntryForm } from '@/features/time/time-entry-form';
 import { useAllowedTransitions } from '@/hooks/use-allowed-transitions';
 import { STATUS_LABEL } from '@/lib/task-constants';
 import { usePermissions } from '@/hooks/use-permissions';
+import { TaskChecklist } from '@/features/tasks/task-checklist';
 import client from '@/api/client';
 
 interface TaskDrawerProps {
@@ -379,6 +380,12 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
       </div>
 
       <AssigneeManager taskId={task.id} assignees={task.assignees} />
+
+      {/* Checklist (todo) — added per the BM mapping meeting decision that
+          personal-task style items belong INSIDE the task, not as separate
+          tasks. No due date, no hours. Renders inside the Details tab so
+          the assignee + dates context is visible right above. */}
+      <TaskChecklist taskId={task.id} />
 
       <div className="grid grid-cols-2 gap-3 text-[12px]">
         {/* Zone row: name for zoned tasks, explicit "Project Root" for

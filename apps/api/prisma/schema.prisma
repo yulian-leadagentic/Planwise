@@ -282,6 +282,8 @@ model User {
   teamTemplates       TeamTemplate[]
   teamTemplateMembers TeamTemplateMember[]
   tasksCreated        Task[]                   @relation("TaskCreator")
+  checklistItemsCreated TaskChecklistItem[]    @relation("ChecklistCreator")
+  checklistItemsDone    TaskChecklistItem[]    @relation("ChecklistDoneBy")
   templatesCreated    Template[]               @relation("TemplateCreator")
   messages            Message[]                @relation("MessageAuthor")
   messageMentions     MessageMention[]
@@ -1120,6 +1122,7 @@ model Task {
   timeEntries         TimeEntry[]
   dependencies        TaskDependency[] @relation("TaskDeps")
   dependedBy          TaskDependency[] @relation("TaskDepBy")
+  checklistItems      TaskChecklistItem[]
 
   @@index([zoneId])
   @@index([projectId])
@@ -1127,6 +1130,34 @@ model Task {
   @@index([projectDeliverableId])
   @@index([status])
   @@map("tasks")
+}
+
+/// Checklist items inside a Task. Per the 2026-06-14 BM mapping meeting
+/// these are NOT separate tasks — no due date, no logged hours, no
+/// status workflow. Just a list of things to tick off as the task
+/// progresses (the "phone the architect; send the updated grid; verify
+/// permits" sublist style). doneBy/doneAt are populated when isDone
+/// flips to true so the team can see WHO actually closed each item.
+model TaskChecklistItem {
+  id        Int       @id @default(autoincrement())
+  taskId    Int       @map("task_id")
+  text      String    @db.VarChar(500)
+  isDone    Boolean   @default(false) @map("is_done")
+  doneAt    DateTime? @map("done_at")
+  doneBy    Int?      @map("done_by")
+  sortOrder Int       @default(0) @map("sort_order")
+  createdBy Int       @map("created_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  task        Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  doneByUser  User? @relation("ChecklistDoneBy", fields: [doneBy], references: [id], onDelete: SetNull)
+  creator     User  @relation("ChecklistCreator", fields: [createdBy], references: [id])
+
+  @@index([taskId])
+  @@index([deletedAt])
+  @@map("task_checklist_items")
 }
 
 /// A project-owned Deliverable instance. Instantiated from a catalog

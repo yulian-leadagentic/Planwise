@@ -99,6 +99,27 @@ export const tasksApi = {
   reorder: (items: { id: number; sortOrder: number; zoneId?: number }[]) =>
     client.post('/tasks/reorder', { items }).then((r) => r.data),
 
+  // Checklist (Todo) — sub-items inside a task. NOT separate tasks: no
+  // due date, no logged hours. The list API returns a plain array (the
+  // controller wraps it in the response interceptor envelope, so we
+  // unwrap both shapes the same way comments does).
+  getChecklist: (taskId: number) =>
+    client.get(`/tasks/${taskId}/checklist`).then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : (d?.data ?? []);
+    }),
+  addChecklistItem: (taskId: number, text: string) =>
+    client.post(`/tasks/${taskId}/checklist`, { text }).then((r) => r.data?.data ?? r.data),
+  updateChecklistItem: (
+    itemId: number,
+    patch: { text?: string; isDone?: boolean },
+  ) =>
+    client.patch(`/tasks/checklist/${itemId}`, patch).then((r) => r.data?.data ?? r.data),
+  removeChecklistItem: (itemId: number) =>
+    client.delete(`/tasks/checklist/${itemId}`).then((r) => r.data),
+  reorderChecklist: (items: { id: number; sortOrder: number }[]) =>
+    client.post(`/tasks/checklist/reorder`, { items }).then((r) => r.data),
+
   // Comments
   // Unwrap the API envelope (`{ data, meta }`) so callers always receive a
   // plain array. Without this, `comments.filter` crashes in task-discussion
