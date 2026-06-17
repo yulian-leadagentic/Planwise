@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronRight, Grid3X3, FolderKanban, MapPin, AlertTriangle, AlertCircle, Calendar, Clock } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
-import { ProjectSelect } from '@/components/shared/project-select';
 import { EmptyState } from '@/components/shared/empty-state';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
@@ -351,10 +350,22 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   // the project selector at the top is hidden and the page is locked
   // to that single project. The standalone /execution-board route
   // passes nothing and gets the cross-project view it always had.
-  const [projectId, setProjectId] = useState<number | null>(forcedProjectId ?? null);
+  // Multi-select set of project IDs — empty = no filter (all projects).
+  // When embedded inside a Project page (`forcedProjectId` set), we lock
+  // the page to that single project by initializing the set with it AND
+  // hiding the filter widget. When standalone, the set is initially empty
+  // (= all projects) and the user picks any subset via the multi-select.
+  const [projectIds, setProjectIds] = useState<Set<number>>(
+    forcedProjectId != null ? new Set([forcedProjectId]) : new Set(),
+  );
   useEffect(() => {
-    if (forcedProjectId != null) setProjectId(forcedProjectId);
+    if (forcedProjectId != null) setProjectIds(new Set([forcedProjectId]));
   }, [forcedProjectId]);
+  // Backwards-compat alias for the cluster of legacy reads below
+  // (matrix grouping, header visibility, API call optimization). Single
+  // value when EXACTLY one project is selected; null otherwise (all or
+  // multiple — both render with project breakdown rows).
+  const projectId: number | null = projectIds.size === 1 ? Array.from(projectIds)[0] : null;
   // View-mode tab inside Execution Board:
   //   • "matrix" — zone × deliverable matrix (task chips per cell)
   //   • "status" — project × deliverable status board (completion %)
@@ -410,7 +421,11 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   const didAutoExpand = useRef(false);
 
   // Don't pass serviceId to the server anymore; we filter client-side.
-  const { data, isLoading } = useExecutionBoard(projectId, null);
+  // For projectId, pass the forcedProjectId only (embedded mode); the
+  // multi-select filter is client-side so the API always returns the
+  // user's full project list — that way the multi-select options stay
+  // populated regardless of how many are selected.
+  const { data, isLoading } = useExecutionBoard(forcedProjectId ?? null, null);
 
   const toggleZoneExpand = useCallback((zoneId: number) => {
     setExpandedZones((prev) => {
@@ -530,7 +545,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   // can actually produce a result.
   const availableServices = useMemo(() => {
     const allTasks = (data?.tasks ?? []).filter((t: any) =>
-      projectId == null ? true : t.projectId === projectId,
+      projectIds.size === 0 ? true : projectIds.has(t.projectId),
     );
     const templates = data?.templates ?? [];
 
@@ -558,7 +573,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     }
 
     return ordered;
-  }, [data?.tasks, data?.templates, projectId]);
+  }, [data?.tasks, data?.templates, projectIds]);
 
   // Same construction as availableServices but resolved via getTaskServiceName
   // — the Service filter only offers values that actually appear on tasks
@@ -566,7 +581,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   // (post-refactor) and falls back to the task's phase / serviceType.
   const availablePhases = useMemo(() => {
     const allTasks = (data?.tasks ?? []).filter((t: any) =>
-      projectId == null ? true : t.projectId === projectId,
+      projectIds.size === 0 ? true : projectIds.has(t.projectId),
     );
     const present = new Set<string>();
     for (const t of allTasks) {
@@ -583,7 +598,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       if (!ordered.includes(n)) ordered.push(n);
     }
     return ordered;
-  }, [data?.tasks, data?.services, projectId, deliverableNameToService]);
+  }, [data?.tasks, data?.services, projectIds, deliverableNameToService]);
 
   // Apply client-side filters before the matrix is built. Order matters:
   // deliverable filter narrows by template-phase; date filters trim by endDate.
@@ -755,7 +770,10 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   const flatRows = useMemo(() => {
     if (!data) return [];
     const result: FlatRow[] = [];
-    const showProjects = !projectId && data.projects.length > 0;
+    // Project header rows appear whenever the page isn't pinned to a SINGLE
+    // project — size === 1 hides them (cleaner single-project view); 0 or
+    // >1 keeps them so the user can tell which zones belong to which.
+    const showProjects = projectIds.size !== 1 && data.projects.length > 0;
 
     function walkZones(nodes: ZoneNode[], baseDepth: number, projectIdCtx: number, isTopLevel: boolean) {
       for (const z of nodes) {
@@ -916,14 +934,23 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       <div className="flex flex-wrap items-center gap-3">
         {/* Project selector hidden when locked to a specific project. */}
         {forcedProjectId == null && (
-          <ProjectSelect
-            value={projectId}
-            onChange={(id) => {
-              setProjectId(id);
+          // Multi-select per #57. Options come from data.projects (the
+          // backend's project list — full set when forcedProjectId is null,
+          // which is exactly this branch). When empty = all projects.
+          <MultiSelectFilter
+            options={(data?.projects ?? []).map((p) => ({
+              value: p.id,
+              label: p.name,
+              hint: p.number ?? undefined,
+            }))}
+            selected={projectIds}
+            onChange={(next) => {
+              setProjectIds(next);
               didAutoExpand.current = false;
             }}
-            placeholder="All Projects"
-            className="w-64"
+            placeholder="Projects"
+            title="Filter by project"
+            triggerClassName="w-64"
           />
         )}
         {/* Service (Phase) multi-select — narrows the board to tasks

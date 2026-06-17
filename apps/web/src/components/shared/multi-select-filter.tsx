@@ -109,7 +109,14 @@ export function MultiSelectFilter<T extends string | number>({
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-72 rounded-md border border-slate-200 bg-white shadow-lg">
+        // dir="ltr" on the popover so the checkbox / label / hint flow stays
+        // consistent on RTL Hebrew pages — otherwise the row reverses and
+        // the unchecked box overlaps the first character of the label,
+        // making it look like the letter is missing.
+        // start-0 lines the popover with the trigger's logical-start edge
+        // in both LTR (left) and RTL (right) layouts, avoiding the off-screen
+        // clip we hit with hard-coded left-0.
+        <div dir="ltr" className="absolute start-0 top-full z-30 mt-1 w-72 rounded-md border border-slate-200 bg-white shadow-lg">
           {/* Search + clear-all */}
           <div className="flex items-center gap-2 border-b border-slate-100 px-2 py-1.5">
             <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" />
@@ -151,10 +158,15 @@ export function MultiSelectFilter<T extends string | number>({
                   >
                     <div
                       className={cn(
-                        'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
+                        'flex h-4 w-4 shrink-0 items-center justify-center rounded border-2',
+                        // Unchecked: thicker slate-400 border + slight bg
+                        // so the box reads as a distinct element instead
+                        // of disappearing into the white popover background
+                        // (which made labels look like their first letter
+                        // was missing).
                         isOn
                           ? 'border-blue-500 bg-blue-500 text-white'
-                          : 'border-slate-300 bg-white',
+                          : 'border-slate-400 bg-slate-50',
                       )}
                     >
                       {isOn && <Check className="h-3 w-3" strokeWidth={3} />}
