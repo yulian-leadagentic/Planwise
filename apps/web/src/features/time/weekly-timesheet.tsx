@@ -219,7 +219,7 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
                   placeholder="New task name..." autoFocus
                   className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
                 <button type="button" onClick={handleCreateQuickTask} disabled={!quickTaskName.trim()}
-                  className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">Create</button>
+                  className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">Create task</button>
                 <button type="button" onClick={() => setShowQuickTask(false)}
                   className="text-sm text-slate-400 px-2">Cancel</button>
               </div>
@@ -327,7 +327,7 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
           </button>
           <button onClick={handleSubmit} disabled={submitting || totalMinutes <= 0}
             className="rounded-lg bg-blue-600 px-5 py-2 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
-            {submitting ? 'Saving...' : 'Submit'}
+            {submitting ? 'Saving…' : 'Save time entry'}
           </button>
         </div>
       </div>
