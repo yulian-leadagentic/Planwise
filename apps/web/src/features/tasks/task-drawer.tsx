@@ -261,8 +261,17 @@ function DueDateChip({ task, onUpdate }: { task: any; onUpdate: (value: string |
         autoFocus
         defaultValue={dueDateValue}
         onBlur={(e) => {
+          // Browsers return "" from <input type=date> when the typed value
+          // didn't parse to a valid YYYY-MM-DD (e.g. user typed "17/06/26"
+          // or any non-ISO format). Treating that empty as "user wants to
+          // clear" silently destroyed the existing due date — see #52.
+          // Now: only commit a value that LOOKS valid; if the field went
+          // empty but we had a date, ignore the blur and keep what we had.
+          // Explicit clearing happens via the ✕ button on the chip below.
           const v = e.target.value;
-          if (v !== dueDateValue) onUpdate(v || null);
+          const isValid = /^\d{4}-\d{2}-\d{2}$/.test(v);
+          if (isValid && v !== dueDateValue) onUpdate(v);
+          // empty string + had a date → assume parse failure, ignore.
           setEditing(false);
         }}
         onKeyDown={(e) => {
@@ -275,21 +284,44 @@ function DueDateChip({ task, onUpdate }: { task: any; onUpdate: (value: string |
   }
 
   return (
-    <button
-      type="button"
-      onClick={() => canEdit && setEditing(true)}
-      disabled={!canEdit}
-      className={cn(
-        'inline-flex items-center gap-1 rounded px-1 py-0.5',
-        canEdit ? 'hover:bg-white/60 cursor-pointer' : 'cursor-default',
+    <span className="inline-flex items-center gap-0.5">
+      <button
+        type="button"
+        onClick={() => canEdit && setEditing(true)}
+        disabled={!canEdit}
+        className={cn(
+          'inline-flex items-center gap-1 rounded px-1 py-0.5',
+          canEdit ? 'hover:bg-white/60 cursor-pointer' : 'cursor-default',
+        )}
+        title={canEdit ? 'Click to change due date' : ''}
+      >
+        <Calendar className="h-3 w-3" />
+        {task.endDate ? formatDate(task.endDate.split('T')[0]) : (
+          <span className="italic text-slate-400">set due date</span>
+        )}
+        {/* Pencil affordance — shows the field is editable. #53. Permission-
+            gated via canEdit above (button is disabled when not allowed). */}
+        {canEdit && (
+          <Pencil className="h-2.5 w-2.5 text-slate-400" aria-hidden="true" />
+        )}
+      </button>
+      {/* Explicit clear button — replaces the "blur with empty value clears
+          the date" path that was silently wiping data on bad input. Only
+          shown when there IS a date to clear and the user has permission. */}
+      {canEdit && task.endDate && (
+        <button
+          type="button"
+          onClick={() => {
+            if (confirm('Clear due date?')) onUpdate(null);
+          }}
+          className="p-0.5 rounded text-slate-300 hover:text-red-500 hover:bg-red-50"
+          title="Clear due date"
+          aria-label="Clear due date"
+        >
+          <X className="h-2.5 w-2.5" />
+        </button>
       )}
-      title={canEdit ? 'Click to change due date' : ''}
-    >
-      <Calendar className="h-3 w-3" />
-      {task.endDate ? formatDate(task.endDate.split('T')[0]) : (
-        <span className="italic text-slate-400">set due date</span>
-      )}
-    </button>
+    </span>
   );
 }
 
@@ -342,7 +374,18 @@ function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any
   return (
     <div>
       <div className="flex items-center justify-between">
-        <label className="text-[11px] font-semibold text-slate-400 uppercase">Assignees</label>
+        {/* Header was previously slate-400 ("Assignees") — too low-contrast,
+            and users couldn't tell whether the block belonged to the task
+            or to the project (#55). Bumped to readable weight and renamed
+            to "Assigned to this task" so the scope is unambiguous. */}
+        <div>
+          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-700">
+            Assigned to this task
+          </label>
+          <p className="text-[10.5px] text-slate-500 leading-tight">
+            People responsible for completing this task.
+          </p>
+        </div>
         <button onClick={() => setShowPicker(!showPicker)} className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-blue-600 hover:bg-blue-50">
           <UserPlus className="h-3 w-3" /> Assign
         </button>

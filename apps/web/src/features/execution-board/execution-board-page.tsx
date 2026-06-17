@@ -919,6 +919,23 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
             className="w-64"
           />
         )}
+        {/* Service (Phase) dropdown — narrows the board to tasks belonging to
+            the chosen Service. Resolved via getTaskServiceName so it honors
+            the project-owned deliverable's service link first.
+            Ordered Project → Service → Deliverable (#51) so the filters
+            follow the conceptual drill-down. */}
+        <select
+          value={phaseFilter}
+          onChange={(e) => setPhaseFilter(e.target.value)}
+          className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
+          title="Filter by service"
+        >
+          <option value="">All Services</option>
+          {availablePhases.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+
         {/* Deliverable dropdown — lists the distinct deliverable names (the
             small pill under each column header) that have tasks in scope.
             Picking one narrows the matrix to columns whose deliverable
@@ -931,21 +948,6 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
         >
           <option value="">All Deliverables</option>
           {availableServices.map((name) => (
-            <option key={name} value={name}>{name}</option>
-          ))}
-        </select>
-
-        {/* Service (Phase) dropdown — narrows the board to tasks belonging to
-            the chosen Service. Resolved via getTaskServiceName so it honors
-            the project-owned deliverable's service link first. */}
-        <select
-          value={phaseFilter}
-          onChange={(e) => setPhaseFilter(e.target.value)}
-          className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
-          title="Filter by service"
-        >
-          <option value="">All Services</option>
-          {availablePhases.map((name) => (
             <option key={name} value={name}>{name}</option>
           ))}
         </select>
