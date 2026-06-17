@@ -4,6 +4,7 @@ import { Clock, User as UserIcon, GripVertical, CalendarClock, ListChecks, Colum
 import { DndContext, DragOverlay, closestCorners, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, useDraggable, useDroppable } from '@dnd-kit/core';
 import { PageHeader } from '@/components/shared/page-header';
 import { TaskDrawer } from './task-drawer';
+import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { tasksApi } from '@/api/tasks.api';
@@ -892,7 +893,9 @@ export function MyTasksKanbanPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabMode>('kanban');
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
-  const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
+  // Drawer ID lives in ?task=N so browser-back and outbound-link returns
+  // restore the open task automatically. See useDrawerRoute docs.
+  const { drawerId: drawerTaskId, openDrawer: setDrawerTaskId, closeDrawer } = useDrawerRoute('task');
 
   // Filters
   const [filterProjectId, setFilterProjectId] = useState<number | null>(null);
@@ -1169,7 +1172,7 @@ export function MyTasksKanbanPage() {
       )}
 
       {drawerTaskId && (
-        <TaskDrawer taskId={drawerTaskId} onClose={() => setDrawerTaskId(null)} />
+        <TaskDrawer taskId={drawerTaskId} onClose={closeDrawer} />
       )}
 
     </div>

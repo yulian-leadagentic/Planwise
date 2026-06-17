@@ -6,6 +6,7 @@ import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { ProjectSelect } from '@/components/shared/project-select';
 import { EmptyState } from '@/components/shared/empty-state';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
+import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { getTaskHealth, aggregateHealth, type TaskHealth } from '@/lib/task-health';
 import { STATUS_DOT, STATUS_PILL, STATUS_LABEL, formatShortDate } from '@/lib/task-constants';
 import { queryKeys } from '@/lib/query-keys';
@@ -384,7 +385,8 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     }
     prevExpandedZones.current = new Set(expandedZones);
   }, [expandedZones]);
-  const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
+  // Drawer ID in ?task=N so back/refresh/outbound-return restores it.
+  const { drawerId: drawerTaskId, openDrawer: setDrawerTaskId, closeDrawer } = useDrawerRoute('task');
   // Due-date filters (#3.3). `dueFrom`/`dueTo` accept ISO yyyy-mm-dd
   // (matches `<input type=date>`). `onlyWithDue` hides tasks that have
   // no end date at all — useful for cleaning up the "TODO without due"
@@ -1453,7 +1455,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
         </div>
       )}
 
-      <TaskDrawer taskId={drawerTaskId} onClose={() => setDrawerTaskId(null)} />
+      <TaskDrawer taskId={drawerTaskId} onClose={closeDrawer} />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
 import { X, Clock, Paperclip, MessageSquare, UserPlus, ChevronDown, Search, Trash2, AlertCircle, AlertTriangle, Calendar, FileText, Pencil } from 'lucide-react';
+import { NavLinkWithReturn } from '@/components/nav/return-route';
 import { TaskFilesTab } from '@/features/tasks/task-files-tab';
 import { MessagePanel } from '@/features/messaging/message-panel';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -163,7 +163,13 @@ export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerP
             <div className="flex-1 overflow-y-auto px-5 py-4">
               {tab === 'details' && <TaskDetailsTab task={task as any} onUpdate={(f, v) => updateTask.mutate({ field: f, value: v })} />}
               {tab === 'time' && !hideTimeTab && <TaskTimeTab taskId={taskId!} />}
-              {tab === 'files' && <TaskFilesTab taskId={taskId!} projectId={(task as any).projectId} />}
+              {tab === 'files' && (
+                <TaskFilesTab
+                  taskId={taskId!}
+                  projectId={(task as any).projectId}
+                  backLabel={(task as any)?.code ? `task ${(task as any).code}` : `task #${taskId}`}
+                />
+              )}
               {tab === 'discussion' && <TaskDiscussionTab taskId={taskId!} />}
             </div>
           </>
@@ -408,7 +414,12 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
     <div className="space-y-4">
       {/* Project Info leads the tab — the parent project's metadata is the
           primary content here. */}
-      {task.projectId && <TaskProjectInfoBlock projectId={task.projectId} />}
+      {task.projectId && (
+        <TaskProjectInfoBlock
+          projectId={task.projectId}
+          backLabel={task.code ? `task ${task.code}` : `task #${task.id}`}
+        />
+      )}
 
       {/* Editable Due Date — gated on tasks:write. Without permission, we
           render a read-only span so users can still SEE the due date but
@@ -463,7 +474,7 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
   );
 }
 
-function TaskProjectInfoBlock({ projectId }: { projectId: number }) {
+function TaskProjectInfoBlock({ projectId, backLabel }: { projectId: number; backLabel: string }) {
   const { data: project, isLoading } = useQuery({
     queryKey: ['project-info-summary', projectId],
     queryFn: () => client.get(`/projects/${projectId}`).then((r) => r.data?.data ?? r.data),
@@ -488,9 +499,13 @@ function TaskProjectInfoBlock({ projectId }: { projectId: number }) {
     <div className="rounded-md border border-slate-200 bg-slate-50/60 p-3">
       <div className="flex items-center justify-between mb-2">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Project Info</span>
-        <Link to={`/projects/${projectId}`} className="text-[10px] text-blue-600 hover:underline">
+        <NavLinkWithReturn
+          to={`/projects/${projectId}`}
+          returnLabel={backLabel}
+          className="text-[10px] text-blue-600 hover:underline"
+        >
           Open project →
-        </Link>
+        </NavLinkWithReturn>
       </div>
       <dl className="space-y-1 text-[12px]">
         <div className="flex gap-2">

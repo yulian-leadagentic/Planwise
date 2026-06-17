@@ -2,6 +2,7 @@ import { useState, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Plus, X, Home, Building2, Clock, Pencil } from 'lucide-react';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
+import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { PageHeader } from '@/components/shared/page-header';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
@@ -51,7 +52,8 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
   // Task being edited in the drawer. The "+ Quick Task" button creates a
   // task; this lets the user open the SELECTED task to edit it properly
   // (name, due date, assignees, etc.) without leaving the timesheet.
-  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
+  // Drawer ID in ?task=N so back/refresh/outbound-return restores it.
+  const { drawerId: editingTaskId, openDrawer: setEditingTaskId, closeDrawer: closeEditing } = useDrawerRoute('task');
   // Bypass the blanket useCreateTimeEntry hook and drive the request
   // directly so we can intercept the CROSS_TASK_OVERLAP error and show
   // the Save-anyway confirmation. The hook always toasts on error,
@@ -338,7 +340,7 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
           icon next to the Task selector. Reuses the standard TaskDrawer so
           edits propagate everywhere through React Query invalidation. */}
       {editingTaskId !== null && (
-        <TaskDrawer taskId={editingTaskId} onClose={() => setEditingTaskId(null)} />
+        <TaskDrawer taskId={editingTaskId} onClose={closeEditing} />
       )}
     </div>
   );

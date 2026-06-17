@@ -12,6 +12,7 @@ import client from '@/api/client';
 import { tasksApi } from '@/api/tasks.api';
 import { formatShortDate } from '@/lib/date-utils';
 import { TaskDrawer } from './task-drawer';
+import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { getTaskHealth } from '@/lib/task-health';
 import { STATUS_PILL, STATUS_LABEL, ZONE_BORDER_COLORS } from '@/lib/task-constants';
 
@@ -247,7 +248,9 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
   // Task whose drawer is currently open. Manager-facing drawer (no time
   // tab) — moving between stages happens via drag OR via the status pill
   // inside the drawer; assigning people is in the drawer's Details tab.
-  const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
+  // Drawer ID lives in ?task=N so browser-back / refresh / outbound links
+  // pointing back here restore the drawer (see useDrawerRoute docs).
+  const { drawerId: drawerTaskId, openDrawer: setDrawerTaskId, closeDrawer } = useDrawerRoute('task');
 
   const { data: planningData, isLoading } = useQuery({
     queryKey: ['planning', projectId],
@@ -457,7 +460,7 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
       {/* Manager-facing drawer — Time tab hidden by spec. Status changes
           and assignee management happen here; hours logging does not. */}
       {drawerTaskId && (
-        <TaskDrawer taskId={drawerTaskId} onClose={() => setDrawerTaskId(null)} hideTimeTab />
+        <TaskDrawer taskId={drawerTaskId} onClose={closeDrawer} hideTimeTab />
       )}
     </>
   );

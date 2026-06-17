@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigateWithReturn } from '@/components/nav/return-route';
 import { AlertTriangle, CheckCircle, Clock, FolderKanban, ListChecks, TrendingUp, XCircle, BarChart3 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
@@ -15,7 +15,7 @@ const feasibilityColors = {
 };
 
 export function ManagerDashboard() {
-  const navigate = useNavigate();
+  const navWithReturn = useNavigateWithReturn();
 
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard', 'manager'],
@@ -75,7 +75,7 @@ export function ManagerDashboard() {
                 <div
                   key={p.project.id}
                   className="rounded-[14px] border border-slate-200 bg-white p-5 hover:border-blue-300 cursor-pointer transition-colors"
-                  onClick={() => navigate(`/projects/${p.project.id}`)}
+                  onClick={() => navWithReturn(`/projects/${p.project.id}`, 'Manager Dashboard')}
                 >
                   <div className="flex items-start justify-between mb-3">
                     <div>

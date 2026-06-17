@@ -6,6 +6,8 @@ import { PageHeader } from '@/components/shared/page-header';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
+import { useDrawerRoute } from '@/components/nav/use-drawer-route';
+import { useNavigateWithReturn } from '@/components/nav/return-route';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 
@@ -48,6 +50,9 @@ function Chev({ open, size = 14 }: { open: boolean; size?: number }) {
 
 export function OperationsDashboardPage() {
   const navigate = useNavigate();
+  // Stamps state.return on the destination so the project page can offer
+  // a "← Back to Operations" pill when the user drilled in from here.
+  const navWithReturn = useNavigateWithReturn();
   const [expandedProjects, setExpandedProjects] = useState<Record<number, boolean>>({});
   const [expandedDepts, setExpandedDepts] = useState<Record<string, boolean>>({});
   const [expandedMembers, setExpandedMembers] = useState<Record<number, boolean>>({});
@@ -55,7 +60,8 @@ export function OperationsDashboardPage() {
   // Task whose drawer is currently open. Operations is a manager-facing
   // dashboard, so the drawer opens with hideTimeTab — hours logging
   // belongs on My Tasks, not here.
-  const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
+  // ID lives in ?task=N so browser-back / outbound-link returns restore it.
+  const { drawerId: drawerTaskId, openDrawer: setDrawerTaskId, closeDrawer } = useDrawerRoute('task');
 
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard', 'operations'],
@@ -121,7 +127,7 @@ export function OperationsDashboardPage() {
                       <span className="text-sm font-bold text-slate-900">{project.name}</span>
                       <span className="font-mono text-[11px] text-slate-400">{project.number}</span>
                       {/* Project link */}
-                      <button onClick={(e) => { e.stopPropagation(); navigate(`/projects/${project.id}`); }}
+                      <button onClick={(e) => { e.stopPropagation(); navWithReturn(`/projects/${project.id}`, 'Operations'); }}
                         className="w-6 h-6 rounded-md flex items-center justify-center text-slate-300 hover:text-blue-600 hover:bg-blue-50 transition-colors"
                         title="Open project">
                         <ExternalLink className="h-3.5 w-3.5" />
@@ -295,7 +301,7 @@ export function OperationsDashboardPage() {
                                         className="flex-1 text-left font-medium text-slate-800 hover:text-blue-600 hover:underline truncate transition-colors">
                                         {task.name}
                                       </button>
-                                      <button onClick={() => navigate(`/projects/${task.projectId}`)}
+                                      <button onClick={() => navWithReturn(`/projects/${task.projectId}`, 'Operations')}
                                         className="text-[10px] text-slate-400 hover:text-blue-600 hover:underline truncate max-w-[120px] transition-colors">
                                         {task.projectName}
                                       </button>
@@ -352,7 +358,7 @@ export function OperationsDashboardPage() {
       {/* Task Drawer — manager mode (Time tab hidden), opens from the
           right when a task is clicked anywhere in this dashboard. */}
       {drawerTaskId && (
-        <TaskDrawer taskId={drawerTaskId} onClose={() => setDrawerTaskId(null)} hideTimeTab />
+        <TaskDrawer taskId={drawerTaskId} onClose={closeDrawer} hideTimeTab />
       )}
     </div>
   );
