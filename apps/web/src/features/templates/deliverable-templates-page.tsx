@@ -589,10 +589,12 @@ export function DeliverableTemplatesPage() {
     });
   };
 
-  if (selectedTemplateId !== null) {
-    return <EditorView templateId={selectedTemplateId} onBack={() => setSelectedTemplateId(null)} />;
-  }
-
+  // ⚠️  Hooks MUST run on every render in the same order, including the
+  //     useMemo below. The early return for `selectedTemplateId !== null`
+  //     used to sit ABOVE this block — clicking "View" then unmounted the
+  //     hook and React threw error #300 ("Rendered fewer hooks than
+  //     expected") in production. Compute these now; the conditional
+  //     branch to <EditorView/> happens AFTER.
   const templateList = ((templates ?? []) as any[]).filter((t: any) => t.code !== '__TASK_CATALOG__');
 
   // Apply search + service filter on top of the catalog-filtered list.
@@ -611,6 +613,11 @@ export function DeliverableTemplatesPage() {
     });
   }, [templateList, searchTerm, phaseFilter]);
   const isFiltered = !!searchTerm.trim() || !!phaseFilter;
+
+  // Conditional return is AFTER all hooks above — safe to bail out here.
+  if (selectedTemplateId !== null) {
+    return <EditorView templateId={selectedTemplateId} onBack={() => setSelectedTemplateId(null)} />;
+  }
 
   return (
     <div className="space-y-6">
