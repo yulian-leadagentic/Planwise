@@ -189,6 +189,14 @@ export class UsersService {
       },
     });
 
+    // 5) Mirror Job Title onto the BP's professions list — see syncPositionToProfession().
+    // Same skip-on-error policy as update(): the user create already
+    // committed; a failed mirror just delays role-picker visibility.
+    if (dto.position) {
+      try { await this.syncPositionToProfession(user.id, dto.position); }
+      catch { /* swallow */ }
+    }
+
     return user;
   }
 
@@ -339,7 +347,7 @@ export class UsersService {
       }
     }
 
-    return this.prisma.user.update({
+    const updated = await this.prisma.user.update({
       where: { id },
       data,
       select: {
@@ -361,11 +369,110 @@ export class UsersService {
         role: { select: { id: true, name: true } },
       },
     });
+
+    // Mirror Job Title onto the linked BP's professions list so the
+    // project role-pickers see it. Safe to skip-on-error: the user write
+    // already succeeded; a failed mirror just means the role-picker won't
+    // pre-list them yet, no data loss.
+    if ('position' in data) {
+      try { await this.syncPositionToProfession(id, data.position); }
+      catch { /* swallow — user.update already committed */ }
+    }
+
+    return updated;
   }
 
   async remove(id: number) {
     await this.findOne(id);
     await this.prisma.user.delete({ where: { id } });
     return { message: 'User deleted' };
+  }
+
+  /**
+   * Mirror User.position (the People admin's "Job Title" text field) onto
+   * the linked BusinessPartner's professions list.
+   *
+   * Background: the People admin writes `User.position` as a plain string;
+   * the project-role picker (and its backend validator) reads professions
+   * from `business_partner_professions` — a M2M to the Profession catalog.
+   * Before this sync, setting "BIM Coordinator" on Moran Pinto's profile
+   * never created the matching profession row, so the picker filtered her
+   * out and the backend rejected manual submits with "must hold one of
+   * these job titles".
+   *
+   * Behavior:
+   *  • No-op when the user has no linked BusinessPartner (legacy data).
+   *  • Position is matched to Profession by NAME (case-insensitive, trimmed).
+   *  • If no matching Profession exists, we ignore — the position is then
+   *    free-text outside the catalog; admins can add it via Job Titles.
+   *  • Only ADDS the link; never removes other professions. People can
+   *    legitimately hold several, and removing on edit risks data loss.
+   */
+  private async syncPositionToProfession(userId: number, position: string | null | undefined): Promise<void> {
+    const trimmed = position?.trim();
+    if (!trimmed) return; // Empty / cleared — leave existing professions alone.
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { businessPartnerId: true },
+    });
+    if (!user?.businessPartnerId) return;
+
+    const profession = await this.prisma.profession.findFirst({
+      where: { name: { equals: trimmed } },
+      select: { id: true },
+    });
+    if (!profession) return; // Free-text position outside the catalog.
+
+    await this.prisma.businessPartnerProfession.upsert({
+      where: {
+        businessPartnerId_professionId: {
+          businessPartnerId: user.businessPartnerId,
+          professionId: profession.id,
+        },
+      },
+      update: {},
+      create: {
+        businessPartnerId: user.businessPartnerId,
+        professionId: profession.id,
+      },
+    });
+  }
+
+  /**
+   * One-shot: sync every active user's `position` onto their BP's
+   * professions list. Idempotent — re-running is safe. Returns a summary
+   * so the admin endpoint that wraps this can report counts.
+   */
+  async backfillPositionsToProfessions(): Promise<{ scanned: number; linked: number; skippedNoBP: number; skippedNoMatch: number }> {
+    const users = await this.prisma.user.findMany({
+      where: { position: { not: null } },
+      select: { id: true, position: true, businessPartnerId: true },
+    });
+    let linked = 0;
+    let skippedNoBP = 0;
+    let skippedNoMatch = 0;
+    for (const u of users) {
+      const trimmed = u.position?.trim();
+      if (!trimmed) continue;
+      if (!u.businessPartnerId) { skippedNoBP++; continue; }
+      const profession = await this.prisma.profession.findFirst({
+        where: { name: { equals: trimmed } },
+        select: { id: true },
+      });
+      if (!profession) { skippedNoMatch++; continue; }
+      await this.prisma.businessPartnerProfession.upsert({
+        where: {
+          businessPartnerId_professionId: {
+            businessPartnerId: u.businessPartnerId,
+            professionId: profession.id,
+          },
+        },
+        update: {},
+        create: { businessPartnerId: u.businessPartnerId, professionId: profession.id },
+      });
+      linked++;
+    }
+    return { scanned: users.length, linked, skippedNoBP, skippedNoMatch };
   }
 }

@@ -39,6 +39,28 @@ export class UsersController {
     return this.usersService.create(dto);
   }
 
+  /**
+   * One-shot maintenance: walk every user's `position` (the People admin's
+   * "Job Title" text field) and ensure the matching Profession is linked
+   * on their BusinessPartner. Idempotent — repeated calls are safe.
+   *
+   * Why it lives here: the project-role pickers + their backend validator
+   * filter candidates by `business_partner_professions`, but the People
+   * admin only writes `User.position` as a plain string. Existing users
+   * (like Moran Pinto whose Job Title was "BIM Coordinator" but whose
+   * BP had no professions) didn't show up in the picker. Going forward
+   * the sync is automatic on update/create — this endpoint catches up
+   * everyone created before the sync existed.
+   */
+  @Post('admin/backfill-positions-to-professions')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary: 'Sync every user\'s Job Title onto their BusinessPartner.professions (one-shot, idempotent)',
+  })
+  backfillPositionsToProfessions() {
+    return this.usersService.backfillPositionsToProfessions();
+  }
+
   @Get()
   @RequirePermissions({ module: 'partners', action: 'read' })
   @ApiPaginated()
