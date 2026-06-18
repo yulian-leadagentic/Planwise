@@ -18,7 +18,10 @@ async function seed() {
     }
     console.log('  Seeded service types');
 
-    // Phases
+    // Phases. The three Hebrew rows (sortOrder 21-23) are sub-phases
+    // used by the BM migration Excel; they live alongside the legacy
+    // English list so existing data isn't touched. Keep in sync with
+    // prisma/seed.ts.
     const phases = [
       { name: 'Pre-Design', sortOrder: 1 },
       { name: 'Design', sortOrder: 2 },
@@ -26,6 +29,9 @@ async function seed() {
       { name: 'AFC', sortOrder: 4 },
       { name: 'Handover', sortOrder: 5 },
       { name: 'Maintenance', sortOrder: 6 },
+      { name: 'תכנון מפורט', sortOrder: 21 },
+      { name: 'תכנון סופי', sortOrder: 22 },
+      { name: 'תכנון לביצוע', sortOrder: 23 },
     ];
     for (const p of phases) {
       await prisma.phase.upsert({ where: { name: p.name }, update: p, create: p });

@@ -117,7 +117,11 @@ async function main() {
   }
   console.log(`  Seeded ${serviceTypes.length} service types`);
 
-  // Phases (v8 — replaces ServicePhase)
+  // Phases (v8 — replaces ServicePhase).
+  // Added 2026-06-18: three Hebrew sub-phases used by the BM migration
+  // Excel ("תכנון מפורט / סופי / לביצוע"). They live alongside the
+  // English design/construction set so existing data isn't touched;
+  // sortOrder 21-23 keeps them visually grouped after the legacy list.
   const phases = [
     { name: 'Pre-Design', sortOrder: 1 },
     { name: 'Design', sortOrder: 2 },
@@ -125,6 +129,9 @@ async function main() {
     { name: 'AFC', sortOrder: 4 },
     { name: 'Handover', sortOrder: 5 },
     { name: 'Maintenance', sortOrder: 6 },
+    { name: 'תכנון מפורט', sortOrder: 21 },
+    { name: 'תכנון סופי', sortOrder: 22 },
+    { name: 'תכנון לביצוע', sortOrder: 23 },
   ];
   for (const p of phases) {
     await prisma.phase.upsert({
