@@ -18,6 +18,12 @@ const partnerInclude = {
   // Main Role — single primary categorization of the contact.
   // Surfaced in the drawer header + BP list badge + relationship pickers.
   mainRoleType: true,
+  // Professions ("Job Titles") the party holds. Surfaced so the Project
+  // Role assignment pickers can pre-filter candidates against a role's
+  // requiredProfessionIds — without this the dropdown showed every
+  // employee and the backend later 400'd on "must hold one of these
+  // job titles".
+  professions: { select: { professionId: true } },
 } as const;
 
 function toDisplayName(dto: { partnerType: PartnerType; firstName?: string | null; lastName?: string | null; companyName?: string | null; displayName?: string | null }): string {

@@ -348,6 +348,10 @@ interface ProjectRoleTypeRow {
   description: string | null;
   allowedPartnerKind: 'person' | 'organization' | 'any';
   requiredPartnerRoleCode: string | null;
+  // Profession IDs the party must hold AT LEAST ONE OF. When present we
+  // filter the assignment dropdown to people who satisfy this — otherwise
+  // the backend rejects the POST with "must hold one of these job titles".
+  requiredProfessionIds: number[] | null;
   isPrimaryRequired: boolean;
   sortOrder: number;
   isSystem: boolean;
@@ -1317,7 +1321,22 @@ function RoleAssignmentPicker({
       return Array.isArray(d) ? d : (d?.data ?? []);
     }),
   });
-  const filtered = candidates.filter((p: any) => !existingPartyIds.includes(p.id));
+  // Filter out already-assigned parties AND, when the role requires one
+  // of a set of professions (Job Titles), parties who don't hold any of
+  // them. Without this second pass, the dropdown happily offered names
+  // that the backend would later reject with a 400 — see the user-facing
+  // "must hold one of these job titles" error.
+  const requiredProfIds: number[] = Array.isArray(role.requiredProfessionIds)
+    ? role.requiredProfessionIds
+    : [];
+  const filtered = candidates.filter((p: any) => {
+    if (existingPartyIds.includes(p.id)) return false;
+    if (requiredProfIds.length === 0) return true;
+    const partyProfIds: number[] = Array.isArray(p.professions)
+      ? p.professions.map((x: any) => x.professionId)
+      : [];
+    return partyProfIds.some((id) => requiredProfIds.includes(id));
+  });
 
   const create = useMutation({
     mutationFn: () =>
@@ -1351,6 +1370,9 @@ function RoleAssignmentPicker({
             {role.requiredPartnerRoleCode && (
               <> · must hold role <span className="font-mono font-semibold">{role.requiredPartnerRoleCode}</span></>
             )}
+            {requiredProfIds.length > 0 && (
+              <> · must hold a required job title</>
+            )}
             {role.isPrimaryRequired && <> · one PRIMARY required</>}
           </div>
           <div>
@@ -1368,7 +1390,9 @@ function RoleAssignmentPicker({
             {filtered.length === 0 && (
               <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded mt-1">
                 No eligible parties. Add a {role.allowedPartnerKind}
-                {role.requiredPartnerRoleCode ? ` with role "${role.requiredPartnerRoleCode}"` : ''} in /partners first.
+                {role.requiredPartnerRoleCode ? ` with role "${role.requiredPartnerRoleCode}"` : ''}
+                {requiredProfIds.length > 0 ? ' who holds a required job title (see /partners → Job Titles)' : ''}
+                {' '}in /partners first.
               </p>
             )}
           </div>
