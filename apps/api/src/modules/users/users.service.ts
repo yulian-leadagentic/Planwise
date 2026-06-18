@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
@@ -9,7 +9,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
 
 @Injectable()
-export class UsersService {
+export class UsersService implements OnModuleInit {
   constructor(
     private prisma: PrismaService,
     private numberRanges: NumberRangesService,
@@ -437,6 +437,39 @@ export class UsersService {
         professionId: profession.id,
       },
     });
+  }
+
+  /**
+   * Boot hook: auto-run the position → professions backfill if (and only
+   * if) we detect at least one user with a Job Title that hasn't been
+   * mirrored. Cheap pre-check (single findFirst on an indexed FK), so a
+   * cold start where everyone is already in sync costs ~1 query. Wrapped
+   * in try/catch so an issue here never blocks bootstrap.
+   *
+   * Rationale: the forward-fix below only syncs on user create/update,
+   * so legacy users (the People admin page predated the sync) need a
+   * one-shot catch-up. Making this automatic on boot means the picker
+   * starts working as soon as the new code lands — no admin button-click,
+   * no console-paste, no operations checklist.
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      const stale = await this.prisma.user.findFirst({
+        where: {
+          position: { not: null },
+          businessPartnerId: { not: null },
+          businessPartner: { professions: { none: {} } },
+        },
+        select: { id: true },
+      });
+      if (!stale) return;
+      const summary = await this.backfillPositionsToProfessions();
+      // eslint-disable-next-line no-console
+      console.log(`[UsersService] auto-backfill position→professions: ${JSON.stringify(summary)}`);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(`[UsersService] auto-backfill skipped: ${(err as Error).message}`);
+    }
   }
 
   /**
