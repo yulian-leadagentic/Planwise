@@ -3,7 +3,6 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
-import { dateRangesOverlap } from '../../common/overlap';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
@@ -455,97 +454,16 @@ export class TasksService {
       throw new ConflictException('User is already assigned to this task');
     }
 
-    // No-overlap policy (2026-06-14): a user can't be active on two tasks
-    // whose date ranges overlap. Use the task's own startDate/endDate as
-    // the effective window — TaskAssignee can carry per-assignee overrides
-    // but the create-path doesn't take them, so the task range is the
-    // source of truth here.
+    // Policy reversal (2026-06-18, per user): no overlap check at the
+    // task-ASSIGNMENT stage. Assignment is about who is responsible for
+    // the work; it isn't a scheduling claim. Distributing a person
+    // across several tasks whose date ranges happen to touch is a
+    // legitimate, common operation (planning headcount, code-review
+    // duty, supervision, etc.) — blocking it created spurious 409s.
     //
-    // Refinement (2026-06-18): the original `null = ±∞` semantics treated
-    // every undated task as "ongoing forever", which made a single dated
-    // task collide with EVERY undated task assigned to the same user. In
-    // real data most tasks were undated or had a past endDate, so users
-    // ended up unable to add a second assignment at all. Now we exclude:
-    //   • tasks whose endDate is already in the past (the work is over)
-    //   • tasks whose status is `completed` or `cancelled` (work is closed)
-    //   • tasks with NO temporal claim at all (both startDate AND endDate
-    //     null) — backlog items, not active commitments
-    // The remaining candidates still go through dateRangesOverlap, so a
-    // genuine future-vs-future date conflict is still blocked.
-    const newTask = await this.prisma.task.findUnique({
-      where: { id: taskId },
-      select: { id: true, name: true, code: true, startDate: true, endDate: true },
-    });
-    if (newTask) {
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-
-      const existingAssignments = await this.prisma.taskAssignee.findMany({
-        where: {
-          userId: data.userId,
-          deletedAt: null,
-          taskId: { not: taskId },
-          task: {
-            deletedAt: null,
-            isArchived: false,
-            status: { notIn: ['completed', 'cancelled'] },
-            AND: [
-              // Must carry at least one date — otherwise no temporal claim.
-              { OR: [{ startDate: { not: null } }, { endDate: { not: null } }] },
-              // If endDate is set, it must not be in the past.
-              { OR: [{ endDate: null }, { endDate: { gte: todayStart } }] },
-            ],
-          },
-        },
-        select: {
-          taskId: true,
-          startDate: true,
-          endDate: true,
-          task: { select: { id: true, name: true, code: true, startDate: true, endDate: true } },
-        },
-      });
-
-      const conflicts = existingAssignments
-        .map((a) => {
-          // Per-assignee dates override the task's range when set.
-          const otherStart = a.startDate ?? a.task?.startDate ?? null;
-          const otherEnd = a.endDate ?? a.task?.endDate ?? null;
-          return {
-            taskId: a.task!.id,
-            name: a.task!.name,
-            code: a.task!.code,
-            start: otherStart,
-            end: otherEnd,
-          };
-        })
-        .filter((other) =>
-          dateRangesOverlap(newTask.startDate, newTask.endDate, other.start, other.end),
-        );
-
-      if (conflicts.length > 0) {
-        throw new ConflictException({
-          code: 'TASK_DATE_OVERLAP',
-          message: 'This user is already assigned to a task whose dates overlap with this one.',
-          details: {
-            user: data.userId,
-            attempted: {
-              taskId,
-              name: newTask.name,
-              code: newTask.code,
-              startDate: newTask.startDate,
-              endDate: newTask.endDate,
-            },
-            conflicts: conflicts.map((c) => ({
-              taskId: c.taskId,
-              name: c.name,
-              code: c.code,
-              startDate: c.start,
-              endDate: c.end,
-            })),
-          },
-        });
-      }
-    }
+    // The time-entry overlap (different code path, in
+    // time-entries.service.ts) STAYS — that one prevents double-booking
+    // actual logged hours, which is a real correctness invariant.
 
     // Atomic upsert — handles soft-deleted rows and unique constraints
     const result = await this.prisma.taskAssignee.upsert({
