@@ -33,6 +33,7 @@ describe('TasksService', () => {
       },
       taskAssignee: {
         findFirst: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
         upsert: jest.fn(),
         deleteMany: jest.fn(),
       },
@@ -92,6 +93,42 @@ describe('TasksService', () => {
       expect(args.where).toEqual({ taskId_userId: { taskId: TASK_ID, userId: USER_ID } });
       // On create path, deletedAt is implicit null; on update path it's cleared.
       expect(args.update).toMatchObject({ deletedAt: null, role: 'reviewer' });
+    });
+
+    it('overlap check excludes completed / cancelled / past-end / fully-undated tasks (filter in WHERE)', async () => {
+      // The bug this locks in (2026-06-18): users couldn't add a second
+      // assignment because EVERY undated existing task was treated as
+      // "ongoing forever" and counted as overlapping. The fix moves the
+      // filter into the Prisma WHERE clause so they're never even loaded.
+      prisma.taskAssignee.findFirst.mockResolvedValue(null);
+      prisma.taskAssignee.upsert.mockResolvedValue({
+        id: 9, taskId: TASK_ID, userId: USER_ID,
+      });
+      // Task with an explicit future end date — should make it past the
+      // findUnique branch and into the assignment-search.
+      prisma.task.findUnique.mockResolvedValue({
+        id: TASK_ID, name: 'Future', code: 'F-1',
+        startDate: null, endDate: new Date('2027-01-01'),
+      });
+
+      await service.addAssignee(TASK_ID, { userId: USER_ID });
+
+      // The query must filter out done work AND undated noise at the DB
+      // level — the in-memory filter alone can't catch the "EVERY undated
+      // task overlaps" pathology, because the bug was that we LOADED them
+      // and then matched -∞..+∞ against everything.
+      expect(prisma.taskAssignee.findMany).toHaveBeenCalledTimes(1);
+      const where = prisma.taskAssignee.findMany.mock.calls[0][0].where;
+      expect(where.task.status).toEqual({ notIn: ['completed', 'cancelled'] });
+      // At-least-one-date clause + endDate-not-past clause, both as AND[].
+      expect(where.task.AND).toHaveLength(2);
+      expect(where.task.AND[0]).toEqual({
+        OR: [{ startDate: { not: null } }, { endDate: { not: null } }],
+      });
+      // Lower bound = today at 00:00 — exact instant depends on the run
+      // time, but the shape and operator are stable.
+      expect(where.task.AND[1].OR[0]).toEqual({ endDate: null });
+      expect(where.task.AND[1].OR[1].endDate).toHaveProperty('gte');
     });
   });
 

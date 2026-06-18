@@ -460,17 +460,42 @@ export class TasksService {
     // the effective window — TaskAssignee can carry per-assignee overrides
     // but the create-path doesn't take them, so the task range is the
     // source of truth here.
+    //
+    // Refinement (2026-06-18): the original `null = ±∞` semantics treated
+    // every undated task as "ongoing forever", which made a single dated
+    // task collide with EVERY undated task assigned to the same user. In
+    // real data most tasks were undated or had a past endDate, so users
+    // ended up unable to add a second assignment at all. Now we exclude:
+    //   • tasks whose endDate is already in the past (the work is over)
+    //   • tasks whose status is `completed` or `cancelled` (work is closed)
+    //   • tasks with NO temporal claim at all (both startDate AND endDate
+    //     null) — backlog items, not active commitments
+    // The remaining candidates still go through dateRangesOverlap, so a
+    // genuine future-vs-future date conflict is still blocked.
     const newTask = await this.prisma.task.findUnique({
       where: { id: taskId },
       select: { id: true, name: true, code: true, startDate: true, endDate: true },
     });
     if (newTask) {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+
       const existingAssignments = await this.prisma.taskAssignee.findMany({
         where: {
           userId: data.userId,
           deletedAt: null,
           taskId: { not: taskId },
-          task: { deletedAt: null, isArchived: false },
+          task: {
+            deletedAt: null,
+            isArchived: false,
+            status: { notIn: ['completed', 'cancelled'] },
+            AND: [
+              // Must carry at least one date — otherwise no temporal claim.
+              { OR: [{ startDate: { not: null } }, { endDate: { not: null } }] },
+              // If endDate is set, it must not be in the past.
+              { OR: [{ endDate: null }, { endDate: { gte: todayStart } }] },
+            ],
+          },
         },
         select: {
           taskId: true,
