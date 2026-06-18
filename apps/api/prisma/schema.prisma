@@ -2046,6 +2046,11 @@ enum DataImportTarget {
   users
   partners
   contacts
+  /// Whole-project migration from a legacy system (the BM migration).
+  /// Touches many entity types in one run — projects, zones, tasks,
+  /// assignments, time entries — so rollback uses the generic ImportLog
+  /// table below rather than per-entity createdByImportId columns.
+  projects
 }
 
 enum DataImportStatus {
@@ -2100,12 +2105,53 @@ model DataImport {
   // it once created (only un-tags them).
   usersCreated    User[]            @relation("UsersCreatedByImport")
   partnersCreated BusinessPartner[] @relation("PartnersCreatedByImport")
+  // Audit log used by the projects-target rollback flow (BM migration).
+  // Catalog rows are recorded with action='linked' and skipped on
+  // rollback; everything else is deleted in reverse sortOrder.
+  logs            ImportLog[]       @relation("ImportLogs")
 
   @@index([userId])
   @@index([target])
   @@index([status])
   @@index([startedAt])
   @@map("data_imports")
+}
+
+/// Generic audit row written by the BM-style whole-project importer.
+/// One row per entity touched by the run. Lets rollback walk DESC by
+/// sortOrder and delete in FK-safe order without adding a
+/// `createdByImportId` column to every table the importer might touch.
+/// Catalog entries (phase, service, profession, department) are logged
+/// with action='linked' so rollback skips them — they're shared.
+model ImportLog {
+  id         Int        @id @default(autoincrement())
+  importId   Int        @map("import_id")
+  import     DataImport @relation("ImportLogs", fields: [importId], references: [id], onDelete: Cascade)
+  /// Snake-case entity name: 'project' / 'zone' / 'task' /
+  /// 'project_deliverable' / 'task_assignee' / 'time_entry' /
+  /// 'user' / 'business_partner' / 'phase' / 'service' / 'profession' /
+  /// 'department'.
+  entityType String     @map("entity_type") @db.VarChar(50)
+  /// PK of the row created/linked. Resolved against entityType at
+  /// rollback time so we can call the right prisma model's delete.
+  entityId   Int        @map("entity_id")
+  /// 'created' — delete on rollback.
+  /// 'linked'  — pre-existing or shared catalog row; rollback skips it.
+  /// 'updated' — touched an existing row; we keep before-state in notes
+  ///             so rollback can restore (M2+; for now we just don't undo).
+  action     String     @db.VarChar(20)
+  /// Monotonic within the run — rollback walks DESC so children of a
+  /// hierarchy (timeentry → assignee → task → deliverable → zone →
+  /// project) are deleted before their parents.
+  sortOrder  Int        @default(0) @map("sort_order")
+  /// Optional free-text — the source-row index, the entity's natural
+  /// key, anything that makes the audit row readable in retrospect.
+  notes      String?    @db.Text
+  createdAt  DateTime   @default(now()) @map("created_at")
+
+  @@index([importId, sortOrder])
+  @@index([entityType, entityId])
+  @@map("import_logs")
 }
 
 enum DataImportRowOutcome {

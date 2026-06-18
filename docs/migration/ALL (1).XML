@@ -1,0 +1,738 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Root>
+
+	<File name="נשר חדיף">
+		<Lot id="A0001">
+			<name>מגרש A</name>
+		</Lot>
+		<Lot id="A0002">
+			<name>מגרש C</name>
+		</Lot>
+		<Building id="B0001">
+			<name>Basement-A</name>
+			<Father>מגרש A</Father>
+		</Building>
+		<Building id="B0002">
+			<name>A</name>
+			<Father>מגרש A</Father>
+		</Building>
+		<Building id="B0003">
+			<name>B</name>
+			<Father>מגרש A</Father>
+		</Building>
+		<Building id="B0004">
+			<name>C</name>
+			<Father>מגרש A</Father>
+		</Building>
+		<Building id="B0005">
+			<name>D</name>
+			<Father>מגרש A</Father>
+		</Building>
+		<Building id="B0006">
+			<name>E</name>
+			<Father>מגרש A</Father>
+		</Building>
+		<Building id="B0007">
+			<name>Basement-C</name>
+			<Father>מגרש C</Father>
+		</Building>
+		<Building id="B0008">
+			<name>H</name>
+			<Father>מגרש C</Father>
+		</Building>
+		<Building id="B0009">
+			<name>F</name>
+			<Father>מגרש C</Father>
+		</Building>
+		<Building id="B0010">
+			<name>G</name>
+			<Father>מגרש C</Father>
+		</Building>
+		<Level id="C0001">
+			<name>FD</name>
+			<Father>Basement-A</Father>
+		</Level>
+		<Level id="C0002">
+			<name>B4</name>
+			<Father>Basement-A</Father>
+		</Level>
+		<Level id="C0003">
+			<name>B3</name>
+			<Father>Basement-A</Father>
+		</Level>
+		<Level id="C0004">
+			<name>B2</name>
+			<Father>Basement-A</Father>
+		</Level>
+		<Level id="C0005">
+			<name>B1</name>
+			<Father>Basement-A</Father>
+		</Level>
+		<Level id="C0006">
+			<name>GL</name>
+			<Father>A</Father>
+		</Level>
+		<Level id="C0007">
+			<name>GL</name>
+			<Father>B</Father>
+		</Level>
+		<Level id="C0008">
+			<name>GL</name>
+			<Father>C</Father>
+		</Level>
+		<Level id="C0009">
+			<name>GL</name>
+			<Father>D</Father>
+		</Level>
+		<Level id="C0010">
+			<name>GL</name>
+			<Father>E</Father>
+		</Level>
+		<Level id="C0011">
+			<name>TYP</name>
+			<Father>A</Father>
+		</Level>
+		<Level id="C0012">
+			<name>TYP</name>
+			<Father>B</Father>
+		</Level>
+		<Level id="C0013">
+			<name>TYP</name>
+			<Father>C</Father>
+		</Level>
+		<Level id="C0014">
+			<name>TYP</name>
+			<Father>D</Father>
+		</Level>
+		<Level id="C0015">
+			<name>TYP</name>
+			<Father>E</Father>
+		</Level>
+		<Level id="C0016">
+			<name>FD</name>
+			<Father>Basement-C</Father>
+		</Level>
+		<Level id="C0017">
+			<name>B4</name>
+			<Father>Basement-C</Father>
+		</Level>
+		<Level id="C0018">
+			<name>B3</name>
+			<Father>Basement-C</Father>
+		</Level>
+		<Level id="C0019">
+			<name>B2</name>
+			<Father>Basement-C</Father>
+		</Level>
+		<Level id="C0020">
+			<name>B1</name>
+			<Father>Basement-C</Father>
+		</Level>
+		<Level id="C0021">
+			<name>GL</name>
+			<Father>H</Father>
+		</Level>
+		<Level id="C0022">
+			<name>GL</name>
+			<Father>G</Father>
+		</Level>
+		<Level id="C0023">
+			<name>GL</name>
+			<Father>F</Father>
+		</Level>
+		<Level id="C0024">
+			<name>TYP</name>
+			<Father>H</Father>
+		</Level>
+		<Level id="C0025">
+			<name>TYP</name>
+			<Father>G</Father>
+		</Level>
+		<Level id="C0026">
+			<name>TYP</name>
+			<Father>F</Father>
+		</Level>
+	</File>
+
+	<File name="זאב 11-13">
+		<Building id="B0011">
+			<name>Basement</name>
+		</Building>
+		<Building id="B0012">
+			<name>A</name>
+		</Building>
+		<Level id="C0027">
+			<name>B1</name>
+			<Father>Basement</Father>
+		</Level>
+		<Level id="C0028">
+			<name>B2</name>
+			<Father>Basement</Father>
+		</Level>
+		<Level id="C0029">
+			<name>FD</name>
+			<Father>Basement</Father>
+		</Level>
+		<Level id="C0030">
+			<name>GL</name>
+			<Father>A</Father>
+		</Level>
+	</File>
+
+	<File name="1616">
+		<level id="C0031">
+			<name>B1</name>
+		</level>
+		<level id="C0032">
+			<name>GL</name>
+		</level>
+		<level id="C0033">
+			<name>L03-TYP</name>
+		</level>
+		<level id="C0034">
+			<name>L05</name>
+		</level>
+		<level id="C0035">
+			<name>RR</name>
+		</level>
+	</File>
+
+	<File name="שלוותה">
+		<level id="C0036">
+			<name>GL</name>
+		</level>
+		<level id="C0037">
+			<name>L01</name>
+		</level>
+		<level id="C0038">
+			<name>L02</name>
+		</level>
+		<level id="C0039">
+			<name>R</name>
+		</level>
+	</File>
+
+	<File name="260014">
+		<Building id="B0013">
+			<name>Basement</name>
+		</Building>
+		<Building id="B0014">
+			<name>A</name>
+		</Building>
+		<Level id="C0040">
+			<name>B1</name>
+			<Father>Basement</Father>
+		</Level>
+		<Level id="C0041">
+			<name>FD</name>
+			<Father>Basement</Father>
+		</Level>
+		<Level id="C0042">
+			<name>Typ</name>
+			<Father>A</Father>
+		</Level>
+		<Level id="C0043">
+			<name>GL</name>
+			<Father>A</Father>
+		</Level>
+	</File>
+
+	<File name="1660">
+		<Building id="B0015">
+			<name>1660</name>
+		</Building>
+		<Building id="B0016">
+			<name>1650</name>
+		</Building>
+		<Level id="C0044">
+			<name>FD</name>
+			<Father>1660</Father>
+		</Level>
+		<Level id="C0045">
+			<name>GL</name>
+			<Father>1660</Father>
+		</Level>
+		<Level id="C0046">
+			<name>LO1</name>
+			<Father>1660</Father>
+		</Level>
+		<Level id="C0047">
+			<name>L02</name>
+			<Father>1660</Father>
+		</Level>
+		<Level id="C0048">
+			<name>L03</name>
+			<Father>1660</Father>
+		</Level>
+		<Level id="C0049">
+			<name>L04</name>
+			<Father>1660</Father>
+		</Level>
+		<Level id="C0050">
+			<name>R</name>
+			<Father>1660</Father>
+		</Level>
+		<Level id="C0051">
+			<name>FD</name>
+			<Father>1650</Father>
+		</Level>
+		<Level id="C0052">
+			<name>GL</name>
+			<Father>1650</Father>
+		</Level>
+		<Level id="C0053">
+			<name>R</name>
+			<Father>1650</Father>
+		</Level>
+	</File>
+
+	<File name="הכרמים מודיעין">
+		<Lot id="A0003">
+			<name>מגרש 15</name>
+		</Lot>
+		<building id="B0017">
+			<name>מגרש 14</name>
+		</building>
+		<building id="B0018">
+			<name>מגרש 13</name>
+		</building>
+		<building id="B0019">
+			<name>מגרש 12</name>
+		</building>
+		<Level id="C0054">
+			<name>FD</name>
+			<Father>מגרש 15</Father>
+		</Level>
+		<Level id="C0055">
+			<name>B1</name>
+			<Father>מגרש 15</Father>
+		</Level>
+		<Level id="C0056">
+			<name>GL</name>
+			<Father>מגרש 15</Father>
+		</Level>
+		<Level id="C0057">
+			<name>FD</name>
+			<Father>מגרש 14</Father>
+		</Level>
+		<Level id="C0058">
+			<name>B1</name>
+			<Father>מגרש 14</Father>
+		</Level>
+		<Level id="C0059">
+			<name>GL</name>
+			<Father>מגרש 14</Father>
+		</Level>
+		<Level id="C0060">
+			<name>FD</name>
+			<Father>מגרש 13</Father>
+		</Level>
+		<Level id="C0061">
+			<name>B1</name>
+			<Father>מגרש 13</Father>
+		</Level>
+		<Level id="C0062">
+			<name>GL</name>
+			<Father>מגרש 13</Father>
+		</Level>
+		<Level id="C0063">
+			<name>FD</name>
+			<Father>מגרש 12</Father>
+		</Level>
+		<Level id="C0064">
+			<name>B1</name>
+			<Father>מגרש 12</Father>
+		</Level>
+		<Level id="C0065">
+			<name>GL</name>
+			<Father>מגרש 12</Father>
+		</Level>
+	</File>
+
+	<File name="בית מחודש">
+		<Project id="P0001">
+			<name>בית מחודש</name>
+		</Project>
+		<Building id="B0020">
+			<name>A</name>
+			<Father>בית מחודש</Father>
+		</Building>
+		<Building id="B0021">
+			<name>C1</name>
+			<Father>בית מחודש</Father>
+		</Building>
+		<Building id="B0022">
+			<name>C2</name>
+			<Father>בית מחודש</Father>
+		</Building>
+		<Building id="B0023">
+			<name>D52</name>
+			<Father>בית מחודש</Father>
+		</Building>
+		<Building id="B0024">
+			<name>D53</name>
+			<Father>בית מחודש</Father>
+		</Building>
+		<Building id="B0025">
+			<name>D54</name>
+			<Father>בית מחודש</Father>
+		</Building>
+		<Building id="B0026">
+			<name>M</name>
+			<Father>בית מחודש</Father>
+		</Building>
+		<Building id="B0027">
+			<name>S1</name>
+			<Father>בית מחודש</Father>
+		</Building>
+		<Building id="B0028">
+			<name>S2</name>
+			<Father>בית מחודש</Father>
+		</Building>
+		<Building id="B0029">
+			<name>T</name>
+			<Father>בית מחודש</Father>
+		</Building>
+		<Level id="C0066">
+			<name>FD</name>
+			<Father>A</Father>
+		</Level>
+		<Level id="C0067">
+			<name>GL</name>
+			<Father>A</Father>
+		</Level>
+		<Level id="C0068">
+			<name>L01</name>
+			<Father>A</Father>
+		</Level>
+		<Level id="C0069">
+			<name>R</name>
+			<Father>A</Father>
+		</Level>
+		<Level id="C0070">
+			<name>FD</name>
+			<Father>C1</Father>
+		</Level>
+		<Level id="C0071">
+			<name>GL</name>
+			<Father>C1</Father>
+		</Level>
+		<Level id="C0072">
+			<name>L01</name>
+			<Father>C1</Father>
+		</Level>
+		<Level id="C0073">
+			<name>LO2</name>
+			<Father>C1</Father>
+		</Level>
+		<Level id="C0074">
+			<name>R</name>
+			<Father>C1</Father>
+		</Level>
+		<Level id="C0075">
+			<name>FD</name>
+			<Father>C2</Father>
+		</Level>
+		<Level id="C0076">
+			<name>GL</name>
+			<Father>C2</Father>
+		</Level>
+		<Level id="C0077">
+			<name>L01</name>
+			<Father>C2</Father>
+		</Level>
+		<Level id="C0078">
+			<name>LO2</name>
+			<Father>C2</Father>
+		</Level>
+		<Level id="C0079">
+			<name>R</name>
+			<Father>C2</Father>
+		</Level>
+		<Level id="C0080">
+			<name>FD</name>
+			<Father>D52</Father>
+		</Level>
+		<Level id="C0081">
+			<name>GL</name>
+			<Father>D52</Father>
+		</Level>
+		<Level id="C0082">
+			<name>FD</name>
+			<Father>D53</Father>
+		</Level>
+		<Level id="C0083">
+			<name>GL</name>
+			<Father>D53</Father>
+		</Level>
+		<Level id="C0084">
+			<name>FD</name>
+			<Father>D54</Father>
+		</Level>
+		<Level id="C0085">
+			<name>GL</name>
+			<Father>D54</Father>
+		</Level>
+		<Level id="C0086">
+			<name>FD</name>
+			<Father>M</Father>
+		</Level>
+		<Level id="C0087">
+			<name>GL</name>
+			<Father>M</Father>
+		</Level>
+		<Level id="C0088">
+			<name>LO1</name>
+			<Father>M</Father>
+		</Level>
+		<Level id="C0089">
+			<name>FD</name>
+			<Father>S1</Father>
+		</Level>
+		<Level id="C0090">
+			<name>GL</name>
+			<Father>S1</Father>
+		</Level>
+		<Level id="C0091">
+			<name>FD</name>
+			<Father>S2</Father>
+		</Level>
+		<Level id="C0092">
+			<name>GL</name>
+			<Father>S2</Father>
+		</Level>
+		<Level id="C0093">
+			<name>FD</name>
+			<Father>T</Father>
+		</Level>
+		<Level id="C0094">
+			<name>CL</name>
+			<Father>T</Father>
+		</Level>
+		<Level id="C0095">
+			<name>GL</name>
+			<Father>T</Father>
+		</Level>
+		<Level id="C0096">
+			<name>R</name>
+			<Father>T</Father>
+		</Level>
+	</File>
+
+	<File name="דרך חברון אסדן">
+		<Building id="B0030">
+			<name>Basement</name>
+		</Building>
+		<Building id="B0031">
+			<name>tower</name>
+		</Building>
+		<Building id="B0032">
+			<name>Building</name>
+		</Building>
+		<Level id="C0097">
+			<name>FD</name>
+			<Father>Basement</Father>
+		</Level>
+		<Level id="C0098">
+			<name>B4</name>
+			<Father>Basement</Father>
+		</Level>
+		<Level id="C0099">
+			<name>B3</name>
+			<Father>Basement</Father>
+		</Level>
+		<Level id="C0100">
+			<name>B2</name>
+			<Father>Basement</Father>
+		</Level>
+		<Level id="C0101">
+			<name>B1</name>
+			<Father>Basement</Father>
+		</Level>
+		<Level id="C0102">
+			<name>GL</name>
+			<Father>tower</Father>
+		</Level>
+		<Level id="C0103">
+			<name>GL</name>
+			<Father>Building</Father>
+		</Level>
+		<Level id="C0104">
+			<name>TYP</name>
+			<Father>tower</Father>
+		</Level>
+		<Level id="C0105">
+			<name>TYP</name>
+			<Father>Building</Father>
+		</Level>
+	</File>
+
+	<File name="260020">
+		<Lot id="A0004">
+			<name>מגרש 1</name>
+		</Lot>
+		<Lot id="A0005">
+			<name>מגרש 2</name>
+		</Lot>
+		<Lot id="A0006">
+			<name>מגרש 4</name>
+		</Lot>
+		<Building id="B0033">
+			<name>Basement1</name>
+			<Father>מגרש 1</Father>
+		</Building>
+		<Building id="B0034">
+			<name>A</name>
+			<Father>מגרש 1</Father>
+		</Building>
+		<Building id="B0035">
+			<name>B</name>
+			<Father>מגרש 1</Father>
+		</Building>
+		<Building id="B0036">
+			<name>C</name>
+			<Father>מגרש 1</Father>
+		</Building>
+		<Building id="B0037">
+			<name>Basement2</name>
+			<Father>מגרש 2</Father>
+		</Building>
+		<Building id="B0038">
+			<name>D</name>
+			<Father>מגרש 2</Father>
+		</Building>
+		<Building id="B0039">
+			<name>E</name>
+			<Father>מגרש 2</Father>
+		</Building>
+		<Building id="B0040">
+			<name>Basement4</name>
+			<Father>מגרש 4</Father>
+		</Building>
+		<Building id="B0041">
+			<name>office</name>
+			<Father>מגרש 4</Father>
+		</Building>
+		<Level id="C0106">
+			<name>FD</name>
+			<Father>Basement1</Father>
+		</Level>
+		<Level id="C0107">
+			<name>B3</name>
+			<Father>Basement1</Father>
+		</Level>
+		<Level id="C0108">
+			<name>B2</name>
+			<Father>Basement1</Father>
+		</Level>
+		<Level id="C0109">
+			<name>B1</name>
+			<Father>Basement1</Father>
+		</Level>
+		<Level id="C0110">
+			<name>GL</name>
+			<Father>A</Father>
+		</Level>
+		<Level id="C0111">
+			<name>GL</name>
+			<Father>B</Father>
+		</Level>
+		<Level id="C0112">
+			<name>GL</name>
+			<Father>C</Father>
+		</Level>
+		<Level id="C0113">
+			<name>FD</name>
+			<Father>Basement2</Father>
+		</Level>
+		<Level id="C0114">
+			<name>B3</name>
+			<Father>Basement2</Father>
+		</Level>
+		<Level id="C0115">
+			<name>B2</name>
+			<Father>Basement2</Father>
+		</Level>
+		<Level id="C0116">
+			<name>B1</name>
+			<Father>Basement2</Father>
+		</Level>
+		<Level id="C0117">
+			<name>GL</name>
+			<Father>E</Father>
+		</Level>
+		<Level id="C0118">
+			<name>GL</name>
+			<Father>F</Father>
+		</Level>
+		<Level id="C0119">
+			<name>FD</name>
+			<Father>Basement4</Father>
+		</Level>
+		<Level id="C0120">
+			<name>B3</name>
+			<Father>Basement4</Father>
+		</Level>
+		<Level id="C0121">
+			<name>B2</name>
+			<Father>Basement4</Father>
+		</Level>
+		<Level id="C0122">
+			<name>B1</name>
+			<Father>Basement4</Father>
+		</Level>
+		<Level id="C0123">
+			<name>GL</name>
+			<Father>Basement4</Father>
+		</Level>
+		<Level id="C0124">
+			<name>Typ</name>
+			<Father>A</Father>
+		</Level>
+		<Level id="C0125">
+			<name>L01</name>
+			<Father>A</Father>
+		</Level>
+		<Level id="C0126">
+			<name>Typ</name>
+			<Father>B</Father>
+		</Level>
+		<Level id="C0127">
+			<name>L01</name>
+			<Father>B</Father>
+		</Level>
+		<Level id="C0128">
+			<name>Typ</name>
+			<Father>C</Father>
+		</Level>
+		<Level id="C0129">
+			<name>L01</name>
+			<Father>C</Father>
+		</Level>
+		<Level id="C0130">
+			<name>Typ</name>
+			<Father>D</Father>
+		</Level>
+		<Level id="C0131">
+			<name>L01</name>
+			<Father>D</Father>
+		</Level>
+		<Level id="C0132">
+			<name>Typ</name>
+			<Father>E</Father>
+		</Level>
+		<Level id="C0133">
+			<name>L01</name>
+			<Father>E</Father>
+		</Level>
+		<Level id="C0134">
+			<name>GL</name>
+			<Father>office</Father>
+		</Level>
+		<Level id="C0135">
+			<name>Typ</name>
+			<Father>office</Father>
+		</Level>
+	</File>
+
+</Root>
