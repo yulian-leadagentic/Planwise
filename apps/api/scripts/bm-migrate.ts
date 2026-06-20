@@ -440,7 +440,11 @@ async function upsertCustomer(name: string, email: string | null, extras: {
   return created.id;
 }
 
-async function upsertUser(row: any, deptByOldId: Map<number, { id: number; name: string }>): Promise<number | null> {
+async function upsertUser(
+  row: any,
+  deptByOldId: Map<number, { id: number; name: string }>,
+  defaultRoleId: number,
+): Promise<number | null> {
   const category = String(row['category'] ?? '').toLowerCase();
   if (category !== 'employee') {
     bumpCount('users', 'skipped'); return null;
@@ -499,7 +503,6 @@ async function upsertUser(row: any, deptByOldId: Map<number, { id: number; name:
     audit('user', ph, 'created', `(dry-run) ${email}`);
     return ph;
   }
-  const employeeRole = await prisma.role.findFirst({ where: { name: 'Employee' } });
   const bcrypt = await import('bcrypt');
   // No usable password in v3 (the column existed in v2 but Amit may not
   // ship the hash). Generate a random one — the admin will issue resets.
@@ -522,7 +525,7 @@ async function upsertUser(row: any, deptByOldId: Map<number, { id: number; name:
     userType: 'employee',
   };
   if (deptName) userData.department = deptName;
-  if (employeeRole) userData.roleId = employeeRole.id;
+  userData.roleId = defaultRoleId;
   if (report.importId) userData.createdByImportId = report.importId;
   const created = await prisma.user.create({ data: userData });
   audit('user', created.id, 'created', `email=${email}`);
@@ -840,11 +843,23 @@ async function main() {
     customerIdByName.set(String(c['שם הלקוח '] ?? c['שם הלקוח'] ?? '').trim(), id);
   }
 
-  // 3. Users (employees only). Pass dept map so User.department gets the
-  //    department NAME from the lookup instead of being left null.
+  // 3. Users (employees only). Pre-resolve the default role at the top
+  //    so we can fail fast with a clear message — the schema requires
+  //    roleId on every User. Tries "Employee" first, falls back to any
+  //    non-admin role, then to any role at all.
+  const defaultRole =
+    await prisma.role.findFirst({ where: { name: { in: ['Employee', 'employee'] } } })
+    ?? await prisma.role.findFirst({ where: { NOT: { name: { in: ['Admin', 'admin'] } } }, orderBy: { id: 'asc' } })
+    ?? await prisma.role.findFirst({ orderBy: { id: 'asc' } });
+  if (!defaultRole) {
+    log('error', 'No Role rows in DB — seed roles before importing users');
+    process.exit(2);
+  }
+  log('info', `Default authorization role: "${defaultRole.name}" (id=${defaultRole.id})`);
+
   for (const u of users) {
     const oldId = Number(u['id']);
-    const newId = await upsertUser(u, deptMap.byOldId);
+    const newId = await upsertUser(u, deptMap.byOldId, defaultRole.id);
     if (Number.isFinite(oldId) && newId) userOldIdToNew.set(oldId, newId);
   }
 
