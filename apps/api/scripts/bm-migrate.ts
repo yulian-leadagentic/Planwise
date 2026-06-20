@@ -888,7 +888,30 @@ async function main() {
 
     // 5. Zones from XML for THIS project — runs in BOTH modes; the
     //    dry-run returns phantom ids so task → zone lookups still work.
-    const xmlFile = xmlFiles.find((f) => f.fileName.trim() === pname);
+    //    Match in priority order: exact name → project number →
+    //    substring → token overlap (XML uses shortened labels like
+    //    "1616" for "מבנה 1616", "260014" for "המאירי", and
+    //    "נשר חדיף" for "נשר תמל 3201 חדיף"; the last needs a token
+    //    matcher because the shortened form isn't a substring).
+    const tokens = (s: string) => s.split(/\s+/).filter(Boolean);
+    const xmlFile =
+      xmlFiles.find((f) => f.fileName.trim() === pname) ??
+      (num ? xmlFiles.find((f) => f.fileName.trim() === num) : undefined) ??
+      xmlFiles.find((f) => {
+        const fn = f.fileName.trim();
+        if (!fn || !pname) return false;
+        return pname.includes(fn) || fn.includes(pname);
+      }) ??
+      xmlFiles.find((f) => {
+        const fn = f.fileName.trim();
+        if (!fn || !pname) return false;
+        // Every token of the shorter side must appear in the longer
+        // side. Catches "נשר חדיף" ⊂ tokens of "נשר תמל 3201 חדיף".
+        const a = tokens(fn), b = tokens(pname);
+        if (a.length === 0 || b.length === 0) return false;
+        const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+        return shorter.every((t) => longer.includes(t));
+      });
     let zoneIdByXmlId = new Map<string, number>();
     if (xmlFile && pid) {
       zoneIdByXmlId = await createZonesFromXml(pid, xmlFile);
