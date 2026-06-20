@@ -188,6 +188,8 @@ const auditQueue: LogEntry[] = [];
 function audit(entityType: string, entityId: number, action: LogEntry['action'], notes?: string) {
   auditQueue.push({ entityType, entityId, action, notes });
 }
+// Running counter so flushes across the run keep a stable sortOrder.
+let auditSortBase = 0;
 async function flushAudit(importId: number) {
   // Dry-run never persists — the queue is purely for counting and the
   // pretty-print at the end. importId=0 (no DataImport row) means dry-run.
@@ -197,10 +199,27 @@ async function flushAudit(importId: number) {
   }
   const data = auditQueue.map((a, i) => ({
     importId, entityType: a.entityType, entityId: a.entityId,
-    action: a.action, sortOrder: i, notes: a.notes ?? null,
+    action: a.action, sortOrder: auditSortBase + i, notes: a.notes ?? null,
   }));
   await prisma.importLog.createMany({ data });
+  auditSortBase += auditQueue.length;
   auditQueue.length = 0;
+}
+// Flush whenever the queue grows past this — keeps rollback recoverable
+// if the script is interrupted mid-run.
+const AUDIT_FLUSH_THRESHOLD = 100;
+async function maybeFlushAudit(importId: number) {
+  if (auditQueue.length >= AUDIT_FLUSH_THRESHOLD) await flushAudit(importId);
+}
+
+// Cheap progress log so a long-running commit shows it's alive.
+let __progressCounter = 0;
+function progress(bucket: string, label?: string) {
+  __progressCounter++;
+  if (__progressCounter % 100 === 0) {
+    // eslint-disable-next-line no-console
+    console.log(`\x1b[2m[progress]\x1b[0m ${__progressCounter} writes — currently ${bucket}${label ? ` (${label})` : ''}`);
+  }
 }
 
 // ─── Report accumulator ─────────────────────────────────────────────────────
@@ -257,17 +276,26 @@ async function upsertDepartments(rows: any[]): Promise<DeptResult> {
   return { byOldId, byName };
 }
 
+// Same cache pattern as phaseByName above — without it, dry-run reports
+// inflated counts (822 "created" services instead of the real ~13) because
+// no writes happen and findFirst always returns null.
+const serviceTypeByName = new Map<string, number>();
 async function resolveServiceTypeId(name: string | null): Promise<number | null> {
   if (!name) return null;
   const trimmed = name.trim();
   if (!trimmed) return null;
+  const key = trimmed.toLowerCase();
+  if (serviceTypeByName.has(key)) return serviceTypeByName.get(key)!;
+
   const existing = await prisma.serviceType.findFirst({ where: { name: trimmed } });
   if (existing) {
+    serviceTypeByName.set(key, existing.id);
     audit('service', existing.id, 'linked', trimmed);
     return existing.id;
   }
   if (!COMMIT) {
     const ph = phantomId();
+    serviceTypeByName.set(key, ph);
     audit('service', ph, 'created', `(dry-run) ${trimmed}`);
     bumpCount('services', 'created');
     return ph;
@@ -275,6 +303,7 @@ async function resolveServiceTypeId(name: string | null): Promise<number | null>
   const created = await prisma.serviceType.create({
     data: { name: trimmed, sortOrder: 99 },
   });
+  serviceTypeByName.set(key, created.id);
   audit('service', created.id, 'created', trimmed);
   bumpCount('services', 'created');
   return created.id;
@@ -994,8 +1023,13 @@ async function main() {
       // and Timesheet sheets can resolve their task references.
       const assId = Number(t['assignment_id of employee']);
       if (taskId && Number.isFinite(assId)) assignmentIdToTaskId.set(assId, taskId);
+      progress('tasks', t['Task_Code']);
+      await maybeFlushAudit(report.importId ?? 0);
     }
   }
+  // Flush whatever's left in the queue before the assignee/timesheet
+  // loops start — keeps the audit log in chronological order.
+  await flushAudit(report.importId ?? 0);
 
   // 7. Employee_Assignments → TaskAssignee rows + Task.status/endDate.
   //    The Excel carries one row per (employee, assignment) pair, with
@@ -1079,11 +1113,14 @@ async function main() {
       });
       audit('task_assignee', a.id, 'created', `user=${oldUserId} task=${oldAssId} status=${eaStatus} due=${eaDueDate?.toISOString().slice(0,10)}`);
       bumpCount('task_assignees', 'created');
+      progress('task_assignees');
+      await maybeFlushAudit(report.importId ?? 0);
     } catch (err: any) {
       bumpCount('task_assignees', 'errors');
       report.errors.push({ context: 'task_assignee', message: err.message });
     }
   }
+  await flushAudit(report.importId ?? 0);
 
   // 8. Timesheet → TimeEntry rows. Excel stores start/end as
   //    seconds-since-midnight; convert to HH:MM. Resolves user via
@@ -1120,21 +1157,33 @@ async function main() {
       continue;
     }
     try {
-      const e = await prisma.timeEntry.create({
-        data: {
-          user: { connect: { id: newUserId } },
-          ...(newTaskId ? { task: { connect: { id: newTaskId } } } : {}),
-          date,
-          startTime: startTime ?? undefined,
-          endTime: endTime ?? undefined,
-          minutes,
-          note,
-          location,
-          isBillable: true,
-        },
+      // Dedup: dedupe by (user, task, date, start) so a re-run of an
+      // interrupted commit doesn't double-insert.
+      const existing = await prisma.timeEntry.findFirst({
+        where: { userId: newUserId, taskId: newTaskId, date, startTime: startTime ?? undefined },
       });
-      audit('time_entry', e.id, 'created', `user=${oldUserId} task=${oldAssId} ${date.toISOString().slice(0, 10)}`);
-      bumpCount('time_entries', 'created');
+      if (existing) {
+        audit('time_entry', existing.id, 'linked', `user=${oldUserId} task=${oldAssId} ${date.toISOString().slice(0, 10)}`);
+        bumpCount('time_entries', 'linked');
+      } else {
+        const e = await prisma.timeEntry.create({
+          data: {
+            user: { connect: { id: newUserId } },
+            ...(newTaskId ? { task: { connect: { id: newTaskId } } } : {}),
+            date,
+            startTime: startTime ?? undefined,
+            endTime: endTime ?? undefined,
+            minutes,
+            note,
+            location,
+            isBillable: true,
+          },
+        });
+        audit('time_entry', e.id, 'created', `user=${oldUserId} task=${oldAssId} ${date.toISOString().slice(0, 10)}`);
+        bumpCount('time_entries', 'created');
+      }
+      progress('time_entries');
+      await maybeFlushAudit(report.importId ?? 0);
     } catch (err: any) {
       bumpCount('time_entries', 'errors');
       report.errors.push({ context: 'time_entry', message: err.message });
