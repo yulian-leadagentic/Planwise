@@ -58,6 +58,7 @@ async function deleteOne(tx: Prisma.TransactionClient, type: string, id: number)
     switch (type) {
       case 'time_entry':           await tx.timeEntry.delete({ where: { id } }); return true;
       case 'task_assignee':        await tx.taskAssignee.delete({ where: { id } }); return true;
+      case 'project_partner_role': await tx.projectPartnerRole.delete({ where: { id } }); return true;
       case 'task':                 await tx.task.delete({ where: { id } }); return true;
       case 'project_deliverable':  await tx.projectDeliverable.delete({ where: { id } }); return true;
       case 'zone':                 await tx.zone.delete({ where: { id } }); return true;

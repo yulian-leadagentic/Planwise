@@ -79,19 +79,38 @@ async function loadWorkbook(file: string): Promise<ExcelJS.Workbook> {
   return wb;
 }
 
+// ExcelJS cells come back in many shapes — strings, numbers, dates, rich
+// text arrays, hyperlinks, formula objects. The previous extractor only
+// handled `{ text }`, so richText cells (a common Hebrew-typing artifact)
+// fell through as objects and rendered as "[object Object]" in the UI —
+// see the firstName / lastName complaint on the Users import.
+function extractCellValue(v: any): any {
+  if (v === null || v === undefined) return null;
+  const t = typeof v;
+  if (t === 'string' || t === 'number' || t === 'boolean') return v;
+  if (v instanceof Date) return v;
+  if (t === 'object') {
+    if (Array.isArray(v.richText)) return v.richText.map((r: any) => r?.text ?? '').join('');
+    if ('text' in v) return extractCellValue(v.text);
+    if ('result' in v) return extractCellValue(v.result);
+    if ('hyperlink' in v) return v.hyperlink;
+    if ('value' in v) return extractCellValue(v.value);
+  }
+  return String(v);
+}
+
 function sheetRows(ws: ExcelJS.Worksheet): Record<string, any>[] {
   const headerRow = ws.getRow(1);
   const headers: string[] = [];
-  headerRow.eachCell((cell, col) => { headers[col - 1] = String(cell.value ?? '').trim(); });
+  headerRow.eachCell((cell, col) => { headers[col - 1] = String(extractCellValue(cell.value) ?? '').trim(); });
   const rows: Record<string, any>[] = [];
   for (let r = 2; r <= ws.rowCount; r++) {
     const row = ws.getRow(r);
     const obj: Record<string, any> = {};
     let allBlank = true;
     headers.forEach((h, idx) => {
-      const v = row.getCell(idx + 1).value;
-      const s = v === null || v === undefined ? '' : typeof v === 'object' && 'text' in (v as any) ? (v as any).text : v;
-      const str = typeof s === 'string' ? s.trim() : s;
+      const raw = extractCellValue(row.getCell(idx + 1).value);
+      const str = typeof raw === 'string' ? raw.trim() : raw;
       if (h) {
         obj[h] = str === '' || str === 'NULL' ? null : str;
         if (obj[h] !== null) allBlank = false;
@@ -202,21 +221,172 @@ function bumpCount(bucket: string, kind: 'created' | 'linked' | 'skipped' | 'err
 }
 
 // ─── Step helpers ───────────────────────────────────────────────────────────
-async function upsertDepartments(rows: any[]): Promise<Map<number, number>> {
-  // Map old department_id → new department_id (we don't have a Department
-  // model directly; per the schema, User.department is a STRING. So this
-  // resolves to a name lookup; the map carries (oldId → name) effectively.)
-  // The Department sheet is just a string lookup table, so we cache the
-  // names by old id.
-  const byOldId = new Map<number, string>();
+interface DeptResult {
+  byOldId: Map<number, { id: number; name: string }>;
+  byName: Map<string, number>;
+}
+async function upsertDepartments(rows: any[]): Promise<DeptResult> {
+  // Two-way map: by oldId (from the Excel department_id column) → real
+  // Department row, AND by name → id (for project.departmentId lookup
+  // when Excel rows reference by name). Both User.department (string)
+  // and Project.departmentId (FK) need it.
+  const byOldId = new Map<number, { id: number; name: string }>();
+  const byName = new Map<string, number>();
   for (const r of rows) {
-    const id = Number(r['Department ID']);
+    const oldId = Number(r['Department ID']);
     const name = String(r['Department'] ?? '').trim();
-    if (!Number.isFinite(id) || !name) continue;
-    byOldId.set(id, name);
+    if (!Number.isFinite(oldId) || !name) continue;
+
+    let dept = await prisma.department.findFirst({ where: { name } });
+    if (dept) {
+      audit('department', dept.id, 'linked', `${name} oldId=${oldId}`);
+      bumpCount('departments', 'linked');
+    } else if (COMMIT) {
+      dept = await prisma.department.create({ data: { name, sortOrder: oldId } });
+      audit('department', dept.id, 'created', `${name} oldId=${oldId}`);
+      bumpCount('departments', 'created');
+    } else {
+      const ph = phantomId();
+      dept = { id: ph } as any;
+      audit('department', ph, 'created', `(dry-run) ${name} oldId=${oldId}`);
+      bumpCount('departments', 'created');
+    }
+    byOldId.set(oldId, { id: dept!.id, name });
+    byName.set(name.toLowerCase(), dept!.id);
   }
-  bumpCount('departments', 'linked');
-  return byOldId as any; // signature kept generic — value is name string
+  return { byOldId, byName };
+}
+
+async function resolveServiceTypeId(name: string | null): Promise<number | null> {
+  if (!name) return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const existing = await prisma.serviceType.findFirst({ where: { name: trimmed } });
+  if (existing) {
+    audit('service', existing.id, 'linked', trimmed);
+    return existing.id;
+  }
+  if (!COMMIT) {
+    const ph = phantomId();
+    audit('service', ph, 'created', `(dry-run) ${trimmed}`);
+    bumpCount('services', 'created');
+    return ph;
+  }
+  const created = await prisma.serviceType.create({
+    data: { name: trimmed, sortOrder: 99 },
+  });
+  audit('service', created.id, 'created', trimmed);
+  bumpCount('services', 'created');
+  return created.id;
+}
+
+/**
+ * The Excel's "Service" column maps to what the UI calls "Service" — but
+ * the UI reads that from task.phase (not task.serviceType, which it
+ * confusingly labels as "Deliverable"). So we upsert a Phase row per
+ * unique Service name and stamp Task.phaseId. This is what makes the
+ * task drawer's "Service:" line show the value.
+ *
+ * Caches by lowercased name so the same value isn't queried 60 times.
+ */
+const phaseByName = new Map<string, number>();
+async function resolvePhaseId(name: string | null): Promise<number | null> {
+  if (!name) return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const key = trimmed.toLowerCase();
+  if (phaseByName.has(key)) return phaseByName.get(key)!;
+
+  const existing = await prisma.phase.findFirst({ where: { name: trimmed } });
+  if (existing) {
+    phaseByName.set(key, existing.id);
+    audit('phase', existing.id, 'linked', trimmed);
+    return existing.id;
+  }
+  if (!COMMIT) {
+    const ph = phantomId();
+    phaseByName.set(key, ph);
+    audit('phase', ph, 'created', `(dry-run) ${trimmed}`);
+    bumpCount('phases', 'created');
+    return ph;
+  }
+  const created = await prisma.phase.create({
+    data: { name: trimmed, sortOrder: 99 },
+  });
+  phaseByName.set(key, created.id);
+  audit('phase', created.id, 'created', trimmed);
+  bumpCount('phases', 'created');
+  return created.id;
+}
+
+/**
+ * Mirror the project's leaderId onto a team_leader ProjectPartnerRole
+ * so the project page's "Team Leader" section finds it. The Projects
+ * service does this dual-write automatically on create/update; we have
+ * to replicate it here because the script bypasses the service.
+ *
+ * Falls back to creating a stub BusinessPartner for the user if one
+ * doesn't exist yet — required because ProjectPartnerRole.partyId
+ * points at a BP, not at the User.
+ */
+async function ensureTeamLeaderRole(projectId: number, leaderUserId: number | null): Promise<void> {
+  if (!COMMIT || !leaderUserId) return;
+  const teamLeaderRole = await prisma.projectRoleType.findUnique({
+    where: { code: 'team_leader' }, select: { id: true },
+  });
+  if (!teamLeaderRole) return;
+  const user = await prisma.user.findUnique({
+    where: { id: leaderUserId },
+    select: { businessPartnerId: true, firstName: true, lastName: true, email: true },
+  });
+  if (!user) return;
+  let bpId = user.businessPartnerId;
+  // The legacy seed users may not have a linked BP — create one so the
+  // role assignment can hold a partyId.
+  if (!bpId) {
+    const bp = await prisma.businessPartner.create({
+      data: {
+        partnerType: 'person',
+        displayName: `${user.firstName} ${user.lastName}`.trim() || (user.email ?? '(unknown)'),
+        firstName: user.firstName ?? undefined,
+        lastName: user.lastName ?? undefined,
+        email: user.email,
+        source: 'import',
+        ...(report.importId ? { createdByImport: { connect: { id: report.importId } } } : {}),
+      },
+    });
+    await prisma.user.update({ where: { id: leaderUserId }, data: { businessPartnerId: bp.id } });
+    audit('business_partner', bp.id, 'created', `BP stub for leader ${user.email}`);
+    bpId = bp.id;
+  }
+  // End any prior team_leader on this project so the unique constraint
+  // (projectId, partyId, roleId, validFrom) doesn't collide.
+  await prisma.projectPartnerRole.deleteMany({
+    where: { projectId, roleId: teamLeaderRole.id, status: 'active' },
+  });
+  const link = await prisma.projectPartnerRole.create({
+    data: {
+      projectId, partyId: bpId, roleId: teamLeaderRole.id,
+      isPrimary: true, validFrom: new Date(), status: 'active',
+    },
+  });
+  audit('project_partner_role', link.id, 'created', `team_leader project=${projectId} bp=${bpId}`);
+}
+
+// Look up a user by "First Last" string. Tolerant of trailing spaces in
+// the source (Excel had "Shiffy " with trailing space).
+async function resolveUserByName(fullName: string | null): Promise<number | null> {
+  if (!fullName) return null;
+  const trimmed = fullName.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(/\s+/);
+  const first = parts.slice(0, -1).join(' ') || parts[0];
+  const last = parts.length > 1 ? parts.slice(-1)[0] : '';
+
+  const u =
+    await prisma.user.findFirst({ where: { firstName: first, lastName: last } }) ??
+    await prisma.user.findFirst({ where: { firstName: { startsWith: first } } });
+  return u?.id ?? null;
 }
 
 async function upsertCustomer(name: string, email: string | null, extras: {
@@ -270,7 +440,7 @@ async function upsertCustomer(name: string, email: string | null, extras: {
   return created.id;
 }
 
-async function upsertUser(row: any): Promise<number | null> {
+async function upsertUser(row: any, deptByOldId: Map<number, { id: number; name: string }>): Promise<number | null> {
   const category = String(row['category'] ?? '').toLowerCase();
   if (category !== 'employee') {
     bumpCount('users', 'skipped'); return null;
@@ -288,9 +458,38 @@ async function upsertUser(row: any): Promise<number | null> {
   const ln = lastName || (firstName ? '' : fallbackName.split(' ').slice(-1).join(' '));
   const isArchive = String(row['is_archive'] ?? '0') === '1';
 
+  // Department resolved from the Department sheet (Excel department_id).
+  const deptIdRaw0 = row['department_id'];
+  const deptIdNum0 = deptIdRaw0 == null ? NaN : Number(deptIdRaw0);
+  const deptNameForUpdate = Number.isFinite(deptIdNum0) ? deptByOldId.get(deptIdNum0)?.name ?? null : null;
+
   const existing = await prisma.user.findFirst({ where: { email } });
   if (existing) {
-    audit('user', existing.id, 'linked', `email=${email}`);
+    // Heal in place — earlier runs may have stored "[object Object]" for
+    // firstName/lastName due to the broken ExcelJS cell extractor.
+    // Idempotent: if the row already matches, this is a no-op patch.
+    if (COMMIT) {
+      const targetFirst = fn || existing.firstName;
+      const targetLast = ln || existing.lastName;
+      const needsHeal =
+        existing.firstName !== targetFirst ||
+        existing.lastName !== targetLast ||
+        (!existing.department && deptNameForUpdate);
+      if (needsHeal) {
+        await prisma.user.update({
+          where: { id: existing.id },
+          data: {
+            firstName: targetFirst,
+            lastName: targetLast,
+            department: existing.department ?? deptNameForUpdate ?? undefined,
+            isActive: !isArchive,
+          },
+        });
+        audit('user', existing.id, 'updated', `healed name/dept for ${email}`);
+      } else {
+        audit('user', existing.id, 'linked', `email=${email}`);
+      }
+    }
     bumpCount('users', 'linked');
     return existing.id;
   }
@@ -305,20 +504,27 @@ async function upsertUser(row: any): Promise<number | null> {
   // No usable password in v3 (the column existed in v2 but Amit may not
   // ship the hash). Generate a random one — the admin will issue resets.
   const tempHash = await bcrypt.hash('Change' + Date.now(), 10);
-  const created = await prisma.user.create({
-    data: {
-      email,
-      password: tempHash,
-      firstName: fn || '(unknown)',
-      lastName: ln || '',
-      phone: row['phone']?.toString() || undefined,
-      isActive: !isArchive,
-      userType: 'employee',
-      roleId: employeeRole?.id ?? undefined,
-      department: undefined, // department lookup deferred to a separate sync
-      createdByImportId: report.importId ?? undefined,
-    } as Prisma.UserUncheckedCreateInput,
-  });
+  // Department resolution: Excel carries department_id (FK to the
+  // Department sheet). Map to the actual Department row we just upserted
+  // and write its NAME into User.department (the User model field is a
+  // free-text string, not an FK).
+  const deptIdRaw = row['department_id'];
+  const deptIdNum = deptIdRaw == null ? NaN : Number(deptIdRaw);
+  const deptName = Number.isFinite(deptIdNum) ? deptByOldId.get(deptIdNum)?.name ?? null : null;
+
+  const userData: any = {
+    email,
+    password: tempHash,
+    firstName: fn || '(unknown)',
+    lastName: ln || '',
+    phone: row['phone']?.toString() || undefined,
+    isActive: !isArchive,
+    userType: 'employee',
+  };
+  if (deptName) userData.department = deptName;
+  if (employeeRole) userData.roleId = employeeRole.id;
+  if (report.importId) userData.createdByImportId = report.importId;
+  const created = await prisma.user.create({ data: userData });
   audit('user', created.id, 'created', `email=${email}`);
   bumpCount('users', 'created');
   return created.id;
@@ -329,6 +535,7 @@ async function upsertProject(
   customerBpId: number | null,
   runnerUserId: number,
   defaultProjectTypeId: number,
+  pmUserId: number | null,
 ): Promise<number | null> {
   const name = String(row['Project_name'] ?? '').trim();
   const number = String(row['Project_Number '] ?? row['Project_Number'] ?? '').trim();
@@ -372,6 +579,9 @@ async function upsertProject(
       status,
       projectTypeId: defaultProjectTypeId,
       createdBy: runnerUserId,
+      // PM from the Excel becomes Project.leaderId (Team Leader in the UI).
+      // null if the PM name didn't match any user — the report flags this.
+      leaderId: pmUserId ?? undefined,
       startDate: parseDate(row['Start date']) ?? undefined,
       endDate: parseDate(row['End Date']) ?? undefined,
       description: row['DESCRIPTION'] || undefined,
@@ -419,14 +629,27 @@ async function createZonesFromXml(
       if (z.name) nameToId.set(z.name, ph);
       continue;
     }
+    // Idempotent: dedupe by (projectId, code) so a re-run doesn't
+    // double the tree. Falls back to (projectId, name) when code is
+    // missing.
+    const existing = await prisma.zone.findFirst({
+      where: { projectId, code: z.id, deletedAt: null },
+    });
+    if (existing) {
+      idMap.set(z.id, existing.id);
+      if (z.name) nameToId.set(z.name, existing.id);
+      audit('zone', existing.id, 'linked', `${z.id} ${z.kind}`);
+      bumpCount('zones', 'linked');
+      continue;
+    }
     const created = await prisma.zone.create({
       data: {
-        projectId,
+        project: { connect: { id: projectId } },
         name: z.name || z.id,
         code: z.id,
         path: z.name || z.id,
         sortOrder: 0,
-      } as Prisma.ZoneUncheckedCreateInput,
+      },
     });
     idMap.set(z.id, created.id);
     if (z.name) nameToId.set(z.name, created.id);
@@ -480,6 +703,9 @@ async function upsertTask(
   zoneId: number | null,
   deliverableId: number | null,
   row: any,
+  runnerUserId: number,
+  serviceTypeId: number | null,
+  phaseId: number | null,
 ): Promise<number | null> {
   const code = row['Task_Code'] ? String(row['Task_Code']).trim() : null;
   const name = String(row['Task Name'] ?? '').trim();
@@ -487,10 +713,13 @@ async function upsertTask(
     bumpCount('tasks', 'skipped'); return null;
   }
 
-  // Dedupe by (project, code) when code is present; else (zone or project, name).
+  // Dedupe by (project, code, zone EXACT, name) — must match all four,
+  // including zoneId=null for project-level tasks. Without an exact zone
+  // match the same code reused across zones collapsed to a single task
+  // (e.g. TSK-1016 in B4 + GL + TYP merged to one row).
   const where: Prisma.TaskWhereInput = code
-    ? { projectId, code, deletedAt: null }
-    : { projectId, name, zoneId: zoneId ?? undefined, deletedAt: null };
+    ? { projectId, code, name, zoneId: zoneId ?? null, deletedAt: null }
+    : { projectId, name, zoneId: zoneId ?? null, deletedAt: null };
   const existing = await prisma.task.findFirst({ where });
   if (existing) {
     audit('task', existing.id, 'linked', `${code ?? ''} ${name}`);
@@ -505,20 +734,30 @@ async function upsertTask(
     return ph;
   }
   const budget = row['Amount'] ? Number(row['Amount']) : undefined;
+  // Hours derivation: when the source row carries a budget AMOUNT but no
+  // hours (the BM dataset never has hours), the user's rule is hours =
+  // amount / 400 (their internal rate). Skip rows with no amount.
+  const hours = budget ? Math.round((budget / 400) * 100) / 100 : undefined;
   // Task.code is required (varchar 50, not null). When the source row
   // has no code, synthesize one from the task name truncated to 50 — the
   // importer reports this so admins can rename later if desired.
   const resolvedCode = code || `BM-${name.slice(0, 40).replace(/\s+/g, '_')}`;
   const created = await prisma.task.create({
     data: {
-      projectId,
-      zoneId: zoneId ?? undefined,
-      projectDeliverableId: deliverableId ?? undefined,
+      project: { connect: { id: projectId } },
+      creator: { connect: { id: runnerUserId } },
+      ...(zoneId ? { zone: { connect: { id: zoneId } } } : {}),
+      ...(deliverableId ? { projectDeliverable: { connect: { id: deliverableId } } } : {}),
+      ...(serviceTypeId ? { serviceType: { connect: { id: serviceTypeId } } } : {}),
+      // task.phaseId is what the UI surfaces under the "Service" label —
+      // see task-drawer.tsx ("{task.phase.name}" rendered as "Service").
+      ...(phaseId ? { phase: { connect: { id: phaseId } } } : {}),
       code: resolvedCode,
       name,
-      budgetAmount: budget ? new Prisma.Decimal(budget) : undefined,
+      ...(budget ? { budgetAmount: new Prisma.Decimal(budget) } : {}),
+      ...(hours ? { budgetHours: new Prisma.Decimal(hours) } : {}),
       status: 'not_started',
-    } as Prisma.TaskUncheckedCreateInput,
+    },
   });
   audit('task', created.id, 'created', `${code ?? ''} ${name}`);
   bumpCount('tasks', 'created');
@@ -543,8 +782,18 @@ async function main() {
   const users = sheetRows(wb.getWorksheet('Users')!);
   const tasks = sheetRows(wb.getWorksheet('Project Tasks')!);
   const departments = sheetRows(wb.getWorksheet('Department')!);
-  // const employeeAssignments = sheetRows(wb.getWorksheet('Employee_Assignments')!);
-  // const timesheet = sheetRows(wb.getWorksheet('Timesheet')!);
+  const employeeAssignments = sheetRows(wb.getWorksheet('Employee_Assignments')!);
+  const timesheet = sheetRows(wb.getWorksheet('Timesheet')!);
+
+  // Cross-sheet id maps:
+  //  • userOldIdToNew — Excel Users.id → real User.id, used by Timesheet
+  //    and Employee_Assignments to resolve who.
+  //  • assignmentIdToTaskId — the legacy `assignment_id` carried on Project
+  //    Tasks AND referenced by Employee_Assignments / Timesheet. Tracks
+  //    "this task came from THAT row of the old system" so the other two
+  //    sheets can resolve the now-real Task.id.
+  const userOldIdToNew = new Map<number, number>();
+  const assignmentIdToTaskId = new Map<number, number>();
 
   // Create DataImport row immediately so subsequent audit logs FK to it.
   // In dry-run we still create the row but set status='parsed' and skip
@@ -569,8 +818,10 @@ async function main() {
     log('info', `DataImport id=${di.id}`);
   }
 
-  // 1. Departments → name lookup map by old id
-  await upsertDepartments(departments);
+  // 1. Departments — actually upsert into the Department model. Returns
+  //    both an oldId→{id,name} map (for user.department) and a name→id
+  //    lookup (for future project.departmentId).
+  const deptMap = await upsertDepartments(departments);
 
   // 2. Customers — sheet first, even if some referenced by Projects are missing
   const customerIdByName = new Map<string, number | null>();
@@ -589,8 +840,13 @@ async function main() {
     customerIdByName.set(String(c['שם הלקוח '] ?? c['שם הלקוח'] ?? '').trim(), id);
   }
 
-  // 3. Users (employees only)
-  for (const u of users) await upsertUser(u);
+  // 3. Users (employees only). Pass dept map so User.department gets the
+  //    department NAME from the lookup instead of being left null.
+  for (const u of users) {
+    const oldId = Number(u['id']);
+    const newId = await upsertUser(u, deptMap.byOldId);
+    if (Number.isFinite(oldId) && newId) userOldIdToNew.set(oldId, newId);
+  }
 
   // 4. Project header(s) — filtered if --project provided
   // Resolve a default ProjectType for new projects (required column).
@@ -612,10 +868,23 @@ async function main() {
       custId = await upsertCustomer(custName, null, {});
       customerIdByName.set(custName, custId);
     }
-    const pid = await upsertProject(p, custId, runner.id, defaultType?.id ?? 0);
+    // PM lookup so Project.leaderId gets set (= "Team Leader" in the UI).
+    const pmName = String(p['PM / Project Manager (user)'] ?? '').trim() || null;
+    const pmUserId = await resolveUserByName(pmName);
+    if (pmName && !pmUserId) {
+      report.warnings.push({ context: 'project_pm', message: `PM "${pmName}" not found in Users` });
+    }
+    const pid = await upsertProject(p, custId, runner.id, defaultType?.id ?? 0, pmUserId);
     const pname = String(p['Project_name'] ?? '').trim();
     if (num) projectIdByNumber.set(num, pid);
     if (pname) projectIdByName.set(pname, pid);
+
+    // 4b. Team Leader visibility — mirror leaderId onto a team_leader
+    //     ProjectPartnerRole so the Team Leader header on the project
+    //     page actually renders. Dual-write matches what the projects
+    //     service does (see syncTeamLeaderRole) — we replicate it here
+    //     because the script bypasses the service.
+    if (pid) await ensureTeamLeaderRole(pid, pmUserId);
 
     // 5. Zones from XML for THIS project — runs in BOTH modes; the
     //    dry-run returns phantom ids so task → zone lookups still work.
@@ -625,6 +894,37 @@ async function main() {
       zoneIdByXmlId = await createZonesFromXml(pid, xmlFile);
     } else if (!xmlFile) {
       report.warnings.push({ context: 'zones', message: `No XML <File name="${pname}"> for project ${num || pname}` });
+    }
+
+    // 5b. Synthetic "No Zone" zone for tasks where Excel says Zone=NA.
+    //     Before this, those tasks went in with zoneId=null which is
+    //     project-level — but the planning grid renders them in a
+    //     synthetic "Project Root" row, NOT under a real zone the user
+    //     can collapse/expand. Per the user's call, they want them all
+    //     under a visible "No Zone" zone instead.
+    let noZoneId: number | null = null;
+    if (pid && COMMIT) {
+      const existingNoZone = await prisma.zone.findFirst({
+        where: { projectId: pid, code: 'NA', deletedAt: null },
+      });
+      if (existingNoZone) {
+        noZoneId = existingNoZone.id;
+        audit('zone', existingNoZone.id, 'linked', 'No Zone bucket');
+      } else {
+        const nz = await prisma.zone.create({
+          data: {
+            project: { connect: { id: pid } },
+            name: 'No Zone', code: 'NA', path: 'No Zone', sortOrder: 999,
+          },
+        });
+        noZoneId = nz.id;
+        audit('zone', nz.id, 'created', 'No Zone bucket');
+        bumpCount('zones', 'created');
+      }
+    } else if (pid && !COMMIT) {
+      noZoneId = phantomId();
+      audit('zone', noZoneId, 'created', '(dry-run) No Zone bucket');
+      bumpCount('zones', 'created');
     }
 
     // 6. Project Tasks for THIS project
@@ -639,8 +939,167 @@ async function main() {
       }
       const zoneRaw = String(t['Zone'] ?? '').trim();
       const xmlZoneId = translateExcelZoneId(zoneRaw);
-      const zoneId = zoneIdByXmlId.get(xmlZoneId) ?? null;
-      if (pid) await upsertTask(pid, zoneId, delivId ?? null, t);
+      // NA / unknown → synthetic No-Zone bucket so they're visible in
+      // the planning grid as a real zone row, not the project-root void.
+      const zoneId = zoneIdByXmlId.get(xmlZoneId) ?? noZoneId;
+      // Each task carries a Service in the Excel. Resolve both:
+      //   • Phase  — task.phaseId drives the drawer's "Service" line and
+      //              the Execution Board service filter priority #3.
+      //   • ServiceType — task.serviceTypeId is the legacy fallback
+      //              (priority #4 in getTaskServiceName) and shows up
+      //              under "Deliverable" in the drawer header.
+      const svcRaw = String(t['Service'] ?? '').trim() || null;
+      const serviceTypeId = await resolveServiceTypeId(svcRaw);
+      const phaseId = await resolvePhaseId(svcRaw);
+      const taskId = pid ? await upsertTask(pid, zoneId, delivId ?? null, t, runner.id, serviceTypeId, phaseId) : null;
+      // Track the assignment_id → task linkage so Employee_Assignments
+      // and Timesheet sheets can resolve their task references.
+      const assId = Number(t['assignment_id of employee']);
+      if (taskId && Number.isFinite(assId)) assignmentIdToTaskId.set(assId, taskId);
+    }
+  }
+
+  // 7. Employee_Assignments → TaskAssignee rows + Task.status/endDate.
+  //    The Excel carries one row per (employee, assignment) pair, with
+  //    status + due_date + (sometimes) start/end. We resolve via the
+  //    maps built earlier: Employees ID → User and assignment_id → Task.
+  //    Rows whose assignment_id isn't in the in-scope task set are
+  //    skipped (e.g. when --project narrowed to a single project).
+  //
+  //    For each EA row we ALSO:
+  //      • map the EA status → Task.status (see mapEaStatus)
+  //      • copy due_date → Task.endDate (so the task drawer's Due Date
+  //        header shows it) AND TaskAssignee.endDate (for per-person
+  //        tracking when multiple people share a task)
+  //      • copy start/end onto TaskAssignee
+  const mapEaStatus = (s: any): string => {
+    const x = String(s ?? '').toLowerCase().trim();
+    if (x === 'in progress' || x === 'working on it') return 'in_progress';
+    if (x === 'done' || x === 'completed') return 'completed';
+    if (x === 'on hold' || x === 'stuck') return 'on_hold';
+    if (x === 'cancelled' || x === 'canceled') return 'cancelled';
+    return 'not_started';
+  };
+  const toDate = (v: any): Date | null => {
+    if (v == null || v === 'NULL') return null;
+    if (v instanceof Date) return v;
+    const d = new Date(String(v));
+    return Number.isFinite(+d) ? d : null;
+  };
+  for (const ea of employeeAssignments) {
+    const oldUserId = Number(ea['Employees ID'] ?? ea['id']);
+    const oldAssId = Number(ea['assignment_id']);
+    const newUserId = userOldIdToNew.get(oldUserId);
+    const newTaskId = assignmentIdToTaskId.get(oldAssId);
+    if (!newUserId || !newTaskId) { bumpCount('task_assignees', 'skipped'); continue; }
+    const eaStatus = mapEaStatus(ea['status']);
+    const eaDueDate = toDate(ea['due_date']);
+    const eaStart = toDate(ea['start_date']);
+    const eaEnd = toDate(ea['end_date']);
+
+    if (!COMMIT) {
+      bumpCount('task_assignees', 'created');
+      audit('task_assignee', phantomId(), 'created', `(dry-run) user=${oldUserId} task=${oldAssId} status=${eaStatus} due=${eaDueDate?.toISOString().slice(0,10)}`);
+      continue;
+    }
+    try {
+      // Mirror status + due date onto the Task itself so they show up on
+      // the planning grid and the task drawer header. When multiple EA
+      // rows target the same Task, the last one processed wins (matches
+      // the legacy system's "current owner overrides" behavior).
+      await prisma.task.update({
+        where: { id: newTaskId },
+        data: {
+          status: eaStatus as any,
+          ...(eaDueDate ? { endDate: eaDueDate } : {}),
+        },
+      });
+
+      const existing = await prisma.taskAssignee.findFirst({ where: { taskId: newTaskId, userId: newUserId, deletedAt: null } });
+      if (existing) {
+        // Heal in place — set assignee dates if they weren't there before.
+        if (eaDueDate || eaStart || eaEnd) {
+          await prisma.taskAssignee.update({
+            where: { id: existing.id },
+            data: {
+              startDate: eaStart ?? existing.startDate ?? undefined,
+              endDate: eaEnd ?? eaDueDate ?? existing.endDate ?? undefined,
+            },
+          });
+        }
+        audit('task_assignee', existing.id, 'linked', `user=${oldUserId} task=${oldAssId} status=${eaStatus}`);
+        bumpCount('task_assignees', 'linked');
+        continue;
+      }
+      const a = await prisma.taskAssignee.create({
+        data: {
+          task: { connect: { id: newTaskId } },
+          user: { connect: { id: newUserId } },
+          ...(eaStart ? { startDate: eaStart } : {}),
+          ...(eaEnd || eaDueDate ? { endDate: eaEnd ?? eaDueDate } : {}),
+        },
+      });
+      audit('task_assignee', a.id, 'created', `user=${oldUserId} task=${oldAssId} status=${eaStatus} due=${eaDueDate?.toISOString().slice(0,10)}`);
+      bumpCount('task_assignees', 'created');
+    } catch (err: any) {
+      bumpCount('task_assignees', 'errors');
+      report.errors.push({ context: 'task_assignee', message: err.message });
+    }
+  }
+
+  // 8. Timesheet → TimeEntry rows. Excel stores start/end as
+  //    seconds-since-midnight; convert to HH:MM. Resolves user via
+  //    Timesheet_user_id and task via assignment_id.
+  for (const ts of timesheet) {
+    const oldUserId = Number(ts['Timesheet_user_id'] ?? ts['user_id']);
+    const oldAssId = Number(ts['assignment_id'] ?? ts['Timesheet_assignment_id']);
+    const newUserId = userOldIdToNew.get(oldUserId);
+    const newTaskId = assignmentIdToTaskId.get(oldAssId);
+    const dateRaw = ts['Timesheet_date'];
+    // Skip rows whose task isn't in scope (--project narrowed the run);
+    // otherwise the importer would create unattached TimeEntry rows that
+    // can't be linked back to a project.
+    if (!newUserId || !newTaskId || !dateRaw) { bumpCount('time_entries', 'skipped'); continue; }
+    const date = dateRaw instanceof Date ? dateRaw : new Date(String(dateRaw));
+    if (!Number.isFinite(+date)) { bumpCount('time_entries', 'skipped'); continue; }
+    const startSec = Number(ts['Timesheet_start_time']);
+    const endSec = Number(ts['Timesheet_end_time']);
+    const toHHMM = (s: number) => {
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    };
+    const startTime = Number.isFinite(startSec) ? toHHMM(startSec) : null;
+    const endTime = Number.isFinite(endSec) ? toHHMM(endSec) : null;
+    const minutes = Number.isFinite(startSec) && Number.isFinite(endSec)
+      ? Math.round((endSec - startSec) / 60)
+      : Math.round(Number(ts['Timesheet_hours']) * 60);
+    const note = ts['Timesheet_description'] && String(ts['Timesheet_description']).toUpperCase() !== 'NULL'
+      ? String(ts['Timesheet_description']) : undefined;
+    const location = String(ts['location'] ?? '').toLowerCase() === 'home' ? 'home' : 'office';
+    if (!COMMIT) {
+      bumpCount('time_entries', 'created');
+      audit('time_entry', phantomId(), 'created', `(dry-run) user=${oldUserId} task=${oldAssId} ${date.toISOString().slice(0, 10)}`);
+      continue;
+    }
+    try {
+      const e = await prisma.timeEntry.create({
+        data: {
+          user: { connect: { id: newUserId } },
+          ...(newTaskId ? { task: { connect: { id: newTaskId } } } : {}),
+          date,
+          startTime: startTime ?? undefined,
+          endTime: endTime ?? undefined,
+          minutes,
+          note,
+          location,
+          isBillable: true,
+        },
+      });
+      audit('time_entry', e.id, 'created', `user=${oldUserId} task=${oldAssId} ${date.toISOString().slice(0, 10)}`);
+      bumpCount('time_entries', 'created');
+    } catch (err: any) {
+      bumpCount('time_entries', 'errors');
+      report.errors.push({ context: 'time_entry', message: err.message });
     }
   }
 
