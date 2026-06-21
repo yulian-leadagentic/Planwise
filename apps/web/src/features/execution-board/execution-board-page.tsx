@@ -1036,27 +1036,20 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
           Only with due date
         </label>
 
-        <div className="flex items-center gap-2">
+        {/* Collapse All used to live here. It only makes sense for views
+            with collapsible zones (Matrix + Zone Tasks), so it now lives
+            inside their Zone column header — see below. The button hides
+            naturally on Status / Task Board (no Zone header). */}
+        {(serviceFilter.size > 0 || dueFrom || dueTo || onlyWithDue || statusFilter || phaseFilter.size > 0) && (
           <button
             type="button"
-            onClick={() => { setExpandedZones(new Set()); setExpandedIds(new Set()); }}
-            disabled={expandedZones.size === 0 && expandedIds.size === 0}
-            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:border-slate-400 disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Collapse every zone / sub-zone"
+            onClick={() => { setServiceFilter(new Set()); setDueFrom(''); setDueTo(''); setOnlyWithDue(false); setStatusFilter(''); setPhaseFilter(new Set()); }}
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:border-slate-400"
+            title="Clear all filters"
           >
-            Collapse All
+            Clear filters
           </button>
-          {(serviceFilter.size > 0 || dueFrom || dueTo || onlyWithDue || statusFilter || phaseFilter.size > 0) && (
-            <button
-              type="button"
-              onClick={() => { setServiceFilter(new Set()); setDueFrom(''); setDueTo(''); setOnlyWithDue(false); setStatusFilter(''); setPhaseFilter(new Set()); }}
-              className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:border-slate-400"
-              title="Clear all filters"
-            >
-              Clear filters
-            </button>
-          )}
-        </div>
+        )}
 
         <div className="ml-auto flex items-center gap-3 text-[11px] text-slate-500">
           <span className="flex items-center gap-1"><AlertCircle className="h-3 w-3 text-red-600" />Overdue / critical</span>
@@ -1172,7 +1165,18 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                       rowSpan={2}
                       className="sticky left-0 top-0 z-30 bg-slate-200/80 px-4 py-2.5 text-left font-bold text-slate-700 min-w-[300px] border-r border-slate-300"
                     >
-                      Zone
+                      <div className="flex items-center justify-between gap-2">
+                        <span>Zone</span>
+                        <button
+                          type="button"
+                          onClick={() => { setExpandedZones(new Set()); setExpandedIds(new Set()); }}
+                          disabled={expandedZones.size === 0 && expandedIds.size === 0}
+                          className="rounded-md border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-700 normal-case tracking-normal hover:border-slate-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                          title="Collapse every zone / sub-zone"
+                        >
+                          Collapse All
+                        </button>
+                      </div>
                     </th>
                     {zoneGroups.map((g) => (
                       <th
@@ -1309,7 +1313,18 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
               <thead>
                 <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
                   <th className="sticky top-0 left-0 z-30 bg-slate-50 px-4 py-2.5 text-left font-semibold min-w-[300px] border-r border-b border-slate-200">
-                    Zone
+                    <div className="flex items-center justify-between gap-2">
+                      <span>Zone</span>
+                      <button
+                        type="button"
+                        onClick={() => { setExpandedZones(new Set()); setExpandedIds(new Set()); }}
+                        disabled={expandedZones.size === 0 && expandedIds.size === 0}
+                        className="rounded-md border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-700 normal-case tracking-normal hover:border-slate-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="Collapse every zone / sub-zone"
+                      >
+                        Collapse All
+                      </button>
+                    </div>
                   </th>
                   {phaseColumns.map((name) => {
                     const svc = phaseToService.get(name);
