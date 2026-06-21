@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -42,6 +42,7 @@ describe('TasksService', () => {
       },
       user: {
         findUnique: jest.fn(),
+        findFirst: jest.fn(),
       },
       timeEntry: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { minutes: 0 }, _max: { date: null } }),
@@ -66,6 +67,34 @@ describe('TasksService', () => {
     beforeEach(() => {
       // findOne is called first inside addAssignee — return a valid task
       prisma.task.findFirst.mockResolvedValue({ id: TASK_ID, projectId: 1 });
+      // Default the active-user lookup to an active row so existing tests
+      // (that don't care about this guard) pass through to the next check.
+      prisma.user.findFirst.mockResolvedValue({
+        id: USER_ID, isActive: true, firstName: 'Active', lastName: 'User',
+      });
+    });
+
+    it('rejects with BadRequestException when the target user is inactive', async () => {
+      prisma.user.findFirst.mockResolvedValue({
+        id: USER_ID, isActive: false, firstName: 'Shifi', lastName: 'Cohen',
+      });
+
+      await expect(
+        service.addAssignee(TASK_ID, { userId: USER_ID }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(prisma.taskAssignee.findFirst).not.toHaveBeenCalled();
+      expect(prisma.taskAssignee.upsert).not.toHaveBeenCalled();
+    });
+
+    it('rejects with NotFoundException when the target user does not exist', async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.addAssignee(TASK_ID, { userId: 9999 }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      expect(prisma.taskAssignee.upsert).not.toHaveBeenCalled();
     });
 
     it('throws ConflictException when the user is already actively assigned', async () => {
