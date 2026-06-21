@@ -446,6 +446,26 @@ export class TasksService {
   async addAssignee(taskId: number, data: { userId: number; role?: string; hourlyRate?: number }, actorId?: number) {
     await this.findOne(taskId);
 
+    // Defensive: never assign to an inactive (deactivated) user. The UI
+    // already filters them out of the picker (since 2026-06-21), but a
+    // stale page, a scripted call, or an out-of-band request could still
+    // try. Block here with a clear 400 so we fail loud instead of
+    // silently writing a row pointing at someone who no longer works
+    // with the company.
+    const target = await this.prisma.user.findFirst({
+      where: { id: data.userId },
+      select: { id: true, isActive: true, firstName: true, lastName: true },
+    });
+    if (!target) {
+      throw new NotFoundException(`User ${data.userId} not found`);
+    }
+    if (!target.isActive) {
+      const name = `${target.firstName ?? ''} ${target.lastName ?? ''}`.trim() || `id=${target.id}`;
+      throw new BadRequestException(
+        `Cannot assign task to inactive user (${name}). Reactivate the user first.`,
+      );
+    }
+
     // Check if already actively assigned
     const active = await this.prisma.taskAssignee.findFirst({
       where: { taskId, userId: data.userId, deletedAt: null },

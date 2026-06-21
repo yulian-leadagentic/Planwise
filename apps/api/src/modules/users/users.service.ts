@@ -205,7 +205,19 @@ export class UsersService implements OnModuleInit {
 
     if (query.userType) where.userType = query.userType;
     if (query.roleId) where.roleId = query.roleId;
-    if (query.isActive !== undefined) where.isActive = query.isActive;
+
+    // Default to ACTIVE-ONLY when isActive is not specified. This is the
+    // safe default for every picker in the app (assignees, timesheet user
+    // select, project member dropdowns, mention search, etc.) — inactive
+    // staff should never appear in selection UI. To see inactive users
+    // pass ?isActive=false; to see BOTH pass ?isActive=all (only the
+    // admin People page does this, behind an explicit status filter).
+    if (query.isActive === undefined) {
+      where.isActive = true;
+    } else if (typeof query.isActive === 'boolean') {
+      where.isActive = query.isActive;
+    }
+    // (isActive === 'all' falls through — no filter applied)
 
     if (query.search) {
       where.OR = [

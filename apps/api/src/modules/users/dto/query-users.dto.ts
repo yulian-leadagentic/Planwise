@@ -1,6 +1,6 @@
-import { IsOptional, IsEnum, IsString, IsInt, IsBoolean } from 'class-validator';
+import { IsOptional, IsEnum, IsString, IsInt, IsBoolean, IsIn } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { UserType } from '@prisma/client';
 
 import { PaginationQueryDto } from '../../../common/dto/pagination.dto';
@@ -22,9 +22,17 @@ export class QueryUsersDto extends PaginationQueryDto {
   @IsString()
   search?: string;
 
-  @ApiPropertyOptional()
+  /**
+   * Active filter. Defaults to true (active only) on the service if omitted.
+   * Accepts: true | false | 'all' (admin override to include both).
+   */
+  @ApiPropertyOptional({ description: 'true | false | "all"' })
   @IsOptional()
-  @Type(() => Boolean)
-  @IsBoolean()
-  isActive?: boolean;
+  @Transform(({ value }) => {
+    if (value === 'all' || value === '*') return 'all';
+    if (value === 'true' || value === true) return true;
+    if (value === 'false' || value === false) return false;
+    return value;
+  })
+  isActive?: boolean | 'all';
 }

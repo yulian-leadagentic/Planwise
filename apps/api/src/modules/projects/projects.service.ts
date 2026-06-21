@@ -511,8 +511,12 @@ export class ProjectsService {
   }
 
   async getMembers(projectId: number) {
+    // Filter out members whose user is deactivated. Project member rows
+    // outlive their user's tenure (we keep the row so historical task
+    // assignment chains stay intact), but they should not surface in
+    // pickers / member lists once the employee is off the system.
     return this.prisma.projectMember.findMany({
-      where: { projectId },
+      where: { projectId, user: { isActive: true } },
       include: {
         user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true, position: true } },
       },

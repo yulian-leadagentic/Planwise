@@ -24,6 +24,7 @@ interface FilterState {
   // People filters
   peopleTab: 'employees' | 'partners';
   peopleSearch: string;
+  peopleStatus: 'active' | 'inactive' | 'all';
 
   // Report filters
   reportDateFrom: string | null;
@@ -36,7 +37,7 @@ interface FilterState {
   setTimeFilters: (filters: Partial<Pick<FilterState, 'timeProjectId' | 'timeWeekStart'>>) => void;
   setProjectFilters: (filters: Partial<Pick<FilterState, 'projectStatus' | 'projectSearch'>>) => void;
   setContractFilters: (filters: Partial<Pick<FilterState, 'contractStatus' | 'contractSearch'>>) => void;
-  setPeopleFilters: (filters: Partial<Pick<FilterState, 'peopleTab' | 'peopleSearch'>>) => void;
+  setPeopleFilters: (filters: Partial<Pick<FilterState, 'peopleTab' | 'peopleSearch' | 'peopleStatus'>>) => void;
   setReportFilters: (filters: Partial<Pick<FilterState, 'reportDateFrom' | 'reportDateTo' | 'reportProjectId' | 'reportUserId'>>) => void;
   resetFilters: () => void;
 }
@@ -55,6 +56,7 @@ const initialState = {
   contractSearch: '',
   peopleTab: 'employees' as const,
   peopleSearch: '',
+  peopleStatus: 'active' as const,
   reportDateFrom: null,
   reportDateTo: null,
   reportProjectId: null,

@@ -194,7 +194,7 @@ const emptyPerson = {
 
 export function PeoplePage() {
   const queryClient = useQueryClient();
-  const { peopleTab, peopleSearch, setPeopleFilters } = useFilterStore();
+  const { peopleTab, peopleSearch, peopleStatus, setPeopleFilters } = useFilterStore();
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ ...emptyPerson });
   // Picker for "Link to existing partner" — opens a searchable list of
@@ -403,9 +403,18 @@ export function PeoplePage() {
   );
 
   const userType = peopleTab === 'employees' ? 'employee' : 'partner';
+  // Status filter: this is the ONLY page in the app that legitimately
+  // needs to see deactivated users (so admins can reactivate them).
+  // 'active' (default) → backend default kicks in (only active).
+  // 'inactive' → only inactive. 'all' → both, via the `all` sentinel.
+  const isActiveParam: boolean | 'all' | undefined =
+    peopleStatus === 'active' ? true
+    : peopleStatus === 'inactive' ? false
+    : 'all';
   const { data, isLoading } = useUsers({
     userType,
     search: debouncedSearch || undefined,
+    isActive: isActiveParam,
   });
 
   const users = data?.data ?? [];
@@ -451,6 +460,28 @@ export function PeoplePage() {
         onSearchChange={(v) => setPeopleFilters({ peopleSearch: v })}
         searchPlaceholder={isPartners ? 'Search external employees...' : 'Search employees...'}
       />
+
+      {/* Status filter — defaults to Active. The whole rest of the app
+       *  relies on the backend's active-only default; this page is the
+       *  one exception (admins need to find deactivated users to
+       *  reactivate or delete them). */}
+      <div className="flex items-center gap-1.5">
+        {(['active', 'inactive', 'all'] as const).map((status) => (
+          <button
+            key={status}
+            type="button"
+            onClick={() => setPeopleFilters({ peopleStatus: status })}
+            className={cn(
+              'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+              peopleStatus === status
+                ? 'border-brand-600 bg-brand-50 text-brand-700'
+                : 'border-border bg-background text-muted-foreground hover:bg-muted/50',
+            )}
+          >
+            {status === 'active' ? 'Active' : status === 'inactive' ? 'Inactive' : 'All'}
+          </button>
+        ))}
+      </div>
 
       {!isLoading && users.length === 0 ? (
         <EmptyState

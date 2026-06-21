@@ -43,12 +43,14 @@ export class PresenceService {
   }
 
   /** Resolve to user records (firstName/lastName/avatarUrl) so the frontend
-   *  can render avatars without a second round-trip. */
+   *  can render avatars without a second round-trip. Filters out
+   *  deactivated users — they should never appear as "online" even if a
+   *  stale browser session is still pinging heartbeats. */
   async listActiveUsers(projectId: number, prisma: PrismaService) {
     const ids = this.activeUserIds(projectId);
     if (ids.length === 0) return [];
     const users = await prisma.user.findMany({
-      where: { id: { in: ids } },
+      where: { id: { in: ids }, isActive: true },
       select: { id: true, firstName: true, lastName: true, avatarUrl: true },
     });
     return users;

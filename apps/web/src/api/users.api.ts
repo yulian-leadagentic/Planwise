@@ -3,7 +3,13 @@ import type { ApiResponse, User, UserListItem, PaginationQuery } from '@/types';
 
 export interface UserQuery extends PaginationQuery {
   userType?: string;
-  isActive?: boolean;
+  /**
+   * Active filter. The backend defaults to `true` (active only) when this
+   * is omitted — that's what every picker in the app relies on. Pass
+   * `false` for inactive-only or `'all'` to include both (admin People
+   * page only).
+   */
+  isActive?: boolean | 'all';
   search?: string;
   roleId?: number;
 }
