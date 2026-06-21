@@ -13,10 +13,17 @@
  * and has been inconsistent in our experience. A self-probe always runs.
  *
  * Tuning:
- *  - probe every 30s
- *  - timeout each probe at 10s
- *  - allow 3 consecutive failures before exit (so a transient 30s burst doesn't
- *    cause spurious restarts; ~1.5min of unresponsiveness => restart)
+ *  - probe every 20s
+ *  - timeout each probe at 8s
+ *  - allow 2 consecutive failures before exit (~40s to recovery)
+ *
+ * Why no outer setTimeout: prior versions wrapped the probe loop in
+ * `setTimeout(60s)` to defer the first probe past boot. That loop runs on
+ * the main thread, so if the loop wedged inside the first 60s the timer
+ * never fired and the watchdog was never armed. Staging incident
+ * 2026-06-21 hit exactly that case (wedge at boot+7s, no auto-restart).
+ * Grace is now enforced inline in recordFailure() instead — the probe
+ * loop runs from t=0, failures during grace are silently dropped.
  */
 import * as http from 'http';
 import { Logger } from 'nestjs-pino';
@@ -28,9 +35,17 @@ const PROBE_INTERVAL_MS = 20_000;
 const PROBE_TIMEOUT_MS = 8_000;
 const MAX_CONSECUTIVE_FAILURES = 2;
 
+// Same idea as the wedge-killswitch: grace lives INLINE in recordFailure,
+// not as a deferred setTimeout. Previously the entire probe loop started
+// via setTimeout(60s) — which meant a wedge inside the first 60s froze
+// the very timer that was supposed to arm us. (Staging incident 2026-06-21.)
+const GRACE_PERIOD_MS = 60_000;
+
 export function startWatchdog(port: number | string, logger: Logger): void {
   let consecutiveFailures = 0;
   let probeInFlight = false;
+  const watchdogStartedAt = Date.now();
+  const inGrace = () => Date.now() - watchdogStartedAt < GRACE_PERIOD_MS;
 
   const probe = () => {
     if (probeInFlight) {
@@ -78,6 +93,11 @@ export function startWatchdog(port: number | string, logger: Logger): void {
   };
 
   const recordFailure = (reason: string) => {
+    if (inGrace()) {
+      // Boot-time probes can legitimately fail (HTTP listener not up yet,
+      // Prisma connecting). Don't count those against the budget.
+      return;
+    }
     consecutiveFailures += 1;
     logger.warn(
       `Watchdog probe failed (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}): ${reason}`,
@@ -95,10 +115,12 @@ export function startWatchdog(port: number | string, logger: Logger): void {
     }
   };
 
-  // Start probing after a 60s grace period so initial boot work (Prisma
-  // connection, migrations on container start) doesn't trigger a false alarm.
-  setTimeout(() => {
-    logger.log('Watchdog enabled', 'Watchdog');
-    setInterval(probe, PROBE_INTERVAL_MS).unref();
-  }, 60_000).unref();
+  // Start probing immediately. The grace period is enforced inline in
+  // recordFailure() above, NOT by deferring this setInterval — see the
+  // file header comment for the failure mode that approach caused.
+  logger.log(
+    `Watchdog armed — exit after ${MAX_CONSECUTIVE_FAILURES} consecutive probe failures (${GRACE_PERIOD_MS / 1000}s post-boot grace)`,
+    'Watchdog',
+  );
+  setInterval(probe, PROBE_INTERVAL_MS).unref();
 }

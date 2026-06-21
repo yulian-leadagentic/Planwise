@@ -24,6 +24,10 @@
  */
 import { Logger } from 'nestjs-pino';
 import { performance, monitorEventLoopDelay } from 'perf_hooks';
+import {
+  getInFlightRequestCount,
+  getLastSlowRoute,
+} from './interceptors/slow-request.interceptor';
 
 // eventLoopUtilization is a method on performance, not a named export.
 // Some @types/node versions don't expose it on perf_hooks at all; access
@@ -54,12 +58,15 @@ export function startVitalsLogger(logger: Logger): void {
       const handles = (process as any)._getActiveHandles?.().length ?? -1;
       const sockets = (process as any)._getActiveHandles?.()
         ?.filter((h: any) => h?.constructor?.name === 'Socket').length ?? -1;
+      const inFlight = getInFlightRequestCount();
+      const lastSlow = getLastSlowRoute();
+      const slowSuffix = lastSlow ? ` lastSlow="${lastSlow}"` : '';
 
       // Pino picks up the second-arg object as structured fields, so we
       // get both a human line in Railway and parseable JSON in Datadog
       // (or wherever we point logs later).
       logger.log(
-        `vitals elu=${eluDelta.utilization.toFixed(2)} lagMs=${maxLagMs} heapMb=${(mem.heapUsed / 1024 / 1024).toFixed(0)} rssMb=${(mem.rss / 1024 / 1024).toFixed(0)} handles=${handles} sockets=${sockets}`,
+        `vitals elu=${eluDelta.utilization.toFixed(2)} lagMs=${maxLagMs} heapMb=${(mem.heapUsed / 1024 / 1024).toFixed(0)} rssMb=${(mem.rss / 1024 / 1024).toFixed(0)} handles=${handles} sockets=${sockets} inFlight=${inFlight}${slowSuffix}`,
         'Vitals',
       );
 

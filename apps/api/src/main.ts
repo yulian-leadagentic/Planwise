@@ -10,6 +10,7 @@ import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor';
+import { SlowRequestInterceptor } from './common/interceptors/slow-request.interceptor';
 import { startWatchdog } from './common/watchdog';
 import { startWedgeKillswitch } from './common/wedge-killswitch';
 import { startVitalsLogger } from './common/vitals';
@@ -54,7 +55,13 @@ async function bootstrap() {
 
   // Global filters & interceptors
   app.useGlobalFilters(new HttpExceptionFilter());
-  app.useGlobalInterceptors(new ResponseInterceptor(), new TimeoutInterceptor());
+  // SlowRequestInterceptor goes FIRST so its timer measures the full
+  // request including TimeoutInterceptor's 30s budget and Response wrap.
+  app.useGlobalInterceptors(
+    new SlowRequestInterceptor(app.get(Logger)),
+    new ResponseInterceptor(),
+    new TimeoutInterceptor(),
+  );
 
   // Swagger — disabled in production to avoid leaking internal surface
   if (process.env.NODE_ENV !== 'production') {

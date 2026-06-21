@@ -1,4 +1,36 @@
 import { PrismaClient, Prisma } from '@prisma/client';
+import { Logger } from '@nestjs/common';
+
+/**
+ * Slow-query timing middleware.
+ *
+ * $use wraps the entire await of the query — that includes pool wait time
+ * AND actual SQL execution. If the connection pool is exhausted, queries
+ * stack up here and the duration includes the wait. So a slow log here
+ * surfaces BOTH a slow SQL query and pool starvation, which is what we
+ * want — both lead to wedges.
+ *
+ * Threshold is 500ms. Tune if it gets noisy; the goal is to catch slow
+ * endpoints that precede a wedge, not to log every legitimate big query.
+ */
+const SLOW_QUERY_MS = 500;
+const queryLogger = new Logger('SlowQuery');
+
+export function applyQueryTimingMiddleware(prisma: PrismaClient) {
+  prisma.$use(async (params, next) => {
+    const start = Date.now();
+    try {
+      return await next(params);
+    } finally {
+      const ms = Date.now() - start;
+      if (ms > SLOW_QUERY_MS) {
+        queryLogger.warn(
+          `${params.model ?? '?'}.${params.action} durationMs=${ms}`,
+        );
+      }
+    }
+  });
+}
 
 const SOFT_DELETE_MODELS: Prisma.ModelName[] = [
   'User',
