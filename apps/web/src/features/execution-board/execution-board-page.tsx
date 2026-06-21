@@ -460,7 +460,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     // Inline the filter-active check (the memoized isFilterActive const
     // is declared later in the component — referencing it here would hit
     // its TDZ during render).
-    const filterActive = serviceFilter.size > 0 || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter || phaseFilter.size > 0;
+    const filterActive = projectIds.size > 0 || serviceFilter.size > 0 || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter || phaseFilter.size > 0;
     if (!filterActive || !data) return;
     const keys = new Set<string>();
     const addZones = (nodes: ZoneNode[]) => {
@@ -475,7 +475,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     }
     setExpandedIds((prev) => new Set([...prev, ...keys]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, data]);
+  }, [projectIds, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, data]);
 
   const toggleExpand = useCallback((key: string) => {
     setExpandedIds((prev) => {
@@ -776,10 +776,14 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   const flatRows = useMemo(() => {
     if (!data) return [];
     const result: FlatRow[] = [];
-    // Project header rows appear whenever the page isn't pinned to a SINGLE
-    // project — size === 1 hides them (cleaner single-project view); 0 or
-    // >1 keeps them so the user can tell which zones belong to which.
-    const showProjects = projectIds.size !== 1 && data.projects.length > 0;
+    // Project header row visibility. In STANDALONE mode (the dedicated
+    // Execution Board page) we always show the header — selecting one
+    // project shouldn't make the layout collapse to depth-0 zones with
+    // no project label (that was confusing per user feedback 2026-06-21).
+    // In EMBEDDED mode (Execution Board rendered as a tab inside a
+    // project), the project context is already obvious from the
+    // surrounding page so the header would be redundant.
+    const showProjects = forcedProjectId == null && data.projects.length > 0;
 
     function walkZones(nodes: ZoneNode[], baseDepth: number, projectIdCtx: number, isTopLevel: boolean) {
       for (const z of nodes) {
