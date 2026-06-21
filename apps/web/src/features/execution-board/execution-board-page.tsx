@@ -605,6 +605,12 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   const filteredTasks = useMemo(() => {
     const all = data?.tasks ?? [];
     return all.filter((t: any) => {
+      // Project multi-select: empty set = no filter (all projects). Otherwise
+      // the task must belong to one of the selected projects. This filter
+      // used to be missing entirely — tasks flowed through unfiltered and
+      // every downstream view (Status / Task / Matrix / Zone Tasks) showed
+      // all projects regardless of selection (bug, 2026-06-21).
+      if (projectIds.size > 0 && !projectIds.has(t.projectId)) return false;
       if (statusFilter && t.status !== statusFilter) return false;
       if (phaseFilter.size > 0 && !phaseFilter.has(getTaskServiceName(t, deliverableNameToService) ?? '__none__')) return false;
       if (onlyWithDue && !t.endDate) return false;
@@ -625,7 +631,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       }
       return true;
     });
-  }, [data?.tasks, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, deliverableNameToService]);
+  }, [data?.tasks, projectIds, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, deliverableNameToService]);
 
   const { phaseColumns, directMatrix, hasNoPhase, phaseToService } = useMemo(() => {
     const tasks = filteredTasks;
@@ -813,7 +819,14 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       });
     }
 
-    for (const project of data.projects) {
+    // Apply the project multi-select to the row iteration. Without this,
+    // a Matrix view with 1 project selected (showProjects=false) walked
+    // zones of ALL projects at depth 0 — the user saw a mixed jumble of
+    // zones that didn't belong to their chosen project.
+    const projectsInScope = projectIds.size === 0
+      ? data.projects
+      : data.projects.filter((p) => projectIds.has(p.id));
+    for (const project of projectsInScope) {
       const zoneTree = data.zones[project.id] ?? [];
       const hasRoot = projectsWithRootTasks.has(project.id);
       if (showProjects) {
@@ -838,7 +851,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     }
 
     return result;
-  }, [data, projectId, expandedIds, projectsWithRootTasks]);
+  }, [data, projectId, projectIds, expandedIds, projectsWithRootTasks]);
 
   // When any client-side filter is active, hide rows that have zero
   // tasks under any phase column. Without this the user picks a filter
@@ -849,7 +862,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   // aggregated-tasks list for it. Project rows are kept if any of their
   // child zones survive — collapsing/expanding still works because
   // expandedIds is unaffected.
-  const isFilterActive = serviceFilter.size > 0 || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter || phaseFilter.size > 0;
+  const isFilterActive = projectIds.size > 0 || serviceFilter.size > 0 || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter || phaseFilter.size > 0;
   const visibleFlatRows = useMemo(() => {
     if (!isFilterActive) return flatRows;
 
