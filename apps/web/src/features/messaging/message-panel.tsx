@@ -27,7 +27,7 @@ function MentionAutocomplete({ search, onSelect, onClose }: {
     queryKey: ['users-active-mention', search],
     staleTime: 30 * 1000,
     queryFn: () =>
-      client.get('/users?isActive=true').then((r) => {
+      client.get('/users?isActive=true&perPage=1000').then((r) => {
         const d = r.data?.data ?? r.data;
         return Array.isArray(d) ? d : [];
       }),

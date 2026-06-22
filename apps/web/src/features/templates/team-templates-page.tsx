@@ -328,7 +328,7 @@ function EditorView({
     staleTime: 5 * 60 * 1000,
     enabled: showAddSection,
     queryFn: () =>
-      client.get('/users?isActive=true').then((r) => {
+      client.get('/users?isActive=true&perPage=1000').then((r) => {
         const d = r.data?.data ?? r.data;
         return Array.isArray(d) ? d : [];
       }),

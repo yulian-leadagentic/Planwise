@@ -88,7 +88,7 @@ export function ProjectListPage() {
     queryKey: ['users', 'active'],
     staleTime: 10 * 60 * 1000,
     queryFn: () =>
-      client.get('/users?isActive=true').then((r) => {
+      client.get('/users?isActive=true&perPage=1000').then((r) => {
         const d = r.data?.data ?? r.data;
         const list = Array.isArray(d) ? d : d?.data ?? [];
         return list as Array<{ id: number; firstName: string; lastName: string }>;

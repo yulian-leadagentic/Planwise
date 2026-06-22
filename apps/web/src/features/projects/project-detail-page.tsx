@@ -1706,7 +1706,11 @@ function AddMemberDialog({
     queryKey: ['users-active'],
     staleTime: 5 * 60 * 1000,
     queryFn: () =>
-      client.get('/users?isActive=true').then((r) => {
+      // perPage=1000 — load every active user so the client-side search
+      // can hit anyone in the company. Default page size is 20, which
+      // silently dropped employees past row 20 (Alex Isakov was missing
+      // from the Add Team Member picker on staging, 2026-06-21).
+      client.get('/users?isActive=true&perPage=1000').then((r) => {
         const d = r.data?.data ?? r.data;
         return Array.isArray(d) ? d : [];
       }),

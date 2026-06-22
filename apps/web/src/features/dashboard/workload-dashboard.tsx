@@ -36,7 +36,7 @@ export function WorkloadDashboardPage() {
   const { data: usersData = [] } = useQuery({
     queryKey: ['users-active'],
     staleTime: 5 * 60 * 1000,
-    queryFn: () => client.get('/users?isActive=true').then((r) => {
+    queryFn: () => client.get('/users?isActive=true&perPage=1000').then((r) => {
       const d = r.data?.data ?? r.data;
       return Array.isArray(d) ? d : [];
     }),
