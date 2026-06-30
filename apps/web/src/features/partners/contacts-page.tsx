@@ -346,8 +346,6 @@ function ContactsListView({
           ? (orgNameById.get(workerOf.targetId) ?? `Organization #${workerOf.targetId}`)
           : (c.companyName ?? null);
         const phone = c.phone || c.mobile || '';
-        const projectChipsToShow = c.projects.slice(0, 3);
-        const more = Math.max(0, c.projects.length - projectChipsToShow.length);
 
         return (
           <div
@@ -411,39 +409,15 @@ function ContactsListView({
               )}
             </div>
 
-            {/* Projects — only render chips when there ARE projects. When
-                the list is empty we leave the column blank so the "0 active"
-                badge to the right speaks for itself; the old "no projects"
-                italic text wrapped to two lines on laptop widths and looked
-                like it was overlapping the badge. (T2.fix6, 2026-06-29.) */}
-            <div className="flex-1 min-w-0 hidden lg:block">
-              {c.projects.length === 0 ? null : (
-                <div className="flex flex-wrap gap-1">
-                  {projectChipsToShow.map((p) => (
-                    <span
-                      key={p.id}
-                      className={cn(
-                        'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium truncate max-w-[180px]',
-                        p.status === 'active' ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                          : p.status === 'on_hold' ? 'border-amber-200 bg-amber-50 text-amber-700'
-                          : p.status === 'completed' ? 'border-blue-200 bg-blue-50 text-blue-700'
-                          : p.status === 'cancelled' ? 'border-red-200 bg-red-50 text-red-700'
-                          : 'border-slate-200 bg-slate-50 text-slate-600'
-                      )}
-                      title={`${p.name}${p.role ? ` — ${p.role}` : ''} (${p.status})`}
-                    >
-                      <FolderKanban className="h-3 w-3 shrink-0 opacity-70" />
-                      <span className="truncate">{p.name}</span>
-                    </span>
-                  ))}
-                  {more > 0 && (
-                    <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-500">
-                      +{more} more
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
+            {/* Flexible spacer — pushes the count badge to the right edge
+                while leaving the row's middle area uncluttered. We used
+                to render per-project chips here, but they truncated to
+                bare folder icons on laptop widths and visually stacked
+                under the "X active" badge, looking like duplicate empty
+                shapes. The count badge already conveys "how many" at a
+                glance; full project lists belong on the contact's
+                drawer/detail view. (T2.fix7, 2026-06-30.) */}
+            <div className="flex-1 min-w-0" />
 
             {/* Project count badge */}
             <div className="flex items-center gap-1.5 shrink-0 text-[11px]">
