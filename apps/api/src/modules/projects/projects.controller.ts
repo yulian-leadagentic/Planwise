@@ -84,15 +84,33 @@ export class ProjectsController {
   @Patch(':id')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Update a project' })
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateProjectDto) {
-    return this.projectsService.update(id, dto);
+  update(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateProjectDto) {
+    return this.projectsService.update(id, dto, user?.id);
   }
 
   @Delete(':id')
   @RequirePermissions({ module: 'projects', action: 'delete' })
   @ApiOperation({ summary: 'Soft delete a project' })
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.projectsService.remove(id);
+  remove(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    return this.projectsService.remove(id, user?.id);
+  }
+
+  // Close / Reopen — distinct from delete. Closing means "the project is
+  // done"; closed projects keep all their data, stay queryable for audit
+  // and reporting, but the default project-list query hides them. The UI
+  // exposes a "Show closed" toggle to opt back in.
+  @Post(':id/close')
+  @RequirePermissions({ module: 'projects', action: 'write' })
+  @ApiOperation({ summary: 'Close a project (stamp closedAt, keep all data)' })
+  close(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    return this.projectsService.close(id, user?.id);
+  }
+
+  @Post(':id/reopen')
+  @RequirePermissions({ module: 'projects', action: 'write' })
+  @ApiOperation({ summary: 'Reopen a previously-closed project (clear closedAt)' })
+  reopen(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    return this.projectsService.reopen(id, user?.id);
   }
 
   // Members
@@ -112,6 +130,25 @@ export class ProjectsController {
   @ApiOperation({ summary: 'List project members (login users only)' })
   getMembers(@Param('id', ParseIntPipe) projectId: number) {
     return this.projectsService.getMembers(projectId);
+  }
+
+  // Project Activity feed — surfaces every audited write that
+  // ActivityLogService routed to this project (status changes, assignee
+  // adds, member changes, file events, etc.). Permission stays at
+  // projects:read because the same people who can see the project
+  // already see the data this aggregates.
+  @Get(':id/activity-logs')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'List activity-log entries scoped to this project (latest first)' })
+  getActivityLogs(
+    @Param('id', ParseIntPipe) projectId: number,
+    @Query('perPage') perPage?: number,
+    @Query('page') page?: number,
+  ) {
+    return this.projectsService.getActivityLogs(projectId, {
+      perPage: Math.min(Number(perPage) || 50, 200),
+      page: Math.max(Number(page) || 1, 1),
+    });
   }
 
   @Get(':id/team')

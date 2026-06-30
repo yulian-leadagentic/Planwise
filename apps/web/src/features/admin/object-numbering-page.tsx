@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link as LinkIcon } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
@@ -33,6 +34,7 @@ interface EntityKindRow {
 
 export function ObjectNumberingPage() {
   const queryClient = useQueryClient();
+  const scrollRef = useStickyHScroll();
 
   const { data: kinds = [], isLoading } = useQuery<EntityKindRow[]>({
     queryKey: ['admin', 'entity-kinds'],
@@ -88,7 +90,7 @@ export function ObjectNumberingPage() {
       {isLoading ? (
         <TableSkeleton rows={5} cols={4} />
       ) : (
-        <div className="rounded-lg border border-border overflow-hidden">
+        <div ref={scrollRef} className="rounded-lg border border-border overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">

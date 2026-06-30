@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Shield, ChevronDown, ChevronRight, Plus, Trash2, Pencil, Users, UserMinus } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import client from '@/api/client';
@@ -11,6 +12,7 @@ import { notify } from '@/lib/notify';
 const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
 
 export function RolesPage() {
+  const scrollRef = useStickyHScroll();
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
@@ -486,7 +488,7 @@ function StageTransitionEditor({ roleId }: { roleId: number }) {
           No restrictions — this role can perform all transitions. Click any cell to start configuring.
         </p>
       )}
-      <div className="overflow-x-auto rounded-lg border border-slate-200">
+      <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-slate-200">
         <table className="w-full text-[11px]">
           <thead>
             <tr className="bg-slate-50">

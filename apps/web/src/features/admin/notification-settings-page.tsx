@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Bell, MessageSquare, UserPlus, AlertCircle, Check } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 
@@ -24,6 +25,7 @@ const defaultRules: NotificationRule[] = [
 ];
 
 export function NotificationSettingsPage() {
+  const scrollRef = useStickyHScroll();
   const [rules, setRules] = useState(defaultRules);
   const [generalSettings, setGeneralSettings] = useState({
     enableMessaging: true,
@@ -127,7 +129,7 @@ export function NotificationSettingsPage() {
       </div>
 
       {/* Per-Event Rules */}
-      <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+      <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
         <div className="px-6 py-4 border-b border-slate-100">
           <h3 className="text-[15px] font-bold text-slate-900">Notification Rules by Event</h3>
           <p className="text-[12px] text-slate-400 mt-0.5">Configure which channels each event type uses</p>

@@ -12,6 +12,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
@@ -41,6 +42,7 @@ interface BoardData {
 }
 
 export function ProjectStatusBoardPage() {
+  const scrollRef = useStickyHScroll();
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery<BoardData>({
     queryKey: ['project-status-board'],
@@ -97,7 +99,7 @@ export function ProjectStatusBoardPage() {
       ) : !data || data.projects.length === 0 ? (
         <div className="py-12 text-center text-sm text-slate-400 italic">No active projects.</div>
       ) : (
-        <div className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
+        <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
           <table className="w-full text-[13px]">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase tracking-wider text-slate-500">

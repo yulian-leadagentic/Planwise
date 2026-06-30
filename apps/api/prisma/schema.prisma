@@ -213,6 +213,12 @@ model User {
   password           String
   firstName          String          @map("first_name")
   lastName           String          @map("last_name")
+  /// Optional Hebrew rendering of the user's name. The search query
+  /// matches against EITHER the English columns above OR these, so an
+  /// admin can find "Yossi" by typing either "yossi" or "יוסי".
+  /// (T3.3, 2026-06-28)
+  firstNameHe        String?         @map("first_name_he") @db.VarChar(100)
+  lastNameHe         String?         @map("last_name_he") @db.VarChar(100)
   phone              String?
   avatarUrl          String?         @map("avatar_url")
   roleId             Int             @map("role_id")
@@ -480,6 +486,9 @@ model ProjectRoleTemplate {
   @@map("project_role_templates")
 }
 
+/// PROJECT — the central object every other table hangs off. `closedAt`
+/// gates project-list visibility; the (closed_at) index supports the
+/// hot path "list active projects" query.
 model Project {
   id             Int           @id @default(autoincrement())
   name           String
@@ -525,6 +534,12 @@ model Project {
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
   deletedAt      DateTime?     @map("deleted_at")
+  /// When set, the project is CLOSED — finished and excluded from the
+  /// default project list (the UI surfaces a "Show closed" toggle for
+  /// when someone needs to find one). Distinct from `deletedAt` (soft
+  /// delete) and `isArchived` (legacy boolean retained for back-compat);
+  /// closing is the user-facing "I'm done with this" action.
+  closedAt       DateTime?     @map("closed_at")
 
   projectType ProjectType @relation(fields: [projectTypeId], references: [id])
   department  Department? @relation(fields: [departmentId], references: [id])
@@ -550,6 +565,7 @@ model Project {
   @@index([leaderId])
   @@index([status])
   @@index([deletedAt])
+  @@index([closedAt])
   @@map("projects")
 }
 
@@ -883,6 +899,11 @@ model ActivityLog {
   entityType  String?          @map("entity_type")
   entityId    Int?             @map("entity_id")
   entityName  String?          @map("entity_name")
+  // Project this event belongs to. Nullable because some actions are
+  // truly global (auth, admin config, user creation pre-project). The
+  // per-project Activity tab filters on this; the (project_id, created_at)
+  // composite index keeps that query fast even at scale.
+  projectId   Int?             @map("project_id")
   description String
   changes     Json?
   metadata    Json?
@@ -897,6 +918,7 @@ model ActivityLog {
   @@index([entityType, entityId])
   @@index([createdAt])
   @@index([sessionId])
+  @@index([projectId, createdAt])
   @@map("activity_logs")
 }
 
@@ -1477,6 +1499,10 @@ model BusinessPartner {
   // Person-only (nullable for orgs)
   firstName    String?       @map("first_name") @db.VarChar(100)
   lastName     String?       @map("last_name") @db.VarChar(100)
+  /// Optional Hebrew rendering — same rationale as on User. Bilingual
+  /// search hits these too. (T3.3, 2026-06-28)
+  firstNameHe  String?       @map("first_name_he") @db.VarChar(100)
+  lastNameHe   String?       @map("last_name_he") @db.VarChar(100)
   // Org-typically (nullable for persons; persons can also have an
   // employer relationship — see BusinessPartnerRelationship)
   companyName  String?       @map("company_name") @db.VarChar(255)

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProjectAccessService } from '../../common/services/project-access.service';
+import { ActivityLogService } from '../../common/services/activity-log.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { QueryProjectsDto } from './dto/query-projects.dto';
@@ -40,6 +41,7 @@ export class ProjectsService {
     private access: ProjectAccessService,
     private bpRelationships: BusinessPartnerRelationshipsService,
     private numberRanges: NumberRangesService,
+    private activityLog: ActivityLogService,
   ) {}
 
   /**
@@ -249,6 +251,14 @@ export class ProjectsService {
       }
     }
 
+    // Audit trail — surfaced in the project's Activity tab.
+    await this.activityLog.logProjectCreated({
+      actorUserId: userId,
+      projectId: project.id,
+      entityId: project.id,
+      projectName: project.name,
+    });
+
     return project;
   }
 
@@ -284,6 +294,17 @@ export class ProjectsService {
 
     if (query.projectTypeId) {
       where.projectTypeId = query.projectTypeId;
+    }
+
+    // Hide CLOSED projects from the default list. T3.6+7, 2026-06-28.
+    // Three states (closedOnly takes precedence over includeClosed):
+    //   • closedOnly=true  → ONLY closed projects     (closedAt IS NOT NULL)
+    //   • includeClosed=true → include both          (no closedAt filter)
+    //   • default          → only open projects      (closedAt IS NULL)
+    if (query.closedOnly) {
+      where.closedAt = { not: null };
+    } else if (!query.includeClosed) {
+      where.closedAt = null;
     }
 
     if (query.search) {
@@ -389,12 +410,67 @@ export class ProjectsService {
       throw new NotFoundException('Project not found');
     }
 
-    return callerCanReadFinance(caller) ? project : omitBudget(project);
+    // Resolve BIM Leader for the task drawer "BIM Leader" row. Read from
+    // ProjectPartnerRole (the canonical home for project role assignments,
+    // alongside team_leader/customer/etc.). We look up the BP, then walk
+    // back to the User row so the UI gets the same shape as `leader`.
+    let bimLeader: { id: number; firstName: string | null; lastName: string | null; avatarUrl: string | null } | null = null;
+    const bimRoleType = await this.prisma.projectRoleType.findUnique({ where: { code: 'bim_leader' } });
+    if (bimRoleType) {
+      const now = new Date();
+      const ppr = await this.prisma.projectPartnerRole.findFirst({
+        where: {
+          projectId: id,
+          roleId: bimRoleType.id,
+          OR: [{ validTo: { gte: now } as any }, { validTo: undefined as any }],
+        },
+        // Pull firstName/lastName off the BP too — when the role's party
+        // isn't linked to a User account, we'd previously fall back to
+        // just `displayName` (often a short string like "Ea") which
+        // didn't read as a person's name. With first/last available we
+        // can build a proper "Firstname Lastname" label.
+        include: {
+          party: {
+            select: { id: true, displayName: true, firstName: true, lastName: true },
+          },
+        },
+      });
+      if (ppr?.party?.id) {
+        const u = await this.prisma.user.findFirst({
+          where: { businessPartnerId: ppr.party.id, isActive: true },
+          select: { id: true, firstName: true, lastName: true, avatarUrl: true },
+        });
+        if (u) {
+          bimLeader = u;
+        } else {
+          // Build the best label from BP fields. Priority:
+          //   1. firstName + lastName  (full name when both stored)
+          //   2. displayName           (legacy single-string fallback)
+          const bp = ppr.party;
+          const hasFullName = !!(bp.firstName && bp.lastName);
+          bimLeader = {
+            id: -bp.id,
+            firstName: hasFullName ? bp.firstName : (bp.firstName ?? bp.displayName),
+            lastName: hasFullName ? bp.lastName : (bp.lastName ?? null),
+            avatarUrl: null,
+          };
+        }
+      }
+    }
+
+    const enriched = { ...project, bimLeader };
+    return callerCanReadFinance(caller) ? enriched : omitBudget(enriched);
   }
 
-  async update(id: number, dto: UpdateProjectDto) {
+  async update(id: number, dto: UpdateProjectDto, actorUserId?: number) {
     await this.findOne(id);
     const { memberIds, ...rest } = dto;
+
+    // Capture which keys are actually being changed (any value supplied,
+    // including null) so the activity-log description can name the fields
+    // — gives the audit feed entries like "Updated 'Tower 1' — name, leader"
+    // instead of a generic "updated project".
+    const changedKeys = Object.keys(rest);
 
     const project = await this.prisma.project.update({
       where: { id },
@@ -408,6 +484,16 @@ export class ProjectsService {
         creator: { select: { id: true, firstName: true, lastName: true } },
       },
     });
+
+    if (changedKeys.length > 0) {
+      await this.activityLog.logProjectUpdated({
+        actorUserId,
+        projectId: id,
+        entityId: id,
+        projectName: project.name,
+        changedFields: changedKeys,
+      });
+    }
 
     // Ensure leader is a member
     if (dto.leaderId && dto.leaderId > 0) {
@@ -462,9 +548,70 @@ export class ProjectsService {
     return project;
   }
 
-  async remove(id: number) {
+  /**
+   * Mark a project as CLOSED. Distinct from soft-delete: closing means
+   * "the work is done, freeze the data", whereas delete means "this
+   * project was a mistake, hide it." Closed projects keep all their
+   * data and remain queryable for audit / billing / cost reporting —
+   * the project list just defaults to hiding them. Idempotent: re-closing
+   * an already-closed project no-ops.
+   */
+  async close(id: number, actorUserId?: number) {
     const project = await this.prisma.project.findFirst({ where: { id } });
     if (!project) throw new NotFoundException('Project not found');
+    if (project.closedAt) {
+      return { message: 'Project already closed', closedAt: project.closedAt };
+    }
+    const closedAt = new Date();
+    await this.prisma.project.update({ where: { id }, data: { closedAt } });
+    await this.activityLog.write({
+      actorUserId,
+      projectId: id,
+      category: 'project',
+      action: 'close',
+      entityType: 'project',
+      entityId: id,
+      entityName: project.name,
+      description: `Closed project "${project.name}"`,
+    });
+    return { message: 'Project closed', closedAt };
+  }
+
+  /**
+   * Re-open a previously-closed project (clears `closedAt`). Idempotent
+   * the other way too: re-opening an active project is a no-op.
+   */
+  async reopen(id: number, actorUserId?: number) {
+    const project = await this.prisma.project.findFirst({ where: { id } });
+    if (!project) throw new NotFoundException('Project not found');
+    if (!project.closedAt) {
+      return { message: 'Project is already open' };
+    }
+    await this.prisma.project.update({ where: { id }, data: { closedAt: null } });
+    await this.activityLog.write({
+      actorUserId,
+      projectId: id,
+      category: 'project',
+      action: 'reopen',
+      entityType: 'project',
+      entityId: id,
+      entityName: project.name,
+      description: `Re-opened project "${project.name}"`,
+    });
+    return { message: 'Project re-opened' };
+  }
+
+  async remove(id: number, actorUserId?: number) {
+    const project = await this.prisma.project.findFirst({ where: { id } });
+    if (!project) throw new NotFoundException('Project not found');
+
+    // Log BEFORE the cascade so the entry survives the delete.
+    await this.activityLog.logProjectDeleted({
+      actorUserId,
+      projectId: id,
+      entityId: id,
+      projectName: project.name,
+    });
 
     // Delete in order: task assignees → tasks → zones → members → project
     await this.prisma.taskAssignee.deleteMany({ where: { task: { projectId: id } } });
@@ -508,6 +655,41 @@ export class ProjectsService {
     }
 
     return member;
+  }
+
+  /**
+   * Per-project activity feed — pulls ActivityLog rows where project_id
+   * matches, newest first. The (project_id, created_at) composite index
+   * keeps this O(log n) even at scale. Joined with `user` for actor
+   * names so the UI doesn't need a second round-trip.
+   *
+   * BigInt id is serialized to string because JSON can't represent
+   * 64-bit integers — bigint.toString() avoids a Number-precision loss
+   * on the wire.
+   */
+  async getActivityLogs(
+    projectId: number,
+    opts: { perPage: number; page: number },
+  ): Promise<{ data: any[]; meta: { total: number; page: number; perPage: number } }> {
+    const take = opts.perPage;
+    const skip = (opts.page - 1) * take;
+    const [rows, total] = await Promise.all([
+      this.prisma.activityLog.findMany({
+        where: { projectId },
+        skip,
+        take,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+        },
+      }),
+      this.prisma.activityLog.count({ where: { projectId } }),
+    ]);
+    const data = rows.map((r) => ({
+      ...r,
+      id: r.id.toString(),
+    }));
+    return { data, meta: { total, page: opts.page, perPage: take } };
   }
 
   async getMembers(projectId: number) {

@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { EmptyState } from '@/components/shared/empty-state';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { useDebounce } from '@/hooks/use-debounce';
 import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
@@ -259,8 +260,9 @@ export function PartnersPage() {
 // ─── Per-tab list components ──────────────────────────────────────────────────
 
 function OrganizationsList({ partners, onSelect }: { partners: BusinessPartner[]; onSelect: (id: number) => void }) {
+  const scrollRef = useStickyHScroll();
   return (
-    <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+    <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">

@@ -101,6 +101,11 @@ export class UsersService implements OnModuleInit {
             displayName: `${dto.firstName} ${dto.lastName}`.trim() || dto.email,
             firstName: dto.firstName,
             lastName: dto.lastName,
+            // Mirror Hebrew names onto the linked BP so the bilingual
+            // search hits work from either entry point (People page or
+            // Contacts page). T3.3, 2026-06-28.
+            firstNameHe: dto.firstNameHe ?? null,
+            lastNameHe: dto.lastNameHe ?? null,
             email: dto.email,
             phone: dto.phone ?? null,
             source: 'manual',
@@ -220,9 +225,15 @@ export class UsersService implements OnModuleInit {
     // (isActive === 'all' falls through — no filter applied)
 
     if (query.search) {
+      // Bilingual search — matches the typed string against EITHER the
+      // English first/last name or the Hebrew rendition (T3.3,
+      // 2026-06-28). One typed query, two languages tried; admins find
+      // "Yossi" by typing "yossi" or "יוסי".
       where.OR = [
         { firstName: { contains: query.search } },
         { lastName: { contains: query.search } },
+        { firstNameHe: { contains: query.search } },
+        { lastNameHe: { contains: query.search } },
         { email: { contains: query.search } },
         { companyName: { contains: query.search } },
       ];
@@ -240,6 +251,12 @@ export class UsersService implements OnModuleInit {
           email: true,
           firstName: true,
           lastName: true,
+          // T3.3 — Hebrew names must be returned so the People edit modal
+          // can pre-fill the form with the current values. Without these,
+          // the modal would always render empty Hebrew fields even when
+          // the row had values, making it look like the column is unset.
+          firstNameHe: true,
+          lastNameHe: true,
           phone: true,
           avatarUrl: true,
           userType: true,
@@ -288,6 +305,9 @@ export class UsersService implements OnModuleInit {
         email: true,
         firstName: true,
         lastName: true,
+        // T3.3 — Hebrew names; see findAll's note for the rationale.
+        firstNameHe: true,
+        lastNameHe: true,
         phone: true,
         avatarUrl: true,
         userType: true,

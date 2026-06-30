@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Trash2, Copy, Search, X, BookOpen } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
@@ -425,7 +426,7 @@ function EditorView({
           </div>
         </div>
 
-        <div className="overflow-x-auto rounded-lg border border-border">
+        <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50">
@@ -527,6 +528,7 @@ function EditorView({
 // ---------------------------------------------------------------------------
 
 export function DeliverableTemplatesPage() {
+  const scrollRef = useStickyHScroll();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 

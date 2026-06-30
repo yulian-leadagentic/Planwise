@@ -56,8 +56,16 @@ export class BusinessPartnersService {
 
     if (query.search) {
       const s = query.search.trim();
+      // Bilingual search — see comment in users.service.findAll. The
+      // person-name columns (firstName/lastName + Hebrew variants) are
+      // included on top of displayName because admins routinely type
+      // just the first or last name. (T3.3, 2026-06-28)
       where.OR = [
         { displayName: { contains: s } },
+        { firstName:   { contains: s } },
+        { lastName:    { contains: s } },
+        { firstNameHe: { contains: s } },
+        { lastNameHe:  { contains: s } },
         { email:       { contains: s } },
         { companyName: { contains: s } },
         { phone:       { contains: s } },

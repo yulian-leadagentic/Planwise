@@ -28,6 +28,22 @@ export class CreateBusinessPartnerDto {
   @MaxLength(100)
   lastName?: string;
 
+  /** Optional Hebrew rendering — bilingual search matches both languages.
+   *  T3.3, 2026-06-28. */
+  @ApiPropertyOptional()
+  @ValidateIf((o) => o.partnerType === 'person')
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  firstNameHe?: string;
+
+  @ApiPropertyOptional()
+  @ValidateIf((o) => o.partnerType === 'person')
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  lastNameHe?: string;
+
   // Org fields
   @ApiPropertyOptional()
   @IsOptional()

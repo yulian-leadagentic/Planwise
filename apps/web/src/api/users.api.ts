@@ -19,6 +19,9 @@ export interface CreateUserPayload {
   password: string;
   firstName: string;
   lastName: string;
+  /** Optional Hebrew rendering — bilingual search matches this too. T3.3. */
+  firstNameHe?: string;
+  lastNameHe?: string;
   phone?: string;
   roleId: number;
   userType: string;

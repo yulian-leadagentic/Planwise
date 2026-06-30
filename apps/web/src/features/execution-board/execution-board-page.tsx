@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { getTaskHealth, aggregateHealth, type TaskHealth } from '@/lib/task-health';
 import { STATUS_DOT, STATUS_PILL, STATUS_LABEL, formatShortDate } from '@/lib/task-constants';
 import { queryKeys } from '@/lib/query-keys';
@@ -123,13 +124,20 @@ function useExecutionBoard(projectId?: number | null, serviceId?: number | null)
 
 // STATUS_DOT, STATUS_PILL, STATUS_LABEL imported from '@/lib/task-constants'
 
-const ZONE_COLORS: Record<string, { border: string; badge: string }> = {
-  zone:     { border: 'border-l-blue-400',   badge: 'bg-blue-100 text-blue-700' },
-  building: { border: 'border-l-indigo-400', badge: 'bg-indigo-100 text-indigo-700' },
-  floor:    { border: 'border-l-teal-400',   badge: 'bg-teal-100 text-teal-700' },
-  area:     { border: 'border-l-amber-400',  badge: 'bg-amber-100 text-amber-700' },
-  wing:     { border: 'border-l-pink-400',   badge: 'bg-pink-100 text-pink-700' },
-  section:  { border: 'border-l-cyan-400',   badge: 'bg-cyan-100 text-cyan-700' },
+// `bg` is the solid background-color form of `border` — used to paint the
+// colored left-accent stripe via an absolute-positioned overlay span on
+// the sticky Zone TD. Chrome / Edge / Safari all drop the `border-left`
+// on a `position: sticky` cell inside a `border-collapse: collapse`
+// table the moment the user scrolls the table horizontally; the overlay
+// avoids that quirk and renders consistently regardless of scrollLeft.
+// (T2.fix4, 2026-06-29.)
+const ZONE_COLORS: Record<string, { border: string; bg: string; badge: string }> = {
+  zone:     { border: 'border-l-blue-400',   bg: 'bg-blue-400',   badge: 'bg-blue-100 text-blue-700' },
+  building: { border: 'border-l-indigo-400', bg: 'bg-indigo-400', badge: 'bg-indigo-100 text-indigo-700' },
+  floor:    { border: 'border-l-teal-400',   bg: 'bg-teal-400',   badge: 'bg-teal-100 text-teal-700' },
+  area:     { border: 'border-l-amber-400',  bg: 'bg-amber-400',  badge: 'bg-amber-100 text-amber-700' },
+  wing:     { border: 'border-l-pink-400',   bg: 'bg-pink-400',   badge: 'bg-pink-100 text-pink-700' },
+  section:  { border: 'border-l-cyan-400',   bg: 'bg-cyan-400',   badge: 'bg-cyan-100 text-cyan-700' },
 };
 
 const PROJECT_COLORS = [
@@ -346,6 +354,11 @@ function TaskCard({ task, health, onClick }: { task: Task; health: TaskHealth; o
 }
 
 export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: number } = {}) {
+  // One sticky-h-scroll ref per inline table view (Matrix and Zone Tasks).
+  // Only one is rendered at a time (the view tab switch unmounts the
+  // other), so we don't worry about ref collisions.
+  const matrixScrollRef = useStickyHScroll();
+  const zoneTasksScrollRef = useStickyHScroll();
   // When the page is rendered as a project tab (forcedProjectId set),
   // the project selector at the top is hidden and the page is locked
   // to that single project. The standalone /execution-board route
@@ -1157,7 +1170,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
               No tasks to display. Try clearing filters or adding tasks under a Deliverable.
             </div>
           ) : (
-            <div className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
+            <div ref={zoneTasksScrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
               <table className="w-max text-[12px] border-collapse">
                 <thead>
                   <tr className="bg-slate-200/80 text-[11px] uppercase tracking-wider text-slate-800">
@@ -1219,10 +1232,13 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                           onClick={() => toggleExpand(row.key)}
                         >
                           <td
-                            className={cn('sticky left-0 z-10 px-4 py-2.5 border-r', pc.bg, pc.border)}
+                            className={cn('sticky left-0 z-10 px-0 py-2.5 border-r', pc.bg, pc.border)}
                             colSpan={zoneTotalCols + 1}
                           >
-                            <div className="flex items-center gap-2">
+                            {/* Double-sticky: see comment on the Matrix view
+                                project header. Inner div pins to viewport
+                                left while the outer TD fills the colSpan. */}
+                            <div className="sticky left-0 inline-flex items-center gap-2 px-4">
                               <ChevronRight
                                 className={cn(
                                   'h-4 w-4 text-slate-400 transition-transform duration-150',
@@ -1255,12 +1271,17 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                       >
                         <td
                           className={cn(
-                            'sticky left-0 z-10 bg-white group-hover:bg-blue-100/70 px-4 py-2 border-r border-slate-300 border-l-[3px] cursor-pointer transition-colors',
-                            zc.border,
+                            'relative sticky left-0 z-10 bg-white group-hover:bg-blue-100/70 px-4 py-2 border-r border-slate-300 cursor-pointer transition-colors',
                           )}
                           onClick={expandFully}
                           aria-label={anyExpanded ? 'Collapse this zone' : 'Expand this zone'}
                         >
+                          {/* Colored zone-accent stripe — painted as an
+                              absolute overlay because `border-left` on a
+                              sticky TD inside a border-collapse table
+                              disappears once the user scrolls horizontally.
+                              See ZONE_COLORS for the source of zc.bg. */}
+                          <span aria-hidden className={cn('absolute inset-y-0 left-0 w-[3px]', zc.bg)} />
                           <div
                             className="flex items-center gap-1.5"
                             style={{ paddingLeft: `${row.depth * 20}px` }}
@@ -1305,7 +1326,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
           );
         })()
       ) : (
-        <div className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
+        <div ref={matrixScrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
             {/* w-max + min-w-full: grow to content (so column min-widths are
                 respected and the container scrolls horizontally) but still
                 fill the width when there are only a few columns. */}
@@ -1373,10 +1394,20 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                         onClick={() => toggleExpand(row.key)}
                       >
                         <td
-                          className={cn('sticky left-0 z-10 px-4 py-2.5 border-r', pc.bg, pc.border)}
+                          className={cn('sticky left-0 z-10 px-0 py-2.5 border-r', pc.bg, pc.border)}
                           colSpan={totalCols}
                         >
-                          <div className="flex items-center gap-2">
+                          {/* Wrap the content in its own `position: sticky; left:0`
+                              layer so it stays pinned to the viewport's left
+                              edge as the row scrolls horizontally. The outer
+                              <td> uses colSpan to fill the full table width,
+                              which means `sticky left:0` on it alone doesn't
+                              keep the INNER text visible — sticky on the wide
+                              TD only fixes the cell box, not its content. The
+                              double-sticky pattern (td + inner div) is the
+                              canonical fix for "row-header inside a wide
+                              colSpan TD". (User feedback 2026-06-28.) */}
+                          <div className="sticky left-0 inline-flex items-center gap-2 px-4">
                             <ChevronRight
                               className={cn(
                                 'h-4 w-4 text-slate-400 transition-transform duration-150',
@@ -1424,12 +1455,17 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                           // sticky-left cell defaults to bg-white so it stays opaque
                           // when scrolled; group-hover paints it the same blue as the
                           // rest of the row so the whole line lights up together.
-                          'sticky left-0 z-10 bg-white group-hover:bg-blue-100/70 px-4 py-2 border-r border-slate-200 border-l-[3px] cursor-pointer transition-colors',
-                          zc.border,
+                          // `relative` anchors the zone-accent overlay span below.
+                          'relative sticky left-0 z-10 bg-white group-hover:bg-blue-100/70 px-4 py-2 border-r border-slate-200 cursor-pointer transition-colors',
                         )}
                         onClick={expandFully}
                         aria-label={anyExpanded ? 'Collapse this zone' : 'Expand this zone'}
                       >
+                        {/* Colored zone-accent stripe — painted as an overlay
+                            because `border-left` on a sticky TD inside a
+                            border-collapse table disappears once the user
+                            scrolls horizontally. */}
+                        <span aria-hidden className={cn('absolute inset-y-0 left-0 w-[3px]', zc.bg)} />
                         <div
                           className="flex items-center gap-1.5"
                           style={{ paddingLeft: `${row.depth * 20}px` }}
@@ -1562,6 +1598,7 @@ function ExecutionStatusBoard({
   projects: any[];
   forcedProjectId?: number;
 }) {
+  const scrollRef = useStickyHScroll();
   // Resolve a task's Deliverable label with the SINGLE canonical resolver
   // (getTaskPhaseName) so the status board columns line up exactly with the
   // matrix board, the filter dropdown, and the project task table. Tasks
@@ -1609,7 +1646,7 @@ function ExecutionStatusBoard({
   }
 
   return (
-    <div className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
+    <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
       <table className="w-max min-w-full text-[12px]">
         <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 tracking-wider">
           <tr>
@@ -1683,6 +1720,7 @@ function ExecutionTaskBoard({
   forcedProjectId?: number;
   onOpenTask: (id: number) => void;
 }) {
+  const scrollRef = useStickyHScroll();
   const resolveDeliverable = (t: any): string => getTaskPhaseName(t) ?? 'No Deliverable';
   const zoneNameOf = (t: any): string => t.zone?.name ?? 'Project Root';
   const taskKeyOf = (t: any): string => `${t.code ?? ''}||${t.name ?? ''}`;
@@ -1749,7 +1787,7 @@ function ExecutionTaskBoard({
     // w-max (no min-w-full): the table is sized to its content, so when only a
     // few columns are in scope they stay content-width instead of stretching
     // to fill; when there are many it overflows and the container scrolls.
-    <div className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
+    <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
       <table className="w-max text-[12px] border-collapse">
         <thead>
           {/* Row 1 — deliverable group headers. */}

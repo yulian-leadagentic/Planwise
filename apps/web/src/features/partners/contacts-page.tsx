@@ -411,11 +411,13 @@ function ContactsListView({
               )}
             </div>
 
-            {/* Projects */}
+            {/* Projects — only render chips when there ARE projects. When
+                the list is empty we leave the column blank so the "0 active"
+                badge to the right speaks for itself; the old "no projects"
+                italic text wrapped to two lines on laptop widths and looked
+                like it was overlapping the badge. (T2.fix6, 2026-06-29.) */}
             <div className="flex-1 min-w-0 hidden lg:block">
-              {c.projects.length === 0 ? (
-                <span className="text-[12px] text-slate-300 italic">no projects</span>
-              ) : (
+              {c.projects.length === 0 ? null : (
                 <div className="flex flex-wrap gap-1">
                   {projectChipsToShow.map((p) => (
                     <span

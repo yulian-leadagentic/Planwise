@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Pencil, Plus, Save, Trash2, X, DollarSign } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 
@@ -35,6 +36,7 @@ const emptyForm: FormState = {
 
 export function CurrenciesPage() {
   const queryClient = useQueryClient();
+  const scrollRef = useStickyHScroll();
   const [editingCode, setEditingCode] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -151,7 +153,7 @@ export function CurrenciesPage() {
           <p className="text-sm font-medium">No currencies configured</p>
         </div>
       ) : (
-        <div className="rounded-lg border border-border overflow-hidden">
+        <div ref={scrollRef} className="rounded-lg border border-border overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
@@ -14,6 +15,7 @@ const SEVERITY_STYLES: Record<string, string> = {
 };
 
 export function ActivityLogPage() {
+  const scrollRef = useStickyHScroll();
   const [page, setPage] = useState(1);
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'activity-logs', page],
@@ -33,7 +35,7 @@ export function ActivityLogPage() {
         <p className="py-8 text-center text-sm text-muted-foreground">No activity logs yet.</p>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-lg border border-border">
+          <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">

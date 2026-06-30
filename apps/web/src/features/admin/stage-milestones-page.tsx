@@ -11,6 +11,7 @@ import { Link } from 'react-router-dom';
 import { Plus, Trash2, ArrowLeft } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
@@ -28,6 +29,7 @@ const inputCls = 'w-full px-2 py-1 rounded border border-slate-200 text-sm focus
 
 export function StageMilestonesPage() {
   const queryClient = useQueryClient();
+  const scrollRef = useStickyHScroll();
   const { data: milestones = [], isLoading } = useQuery<Milestone[]>({
     queryKey: ['project-stage-milestones'],
     queryFn: () =>
@@ -87,7 +89,7 @@ export function StageMilestonesPage() {
 
       <NewMilestoneRow onAdd={(data) => create.mutate(data)} submitting={create.isPending} />
 
-      <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+      <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
         <table className="w-full text-[13px]">
           <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 tracking-wider">
             <tr>

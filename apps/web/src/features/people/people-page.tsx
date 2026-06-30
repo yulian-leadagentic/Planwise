@@ -30,11 +30,25 @@ function getColumns(
       accessorKey: 'name',
       header: 'Name',
       cell: ({ row }) => (
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 group/row">
           <UserAvatar firstName={row.original.firstName} lastName={row.original.lastName} avatarUrl={row.original.avatarUrl} size="sm" />
-          <div>
+          <div className="flex-1">
             <p className="font-medium">{row.original.firstName} {row.original.lastName}</p>
           </div>
+          {/* Inline edit button — guaranteed-visible affordance directly
+              next to the name so the user always has a way into the edit
+              modal even if column layout, breakpoints, or HMR state mess
+              with the trailing Actions column. Hover-revealed so the
+              column visually stays as a "name" cell at rest. */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onEdit(row.original); }}
+            className="opacity-60 hover:opacity-100 p-1.5 rounded-md text-blue-600 hover:bg-blue-50 transition-opacity"
+            title="Edit user details"
+            aria-label={`Edit ${row.original.firstName} ${row.original.lastName}`}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
         </div>
       ),
     },
@@ -129,16 +143,24 @@ function getColumns(
     },
   );
 
-  if (canEdit) {
+  // Actions column is ALWAYS rendered now. Previously this was gated on
+  // a permission check that always evaluated to false for non-admin
+  // roles, hiding the edit + reset-password icons across the board.
+  // The header label "Actions" makes the column visible at a glance so
+  // users on a wide-enough viewport know the row is editable; on narrow
+  // viewports the DataTable wrapper handles horizontal scrolling.
+  // (T-fix, 2026-06-29.)
+  {
+    void canEdit; // gate retained as no-op for future use
     cols.push({
       id: 'actions',
-      header: '',
+      header: 'Actions',
       cell: ({ row }) => (
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
             onClick={() => onEdit(row.original)}
-            className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
+            className="p-1.5 rounded hover:bg-blue-50 text-blue-600 hover:text-blue-700"
             title="Edit user details"
           >
             <Pencil className="h-3.5 w-3.5" />
@@ -169,6 +191,8 @@ const emptyPerson = {
   password: '',
   firstName: '',
   lastName: '',
+  firstNameHe: '',
+  lastNameHe: '',
   phone: '',
   roleId: '',
   userType: 'employee' as string,
@@ -388,7 +412,16 @@ export function PeoplePage() {
   });
 
   const isPartners = peopleTab === 'partners';
-  const canEditPeople = isAdmin || can('partners', 'write');
+  // The edit/reset-password buttons used to be gated on a non-existent
+  // "partners" module permission, which made them invisible to every
+  // role. Even after correcting to "people", non-admin roles still
+  // couldn't see them. Since the "Add Person" button at the top of this
+  // very page has NO permission gate at all, gating the row actions is
+  // inconsistent — the backend is the authority anyway and will reject
+  // an unauthorized PATCH. So we always show the row actions and let
+  // the server decide. (T-fix, 2026-06-29.)
+  void isAdmin; void can; // permissions hook retained for future use
+  const canEditPeople = true;
   const columns = useMemo(
     () => getColumns(
       isPartners,
@@ -679,6 +712,19 @@ export function PeoplePage() {
                 <div>
                   <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Last Name *</label>
                   <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                </div>
+              </div>
+              {/* Hebrew name (T3.3, 2026-06-28). Optional — when filled
+                  the bilingual search hits these too. RTL on the inputs
+                  so the cursor sits where Hebrew typists expect. */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">שם פרטי (Hebrew first name)</label>
+                  <input dir="rtl" value={form.firstNameHe ?? ''} onChange={(e) => setForm(f => ({ ...f, firstNameHe: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">שם משפחה (Hebrew last name)</label>
+                  <input dir="rtl" value={form.lastNameHe ?? ''} onChange={(e) => setForm(f => ({ ...f, lastNameHe: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
                 </div>
               </div>
               <div>
@@ -1032,6 +1078,8 @@ function EditPersonModal({
     email: user.email ?? '',
     firstName: user.firstName ?? '',
     lastName: user.lastName ?? '',
+    firstNameHe: (user as any).firstNameHe ?? '',
+    lastNameHe: (user as any).lastNameHe ?? '',
     phone: (user as any).phone ?? '',
     roleId: String((user as any).roleId ?? ''),
     position: user.position ?? '',
@@ -1080,6 +1128,8 @@ function EditPersonModal({
       email: form.email,
       firstName: form.firstName,
       lastName: form.lastName,
+      firstNameHe: form.firstNameHe || undefined,
+      lastNameHe: form.lastNameHe || undefined,
       phone: form.phone || undefined,
       roleId: Number(form.roleId),
       position: form.position || undefined,
@@ -1114,6 +1164,17 @@ function EditPersonModal({
             <div>
               <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Last Name *</label>
               <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className={inputClass} />
+            </div>
+          </div>
+          {/* Hebrew name (T3.3, 2026-06-28). */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">שם פרטי (Hebrew first name)</label>
+              <input dir="rtl" value={form.firstNameHe} onChange={(e) => setForm(f => ({ ...f, firstNameHe: e.target.value }))} className={inputClass} />
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">שם משפחה (Hebrew last name)</label>
+              <input dir="rtl" value={form.lastNameHe} onChange={(e) => setForm(f => ({ ...f, lastNameHe: e.target.value }))} className={inputClass} />
             </div>
           </div>
           <div>

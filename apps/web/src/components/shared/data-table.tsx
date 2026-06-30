@@ -10,6 +10,7 @@ import {
 import { useState } from 'react';
 import { ChevronDown, ChevronUp, ChevronsUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-media-query';
+import { useStickyHScroll } from './sticky-h-scroll';
 import { cn } from '@/lib/utils';
 
 interface DataTableProps<TData> {
@@ -33,6 +34,12 @@ export function DataTable<TData>({
 }: DataTableProps<TData>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const isMobile = useIsMobile();
+  // Sticky horizontal scrollbar — pins a proxy bar to the viewport
+  // bottom when the table overflows horizontally. Wires once here so
+  // every consumer (People, Tasks, Contracts, and any future caller)
+  // gets the affordance without re-implementing it. The hook is a no-op
+  // when content fits.
+  const scrollRef = useStickyHScroll();
 
   const table = useReactTable({
     data,
@@ -82,7 +89,7 @@ export function DataTable<TData>({
   // Desktop table layout
   return (
     <div className="space-y-4">
-      <div className="overflow-x-auto rounded-lg border border-border">
+      <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full text-sm">
           <thead className="bg-muted/50">
             {table.getHeaderGroups().map((headerGroup) => (

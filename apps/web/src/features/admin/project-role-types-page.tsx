@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2, Pencil, Save, X, Briefcase, Lock } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -51,6 +52,7 @@ export function ProjectRoleTypesPage() {
   const canWrite = isAdmin || can('admin/project-role-types', 'write');
   const canDelete = isAdmin || can('admin/project-role-types', 'delete');
   const queryClient = useQueryClient();
+  const scrollRef = useStickyHScroll();
   const [editingId, setEditingId] = useState<number | 'new' | null>(null);
 
   const { data: types = [], isLoading } = useQuery<ProjectRoleType[]>({
@@ -106,7 +108,7 @@ export function ProjectRoleTypesPage() {
       {isLoading ? (
         <TableSkeleton rows={4} cols={5} />
       ) : (
-        <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+        <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">

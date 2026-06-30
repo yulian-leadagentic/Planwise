@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Plus, Trash2, Pencil, BookOpen } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
@@ -63,6 +64,7 @@ function compareTasks(a: any, b: any, field: SortField, dir: SortDir): number {
 // ---------------------------------------------------------------------------
 
 export function TaskCatalogPage() {
+  const scrollRef = useStickyHScroll();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -285,7 +287,7 @@ export function TaskCatalogPage() {
       {isLoading ? (
         <TableSkeleton rows={5} cols={5} />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
+        <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50">

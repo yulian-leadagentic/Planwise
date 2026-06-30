@@ -42,8 +42,8 @@ export interface UpdateTaskPayload {
   status?: string;
   priority?: string;
   completionPct?: number;
-  startDate?: string;
-  endDate?: string;
+  startDate?: string | null;
+  endDate?: string | null;
   isArchived?: boolean;
 }
 

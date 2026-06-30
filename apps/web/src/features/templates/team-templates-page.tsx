@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Trash2, Users, Search } from 'lucide-react';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 
@@ -68,6 +69,7 @@ function TypeBadge({ type }: { type?: string | null }) {
 // ── Main Component ─────────────────────────────────────────────────────────────
 
 export function TeamTemplatesPage() {
+  const scrollRef = useStickyHScroll();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -467,7 +469,7 @@ function EditorView({
             <p className="mt-2 text-sm text-slate-400">No members yet. Add members to this template.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div ref={scrollRef} className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="bg-[#FAFBFC]">

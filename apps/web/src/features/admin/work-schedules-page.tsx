@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
@@ -9,6 +10,7 @@ import { notify } from '@/lib/notify';
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 export function WorkSchedulesPage() {
+  const scrollRef = useStickyHScroll();
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('Regular Shift');
@@ -108,7 +110,7 @@ export function WorkSchedulesPage() {
       ) : schedules.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">No work schedules configured yet. Click "Add Schedule" to create one.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
+        <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">

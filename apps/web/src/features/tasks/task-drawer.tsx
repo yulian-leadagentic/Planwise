@@ -555,6 +555,23 @@ function TaskProjectInfoBlock({ projectId, backLabel }: { projectId: number; bac
           <dt className="text-slate-500 w-[110px] shrink-0">Project:</dt>
           <dd className="text-slate-700 font-medium break-words min-w-0">{project.name}</dd>
         </div>
+        {/* BIM Leader — resolved from the project_partner_roles row with
+            role.code = bim_leader (see projects.service.findOne). Shown
+            here per user feedback 2026-06-22 — task owners need to know
+            who owns BIM for the project without digging into the team
+            tab. Falls back to em-dash when unassigned. */}
+        <div className="flex gap-2">
+          <dt className="text-slate-500 w-[110px] shrink-0">BIM Leader:</dt>
+          <dd className="text-slate-700 break-words min-w-0">
+            {project.bimLeader ? (
+              `${project.bimLeader.firstName ?? ''} ${project.bimLeader.lastName ?? ''}`.trim() || (
+                <span className="text-slate-300 italic">—</span>
+              )
+            ) : (
+              <span className="text-slate-300 italic">—</span>
+            )}
+          </dd>
+        </div>
         {fields.map((f) => (
           <div key={f.label} className="flex gap-2">
             <dt className="text-slate-500 w-[110px] shrink-0">{f.label}:</dt>

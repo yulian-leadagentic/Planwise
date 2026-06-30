@@ -3,6 +3,8 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivityLogService } from '../../common/services/activity-log.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
@@ -12,7 +14,57 @@ export class TasksService {
   constructor(
     private prisma: PrismaService,
     private eventEmitter: EventEmitter2,
+    private activityLog: ActivityLogService,
+    private notifications: NotificationsService,
   ) {}
+
+  /**
+   * Notify every ACTIVE assignee of a task — except the actor — that
+   * an attachment was added or removed. Best-effort: a notification
+   * failure is logged via the service but never breaks the underlying
+   * file operation. Used by add/removeAttachment below.
+   */
+  private async notifyAssigneesAboutAttachment(params: {
+    taskId: number;
+    actorId: number | null;
+    action: 'added' | 'removed';
+    fileName: string;
+  }): Promise<void> {
+    const { taskId, actorId, action, fileName } = params;
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId },
+      select: { id: true, code: true, name: true, projectId: true },
+    });
+    if (!task) return;
+    const assignees = await this.prisma.taskAssignee.findMany({
+      where: { taskId, deletedAt: null, user: { isActive: true } },
+      select: { userId: true },
+    });
+    const actor = actorId
+      ? await this.prisma.user.findUnique({
+          where: { id: actorId },
+          select: { firstName: true, lastName: true },
+        })
+      : null;
+    const actorLabel = actor ? `${actor.firstName ?? ''} ${actor.lastName ?? ''}`.trim() : 'Someone';
+    const taskLabel = task.code ? `${task.code} ${task.name}` : task.name;
+    const verb = action === 'added' ? 'attached' : 'removed';
+    const title = `${actorLabel} ${verb} "${fileName}" on ${taskLabel}`;
+    for (const a of assignees) {
+      if (a.userId === actorId) continue; // don't notify the person who did it
+      try {
+        await this.notifications.create({
+          userId: a.userId,
+          type: action === 'added' ? 'task.attachment.added' : 'task.attachment.removed',
+          title,
+          data: { taskId, projectId: task.projectId, fileName },
+        });
+      } catch {
+        // Best-effort — one failed notification mustn't take down the
+        // attach/delete write that already succeeded.
+      }
+    }
+  }
 
   async create(userId: number, dto: CreateTaskDto) {
     // Two paths:
@@ -51,7 +103,7 @@ export class TasksService {
       });
     }
 
-    return this.prisma.task.create({
+    const task = await this.prisma.task.create({
       data: {
         zoneId: dto.zoneId ?? null,
         projectId,
@@ -84,6 +136,16 @@ export class TasksService {
         },
       },
     });
+
+    await this.activityLog.logTaskCreated({
+      actorUserId: userId,
+      projectId: task.projectId,
+      entityId: task.id,
+      taskCode: task.code ?? null,
+      taskName: task.name,
+    });
+
+    return task;
   }
 
   async findAll(query: QueryTasksDto, restrictToProjectIds?: number[]) {
@@ -352,6 +414,33 @@ export class TasksService {
       });
     }
 
+    // Activity log — status change gets its own semantic entry so the
+    // Activity tab can show "X status: To Do → In Progress" without
+    // having to diff before/after. All other field changes roll up into
+    // one generic "updated" line with the changed field list.
+    if (dto.status && dto.status !== (existing as any).status) {
+      await this.activityLog.logTaskStatusChange({
+        actorUserId: userId,
+        projectId: (existing as any).projectId,
+        entityId: id,
+        taskCode: (existing as any).code ?? null,
+        taskName: (existing as any).name,
+        oldStatus: (existing as any).status,
+        newStatus: dto.status,
+      });
+    }
+    const nonStatusKeys = Object.keys(dto).filter((k) => k !== 'status');
+    if (nonStatusKeys.length > 0) {
+      await this.activityLog.logTaskUpdated({
+        actorUserId: userId,
+        projectId: (existing as any).projectId,
+        entityId: id,
+        taskCode: (existing as any).code ?? null,
+        taskName: (existing as any).name,
+        changedFields: nonStatusKeys,
+      });
+    }
+
     // Re-sync completionPct whenever status changes. The completion model
     // uses status as a ceiling (Done=100, In Review=90, otherwise time-
     // based capped at 80), so a status flip needs to update the persisted
@@ -510,13 +599,55 @@ export class TasksService {
       });
     }
 
+    // Activity log — needs the parent task's project for the per-project
+    // feed. findOne above didn't return it; cheaper to read from result
+    // (no relation loaded) or re-fetch the minimal column.
+    const taskRow = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      select: { projectId: true, code: true, name: true },
+    });
+    if (taskRow) {
+      const assigneeName = `${result.user?.firstName ?? ''} ${result.user?.lastName ?? ''}`.trim() || `user #${data.userId}`;
+      await this.activityLog.logAssigneeAdded({
+        actorUserId: actorId,
+        projectId: taskRow.projectId,
+        entityId: taskId,
+        taskCode: taskRow.code ?? null,
+        taskName: taskRow.name,
+        assigneeName,
+      });
+    }
+
     return result;
   }
 
-  async removeAssignee(taskId: number, userId: number) {
+  async removeAssignee(taskId: number, userId: number, actorId?: number) {
+    // Capture context BEFORE delete so the activity log entry has the
+    // assignee's name and the parent task's project.
+    const [taskRow, assignee] = await Promise.all([
+      this.prisma.task.findUnique({
+        where: { id: taskId },
+        select: { projectId: true, code: true, name: true },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { firstName: true, lastName: true },
+      }),
+    ]);
     await this.prisma.taskAssignee.deleteMany({
       where: { taskId, userId },
     });
+    if (taskRow) {
+      const assigneeName = `${assignee?.firstName ?? ''} ${assignee?.lastName ?? ''}`.trim() || `user #${userId}`;
+      await this.activityLog.logAssigneeRemoved({
+        actorUserId: actorId,
+        projectId: taskRow.projectId,
+        entityId: taskId,
+        taskCode: taskRow.code ?? null,
+        taskName: taskRow.name,
+        assigneeName,
+      });
+    }
     return { message: 'Assignee removed' };
   }
 
@@ -645,7 +776,7 @@ export class TasksService {
       throw new BadRequestException('fileUrl must be a relative path returned by /files/upload');
     }
 
-    return this.prisma.taskAttachment.create({
+    const attachment = await this.prisma.taskAttachment.create({
       data: {
         taskId,
         fileName: data.fileName,
@@ -658,10 +789,36 @@ export class TasksService {
         uploader: { select: { id: true, firstName: true, lastName: true } },
       },
     });
+
+    // Notify every other assignee on the task. Awaited so a slow
+    // notification path can't cause stale UI on the client, but wrapped
+    // in best-effort error handling internally.
+    await this.notifyAssigneesAboutAttachment({
+      taskId,
+      actorId: userId,
+      action: 'added',
+      fileName: data.fileName,
+    });
+
+    return attachment;
   }
 
-  async removeAttachment(attachmentId: number) {
+  async removeAttachment(attachmentId: number, actorId?: number) {
+    // Capture context BEFORE delete so the notification has the file
+    // name and the parent task id (the row is gone afterwards).
+    const att = await this.prisma.taskAttachment.findUnique({
+      where: { id: attachmentId },
+      select: { taskId: true, fileName: true },
+    });
     await this.prisma.taskAttachment.delete({ where: { id: attachmentId } });
+    if (att) {
+      await this.notifyAssigneesAboutAttachment({
+        taskId: att.taskId,
+        actorId: actorId ?? null,
+        action: 'removed',
+        fileName: att.fileName,
+      });
+    }
     return { message: 'Attachment removed' };
   }
 

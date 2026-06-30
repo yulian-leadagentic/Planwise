@@ -3,6 +3,8 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivityLogService } from '../../common/services/activity-log.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 /**
  * Unit tests for the parts of TasksService that carry real security and
@@ -54,6 +56,24 @@ describe('TasksService', () => {
         TasksService,
         { provide: PrismaService, useValue: prisma },
         { provide: EventEmitter2, useValue: { emit: jest.fn() } },
+        // ActivityLogService + NotificationsService are injected by the
+        // service but the tests here don't assert on them — provide
+        // no-op stubs so the DI graph resolves.
+        {
+          provide: ActivityLogService,
+          useValue: {
+            logTaskCreated: jest.fn(),
+            logTaskUpdated: jest.fn(),
+            logTaskStatusChange: jest.fn(),
+            logTaskDeleted: jest.fn(),
+            logAssigneeAdded: jest.fn(),
+            logAssigneeRemoved: jest.fn(),
+          },
+        },
+        {
+          provide: NotificationsService,
+          useValue: { create: jest.fn() },
+        },
       ],
     }).compile();
 

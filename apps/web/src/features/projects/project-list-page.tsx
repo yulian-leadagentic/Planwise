@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Trash2, MessageSquare, Search, Send, UserCircle, Columns3, ChevronDown } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { useProjects } from '@/hooks/use-projects';
 import { useFilterStore } from '@/stores/filter.store';
 import { useDebounce } from '@/hooks/use-debounce';
@@ -69,6 +70,7 @@ const statusColors: Record<string, { bg: string; text: string; label: string }> 
 };
 
 export function ProjectListPage() {
+  const tableScrollRef = useStickyHScroll();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { projectSearch, projectStatus, setProjectFilters } = useFilterStore();
@@ -95,10 +97,20 @@ export function ProjectListPage() {
       }),
   });
 
+  // Status filter is a single dropdown with values from the ProjectStatus
+  // enum plus a synthetic "closed" option (T3.6 follow-up). When the user
+  // picks "closed", we send `closedOnly=true` to the API and clear the
+  // real status filter — closed is a separate dimension (closedAt
+  // timestamp) but exposing it in the same dropdown matches the user's
+  // mental model ("status = closed").
+  const isClosedFilter = projectStatus[0] === '__closed__';
+  const apiStatus = isClosedFilter ? undefined : (projectStatus.length ? projectStatus[0] : undefined);
+
   const { data, isLoading } = useProjects({
     search: debouncedSearch || undefined,
-    status: projectStatus.length ? projectStatus[0] : undefined,
+    status: apiStatus,
     memberId: memberFilter ?? undefined,
+    closedOnly: isClosedFilter ? true : undefined,
     perPage: 100,
   });
 
@@ -277,6 +289,10 @@ export function ProjectListPage() {
           <input value={projectSearch} onChange={(e) => setProjectFilters({ projectSearch: e.target.value })}
             placeholder="Search projects..." className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
         </div>
+        {/* Status dropdown — includes a synthetic "Closed" option that
+            flips closedOnly on the API. The user expected to find closed
+            projects via the same status control, so we surface it here
+            instead of behind a separate checkbox. (T3.6 follow-up.) */}
         <select value={projectStatus[0] ?? ''} onChange={(e) => setProjectFilters({ projectStatus: e.target.value ? [e.target.value] : [] })}
           className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
           <option value="">All Status</option>
@@ -285,6 +301,8 @@ export function ProjectListPage() {
           <option value="on_hold">On Hold</option>
           <option value="completed">Completed</option>
           <option value="cancelled">Cancelled</option>
+          <option disabled>──────────</option>
+          <option value="__closed__">Closed</option>
         </select>
         {/* Filter by team member — matches projects where the user is leader OR an active member. */}
         <select
@@ -317,7 +335,7 @@ export function ProjectListPage() {
           <select
             value={groupBy ?? ''}
             onChange={(e) => setGroupBy(e.target.value || null)}
-            className="rounded-lg border border-slate-200 px-2 py-2 text-sm bg-white"
+            className="h-9 rounded-lg border border-slate-200 px-3 text-sm bg-white"
             title="Bucket projects by a field — value column header turns into the group label"
           >
             <option value="">No grouping</option>
@@ -341,7 +359,7 @@ export function ProjectListPage() {
           <button
             type="button"
             onClick={() => setColumnsMenuOpen((o) => !o)}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50"
+            className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 px-3 text-sm hover:bg-slate-50"
             title="Show / hide role columns"
           >
             <Columns3 className="h-4 w-4 text-slate-500" />
@@ -407,7 +425,7 @@ export function ProjectListPage() {
             button below for consistency. */}
         <button
           onClick={() => navigate('/projects/new')}
-          className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+          className="flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-sm font-semibold text-white hover:bg-blue-700"
         >
           <Plus className="h-4 w-4" /> New Project
         </button>
@@ -449,7 +467,7 @@ export function ProjectListPage() {
         </div>
       ) : (
         <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
-          <div className="overflow-x-auto">
+          <div ref={tableScrollRef} className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-500">

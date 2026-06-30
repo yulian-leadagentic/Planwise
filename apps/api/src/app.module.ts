@@ -41,6 +41,7 @@ import { ProjectPartnerRolesModule } from './modules/project-partner-roles/proje
 import { DataImportModule } from './modules/data-import/data-import.module';
 import { ProjectStatusBoardModule } from './modules/project-status-board/project-status-board.module';
 import { ProjectDeliverablesModule } from './modules/project-deliverables/project-deliverables.module';
+import { ActivityLogModule } from './common/services/activity-log.module';
 
 @Module({
   imports: [
@@ -84,6 +85,7 @@ import { ProjectDeliverablesModule } from './modules/project-deliverables/projec
     ScheduleModule.forRoot(),
     EventEmitterModule.forRoot(),
     PrismaModule,
+    ActivityLogModule,
     AuthModule,
     ProjectsModule,
     LabelsModule,

@@ -75,8 +75,8 @@ export class CreateTaskDto {
   priority?: string;
 
   /** Planning forecast — when work is *expected* to begin. */
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsDateString()
-  estimatedStartDate?: string;
+  estimatedStartDate?: string | null;
 }

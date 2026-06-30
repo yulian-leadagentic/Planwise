@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { ProjectSelect } from '@/components/shared/project-select';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { MinutesInput } from '@/components/shared/minutes-input';
 import { useWeeklyGrid, useCreateTimeEntry, useUpdateTimeEntry } from '@/hooks/use-time';
 import { useFilterStore } from '@/stores/filter.store';
@@ -11,6 +12,7 @@ import { Skeleton } from '@/components/shared/loading-skeleton';
 import { cn } from '@/lib/utils';
 
 export function TimeGridPage() {
+  const scrollRef = useStickyHScroll();
   const [weekOffset, setWeekOffset] = useState(0);
   const { timeProjectId, setTimeFilters } = useFilterStore();
 
@@ -89,7 +91,7 @@ export function TimeGridPage() {
           No tasks found for this period. Log time to tasks to see them here.
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
+        <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead className="bg-muted/50">
               <tr>

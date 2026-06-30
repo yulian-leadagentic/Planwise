@@ -3,11 +3,13 @@ import { Plus, ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/page-header';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 
 export function ProjectTypesPage() {
+  const scrollRef = useStickyHScroll();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
@@ -115,7 +117,7 @@ export function ProjectTypesPage() {
       ) : types.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">No project types configured yet. Click "Add Type" to create one.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
+        <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50">

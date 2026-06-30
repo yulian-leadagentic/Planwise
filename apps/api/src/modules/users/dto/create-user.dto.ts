@@ -31,6 +31,18 @@ export class CreateUserDto {
   @IsString()
   lastName: string;
 
+  /** Optional Hebrew rendering — picks up the bilingual search index.
+   *  T3.3 (2026-06-28). */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  firstNameHe?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  lastNameHe?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

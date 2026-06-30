@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import {
   FileText, Link as LinkIcon, Upload, Trash2, Download, Copy, Check, Plus, ExternalLink, X, HardDrive, Star,
 } from 'lucide-react';
@@ -268,6 +269,7 @@ function FilesSections({
   canDelete: boolean;
   onRemove: (file: ProjectFile) => void;
 }) {
+  const scrollRef = useStickyHScroll();
   return (
     <div className="space-y-6">
       <SectionPanel
@@ -384,7 +386,7 @@ function SectionPanel({
           {emptyHint}
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div ref={scrollRef} className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50/60 text-[11px] uppercase tracking-wider text-slate-500">

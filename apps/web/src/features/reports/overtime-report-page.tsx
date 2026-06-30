@@ -2,12 +2,14 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Download } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { minutesToDisplay } from '@amec/shared';
 import { formatDate } from '@/lib/date-utils';
 
 export function OvertimeReportPage() {
+  const scrollRef = useStickyHScroll();
   const today = new Date();
   const [from, setFrom] = useState(new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]);
   const [to, setTo] = useState(new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0]);
@@ -47,7 +49,7 @@ export function OvertimeReportPage() {
       ) : rows.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">No overtime recorded for this period.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
+        <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">

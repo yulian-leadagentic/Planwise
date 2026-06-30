@@ -38,4 +38,30 @@ export class QueryProjectsDto extends PaginationQueryDto {
   @Type(() => Number)
   @IsInt()
   memberId?: number;
+
+  /**
+   * Include CLOSED projects in the result set. By default the list
+   * returns only `closedAt IS NULL` rows — the Project list page exposes
+   * a "Show closed" toggle that flips this flag. Audit / historical
+   * tools that need every project pass it as true. (T3.6+7, 2026-06-28)
+   */
+  @ApiPropertyOptional({ description: 'Pass true to include closed projects (default: false)' })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  includeClosed?: boolean;
+
+  /**
+   * Filter to ONLY closed projects (the inverse of the default filter).
+   * Used when the user picks "Closed" in the project-list status dropdown:
+   * the dropdown sends `closedOnly=true` and we restrict the result set to
+   * `closedAt IS NOT NULL`. Implicitly disables the default
+   * `closedAt = null` filter — `closedOnly` and `includeClosed` are both
+   * scoped to the same column. (T3.6 follow-up, 2026-06-29.)
+   */
+  @ApiPropertyOptional({ description: 'Pass true to show ONLY closed projects' })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  closedOnly?: boolean;
 }

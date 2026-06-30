@@ -1,13 +1,14 @@
 import { useState, useMemo, useRef, useEffect, useCallback, createContext, useContext, Fragment } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { usePermissions } from '@/hooks/use-permissions';
-import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle, ChevronsDownUp, ChevronsUpDown, Pencil } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle, ChevronsDownUp, ChevronsUpDown, Pencil, SlidersHorizontal, Archive, Undo2 } from 'lucide-react';
 import { formatDuration } from '@/lib/date-utils';
 import { notify } from '@/lib/notify';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { planningApi, zonesApi, templatesApi } from '@/api/zones.api';
 import { tasksApi } from '@/api/tasks.api';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { STATUS_LABEL } from '@/lib/task-constants';
 import client from '@/api/client';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
@@ -641,6 +642,31 @@ const ProjectDeliverablesContext = createContext<ProjectDeliverableLookups>({
   byId: new Map(),
   byTemplateId: new Map(),
 });
+
+/**
+ * Multi-level group-by — secondary dimension applied inside each primary
+ * group's task list. When `dim` is set, every leaf task-table renders is
+ * replaced by nested deliverable/service cards via `bucketize(tasks)`.
+ * Wrapping component (PlanningView) supplies the dim + the bucketing
+ * closure; cards consume both from this context so the new prop doesn't
+ * have to thread through SortableZone → HierarchicalZoneGroup → ... .
+ * (T2.fix3, 2026-06-28.)
+ */
+type SubGroupDim = 'service' | 'phase';
+type SubGroupBucket = {
+  key: string;
+  label: string;
+  serviceLabel: string;
+  color: string;
+  tasks: any[];
+  editableTemplateId: number | null;
+  editableDeliverableId: number | null;
+};
+type PlanningSubGroupCtx = {
+  dim: SubGroupDim;
+  bucketize: (tasks: any[]) => SubGroupBucket[];
+};
+const PlanningSubGroupContext = createContext<PlanningSubGroupCtx | null>(null);
 
 /**
  * Canonical Deliverable label for a task — the SINGLE resolution used by
@@ -3217,6 +3243,11 @@ function SortableZone(props: any) {
 function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth, selectedTaskIds, onToggleTask, onToggleMany, zoneDragHandleProps }: any) {
   const [collapsed, setCollapsed] = useState(false);
   useBulkCollapseSync(setCollapsed);
+  // Multi-level group-by — when a sub-dimension is selected (Deliverable
+  // or Service), the zone's direct tasks render as nested deliverable
+  // cards instead of a flat task table. Sub-zones still render as zones
+  // and apply their own sub-grouping recursively.
+  const subCtx = useContext(PlanningSubGroupContext);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddZone, setShowAddZone] = useState(false);
   const [showCatalogPicker, setShowCatalogPicker] = useState(false);
@@ -3406,36 +3437,65 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           )}
 
           {/* Task column header row — border-l-[3px] transparent to match body rows' colored left border */}
-          {directTasks.length > 0 && (
-            <div style={{ marginLeft: 28 }} className={cn(TASK_GRID, 'py-1.5 px-4 bg-slate-50/70 border-b border-l-[3px] border-l-transparent border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider')}>
-              <span />
-              <span />
-              <ColHeader label="Code" filterKey="code" kind="text" />
-              <ColHeader label="Task Name" filterKey="name" kind="text" />
-              <ColHeader label="Zone" filterKey="zone" kind="select" />
-              <ColHeader label="Deliverable" filterKey="deliverable" kind="select" />
-              <ColHeader label="Service" filterKey="service" kind="select" />
-              <span className="text-right">Est. Hours</span>
-              <span className="text-right">Logged</span>
-              <span className="text-right">Amount</span>
-              <span className="text-right">Actual ₪</span>
-              <span>Est. Start</span>
-              <span>Due Date</span>
-              <ColHeader label="Assignees" filterKey="assignee" kind="assignee" />
-              <ColHeader label="Status" filterKey="status" kind="select" />
-              <span className="w-5 shrink-0" />
+          {subCtx && directTasks.length > 0 ? (
+            // Multi-level: render direct tasks as nested deliverable / service
+            // cards (the chosen sub-dimension) instead of a flat task table.
+            <div style={{ marginLeft: 28 }} className="px-3 py-2 space-y-1.5 bg-slate-50/40">
+              {subCtx.bucketize(directTasks).map((sg) => (
+                <ProjectRootDeliverableGroup
+                  key={sg.key}
+                  isSubGroup
+                  projectId={projectId}
+                  label={sg.label}
+                  serviceLabel={sg.serviceLabel}
+                  color={sg.color}
+                  tasks={sg.tasks}
+                  members={members}
+                  onUpdate={onUpdate}
+                  onDeleteTask={onDeleteTask}
+                  selectedTaskIds={selectedTaskIds}
+                  onToggleTask={onToggleTask}
+                  onToggleMany={onToggleMany}
+                  kind={subCtx.dim === 'phase' ? 'service' : 'deliverable'}
+                  editableTemplateId={subCtx.dim === 'service' ? sg.editableTemplateId : null}
+                  editableDeliverableId={subCtx.dim === 'service' ? sg.editableDeliverableId : null}
+                />
+              ))}
             </div>
+          ) : (
+            <>
+              {directTasks.length > 0 && (
+                <div style={{ marginLeft: 28 }} className={cn(TASK_GRID, 'py-1.5 px-4 bg-slate-50/70 border-b border-l-[3px] border-l-transparent border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider')}>
+                  <span />
+                  <span />
+                  <ColHeader label="Code" filterKey="code" kind="text" />
+                  <ColHeader label="Task Name" filterKey="name" kind="text" />
+                  <ColHeader label="Zone" filterKey="zone" kind="select" />
+                  <ColHeader label="Deliverable" filterKey="deliverable" kind="select" />
+                  <ColHeader label="Service" filterKey="service" kind="select" />
+                  <span className="text-right">Est. Hours</span>
+                  <span className="text-right">Logged</span>
+                  <span className="text-right">Amount</span>
+                  <span className="text-right">Actual ₪</span>
+                  <span>Est. Start</span>
+                  <span>Due Date</span>
+                  <ColHeader label="Assignees" filterKey="assignee" kind="assignee" />
+                  <ColHeader label="Status" filterKey="status" kind="select" />
+                  <span className="w-5 shrink-0" />
+                </div>
+              )}
+              <SortableTaskList
+                tasks={directTasks}
+                zoneId={zone.id}
+                projectId={projectId}
+                members={members}
+                selectedTaskIds={selectedTaskIds}
+                onToggleTask={onToggleTask}
+                onUpdate={onUpdate}
+                onDeleteTask={onDeleteTask}
+              />
+            </>
           )}
-          <SortableTaskList
-            tasks={directTasks}
-            zoneId={zone.id}
-            projectId={projectId}
-            members={members}
-            selectedTaskIds={selectedTaskIds}
-            onToggleTask={onToggleTask}
-            onUpdate={onUpdate}
-            onDeleteTask={onDeleteTask}
-          />
 
           {hasChildren && (
             // Sub-zones get their own SortableContext scoped to this parent's
@@ -3517,7 +3577,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
 function ProjectRootDeliverableGroup({
   projectId, label, serviceLabel, color, tasks, members, onUpdate, onDeleteTask,
   selectedTaskIds, onToggleTask, onToggleMany,
-  dndId, kind, editableTemplateId, editableDeliverableId,
+  dndId, kind, editableTemplateId, editableDeliverableId, isSubGroup,
 }: {
   projectId: number;
   label: string;
@@ -3551,7 +3611,13 @@ function ProjectRootDeliverableGroup({
    *  (board, reports, customer-facing). Falls back to creating an entity from
    *  editableTemplateId if none exists yet. */
   editableDeliverableId?: number | null;
+  /** True when this card is already nested inside another primary group
+   *  (multi-level group-by). Disables further recursion so we don't try
+   *  to sub-bucket an already-bucketed list. */
+  isSubGroup?: boolean;
 }) {
+  const subCtx = useContext(PlanningSubGroupContext);
+  const renderNested = !isSubGroup && subCtx != null && tasks.length > 0;
   const [collapsed, setCollapsed] = useState(false);
   useBulkCollapseSync(setCollapsed);
   // useSortable is always called (hooks must be unconditional) but we
@@ -3713,6 +3779,35 @@ function ProjectRootDeliverableGroup({
         </span>
       </div>
       {!collapsed && (
+        renderNested ? (
+          // Multi-level group-by: render the sub-buckets as nested cards
+          // instead of the leaf task table. Each nested card recurses into
+          // ProjectRootDeliverableGroup with isSubGroup=true so it falls
+          // through to the leaf rendering. dndId is intentionally omitted
+          // for sub-cards — reorder DnD stays scoped to the top level.
+          <div className="px-3 py-2 space-y-1.5 bg-slate-50/40">
+            {subCtx!.bucketize(tasks).map((sg) => (
+              <ProjectRootDeliverableGroup
+                key={sg.key}
+                isSubGroup
+                projectId={projectId}
+                label={sg.label}
+                serviceLabel={sg.serviceLabel}
+                color={sg.color}
+                tasks={sg.tasks}
+                members={members}
+                onUpdate={onUpdate}
+                onDeleteTask={onDeleteTask}
+                selectedTaskIds={selectedTaskIds}
+                onToggleTask={onToggleTask}
+                onToggleMany={onToggleMany}
+                kind={subCtx!.dim === 'phase' ? 'service' : 'deliverable'}
+                editableTemplateId={subCtx!.dim === 'service' ? sg.editableTemplateId : null}
+                editableDeliverableId={subCtx!.dim === 'service' ? sg.editableDeliverableId : null}
+              />
+            ))}
+          </div>
+        ) : (
         <>
           <div style={{ marginLeft: 28 }} className={cn(TASK_GRID, 'py-1.5 px-4 bg-slate-50/70 border-b border-l-[3px] border-l-transparent border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider')}>
             <span /><span />
@@ -3742,6 +3837,7 @@ function ProjectRootDeliverableGroup({
             onDeleteTask={onDeleteTask}
           />
         </>
+        )
       )}
     </div>
   );
@@ -3766,6 +3862,11 @@ function ProjectRootGroup({
 }) {
   const overrideFor = (tplId: number | null | undefined) =>
     tplId != null ? deliverableByTemplateId?.get(tplId)?.name : undefined;
+  // When a sub-grouping dimension is active, defer to that bucketing so
+  // orphan tasks (zoneId=null) stay consistent with the dimension chosen
+  // for zoned tasks. Without this, root tasks would always group by
+  // Deliverable, even when the user picked Service as the sub-dim.
+  const subCtx = useContext(PlanningSubGroupContext);
   if (tasks.length === 0) return null;
 
   // Bucket by Deliverable identity. Priority order:
@@ -3866,6 +3967,34 @@ function ProjectRootGroup({
   // SortableContext items for DnD — orphan bucket has no dndId so it
   // sits at the bottom and isn't draggable.
   const sortableIds = sorted.filter((b) => b.dndId).map((b) => b.dndId!);
+
+  // Sub-grouping override — route through the shared bucketizer so the
+  // chip / kind / label match the dimension the user picked in the toolbar.
+  if (subCtx) {
+    return (
+      <>
+        {subCtx.bucketize(tasks).map((sg) => (
+          <ProjectRootDeliverableGroup
+            key={sg.key}
+            projectId={projectId}
+            label={sg.label}
+            serviceLabel={sg.serviceLabel}
+            color={sg.color}
+            tasks={sg.tasks}
+            members={members}
+            onUpdate={onUpdate}
+            onDeleteTask={onDeleteTask}
+            selectedTaskIds={selectedTaskIds}
+            onToggleTask={onToggleTask}
+            onToggleMany={onToggleMany}
+            kind={subCtx.dim === 'phase' ? 'service' : 'deliverable'}
+            editableTemplateId={subCtx.dim === 'service' ? sg.editableTemplateId : null}
+            editableDeliverableId={subCtx.dim === 'service' ? sg.editableDeliverableId : null}
+          />
+        ))}
+      </>
+    );
+  }
 
   return (
     <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
@@ -4019,6 +4148,12 @@ function PlanningView({ projectId }: { projectId: number }) {
       }
   >(null);
   const [groupBy, setGroupBy] = useState<'zone' | 'service' | 'phase' | 'none'>('zone');
+  // Optional secondary dimension applied inside each primary group's task
+  // list — Zone → Deliverable, Zone → Service, Deliverable → Service,
+  // Service → Deliverable. '' means single-level grouping. The dropdown
+  // excludes whatever the primary level is set to; flipping the primary
+  // clears the secondary if they would collide. (T2.fix3, 2026-06-28.)
+  const [subGroupBy, setSubGroupBy] = useState<'' | 'service' | 'phase'>('');
   // Bulk collapse/expand. `bulkCollapsed` tracks the last toolbar state
   // so the button label flips between "Collapse all" / "Expand all".
   // `bulkVersion` is bumped on every click so cards re-sync even when
@@ -4050,6 +4185,39 @@ function PlanningView({ projectId }: { projectId: number }) {
   // date set, 'no' = only tasks missing one (handy for catching tasks
   // that slipped through scheduling).
   const [filterHasDue, setFilterHasDue] = useState<'' | 'yes' | 'no'>('');
+
+  // Toolbar popovers — the old action bar had 4 add-buttons + 6 filter
+  // controls on screen at once, which collapsed into a chaotic 3-row
+  // stack on a 13" laptop (T2.fix5). We now collapse the adds into one
+  // "+ Add" dropdown and the filters into a "Filters" popover with an
+  // active-count badge. The boolean state below drives both popovers.
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const addMenuRef = useRef<HTMLDivElement | null>(null);
+  const filterPanelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    // Single document-level mousedown handler closes whichever popover
+    // is open when the click lands outside its container. Re-binds only
+    // when the open state changes — no listener cost while both are closed.
+    if (!showAddMenu && !showFilterPanel) return;
+    const onDocDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (showAddMenu && addMenuRef.current && !addMenuRef.current.contains(t)) setShowAddMenu(false);
+      if (showFilterPanel && filterPanelRef.current && !filterPanelRef.current.contains(t)) setShowFilterPanel(false);
+    };
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [showAddMenu, showFilterPanel]);
+  // Count of active filters — drives the badge on the "Filters" button so
+  // the user can tell at a glance whether the current view is unfiltered.
+  // `search` is shown inline (its own input), so it's not counted here.
+  const activeFilterCount =
+    (filterStatus ? 1 : 0) +
+    (filterPriority ? 1 : 0) +
+    (filterAssigneeId ? 1 : 0) +
+    (filterStartFrom || filterStartTo ? 1 : 0) +
+    (filterDueFrom || filterDueTo ? 1 : 0) +
+    (filterHasDue ? 1 : 0);
 
   // ─── Undo Stack ─────────────────────────────────────────────────────────────
   const undoStackRef = useRef<{ label: string; fn: () => Promise<void> }[]>([]);
@@ -4654,6 +4822,101 @@ function PlanningView({ projectId }: { projectId: number }) {
     });
   }, [sorted, groupBy, flatZones, deliverableById, deliverableByTemplateId]);
 
+  /** Bucket a task subset by a single dimension (Deliverable or Service)
+   *  for the multi-level group-by feature. Same priority order as the
+   *  primary `groups` memo, but trimmed (no zone branch, no DnD, no
+   *  `flatZones` dependency) since sub-buckets never participate in
+   *  reorder DnD. */
+  const bucketizeForSub = useCallback((subTasks: any[], dim: SubGroupDim): SubGroupBucket[] => {
+    const map = new Map<string, SubGroupBucket & { sortOrder: number }>();
+    for (const t of subTasks) {
+      let key = '';
+      let label = '';
+      let serviceLabel = '';
+      let color = '#8B5CF6';
+      let sortOrder = 0;
+      let editableTemplateId: number | null = null;
+      let editableDeliverableId: number | null = null;
+      if (dim === 'service') {
+        const marker = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1];
+        if (t.projectDeliverableId != null) {
+          const d = deliverableById.get(t.projectDeliverableId);
+          label = d?.name ?? `Deliverable #${t.projectDeliverableId}`;
+          color = d?.service?.color || t.phase?.color || '#8B5CF6';
+          key = `pd-${t.projectDeliverableId}`;
+          editableDeliverableId = t.projectDeliverableId;
+          editableTemplateId = t.deliverableTemplateId ?? null;
+        } else if (t.deliverableTemplateId != null) {
+          label = deliverableByTemplateId.get(t.deliverableTemplateId)?.name
+            ?? t.deliverableTemplate?.name
+            ?? `Deliverable #${t.deliverableTemplateId}`;
+          color = t.phase?.color || '#8B5CF6';
+          key = `tpl-${t.deliverableTemplateId}`;
+          editableTemplateId = t.deliverableTemplateId;
+          editableDeliverableId = deliverableByTemplateId.get(t.deliverableTemplateId)?.id ?? null;
+        } else if (t.serviceTypeId != null) {
+          label = t.serviceType?.name || `Deliverable #${t.serviceTypeId}`;
+          color = t.serviceType?.color || t.phase?.color || '#8B5CF6';
+          sortOrder = Number(t.serviceType?.sortOrder ?? 0);
+          key = `st-${t.serviceTypeId}`;
+        } else if (marker) {
+          label = marker;
+          color = t.phase?.color || '#8B5CF6';
+          key = `marker-${marker}`;
+        } else {
+          label = 'No Deliverable';
+          color = '#94a3b8';
+          key = 'none-no-deliverable';
+        }
+        serviceLabel = t.phase?.name || '';
+      } else {
+        // dim === 'phase' — Service grouping.
+        if (t.phaseId != null) {
+          label = t.phase?.name || `Service #${t.phaseId}`;
+          color = t.phase?.color || '#8B5CF6';
+          sortOrder = Number(t.phase?.sortOrder ?? 0);
+          key = `ph-${t.phaseId}`;
+        } else {
+          label = 'No Service';
+          color = '#94a3b8';
+          key = 'none-no-service';
+        }
+      }
+      if (!map.has(key)) {
+        map.set(key, {
+          key, label, serviceLabel, color, tasks: [], sortOrder,
+          editableTemplateId, editableDeliverableId,
+        });
+      }
+      map.get(key)!.tasks.push(t);
+    }
+    return Array.from(map.values()).sort((a, b) => {
+      const aIsNone = a.label.startsWith('No ');
+      const bIsNone = b.label.startsWith('No ');
+      if (aIsNone !== bIsNone) return aIsNone ? 1 : -1;
+      if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+      return a.label.localeCompare(b.label);
+    });
+  }, [deliverableById, deliverableByTemplateId]);
+
+  // Effective sub-dimension. A primary collision (e.g. user picked
+  // Deliverable as primary AND Deliverable as sub) collapses to no
+  // sub-grouping — the dropdown filter prevents it from being set, but
+  // we guard here too so a stale value never leaks through.
+  const effectiveSubDim: SubGroupDim | null = (() => {
+    if (!subGroupBy) return null;
+    if (groupBy === 'none') return null;
+    if (groupBy === 'service' && subGroupBy === 'service') return null;
+    if (groupBy === 'phase' && subGroupBy === 'phase') return null;
+    return subGroupBy;
+  })();
+  const subGroupCtx: PlanningSubGroupCtx | null = useMemo(
+    () => effectiveSubDim
+      ? { dim: effectiveSubDim, bucketize: (t: any[]) => bucketizeForSub(t, effectiveSubDim) }
+      : null,
+    [effectiveSubDim, bucketizeForSub],
+  );
+
   const totalHours = sorted.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
   const totalAmount = sorted.reduce((s: number, t: any) => s + Number(t.budgetAmount || 0), 0);
   const totalLoggedMinutes = sorted.reduce((s: number, t: any) => s + (t.loggedMinutes || 0), 0);
@@ -4665,6 +4928,7 @@ function PlanningView({ projectId }: { projectId: number }) {
     <BulkCollapseContext.Provider value={{ desired: bulkCollapsed, version: bulkVersion }}>
     <TaskMessageCountsContext.Provider value={messageCounts as Record<number, number>}>
     <ProjectDeliverablesContext.Provider value={deliverableLookups}>
+    <PlanningSubGroupContext.Provider value={subGroupCtx}>
     <TaskFilterContext.Provider value={{ filters: colFilters, setFilter: setColFilter, options: colFilterOptions }}>
     <div className="space-y-5">
       {/* Template picker / manual zone dialogs */}
@@ -4828,28 +5092,236 @@ function PlanningView({ projectId }: { projectId: number }) {
         </div>
       )}
 
-      {/* Action bar */}
+      {/* Action bar — single line.
+          LEFT cluster: a single "+ Add" dropdown replaces the previous
+          4 separate buttons (Add Zone from Template / Manually / Project
+          Root Deliverable / Project Root Task) — one button, one menu,
+          grouped by section.
+          RIGHT cluster: view controls (Group + sub-group + collapse),
+          search, a single "Filters" button (with an active-count badge)
+          that opens a popover with all 6 task filters, and quiet utility
+          links (Select-all, Undo, Archived) only when relevant.
+          (T2.fix5 toolbar redesign, 2026-06-29.) */}
       {!showTemplatePicker && !showManualZone && (
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 flex-wrap">
-            <button onClick={() => setShowTemplatePicker(true)} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5">
-              <Plus className="h-3.5 w-3.5" /> Add Zone from Template
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Add menu — primary action, single entry point. */}
+          <div className="relative" ref={addMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowAddMenu((v) => !v)}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold pl-3.5 pr-2.5 py-2 rounded-lg flex items-center gap-1.5"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add
+              <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showAddMenu && 'rotate-180')} />
             </button>
-            <button onClick={() => setShowManualZone(true)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5">
-              <Plus className="h-3.5 w-3.5" /> Add Zone Manually
-            </button>
-            {/* Root-level adds — tasks/deliverables that attach to the
-                project itself, not to any zone. Render in a "Project
-                Root" group above the zone tree. */}
-            <span className="mx-1 h-5 w-px bg-slate-200" />
-            <button onClick={() => setShowRootTemplate(true)} className="bg-violet-600 hover:bg-violet-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5">
-              <Plus className="h-3.5 w-3.5" /> Add Deliverable
-            </button>
-            <button onClick={() => setShowRootTask(true)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5">
-              <Plus className="h-3.5 w-3.5" /> Add Task
-            </button>
+            {showAddMenu && (
+              <div className="absolute left-0 top-full z-50 mt-1.5 w-60 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-1.5">
+                <div className="px-2 pt-1 pb-0.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Zone</div>
+                <button onClick={() => { setShowTemplatePicker(true); setShowAddMenu(false); }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50 text-left">
+                  <Layers className="h-3.5 w-3.5 text-slate-400" />
+                  <span className="flex-1">From Template</span>
+                </button>
+                <button onClick={() => { setShowManualZone(true); setShowAddMenu(false); }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50 text-left">
+                  <Plus className="h-3.5 w-3.5 text-slate-400" />
+                  <span className="flex-1">Manually</span>
+                </button>
+                <div className="my-1 h-px bg-slate-100" />
+                <div className="px-2 pt-1 pb-0.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Project Root</div>
+                <button onClick={() => { setShowRootTemplate(true); setShowAddMenu(false); }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50 text-left">
+                  <FileText className="h-3.5 w-3.5 text-slate-400" />
+                  <span className="flex-1">New Deliverable</span>
+                </button>
+                <button onClick={() => { setShowRootTask(true); setShowAddMenu(false); }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50 text-left">
+                  <Plus className="h-3.5 w-3.5 text-slate-400" />
+                  <span className="flex-1">New Task</span>
+                </button>
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-3">
+
+          <span className="mx-1 h-5 w-px bg-slate-200" />
+
+          {/* Group controls — primary + optional secondary dimension. */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-semibold text-slate-400">Group</span>
+            <select
+              value={groupBy}
+              onChange={(e) => {
+                const next = e.target.value as 'zone' | 'service' | 'phase' | 'none';
+                setGroupBy(next);
+                if (next === 'none' || (next === 'service' && subGroupBy === 'service') || (next === 'phase' && subGroupBy === 'phase')) {
+                  setSubGroupBy('');
+                }
+              }}
+              className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+            >
+              <option value="zone">Zone</option>
+              <option value="service">Deliverable</option>
+              <option value="phase">Service</option>
+              <option value="none">No Grouping</option>
+            </select>
+            {groupBy !== 'none' && (
+              <>
+                <span className="text-slate-300 text-[11px]">/</span>
+                <select
+                  value={subGroupBy}
+                  onChange={(e) => setSubGroupBy(e.target.value as '' | 'service' | 'phase')}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+                  title="Optional secondary grouping inside each primary group"
+                >
+                  <option value="">No sub-group</option>
+                  {groupBy !== 'service' && <option value="service">Deliverable</option>}
+                  {groupBy !== 'phase' && <option value="phase">Service</option>}
+                </select>
+              </>
+            )}
+          </div>
+
+          <span className="mx-1 h-5 w-px bg-slate-200" />
+
+          {/* Search — always inline, narrow but visible. */}
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search tasks…"
+              className="w-44 pl-8 pr-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          {/* Filters popover — collapses the old 6-control filter row. */}
+          <div className="relative" ref={filterPanelRef}>
+            <button
+              type="button"
+              onClick={() => setShowFilterPanel((v) => !v)}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[13px] font-semibold transition-colors',
+                activeFilterCount > 0
+                  ? 'border-blue-300 bg-blue-50 text-blue-700 hover:border-blue-400'
+                  : 'border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300',
+              )}
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              Filters
+              {activeFilterCount > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+            {showFilterPanel && (
+              <div className="absolute right-0 top-full z-50 mt-1.5 w-[440px] max-w-[92vw] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Task Filters</span>
+                  {hasTaskFilter && (
+                    <button
+                      type="button"
+                      onClick={() => { clearTaskFilters(); }}
+                      className="text-[12px] font-semibold text-blue-600 hover:text-blue-700"
+                    >
+                      Clear all
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-3">
+                  <label className="block">
+                    <span className="block text-[11px] font-semibold text-slate-500 mb-1">Status</span>
+                    <select
+                      value={filterStatus}
+                      onChange={(e) => setFilterStatus(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="">All statuses</option>
+                      {(['not_started', 'in_progress', 'in_review', 'completed', 'on_hold', 'cancelled'] as const).map((s) => (
+                        <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="block text-[11px] font-semibold text-slate-500 mb-1">Priority</span>
+                    <select
+                      value={filterPriority}
+                      onChange={(e) => setFilterPriority(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="">Any priority</option>
+                      <option value="critical">Critical</option>
+                      <option value="high">High</option>
+                      <option value="medium">Medium</option>
+                      <option value="low">Low</option>
+                    </select>
+                  </label>
+                  <label className="block col-span-2">
+                    <span className="block text-[11px] font-semibold text-slate-500 mb-1">Assignee</span>
+                    <select
+                      value={filterAssigneeId}
+                      onChange={(e) => setFilterAssigneeId(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="">Any assignee</option>
+                      {Array.from(
+                        new Map<number, { id: number; name: string }>(
+                          tasks.flatMap((t: any) =>
+                            (t.assignees ?? []).map((a: any) => {
+                              const u = a.user ?? {};
+                              const id = a.userId ?? u.id;
+                              if (id == null) return null;
+                              const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || `User #${id}`;
+                              return [id, { id, name }] as [number, { id: number; name: string }];
+                            }).filter(Boolean),
+                          ),
+                        ).values(),
+                      )
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map((u) => (
+                          <option key={u.id} value={String(u.id)}>{u.name}</option>
+                        ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="block text-[11px] font-semibold text-slate-500 mb-1">Estimated start</span>
+                    <div className="flex items-center gap-1.5">
+                      <input type="date" value={filterStartFrom} onChange={(e) => setFilterStartFrom(e.target.value)}
+                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none" />
+                      <span className="text-slate-300 text-xs">→</span>
+                      <input type="date" value={filterStartTo} onChange={(e) => setFilterStartTo(e.target.value)}
+                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none" />
+                    </div>
+                  </label>
+                  <label className="block">
+                    <span className="block text-[11px] font-semibold text-slate-500 mb-1">Due date</span>
+                    <div className="flex items-center gap-1.5">
+                      <input type="date" value={filterDueFrom} onChange={(e) => setFilterDueFrom(e.target.value)}
+                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none" />
+                      <span className="text-slate-300 text-xs">→</span>
+                      <input type="date" value={filterDueTo} onChange={(e) => setFilterDueTo(e.target.value)}
+                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none" />
+                    </div>
+                  </label>
+                  <label className="block col-span-2">
+                    <span className="block text-[11px] font-semibold text-slate-500 mb-1">Has due date</span>
+                    <select
+                      value={filterHasDue}
+                      onChange={(e) => setFilterHasDue(e.target.value as '' | 'yes' | 'no')}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="">Any</option>
+                      <option value="yes">Has a due date set</option>
+                      <option value="no">Missing due date</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Utility links — pushed right; only shown when actionable. */}
+          <div className="ml-auto flex items-center gap-1">
             {sorted.length > 0 && (
               <button
                 type="button"
@@ -4858,7 +5330,7 @@ function PlanningView({ projectId }: { projectId: number }) {
                   const allSelected = visibleIds.every((id: number) => selectedTaskIds.has(id));
                   toggleManyTasks(visibleIds, !allSelected);
                 }}
-                className="text-[12px] font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                className="px-2.5 py-1.5 text-[12px] font-semibold text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg"
               >
                 {sorted.every((t: any) => selectedTaskIds.has(t.id)) ? 'Deselect all' : `Select all (${sorted.length})`}
               </button>
@@ -4867,152 +5339,23 @@ function PlanningView({ projectId }: { projectId: number }) {
               <button
                 type="button"
                 onClick={handleUndo}
-                className="text-[12px] font-semibold text-slate-500 hover:text-slate-700 flex items-center gap-1"
                 title="Undo last action (Ctrl+Z)"
+                aria-label="Undo last action"
+                className="flex items-center justify-center w-[34px] h-[34px] rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5"><path fillRule="evenodd" d="M7.793 2.232a.75.75 0 01-.025 1.06L3.622 7.25h10.003a5.375 5.375 0 010 10.75H10.75a.75.75 0 010-1.5h2.875a3.875 3.875 0 000-7.75H3.622l4.146 3.957a.75.75 0 01-1.036 1.085l-5.5-5.25a.75.75 0 010-1.085l5.5-5.25a.75.75 0 011.06.025z" clipRule="evenodd" /></svg>
-                Undo
+                <Undo2 className="w-4 h-4" />
               </button>
             )}
-            {/* Archive button — opens an inline modal listing this
-                project's archived tasks with Restore actions. Previous
-                version (U4) opened /tasks?tab=archived in a new tab,
-                which broke flow and lost the planning state. V1 fix:
-                keep the user in the planning view. */}
             <button
               type="button"
               onClick={() => setShowArchiveModal(true)}
-              className="text-[12px] font-semibold text-slate-500 hover:text-slate-700 flex items-center gap-1"
-              title="View archived tasks for this project (deleted tasks can be restored)"
+              title="View archived tasks for this project"
+              aria-label="View archived tasks"
+              className="flex items-center justify-center w-[34px] h-[34px] rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5"><path fillRule="evenodd" d="M3.5 3A1.5 1.5 0 002 4.5v.5H18v-.5A1.5 1.5 0 0016.5 3h-13zM2 6.5h16v9a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 012 15.5v-9zm5.75 1.75a.75.75 0 000 1.5h4.5a.75.75 0 000-1.5h-4.5z" /></svg>
-              Archived
+              <Archive className="w-4 h-4" />
             </button>
-            <div className="flex items-center gap-1.5">
-              <span className="text-[11px] font-semibold text-slate-400">Group:</span>
-              <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as any)} className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none">
-                <option value="zone">Zone</option>
-                <option value="service">Deliverable</option>
-                <option value="phase">Service</option>
-                <option value="none">No Grouping</option>
-              </select>
-            </div>
-            {/* One-click collapse/expand for every card on the page —
-                zones, hierarchical zones, project-root deliverables. */}
-            <button
-              type="button"
-              onClick={toggleBulkCollapse}
-              title={bulkCollapsed ? 'Expand all groups' : 'Collapse all groups'}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-[12px] font-semibold text-slate-600 hover:bg-slate-50 hover:border-slate-300"
-            >
-              {bulkCollapsed
-                ? <><ChevronsUpDown className="w-3.5 h-3.5" /> Expand all</>
-                : <><ChevronsDownUp className="w-3.5 h-3.5" /> Collapse all</>}
-            </button>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter tasks..." className="w-48 pl-8 px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none" />
-            </div>
           </div>
-        </div>
-      )}
-
-      {/* Task filters — Status + Estimated Start range + Due Date range */}
-      {!showTemplatePicker && !showManualZone && (
-        <div className="flex flex-wrap items-center gap-2 -mt-2">
-          <span className="text-[11px] font-semibold text-slate-400">Filter by:</span>
-          <select
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-            className="px-2.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none"
-            title="Status"
-          >
-            {/* Labels pulled from STATUS_LABEL (the single source of
-                truth in task-constants.ts) so the planning filter shows
-                the same wording as Kanban, the task drawer, the
-                execution board, etc. Previously this dropdown said
-                "Not started / Completed" while the rest of the app said
-                "To Do / Done" — that's the inconsistency the user flagged. */}
-            <option value="">All statuses</option>
-            {(['not_started', 'in_progress', 'in_review', 'completed', 'on_hold', 'cancelled'] as const).map((s) => (
-              <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
-            ))}
-          </select>
-          {/* V7 — Priority + Assignee filters on the planning table. */}
-          <select
-            value={filterPriority}
-            onChange={(e) => setFilterPriority(e.target.value)}
-            className="px-2.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none"
-            title="Priority"
-          >
-            <option value="">Any Priority</option>
-            <option value="critical">Critical</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-          </select>
-          <select
-            value={filterAssigneeId}
-            onChange={(e) => setFilterAssigneeId(e.target.value)}
-            className="px-2.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none"
-            title="Assignee"
-          >
-            <option value="">Any Assignee</option>
-            {/* Derive distinct users from the task list itself —
-                cheaper than another query, and only assignees who
-                actually appear on tasks here are listed. */}
-            {Array.from(
-              new Map<number, { id: number; name: string }>(
-                tasks.flatMap((t: any) =>
-                  (t.assignees ?? []).map((a: any) => {
-                    const u = a.user ?? {};
-                    const id = a.userId ?? u.id;
-                    if (id == null) return null;
-                    const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || `User #${id}`;
-                    return [id, { id, name }] as [number, { id: number; name: string }];
-                  }).filter(Boolean),
-                ),
-              ).values(),
-            )
-              .sort((a, b) => a.name.localeCompare(b.name))
-              .map((u) => (
-                <option key={u.id} value={String(u.id)}>{u.name}</option>
-              ))}
-          </select>
-          <div className="flex items-center gap-1 text-[11px] text-slate-500">
-            <span>Est. start:</span>
-            <input type="date" value={filterStartFrom} onChange={(e) => setFilterStartFrom(e.target.value)} className="px-1.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700" />
-            <span className="text-slate-400">→</span>
-            <input type="date" value={filterStartTo} onChange={(e) => setFilterStartTo(e.target.value)} className="px-1.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700" />
-          </div>
-          <div className="flex items-center gap-1 text-[11px] text-slate-500">
-            <span>Due:</span>
-            <input type="date" value={filterDueFrom} onChange={(e) => setFilterDueFrom(e.target.value)} className="px-1.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700" />
-            <span className="text-slate-400">→</span>
-            <input type="date" value={filterDueTo} onChange={(e) => setFilterDueTo(e.target.value)} className="px-1.5 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700" />
-          </div>
-          <div className="flex items-center gap-1 text-[11px] text-slate-500">
-            <span>Has due date:</span>
-            <select
-              value={filterHasDue}
-              onChange={(e) => setFilterHasDue(e.target.value as '' | 'yes' | 'no')}
-              className="px-2 py-1 rounded-md border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none"
-              title="Filter tasks by whether they have a due date"
-            >
-              <option value="">Any</option>
-              <option value="yes">Yes</option>
-              <option value="no">No</option>
-            </select>
-          </div>
-          {hasTaskFilter && (
-            <button
-              type="button"
-              onClick={clearTaskFilters}
-              className="text-[12px] text-slate-500 hover:text-slate-700 underline"
-            >
-              Clear
-            </button>
-          )}
         </div>
       )}
 
@@ -5227,6 +5570,7 @@ function PlanningView({ projectId }: { projectId: number }) {
       />
     </div>
     </TaskFilterContext.Provider>
+    </PlanningSubGroupContext.Provider>
     </ProjectDeliverablesContext.Provider>
     </TaskMessageCountsContext.Provider>
     </BulkCollapseContext.Provider>
@@ -5238,12 +5582,17 @@ function PlanningView({ projectId }: { projectId: number }) {
 export function PlanningPage() {
   const navigate = useNavigate();
   const { id } = useParams();
+  // Sticky horizontal scrollbar — pins the bottom proxy bar to the
+  // viewport so users on tall planning tables can scroll right without
+  // first scrolling all the way down to find the native scrollbar.
+  // (T2.fix2, 2026-06-28.)
+  const scrollRef = useStickyHScroll();
   // Allow horizontal scroll — TASK_GRID's min-width (1280px) forces a
   // baseline column layout where the task name stays visible at ≥180px.
   // On a wide monitor everything fits inside the viewport; on a 13" laptop
   // the user scrolls horizontally rather than losing column data.
   return (
-    <div className="px-4 py-5 space-y-4 overflow-x-auto">
+    <div ref={scrollRef} className="px-4 py-5 space-y-4 overflow-x-auto">
       <button onClick={() => navigate(`/projects/${Number(id)}`)} className="flex items-center gap-1.5 text-[13px] text-slate-400 hover:text-slate-600"><ArrowLeft className="h-4 w-4" /> Back to Project</button>
       <PlanningView projectId={Number(id)} />
     </div>
@@ -5253,8 +5602,9 @@ export function PlanningPage() {
 export function PlanningTab({ projectId }: { projectId: number }) {
   // Same overflow-x rationale as PlanningPage above — see TASK_GRID
   // comment for the column-width context.
+  const scrollRef = useStickyHScroll();
   return (
-    <div className="overflow-x-auto">
+    <div ref={scrollRef} className="overflow-x-auto">
       <PlanningView projectId={projectId} />
     </div>
   );

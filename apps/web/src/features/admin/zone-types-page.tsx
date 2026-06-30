@@ -4,6 +4,7 @@ import { Pencil, Save, X } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { ColorPalettePicker } from '@/components/shared/color-palette-picker';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 
@@ -23,6 +24,7 @@ type ZoneTypeRow = {
 
 export function ZoneTypesPage() {
   const queryClient = useQueryClient();
+  const scrollRef = useStickyHScroll();
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editLabel, setEditLabel] = useState('');
   const [editColor, setEditColor] = useState('#3B82F6');
@@ -88,7 +90,7 @@ export function ZoneTypesPage() {
       ) : zoneTypes.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">No zone types found. Run database migrations to seed them.</p>
       ) : (
-        <div className="rounded-lg border border-border">
+        <div ref={scrollRef} className="rounded-lg border border-border overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">

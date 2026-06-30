@@ -38,6 +38,8 @@ export function CreateContactModal({
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',
+    firstNameHe: '',
+    lastNameHe: '',
     employerOrgId: preselectEmployerOrgId ? String(preselectEmployerOrgId) : '' as string,
     email: '',
     phone: '',
@@ -123,6 +125,8 @@ export function CreateContactModal({
         partnerType: 'person',
         firstName: form.firstName.trim() || undefined,
         lastName: form.lastName.trim() || undefined,
+        firstNameHe: form.firstNameHe.trim() || undefined,
+        lastNameHe: form.lastNameHe.trim() || undefined,
         email: form.email.trim() || undefined,
         phone: form.phone.trim() || undefined,
         mobile: form.mobile.trim() || undefined,
@@ -216,6 +220,18 @@ export function CreateContactModal({
             <div>
               <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Last Name *</label>
               <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className={inputClass} />
+            </div>
+          </div>
+          {/* Hebrew name (T3.3, 2026-06-28) — bilingual search picks
+              these up so contacts are findable in either language. */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">שם פרטי</label>
+              <input dir="rtl" value={form.firstNameHe} onChange={(e) => setForm(f => ({ ...f, firstNameHe: e.target.value }))} className={inputClass} />
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">שם משפחה</label>
+              <input dir="rtl" value={form.lastNameHe} onChange={(e) => setForm(f => ({ ...f, lastNameHe: e.target.value }))} className={inputClass} />
             </div>
           </div>
 

@@ -278,16 +278,11 @@ export function LogTimeDialog({
             />
           </div>
 
-          {/* Billable toggle */}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={isBillable}
-              onChange={(e) => setIsBillable(e.target.checked)}
-              className="h-4 w-4 rounded border-input text-brand-600 focus:ring-brand-500"
-            />
-            <span className="text-sm">Billable</span>
-          </label>
+          {/* Billable toggle hidden per user feedback 2026-06-22 — the
+              column stays in the DB so historical entries keep their flag,
+              and the state still defaults to true so newly logged entries
+              read as billable until the field comes back. setIsBillable is
+              left wired up should we re-introduce the UI later. */}
 
           {/* Actions */}
           <div className="flex items-center justify-end gap-2 pt-2">

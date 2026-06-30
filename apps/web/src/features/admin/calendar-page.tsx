@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, ChevronLeft, ChevronRight, X, Trash2, Download, Calendar, Check, Clock } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
@@ -119,6 +120,7 @@ type CalendarViewMode = 'month' | 'year';
 
 export function CalendarDaysPage() {
   const queryClient = useQueryClient();
+  const scrollRef = useStickyHScroll();
   const today = new Date();
   const [viewMode, setViewMode] = useState<CalendarViewMode>('month');
   const [viewYear, setViewYear] = useState(today.getFullYear());
@@ -372,7 +374,7 @@ export function CalendarDaysPage() {
           </div>
 
           {/* Calendar Grid */}
-          <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+          <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
             <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
               {DAY_NAMES.map((day) => (
                 <div key={day} className="px-2 py-2.5 text-center text-[11px] font-semibold text-slate-500 uppercase tracking-wider">{day}</div>

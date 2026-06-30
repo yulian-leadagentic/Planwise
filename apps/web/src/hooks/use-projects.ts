@@ -114,6 +114,36 @@ export function useRemoveProjectMember() {
   });
 }
 
+/** Close + reopen — invalidate the project list + the per-project cache
+ *  so the closed banner / re-opened state appears immediately. */
+export function useCloseProject() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => projectsApi.close(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['projects', id] });
+      queryClient.invalidateQueries({ queryKey: ['project-info-summary', id] });
+      notify.success('Project closed', { code: 'PROJECT-CLOSE-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to close project'),
+  });
+}
+
+export function useReopenProject() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => projectsApi.reopen(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['projects', id] });
+      queryClient.invalidateQueries({ queryKey: ['project-info-summary', id] });
+      notify.success('Project re-opened', { code: 'PROJECT-REOPEN-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to re-open project'),
+  });
+}
+
 export function useProjectTypes() {
   return useQuery({
     queryKey: ['project-types'],

@@ -368,14 +368,8 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
             </div>
           )}
 
-          {/* Billable + Note */}
-          <div className="flex items-start gap-4">
-            <label className="flex items-center gap-2 cursor-pointer text-[12px]">
-              <input type="checkbox" checked={isBillable} onChange={(e) => setIsBillable(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600" />
-              <span className="font-medium text-slate-600">Billable</span>
-            </label>
-          </div>
+          {/* Billable toggle hidden per user feedback 2026-06-22 — state
+              stays wired so the API call keeps defaulting to true. */}
 
           <div>
             <label className="text-[12px] font-semibold text-slate-600 mb-1 block">Description</label>

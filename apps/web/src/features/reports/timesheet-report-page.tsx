@@ -21,6 +21,7 @@ import { useMemo, useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download, ChevronDown, FileSpreadsheet, FileText, Printer } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { UserSelect } from '@/components/shared/user-select';
 import { ProjectSelect } from '@/components/shared/project-select';
@@ -216,6 +217,7 @@ function downloadCsv(filename: string, rows: Row[]) {
 // ─── Page ───────────────────────────────────────────────────────────────
 
 export function TimesheetReportPage() {
+  const scrollRef = useStickyHScroll();
   // Default range = current month, matching the legacy report's default.
   const today = new Date();
   const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
@@ -566,7 +568,7 @@ export function TimesheetReportPage() {
           No time entries match these filters.
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
+        <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">

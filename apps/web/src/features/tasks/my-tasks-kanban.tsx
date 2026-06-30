@@ -16,7 +16,7 @@ import { queryKeys } from '@/lib/query-keys';
 import { useAllowedTransitions } from '@/hooks/use-allowed-transitions';
 import { useOverlapConfirm } from '@/features/time/overlap-confirm';
 
-type TabMode = 'time' | 'kanban';
+type TabMode = 'time' | 'kanban' | 'upcoming';
 
 const columns = [
   { id: 'not_started', label: 'To Do', color: 'border-t-slate-400', bg: 'bg-slate-50/50' },
@@ -450,11 +450,9 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
           </div>
         )}
 
-        {/* Assignee avatars — stack of up to 4 with overflow count. The
-            Kanban already scopes to /tasks/mine so the caller sees their
-            own tasks, but tasks can be assigned to multiple people and
-            seeing teammates inline avoids a click into the drawer just
-            to learn "who else is on this". */}
+        {/* Assignee avatars — emphasized per user feedback 2026-06-22.
+            Larger circles + heavier border so "who's on this task" is
+            scannable without opening the drawer. */}
         {Array.isArray((task as any).assignees) && (task as any).assignees.length > 0 && (
           <div className="flex items-center gap-0.5">
             {((task as any).assignees as any[]).slice(0, 4).map((a) => {
@@ -462,7 +460,7 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
               return (
                 <span
                   key={a.id}
-                  className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-[8px] font-bold border border-white -ml-1 first:ml-0"
+                  className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-extrabold ring-2 ring-white -ml-1.5 first:ml-0 shadow-sm"
                   title={`${a.user?.firstName ?? ''} ${a.user?.lastName ?? ''}`.trim()}
                 >
                   {initials}
@@ -470,7 +468,9 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
               );
             })}
             {(task as any).assignees.length > 4 && (
-              <span className="text-[9px] text-slate-500 ml-1">+{(task as any).assignees.length - 4}</span>
+              <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-slate-200 text-slate-700 text-[10px] font-bold ring-2 ring-white -ml-1.5 shadow-sm">
+                +{(task as any).assignees.length - 4}
+              </span>
             )}
           </div>
         )}
@@ -498,6 +498,71 @@ function KanbanStatusSelect({ status, onStatusChange }: { status: string; onStat
         <option key={c.id} value={c.id}>{c.label}</option>
       ))}
     </select>
+  );
+}
+
+/**
+ * Row-level inline status select for the My Tasks list rows. Same color
+ * convention as the previous read-only badge so the row reads the same
+ * at-a-glance, but clicking it opens a native select with the allowed
+ * transitions (gates illegal jumps the same way the kanban drag does).
+ *
+ * Behavior:
+ *   - PATCHes /tasks/:id with the new status, invalidates the My Tasks +
+ *     planning + execution-board caches so every surface re-fetches.
+ *   - Wrapping span stops click propagation so picking a status doesn't
+ *     also fire the row's open-drawer handler underneath.
+ */
+function RowStatusSelect({ taskId, status }: { taskId: number; status: string }) {
+  const queryClient = useQueryClient();
+  const { allowedStatuses } = useAllowedTransitions(status);
+  const statusColor = status === 'completed'
+    ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+    : status === 'in_progress'
+      ? 'bg-blue-100 text-blue-700 border-blue-200'
+      : status === 'in_review'
+        ? 'bg-violet-100 text-violet-700 border-violet-200'
+        : 'bg-slate-100 text-slate-600 border-slate-200';
+
+  const handleChange = async (newStatus: string) => {
+    try {
+      await tasksApi.update(taskId, { status: newStatus });
+      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.mine() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.detail(taskId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.planning.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.executionBoard.all });
+      notify.success(`Status changed to ${STATUS_LABEL[newStatus] ?? newStatus}`);
+    } catch (e: any) {
+      notify.apiError(e, 'Failed to change status');
+    }
+  };
+
+  return (
+    <span
+      className="inline-flex shrink-0"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <select
+        aria-label="Change task status"
+        value={status}
+        onChange={(e) => handleChange(e.target.value)}
+        className={cn(
+          'rounded border px-1.5 py-0.5 text-[10px] font-semibold appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200',
+          statusColor,
+        )}
+        title="Click to change status"
+      >
+        {/* Always include the CURRENT status so the select can render it,
+            even if it's not in the allowed-transition set (defensive — e.g.
+            statuses that locked themselves due to time-entry rules). */}
+        {!allowedStatuses.includes(status) && (
+          <option value={status}>{STATUS_LABEL[status] ?? status}</option>
+        )}
+        {columns.filter((c) => allowedStatuses.includes(c.id)).map((c) => (
+          <option key={c.id} value={c.id}>{c.label}</option>
+        ))}
+      </select>
+    </span>
   );
 }
 
@@ -643,55 +708,94 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
   // TIME_OPTIONS removed — both selects now use the shared
   // TimeDropdown component which reads from module-level TIME_SLOTS.
 
-  // Route through STATUS_LABEL so this badge uses the same wording as every
-  // other status pill in the app ("Done" / "In Review" / "In Progress" /
-  // "To Do" / "On Hold" / "Cancelled"). Previously had local "Review" /
-  // "Active" overrides that drifted from the rest of the UI.
-  const statusLabel = STATUS_LABEL[task.status] ?? task.status;
-  const statusColor = task.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : task.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : task.status === 'in_review' ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-600';
+  // Status pill label / color are now rendered inside RowStatusSelect
+  // (clickable inline select). Routes through STATUS_LABEL there so wording
+  // stays in sync with every other status pill in the app.
 
   return (
     <div className="border-b border-slate-100 last:border-b-0">
       {overlap.dialog}
       <div className="flex items-center gap-2 px-4 py-2.5 hover:bg-blue-50/30 transition-colors">
-        {/* Task info — clickable to open the task sidebar. The form
-            controls below have their own click/change handlers, so clicks
-            inside those don't bubble up to the drawer-open handler. */}
-        <button
-          type="button"
-          onClick={() => onOpenDrawer(task.id)}
-          className="flex-1 min-w-0 text-left cursor-pointer rounded hover:bg-slate-50 -mx-1 px-1 py-0.5"
-          title="Open task details"
-        >
+        {/* Task info — name + zone clickable to open the drawer. The status
+            select sits ALONGSIDE the clickable region (not nested) because
+            <select> can't live inside <button>. The status select stops
+            its own propagation so picking a status doesn't also open the
+            drawer underneath. */}
+        <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             {projectName && <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 rounded px-1.5 py-0.5 shrink-0">{projectName}</span>}
-            <span className={cn('text-[10px] font-semibold rounded px-1.5 py-0.5 shrink-0', statusColor)}>{statusLabel}</span>
+            <RowStatusSelect taskId={task.id} status={task.status} />
+            {/* Assignee avatars — T1.4 also applies to the Time Reporting
+                row, not only the Kanban card. Shows up to 4 mini-circles
+                so the user sees who else is on the task without opening
+                the drawer. Hidden when the row has no assignees so the
+                status pill stays flush. */}
+            {Array.isArray(task.assignees) && task.assignees.length > 0 && (
+              <div className="flex items-center gap-0.5 shrink-0">
+                {(task.assignees as any[]).slice(0, 4).map((a) => {
+                  const initials = `${a.user?.firstName?.[0] ?? ''}${a.user?.lastName?.[0] ?? ''}` || '?';
+                  return (
+                    <span
+                      key={a.id}
+                      className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-[9px] font-extrabold ring-2 ring-white -ml-1 first:ml-0 shadow-sm"
+                      title={`${a.user?.firstName ?? ''} ${a.user?.lastName ?? ''}`.trim()}
+                    >
+                      {initials}
+                    </span>
+                  );
+                })}
+                {task.assignees.length > 4 && (
+                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-700 text-[9px] font-bold ring-2 ring-white -ml-1 shadow-sm">
+                    +{task.assignees.length - 4}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
-          <p className="text-[13px] font-medium text-slate-800 truncate mt-0.5">{task.name}</p>
-          {/* Context line: zone if present, else "Project Root" + phase so
-              the row isn't silently bucket-less. Same convention as the
-              kanban card and the timesheet picker. */}
-          {zoneName ? (
-            <p className="text-[10px] text-slate-500 truncate">{zoneName}</p>
-          ) : (
-            <p className="text-[10px] text-slate-400 italic truncate">
-              Project Root
-              {task.phase?.name ? ` · ${task.phase.name}` : task.serviceType?.name ? ` · ${task.serviceType.name}` : ''}
-            </p>
-          )}
-        </button>
+          <button
+            type="button"
+            onClick={() => onOpenDrawer(task.id)}
+            className="block w-full text-left cursor-pointer rounded hover:bg-slate-50 -mx-1 px-1 py-0.5 mt-0.5"
+            title="Open task details"
+          >
+            <p className="text-[13px] font-medium text-slate-800 truncate">{task.name}</p>
+            {/* Context line: zone if present, else "Project Root" + phase so
+                the row isn't silently bucket-less. Same convention as the
+                kanban card and the timesheet picker. */}
+            {zoneName ? (
+              <p className="text-[10px] text-slate-500 truncate">{zoneName}</p>
+            ) : (
+              <p className="text-[10px] text-slate-400 italic truncate">
+                Project Root
+                {task.phase?.name ? ` · ${task.phase.name}` : task.serviceType?.name ? ` · ${task.serviceType.name}` : ''}
+              </p>
+            )}
+          </button>
+        </div>
 
-        {/* Due date column */}
-        <div className="w-[80px] text-center shrink-0">
-          {dueLabel ? (
-            <span className={cn(
-              'inline-flex items-center gap-1 text-[11px] font-medium tabular-nums',
-              isOverdue ? 'text-red-600 font-bold' : 'text-slate-600',
-            )}>
-              <Calendar className="h-3 w-3" />
-              {dueLabel}
-            </span>
-          ) : (
+        {/* Due date column — emphasized per user feedback 2026-06-22.
+            Bigger font + colored pill so the deadline reads at a glance:
+            overdue = red, due within 3 days = amber, future = slate. */}
+        <div className="w-[96px] text-center shrink-0">
+          {dueLabel ? (() => {
+            const days = Math.floor(
+              (new Date(task.endDate as string).getTime() - new Date(today).getTime()) / 86400000,
+            );
+            const tone = isOverdue
+              ? 'bg-red-100 text-red-700 border-red-200'
+              : days <= 3
+                ? 'bg-amber-100 text-amber-700 border-amber-200'
+                : 'bg-slate-100 text-slate-700 border-slate-200';
+            return (
+              <span className={cn(
+                'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[12px] font-bold tabular-nums',
+                tone,
+              )}>
+                <Calendar className="h-3.5 w-3.5" />
+                {dueLabel}
+              </span>
+            );
+          })() : (
             <span className="text-[11px] text-slate-300">—</span>
           )}
         </div>
@@ -788,9 +892,188 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
   );
 }
 
+/**
+ * Upcoming-view buckets — derived from each task's endDate vs. today.
+ * Order matters: the UI renders sections in this order, so the most
+ * urgent rolls to the top.
+ */
+type DueBucket = 'overdue' | 'today' | 'this_week' | 'next_week' | 'later' | 'no_date';
+const DUE_BUCKETS: { key: DueBucket; label: string; tone: string }[] = [
+  { key: 'overdue',   label: 'Overdue',     tone: 'border-red-200 bg-red-50/40 text-red-700' },
+  { key: 'today',     label: 'Due Today',   tone: 'border-amber-200 bg-amber-50/40 text-amber-700' },
+  { key: 'this_week', label: 'This Week',   tone: 'border-blue-200 bg-blue-50/40 text-blue-700' },
+  { key: 'next_week', label: 'Next Week',   tone: 'border-violet-200 bg-violet-50/40 text-violet-700' },
+  { key: 'later',     label: 'Later',       tone: 'border-slate-200 bg-slate-50/60 text-slate-600' },
+  { key: 'no_date',   label: 'No Due Date', tone: 'border-slate-200 bg-slate-50/60 text-slate-500' },
+];
+
+/**
+ * Decide which Upcoming bucket a task belongs to.
+ *
+ * Buckets reflect what the user needs to ACT on this week — not just
+ * "when is the deadline?". A 2-month task that started last week and
+ * is due next month still belongs in "This Week", because the user is
+ * actively working on it now. The old version only looked at endDate,
+ * so multi-week tasks slid into "Later" and disappeared from the
+ * actionable view.
+ *
+ * Priority (first match wins):
+ *   1. completed/cancelled → 'later' (out of focus)
+ *   2. endDate in the past → 'overdue' (must catch up)
+ *   3. endDate == today → 'today'
+ *   4. [startDate, endDate] overlaps [today, today+7d] → 'this_week'
+ *      (covers: starts/ends this week, AND active multi-week tasks
+ *       whose start is already in the past)
+ *   5. starts or ends in days 8–14 → 'next_week'
+ *   6. else → 'later'
+ *   7. no startDate AND no endDate → 'no_date'
+ */
+function bucketForTask(task: any, todayMs: number): DueBucket {
+  if (task.status === 'completed' || task.status === 'cancelled') return 'later';
+
+  const dayMs = 86_400_000;
+  const startMs = task.startDate ? new Date(task.startDate).getTime() : null;
+  const endMs = task.endDate ? new Date(task.endDate).getTime() : null;
+
+  if (startMs == null && endMs == null) return 'no_date';
+
+  // Overdue — endDate in the past
+  if (endMs != null && endMs < todayMs) return 'overdue';
+
+  // Due today — endDate is exactly today
+  if (endMs != null) {
+    const dueDay = Math.floor((endMs - todayMs) / dayMs);
+    if (dueDay === 0) return 'today';
+  }
+
+  const weekEndMs = todayMs + 7 * dayMs;
+  // "Active this week" — the task's [startDate, endDate] window overlaps
+  // the next 7 days. A null endDate is treated as open-ended (still
+  // ongoing). A null startDate falls back to the endDate-only check so
+  // deadline-only tasks still slot in.
+  const startsByEndOfWeek = startMs != null && startMs <= weekEndMs;
+  const stillOpenOrLater = endMs == null || endMs >= todayMs;
+  const endsThisWeek = endMs != null && endMs <= weekEndMs;
+  if ((startsByEndOfWeek && stillOpenOrLater) || endsThisWeek) {
+    return 'this_week';
+  }
+
+  const twoWeeksMs = todayMs + 14 * dayMs;
+  const startsNextWeek = startMs != null && startMs > weekEndMs && startMs <= twoWeeksMs;
+  const endsNextWeek = endMs != null && endMs > weekEndMs && endMs <= twoWeeksMs;
+  if (startsNextWeek || endsNextWeek) return 'next_week';
+
+  return 'later';
+}
+
+/**
+ * "Upcoming" view — same row component as the time-reporting list, but
+ * grouped by due-date proximity. Buckets are rendered in urgency order
+ * (Overdue first), and empty buckets are skipped so the page stays
+ * focused on actionable work.
+ */
+function UpcomingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer: (id: number) => void }) {
+  const todayMs = useMemo(() => {
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    return t.getTime();
+  }, []);
+
+  const grouped = useMemo(() => {
+    const m = new Map<DueBucket, any[]>();
+    for (const b of DUE_BUCKETS) m.set(b.key, []);
+    for (const t of tasks) m.get(bucketForTask(t, todayMs))!.push(t);
+    // Within each bucket, sort by endDate ascending (sooner first; tasks
+    // without a date go to the end), with task id as tie-breaker.
+    for (const arr of m.values()) {
+      arr.sort((a, b) => {
+        const aT = a.endDate ? new Date(a.endDate).getTime() : Number.POSITIVE_INFINITY;
+        const bT = b.endDate ? new Date(b.endDate).getTime() : Number.POSITIVE_INFINITY;
+        return (aT - bT) || (a.id ?? 0) - (b.id ?? 0);
+      });
+    }
+    return m;
+  }, [tasks, todayMs]);
+
+  return (
+    <div className="space-y-4">
+      {DUE_BUCKETS.map((b) => {
+        const list = grouped.get(b.key) ?? [];
+        if (list.length === 0) return null;
+        return (
+          <div key={b.key} className={cn('rounded-[14px] border bg-white overflow-hidden', b.tone)}>
+            <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between bg-white/60">
+              <div className="flex items-center gap-2">
+                <h3 className="text-[13px] font-semibold">{b.label}</h3>
+                <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">{list.length}</span>
+              </div>
+            </div>
+            {list.map((task: any) => (
+              <TimeReportingRow key={task.id} task={task} onOpenDrawer={onOpenDrawer} />
+            ))}
+          </div>
+        );
+      })}
+      {/* Empty state when zero tasks across all buckets (shouldn't happen
+          when the list is non-empty above, but defensive for stale data) */}
+      {tasks.length === 0 && (
+        <div className="py-12 text-center">
+          <CalendarClock className="mx-auto h-12 w-12 text-slate-300" />
+          <p className="mt-3 text-sm text-slate-500">Nothing on your plate right now.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type SortField = 'task' | 'project' | 'status' | 'due';
+type SortDir = 'asc' | 'desc';
+
+/** Pure comparator — keeps task IDs stable when sort keys collide. */
+function compareTasks(a: any, b: any, field: SortField, dir: SortDir): number {
+  const sign = dir === 'asc' ? 1 : -1;
+  const tieBreak = (a.id ?? 0) - (b.id ?? 0);
+  switch (field) {
+    case 'task':
+      return sign * String(a.name ?? '').localeCompare(String(b.name ?? '')) || tieBreak;
+    case 'project':
+      return sign * String(a.project?.name ?? '').localeCompare(String(b.project?.name ?? '')) || tieBreak;
+    case 'status': {
+      // Order by workflow stage so "Not started → In progress → In review →
+      // Done" is the natural ascending order, regardless of the string
+      // alphabet.
+      const rank: Record<string, number> = { not_started: 0, in_progress: 1, in_review: 2, completed: 3, on_hold: 4, cancelled: 5 };
+      return sign * ((rank[a.status] ?? 99) - (rank[b.status] ?? 99)) || tieBreak;
+    }
+    case 'due': {
+      const aT = a.endDate ? new Date(a.endDate).getTime() : Number.POSITIVE_INFINITY;
+      const bT = b.endDate ? new Date(b.endDate).getTime() : Number.POSITIVE_INFINITY;
+      return sign * (aT - bT) || tieBreak;
+    }
+  }
+}
+
 function TimeReportingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer: (id: number) => void }) {
-  const activeTasks = tasks.filter((t) => t.status !== 'completed');
-  const completedTasks = tasks.filter((t) => t.status === 'completed');
+  // Column sort state per user request 2026-06-22. Default: no sort
+  // (null) preserves the existing relevance-based order from the parent.
+  // Clicking a header toggles asc → desc → off; clicking a different
+  // header resets dir to asc.
+  const [sortField, setSortField] = useState<SortField | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const onHeaderClick = (field: SortField) => {
+    if (sortField !== field) { setSortField(field); setSortDir('asc'); return; }
+    if (sortDir === 'asc') { setSortDir('desc'); return; }
+    setSortField(null);
+    setSortDir('asc');
+  };
+
+  const sortedTasks = useMemo(() => {
+    if (!sortField) return tasks;
+    return [...tasks].sort((a, b) => compareTasks(a, b, sortField, sortDir));
+  }, [tasks, sortField, sortDir]);
+
+  const activeTasks = sortedTasks.filter((t) => t.status !== 'completed');
+  const completedTasks = sortedTasks.filter((t) => t.status === 'completed');
 
   // Fetch recent time entries for today
   const today = new Date().toISOString().split('T')[0];
@@ -823,6 +1106,38 @@ function TimeReportingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer:
         </div>
       )}
 
+      {/* Sort-by chip row — separate from the in-row header below so
+          users can sort by columns that DON'T have a corresponding
+          input on each row (project, status). The label flips between
+          "▲" / "▼" / unset and the field clears on a third click. */}
+      <div className="flex items-center gap-2 text-[11px] text-slate-500">
+        <span className="font-semibold uppercase tracking-wider">Sort by</span>
+        {([
+          { field: 'project' as const, label: 'Project' },
+          { field: 'task' as const, label: 'Task' },
+          { field: 'status' as const, label: 'Status' },
+          { field: 'due' as const, label: 'Due Date' },
+        ]).map((c) => {
+          const active = sortField === c.field;
+          return (
+            <button
+              key={c.field}
+              type="button"
+              onClick={() => onHeaderClick(c.field)}
+              className={cn(
+                'rounded-md border px-2 py-0.5 font-medium transition-colors',
+                active
+                  ? 'border-blue-300 bg-blue-50 text-blue-700'
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
+              )}
+            >
+              {c.label}
+              {active && <span className="ml-1">{sortDir === 'asc' ? '▲' : '▼'}</span>}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Active tasks */}
       {activeTasks.length > 0 && (
         <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
@@ -831,15 +1146,19 @@ function TimeReportingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer:
               <h3 className="text-[13px] font-semibold text-slate-700">Active Tasks</h3>
               <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-600">{activeTasks.length}</span>
             </div>
-            {/* Header labels — matched to the Add Timesheet Entry
-                modal's labels ("Start Time" + "End Time" + "Total Hours"). */}
+            {/* Header labels — widths MUST match TimeReportingRow's column
+                widths exactly so columns line up. Source-of-truth for the
+                row widths is at TimeReportingRow above: w-[96px] Due,
+                w-[130px] Date, w-[80px] Start/End, w-[58px] Total, w-14
+                Details button, ~w-[68px] Log button. */}
             <div className="flex items-center gap-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wider pr-1">
-              <span className="w-[80px] text-center">Due</span>
+              <span className="w-[96px] text-center">Due</span>
               <span className="w-[130px] text-center">Date</span>
               <span className="w-[80px] text-center">Start Time</span>
               <span className="w-[80px] text-center">End Time</span>
               <span className="w-[58px] text-center">Total Hours</span>
-              <span className="w-[72px]" />
+              <span className="w-14" />
+              <span className="w-[68px]" />
             </div>
           </div>
           {activeTasks.map((task: any) => <TimeReportingRow key={task.id} task={task} onOpenDrawer={onOpenDrawer} />)}
@@ -1050,6 +1369,11 @@ export function MyTasksKanbanPage() {
               activeTab === 'kanban' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
             <Columns3 className="h-3.5 w-3.5" /> Kanban
           </button>
+          <button onClick={() => setActiveTab('upcoming')}
+            className={cn('flex items-center gap-1.5 px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
+              activeTab === 'upcoming' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+            <CalendarClock className="h-3.5 w-3.5" /> Upcoming
+          </button>
         </div>
       </div>
 
@@ -1142,6 +1466,8 @@ export function MyTasksKanbanPage() {
         <div className="py-12 text-center text-sm text-slate-600">Loading your tasks...</div>
       ) : activeTab === 'time' ? (
         <TimeReportingTab tasks={tasks} onOpenDrawer={(id) => setDrawerTaskId(id)} />
+      ) : activeTab === 'upcoming' ? (
+        <UpcomingTab tasks={tasks} onOpenDrawer={(id) => setDrawerTaskId(id)} />
       ) : tasks.length === 0 ? (
         <div className="py-12 text-center">
           <UserIcon className="mx-auto h-12 w-12 text-slate-300" />

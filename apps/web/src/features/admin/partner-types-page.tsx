@@ -3,6 +3,7 @@ import { Plus, Trash2, Pencil, Save, X, Tags, Lock } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -131,6 +132,7 @@ export function PartnerTypesPage() {
 
 function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: boolean }) {
   const queryClient = useQueryClient();
+  const scrollRef = useStickyHScroll();
   const [editingId, setEditingId] = useState<number | 'new' | null>(null);
 
   const { data: types = [], isLoading } = useQuery<RoleType[]>({
@@ -177,7 +179,7 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
       {isLoading ? (
         <TableSkeleton rows={4} cols={3} />
       ) : (
-        <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+        <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">

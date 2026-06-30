@@ -161,7 +161,7 @@ export class TasksController {
     @Param('userId', ParseIntPipe) userId: number,
   ) {
     await this.access.assertTaskAccess(user.id, taskId, user.roleId);
-    return this.tasksService.removeAssignee(taskId, userId);
+    return this.tasksService.removeAssignee(taskId, userId, user?.id);
   }
 
   // Checklist — sub-items inside a task, NOT separate tasks. Read is gated
@@ -281,6 +281,6 @@ export class TasksController {
     await this.tasksService.assertAttachmentAccess(attachmentId, async (taskId) => {
       await this.access.assertTaskAccess(user.id, taskId, user.roleId);
     });
-    return this.tasksService.removeAttachment(attachmentId);
+    return this.tasksService.removeAttachment(attachmentId, user?.id);
   }
 }
