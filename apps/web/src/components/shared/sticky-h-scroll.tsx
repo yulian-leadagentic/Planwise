@@ -61,20 +61,45 @@ export function useStickyHScroll() {
     // the helper has zero CSS dependencies on the consuming app.
     const proxy = document.createElement('div');
     proxy.setAttribute('aria-hidden', 'true');
+    proxy.dataset.stickyHScroll = '1'; // hook for the always-visible scrollbar CSS below
     proxy.style.position = 'fixed';
     proxy.style.left = '0';
     proxy.style.right = '0';
     proxy.style.bottom = '0';
     proxy.style.overflowX = 'auto';
+    proxy.style.overflowY = 'hidden';
     proxy.style.zIndex = '40';
     proxy.style.background = 'rgba(241, 245, 249, 0.95)'; // slate-100 @ 95%
-    proxy.style.boxShadow = '0 -1px 0 rgba(15, 23, 42, 0.08)';
+    proxy.style.boxShadow = '0 -1px 0 rgba(15, 23, 42, 0.12)';
     proxy.style.display = 'none'; // hidden until we confirm we need it
     proxy.style.pointerEvents = 'auto';
+    // Explicit minimum height so the OS scrollbar inside ALWAYS has a
+    // tall track to render in. Windows/Chrome can auto-hide scrollbars
+    // when the container is too short; explicitly sized container +
+    // forced webkit-scrollbar styles below override that.
+    proxy.style.height = '14px';
+
+    // One-time global stylesheet that makes the proxy's webkit
+    // scrollbar always-visible with a contrasting thumb. Mount once and
+    // reuse for every consumer. (T-fix on staging — the OS native bar
+    // was rendering as a sub-pixel sliver on some Chrome configs.)
+    if (!document.getElementById('sticky-h-scroll-style')) {
+      const style = document.createElement('style');
+      style.id = 'sticky-h-scroll-style';
+      style.textContent = `
+        div[data-sticky-h-scroll] { scrollbar-width: thin; scrollbar-color: #94A3B8 transparent; }
+        div[data-sticky-h-scroll]::-webkit-scrollbar { height: 12px; background: transparent; }
+        div[data-sticky-h-scroll]::-webkit-scrollbar-thumb {
+          background: #94A3B8; border-radius: 6px; border: 2px solid rgba(241, 245, 249, 0.95);
+        }
+        div[data-sticky-h-scroll]::-webkit-scrollbar-thumb:hover { background: #64748B; }
+        div[data-sticky-h-scroll]::-webkit-scrollbar-track { background: transparent; }
+      `;
+      document.head.appendChild(style);
+    }
 
     const phantom = document.createElement('div');
-    // 1px tall so the proxy only shows its native scrollbar — no real
-    // content visible inside.
+    // 1px tall so the proxy only shows its scrollbar — no real content.
     phantom.style.height = '1px';
     proxy.appendChild(phantom);
     document.body.appendChild(proxy);
