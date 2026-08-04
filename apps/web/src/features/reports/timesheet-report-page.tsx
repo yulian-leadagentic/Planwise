@@ -236,9 +236,12 @@ export function TimesheetReportPage() {
   const [userId, setUserId] = useState<number | null>(null);
   const [projectId, setProjectId] = useState<number | null>(null);
   const [groupBy, setGroupBy] = useState<GroupBy>('none');
+  // Personal-task filter (client feedback 2026-08-02). Tri-state so
+  // reports can slice by personal-ness without a separate view.
+  const [personal, setPersonal] = useState<'include' | 'exclude' | 'only'>('include');
 
   const { data, isLoading } = useQuery<Response>({
-    queryKey: ['reports', 'timesheet-detailed', from, to, userId, projectId],
+    queryKey: ['reports', 'timesheet-detailed', from, to, userId, projectId, personal],
     queryFn: () =>
       client
         .get('/reports/timesheet/detailed', {
@@ -247,6 +250,7 @@ export function TimesheetReportPage() {
             to,
             ...(userId ? { userId } : {}),
             ...(projectId ? { projectId } : {}),
+            ...(personal !== 'include' ? { personal } : {}),
           },
         })
         .then((r) => r.data?.data ?? r.data),
@@ -479,7 +483,7 @@ export function TimesheetReportPage() {
       {/* Filters row — hidden when printing so the PDF shows just
           the summary bar + table (filters are not data, they're
           controls). */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-3 no-print">
+      <div className="grid grid-cols-1 md:grid-cols-6 gap-3 no-print">
         <div>
           <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
             Employee
@@ -526,6 +530,20 @@ export function TimesheetReportPage() {
             {GROUP_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+            Personal tasks
+          </label>
+          <select
+            value={personal}
+            onChange={(e) => setPersonal(e.target.value as 'include' | 'exclude' | 'only')}
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          >
+            <option value="include">Include</option>
+            <option value="exclude">Exclude</option>
+            <option value="only">Only personal</option>
           </select>
         </div>
       </div>

@@ -9,7 +9,9 @@ import {
   Query,
   ParseIntPipe,
   UseGuards,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { ProjectsService } from './projects.service';
@@ -156,6 +158,30 @@ export class ProjectsController {
   @ApiOperation({ summary: 'Unified project team — internal members + external partners' })
   getTeam(@Param('id', ParseIntPipe) projectId: number) {
     return this.projectsService.getTeam(projectId);
+  }
+
+  /** Excel export of every task on the project as a FLAT list — no
+   *  zone/deliverable/service groups, no client-side filters applied.
+   *  Users export from Planning when they need to slice the data in
+   *  Excel. (Tier B #5, 2026-06-30.) */
+  @Get(':id/tasks/export')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'Export every task on the project as a flat Excel file' })
+  async exportProjectTasks(
+    @Param('id', ParseIntPipe) projectId: number,
+    @Res() res: Response,
+  ) {
+    const { buffer, filename } = await this.projectsService.exportTasksExcel(projectId);
+    // RFC 5987 encoded `filename*` alongside the ASCII fallback so
+    // browsers correctly render Hebrew (and other non-ASCII)
+    // project names in the download prompt. The ASCII `filename`
+    // strips non-ASCII to keep older clients happy.
+    const asciiFallback = filename.replace(/[^\x20-\x7E]+/g, '_');
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    });
+    res.send(buffer);
   }
 
   @Delete(':id/members/:userId')

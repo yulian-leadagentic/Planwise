@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback, createContext, useContext, Fragment } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { usePermissions } from '@/hooks/use-permissions';
-import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle, ChevronsDownUp, ChevronsUpDown, Pencil, SlidersHorizontal, Archive, Undo2 } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle, ChevronsDownUp, ChevronsUpDown, Pencil, SlidersHorizontal, Archive, Undo2, Calendar } from 'lucide-react';
 import { formatDuration } from '@/lib/date-utils';
 import { notify } from '@/lib/notify';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { planningApi, zonesApi, templatesApi } from '@/api/zones.api';
 import { tasksApi } from '@/api/tasks.api';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
+import { useColumnVisibility, ColumnVisibilityPicker } from '@/components/shared/column-visibility';
 import { STATUS_LABEL } from '@/lib/task-constants';
 import client from '@/api/client';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
@@ -652,7 +653,7 @@ const ProjectDeliverablesContext = createContext<ProjectDeliverableLookups>({
  * have to thread through SortableZone → HierarchicalZoneGroup → ... .
  * (T2.fix3, 2026-06-28.)
  */
-type SubGroupDim = 'service' | 'phase';
+type SubGroupDim = 'service' | 'phase' | 'zone';
 type SubGroupBucket = {
   key: string;
   label: string;
@@ -836,7 +837,86 @@ function ColHeader({
 //     + tooltip handles long paths.
 //   • The page-level wrapper (PlanningPage) now allows horizontal
 //     scroll so the whole table doesn't squash to fit narrow screens.
+/**
+ * Full task-grid template as originally sized (16 slots: 2 fixed
+ * leading + 13 toggleable + 1 fixed trailing). Kept as the FALLBACK
+ * for any code path that doesn't consume PlanningColumnsContext —
+ * so out-of-context renders still get the classic all-columns view.
+ * When a caller IS wrapped in the provider, they should read
+ * `ctx.gridClass` + `ctx.gridStyle` and skip hidden cells.
+ */
 const TASK_GRID = 'grid grid-cols-[16px_16px_80px_minmax(180px,2fr)_140px_96px_80px_56px_64px_64px_72px_96px_96px_96px_96px_84px] gap-x-2 items-center min-w-[1280px]';
+
+/**
+ * Ordered list of TOGGLEABLE columns on the planning grid. Fixed
+ * leading (drag/checkbox 16px each) and trailing (action-menu 84px)
+ * slots are NOT in this list — they're always rendered. Column
+ * widths mirror the historical TASK_GRID template so persisting +
+ * restoring visibility doesn't reflow anything a user wasn't already
+ * used to.
+ *
+ * Order MUST match the render order in every row/header helper so
+ * the picker's "show/hide column N" flips the correct cell.
+ */
+export const PLANNING_COLUMNS = [
+  { key: 'code',        label: 'Code',        width: '80px' },
+  { key: 'name',        label: 'Task Name',   width: 'minmax(180px,2fr)', required: true },
+  { key: 'zone',        label: 'Zone',        width: '140px' },
+  { key: 'deliverable', label: 'Deliverable', width: '96px' },
+  { key: 'service',     label: 'Service',     width: '80px' },
+  { key: 'estHours',    label: 'Est. Hours',  width: '56px' },
+  { key: 'loggedHours', label: 'Logged',      width: '64px' },
+  { key: 'estCost',     label: 'Amount',      width: '64px' },
+  { key: 'actualCost',  label: 'Actual ₪',   width: '72px' },
+  { key: 'delivDate',   label: 'Deliv. Date', width: '96px' },
+  { key: 'dueDate',     label: 'Due Date',    width: '96px' },
+  { key: 'assignees',   label: 'Assignees',   width: '96px' },
+  { key: 'status',      label: 'Status',      width: '96px' },
+] as const;
+
+interface PlanningColumnsCtx {
+  isVisible: (key: string) => boolean;
+  /** Inline style with gridTemplateColumns + minWidth, computed
+   *  from the currently-visible columns. */
+  gridStyle: React.CSSProperties;
+}
+
+const PlanningColumnsContext = createContext<PlanningColumnsCtx | null>(null);
+
+function usePlanningColumns(): PlanningColumnsCtx {
+  const ctx = useContext(PlanningColumnsContext);
+  // Fallback: everything visible, static template — matches the
+  // legacy behavior for any consumer rendered outside the provider.
+  if (!ctx) {
+    return {
+      isVisible: () => true,
+      gridStyle: {
+        gridTemplateColumns: `16px 16px ${PLANNING_COLUMNS.map((c) => c.width).join(' ')} 84px`,
+        minWidth: '1280px',
+      },
+    };
+  }
+  return ctx;
+}
+
+/** Compute the inline grid style for the CURRENT visibility set.
+ *  Total min-width = 16+16+84 + sum of visible widths (used to
+ *  preserve horizontal-scroll behavior). */
+function computePlanningGridStyle(isVisible: (k: string) => boolean): React.CSSProperties {
+  const visible = PLANNING_COLUMNS.filter((c) => c.required || isVisible(c.key));
+  const widths = visible.map((c) => c.width).join(' ');
+  // Rough min-width: sum numeric px widths + 2 leading 16px + 84px trailing.
+  // minmax(180px,2fr) contributes 180 minimum.
+  const numericMin = visible.reduce((s, c) => {
+    if (c.width.startsWith('minmax')) return s + 180;
+    const n = parseInt(c.width, 10);
+    return s + (Number.isFinite(n) ? n : 96);
+  }, 0);
+  return {
+    gridTemplateColumns: `16px 16px ${widths} 84px`,
+    minWidth: `${16 + 16 + 84 + numericMin + (visible.length + 3 - 1) * 8}px`,
+  };
+}
 
 function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onToggleTask, onUpdate, onDeleteTask }: {
   task: any; idx: number; projectId: number; members: any[];
@@ -860,6 +940,11 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
 
   // Project's first-class deliverables (for the inline Deliverable picker).
   const deliverableLookups = useContext(ProjectDeliverablesContext);
+
+  // Dynamic grid columns (client feedback 2026-08-02 item 1). Reads
+  // the current visibility set from the context; falls back to the
+  // full-column view when rendered outside the provider (legacy).
+  const cols = usePlanningColumns();
 
   // Spreadsheet-style multi-edit: if this row is part of a multi-selection,
   // an inline edit propagates to ALL selected rows. If only one row is
@@ -948,8 +1033,8 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
     // the whole row), but the drag attributes + listeners live on the
     // grip button below — that's the recommended shape and it makes the
     // a11y focus land on the actual drag handle.
-    <div ref={setNodeRef} style={style} className={cn(
-      TASK_GRID, 'py-1.5 px-4 border-b border-l-[3px] transition-colors text-[13px]',
+    <div ref={setNodeRef} style={{ ...style, ...cols.gridStyle }} className={cn(
+      'grid gap-x-2 items-center py-1.5 px-4 border-b border-l-[3px] transition-colors text-[13px]',
       zoneBorderColors[zoneType] || 'border-l-slate-300',
       isDragging && 'opacity-40 bg-blue-50 shadow-lg z-10 border-blue-300',
       isOver && !isDragging && 'border-t-2 border-t-blue-500',
@@ -970,7 +1055,9 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
         <GripVertical className="w-4 h-4" />
       </button>
       <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
-      <span className="font-mono text-[11px] font-medium text-slate-500 truncate" title={task.code || ''}>{task.code || '-'}</span>
+      {cols.isVisible('code') && (
+        <span className="font-mono text-[11px] font-medium text-slate-500 truncate" title={task.code || ''}>{task.code || '-'}</span>
+      )}
       <span className="font-medium text-slate-900 min-w-0 truncate" title={task.name}>
         {task.name}
         {task.dependencies?.length > 0 && (
@@ -986,7 +1073,7 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           different parents (e.g. "מרתף" under Building A vs Building B)
           are otherwise indistinguishable. Hover shows the same breadcrumb
           for screen-reader / pinned-tooltip use. */}
-      {(() => {
+      {cols.isVisible('zone') && (() => {
         if (task.zoneId == null) {
           return (
             <span className="text-[11px] truncate">
@@ -1010,37 +1097,43 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           deliverable; "+ New" creates a project deliverable. The displayed
           label is resolved entity-first via the canonical resolver so it
           always matches the group header and the column filter. */}
-      <ProjectDeliverablePickerCell
-        projectId={projectId}
-        currentDeliverableId={task.projectDeliverableId ?? null}
-        currentLabel={(() => {
-          const n = resolveTaskDeliverable(task, deliverableLookups);
-          return n === 'No Deliverable' ? null : n;
-        })()}
-        currentColor={
-          (task.projectDeliverableId != null
-            ? deliverableLookups.byId.get(task.projectDeliverableId)?.service?.color
-            : null) || task.phase?.color || task.serviceType?.color
-        }
-        onAssign={saveDeliverable}
-      />
+      {cols.isVisible('deliverable') && (
+        <ProjectDeliverablePickerCell
+          projectId={projectId}
+          currentDeliverableId={task.projectDeliverableId ?? null}
+          currentLabel={(() => {
+            const n = resolveTaskDeliverable(task, deliverableLookups);
+            return n === 'No Deliverable' ? null : n;
+          })()}
+          currentColor={
+            (task.projectDeliverableId != null
+              ? deliverableLookups.byId.get(task.projectDeliverableId)?.service?.color
+              : null) || task.phase?.color || task.serviceType?.color
+          }
+          onAssign={saveDeliverable}
+        />
+      )}
       {/* Service cell — click to edit. Phase is the parent Service. */}
-      <CompactPickerCell
-        projectId={projectId}
-        currentId={task.phaseId ?? null}
-        currentLabel={task.phase?.name ?? null}
-        currentColor={task.phase?.color}
-        kind="phase"
-        fieldLabel="Service"
-        onSave={(v) => saveField('phaseId', v)}
-      />
+      {cols.isVisible('service') && (
+        <CompactPickerCell
+          projectId={projectId}
+          currentId={task.phaseId ?? null}
+          currentLabel={task.phase?.name ?? null}
+          currentColor={task.phase?.color}
+          kind="phase"
+          fieldLabel="Service"
+          onSave={(v) => saveField('phaseId', v)}
+        />
+      )}
       {/* Estimate (budgetHours) — editable. */}
-      <InlineEditCell value={task.budgetHours} suffix="h" width="w-14" onSave={(v) => saveField('budgetHours', v)} />
+      {cols.isVisible('estHours') && (
+        <InlineEditCell value={task.budgetHours} suffix="h" width="w-14" onSave={(v) => saveField('budgetHours', v)} />
+      )}
       {/* Reported / logged hours — read-only sum of all TimeEntry.minutes
           for this task across the team. Aggregated server-side in
           planning.service.ts → loggedMinutes. Red if it has exceeded the
           budget estimate (budget > 0 and logged > budget). */}
-      {(() => {
+      {cols.isVisible('loggedHours') && (() => {
         const loggedHours = Number(task.loggedMinutes ?? 0) / 60;
         const budget = Number(task.budgetHours ?? 0);
         const overBudget = budget > 0 && loggedHours > budget;
@@ -1059,68 +1152,81 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       {/* Amount + Actual ₪ are finance-gated. Non-finance users see
           em-dash placeholders so the CSS grid stays column-aligned
           without revealing budget or computed cost. */}
-      {showFinance ? (
-        <InlineEditCell value={task.budgetAmount} prefix="₪" width="w-16" onSave={(v) => saveField('budgetAmount', v)} />
-      ) : (
-        <span className="text-right text-[11px] font-mono text-slate-300">—</span>
+      {cols.isVisible('estCost') && (
+        showFinance ? (
+          <InlineEditCell value={task.budgetAmount} prefix="₪" width="w-16" onSave={(v) => saveField('budgetAmount', v)} />
+        ) : (
+          <span className="text-right text-[11px] font-mono text-slate-300">—</span>
+        )
       )}
       {/* M5 — Actual cost (read-only). Sum of each contributor's logged
           minutes / 60 × their seniority hourly cost. Aggregated server-side
           (planning.service.ts → actualCost). Red when actual exceeds the
           budget amount; em-dash when nothing rateable has been logged.
           Hidden behind the Finance permission. */}
-      {showFinance ? (() => {
-        const ac = Number(task.actualCost ?? 0);
-        const budget = Number(task.budgetAmount ?? 0);
-        const overBudget = budget > 0 && ac > budget;
-        const sym = task.actualCostCurrency === 'USD' ? '$' : task.actualCostCurrency === 'EUR' ? '€' : '₪';
-        return (
-          <span
-            className={cn(
-              'text-right text-[11px] font-mono tabular-nums font-semibold',
-              ac === 0 ? 'text-slate-300' : overBudget ? 'text-red-600' : 'text-slate-700',
-            )}
-            title={overBudget
-              ? `Over budget: ${sym}${ac.toLocaleString()} actual vs ${sym}${budget.toLocaleString()} budget`
-              : ac > 0 ? `Actual labor cost: ${sym}${ac.toLocaleString()}` : 'No rateable time logged'}
-          >
-            {ac > 0 ? `${sym}${ac.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
-          </span>
-        );
-      })() : (
-        <span className="text-right text-[11px] font-mono text-slate-300">—</span>
+      {cols.isVisible('actualCost') && (
+        showFinance ? (() => {
+          const ac = Number(task.actualCost ?? 0);
+          const budget = Number(task.budgetAmount ?? 0);
+          const overBudget = budget > 0 && ac > budget;
+          const sym = task.actualCostCurrency === 'USD' ? '$' : task.actualCostCurrency === 'EUR' ? '€' : '₪';
+          return (
+            <span
+              className={cn(
+                'text-right text-[11px] font-mono tabular-nums font-semibold',
+                ac === 0 ? 'text-slate-300' : overBudget ? 'text-red-600' : 'text-slate-700',
+              )}
+              title={overBudget
+                ? `Over budget: ${sym}${ac.toLocaleString()} actual vs ${sym}${budget.toLocaleString()} budget`
+                : ac > 0 ? `Actual labor cost: ${sym}${ac.toLocaleString()}` : 'No rateable time logged'}
+            >
+              {ac > 0 ? `${sym}${ac.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
+            </span>
+          );
+        })() : (
+          <span className="text-right text-[11px] font-mono text-slate-300">—</span>
+        )
       )}
-      {/* Estimated start date — planning forecast (distinct from actual
-          startDate, which is set when work begins and lives in the drawer). */}
-      <span>
-        <input
-          type="date"
-          value={estStartDate}
-          onChange={(e) => saveField('estimatedStartDate', e.target.value)}
+      {/* Deliverable date — read-only display of the Deliverable's
+          target date resolved from the (zone × deliverable) pair (with
+          deliverable-level fallback). Est. Start was removed from the
+          project tasks view per client 2026-08-02; it stays as an
+          INTERNAL computation on the backend that decides when a task
+          bumps into "This Week" on My Tasks, but the PM doesn't need
+          to see it here. */}
+      {cols.isVisible('delivDate') && (
+        <span
           className={cn(
-            'w-full px-1 py-0.5 rounded border text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400',
-            'border-slate-200 text-slate-600 bg-transparent',
-            !estStartDate && 'text-slate-300',
+            'text-[11px] tabular-nums text-slate-600',
+            !task.deliverableTargetDate && 'text-slate-300',
           )}
-          title="Estimated (planned) start date"
-        />
-      </span>
-      <span>
-        <input
-          type="date"
-          value={dueDate}
-          onChange={(e) => saveField('endDate', e.target.value)}
-          className={cn(
-            'w-full px-1 py-0.5 rounded border text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400',
-            isOverdue ? 'border-red-300 text-red-600 bg-red-50' : 'border-slate-200 text-slate-600 bg-transparent',
-            !dueDate && 'text-slate-300',
-          )}
-        />
-      </span>
-      <span className="flex items-center">
-        <AssigneePicker task={task} members={members} projectId={projectId} onUpdate={onUpdate} selectedTaskIds={selectedTaskIds} />
-      </span>
-      <StatusBadgeDropdown taskId={task.id} currentStatus={task.status} projectId={projectId} selectedTaskIds={selectedTaskIds} />
+          title={task.deliverableTargetDate ? `Deliverable target: ${String(task.deliverableTargetDate).slice(0, 10)}` : 'No deliverable target set'}
+        >
+          {task.deliverableTargetDate ? String(task.deliverableTargetDate).slice(0, 10) : '—'}
+        </span>
+      )}
+      {cols.isVisible('dueDate') && (
+        <span>
+          <input
+            type="date"
+            value={dueDate}
+            onChange={(e) => saveField('endDate', e.target.value)}
+            className={cn(
+              'w-full px-1 py-0.5 rounded border text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400',
+              isOverdue ? 'border-red-300 text-red-600 bg-red-50' : 'border-slate-200 text-slate-600 bg-transparent',
+              !dueDate && 'text-slate-300',
+            )}
+          />
+        </span>
+      )}
+      {cols.isVisible('assignees') && (
+        <span className="flex items-center">
+          <AssigneePicker task={task} members={members} projectId={projectId} onUpdate={onUpdate} selectedTaskIds={selectedTaskIds} />
+        </span>
+      )}
+      {cols.isVisible('status') && (
+        <StatusBadgeDropdown taskId={task.id} currentStatus={task.status} projectId={projectId} selectedTaskIds={selectedTaskIds} />
+      )}
       <div className="flex items-center gap-0.5">
         <TaskAttachmentButton taskId={task.id} projectId={projectId} />
         <TaskDiscussionButton taskId={task.id} taskName={task.name} />
@@ -3243,6 +3349,7 @@ function SortableZone(props: any) {
 function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth, selectedTaskIds, onToggleTask, onToggleMany, zoneDragHandleProps }: any) {
   const [collapsed, setCollapsed] = useState(false);
   useBulkCollapseSync(setCollapsed);
+  const cols = usePlanningColumns();
   // Multi-level group-by — when a sub-dimension is selected (Deliverable
   // or Service), the zone's direct tasks render as nested deliverable
   // cards instead of a flat task table. Sub-zones still render as zones
@@ -3456,7 +3563,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
                   selectedTaskIds={selectedTaskIds}
                   onToggleTask={onToggleTask}
                   onToggleMany={onToggleMany}
-                  kind={subCtx.dim === 'phase' ? 'service' : 'deliverable'}
+                  kind={subCtx.dim === 'phase' ? 'service' : subCtx.dim === 'zone' ? 'zone' : 'deliverable'}
                   editableTemplateId={subCtx.dim === 'service' ? sg.editableTemplateId : null}
                   editableDeliverableId={subCtx.dim === 'service' ? sg.editableDeliverableId : null}
                 />
@@ -3465,22 +3572,22 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           ) : (
             <>
               {directTasks.length > 0 && (
-                <div style={{ marginLeft: 28 }} className={cn(TASK_GRID, 'py-1.5 px-4 bg-slate-50/70 border-b border-l-[3px] border-l-transparent border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider')}>
+                <div style={{ marginLeft: 28, ...cols.gridStyle }} className={cn('grid gap-x-2 items-center py-1.5 px-4 bg-slate-50/70 border-b border-l-[3px] border-l-transparent border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider')}>
                   <span />
                   <span />
-                  <ColHeader label="Code" filterKey="code" kind="text" />
+                  {cols.isVisible('code') && <ColHeader label="Code" filterKey="code" kind="text" />}
                   <ColHeader label="Task Name" filterKey="name" kind="text" />
-                  <ColHeader label="Zone" filterKey="zone" kind="select" />
-                  <ColHeader label="Deliverable" filterKey="deliverable" kind="select" />
-                  <ColHeader label="Service" filterKey="service" kind="select" />
-                  <span className="text-right">Est. Hours</span>
-                  <span className="text-right">Logged</span>
-                  <span className="text-right">Amount</span>
-                  <span className="text-right">Actual ₪</span>
-                  <span>Est. Start</span>
-                  <span>Due Date</span>
-                  <ColHeader label="Assignees" filterKey="assignee" kind="assignee" />
-                  <ColHeader label="Status" filterKey="status" kind="select" />
+                  {cols.isVisible('zone') && <ColHeader label="Zone" filterKey="zone" kind="select" />}
+                  {cols.isVisible('deliverable') && <ColHeader label="Deliverable" filterKey="deliverable" kind="select" />}
+                  {cols.isVisible('service') && <ColHeader label="Service" filterKey="service" kind="select" />}
+                  {cols.isVisible('estHours') && <span className="text-right">Est. Hours</span>}
+                  {cols.isVisible('loggedHours') && <span className="text-right">Logged</span>}
+                  {cols.isVisible('estCost') && <span className="text-right">Amount</span>}
+                  {cols.isVisible('actualCost') && <span className="text-right">Actual ₪</span>}
+                  {cols.isVisible('delivDate') && <span>Deliv. Date</span>}
+                  {cols.isVisible('dueDate') && <span>Due Date</span>}
+                  {cols.isVisible('assignees') && <ColHeader label="Assignees" filterKey="assignee" kind="assignee" />}
+                  {cols.isVisible('status') && <ColHeader label="Status" filterKey="status" kind="select" />}
                   <span className="w-5 shrink-0" />
                 </div>
               )}
@@ -3601,7 +3708,7 @@ function ProjectRootDeliverableGroup({
    *  to flag repeatedly. Pass 'service' when grouping by Phase and
    *  the chip becomes "service"; default stays 'deliverable' for
    *  backwards-compat with all other call sites. */
-  kind?: 'deliverable' | 'service' | 'none';
+  kind?: 'deliverable' | 'service' | 'zone' | 'none';
   /** When set, the user can inline-rename the group. Only meaningful for
    *  Template-based groups (not ServiceType / marker / orphan). Pass the
    *  deliverableTemplate's id; null/undefined hides the rename pencil. */
@@ -3633,6 +3740,7 @@ function ProjectRootDeliverableGroup({
   // Opens on pencil click. Empty value is a no-op (the entity name is
   // required). Outside-click confirms (Enter / blur), Esc cancels.
   const queryClient = useQueryClient();
+  const cols = usePlanningColumns();
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(label);
   const renameMutation = useMutation({
@@ -3770,6 +3878,30 @@ function ProjectRootDeliverableGroup({
             </span>
           )}
         </div>
+        {/* Delivery date pill — Amit's ask (client meeting 2026-08-04):
+            when grouping by Deliverable, the deliverable's target
+            date belongs in the group header (not as a redundant
+            column). Pulled from the first task with a resolved
+            deliverableTargetDate. Only shown for deliverable groups. */}
+        {kind === 'deliverable' && (() => {
+          const dt = (tasks as any[]).map((t) => t.deliverableTargetDate).find((d) => !!d);
+          if (!dt) return null;
+          const iso = String(dt).slice(0, 10);
+          const past = new Date(iso).getTime() < Date.now();
+          return (
+            <span
+              className={cn(
+                'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold tabular-nums shrink-0',
+                past ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-blue-50 border-blue-200 text-blue-700',
+              )}
+              title={`Deliverable target date: ${iso}${past ? ' (past)' : ''}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Calendar className="w-3 h-3" />
+              {iso}
+            </span>
+          );
+        })()}
         <span className="ml-auto text-[11px] font-medium text-slate-400">
           {tasks.length} tasks · {totalHours}h budget
           <span className={cn('ml-1 font-semibold', totalLoggedHours === 0 ? 'text-slate-400' : totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-blue-500')}>
@@ -3801,7 +3933,7 @@ function ProjectRootDeliverableGroup({
                 selectedTaskIds={selectedTaskIds}
                 onToggleTask={onToggleTask}
                 onToggleMany={onToggleMany}
-                kind={subCtx!.dim === 'phase' ? 'service' : 'deliverable'}
+                kind={subCtx!.dim === 'phase' ? 'service' : subCtx!.dim === 'zone' ? 'zone' : 'deliverable'}
                 editableTemplateId={subCtx!.dim === 'service' ? sg.editableTemplateId : null}
                 editableDeliverableId={subCtx!.dim === 'service' ? sg.editableDeliverableId : null}
               />
@@ -3809,21 +3941,21 @@ function ProjectRootDeliverableGroup({
           </div>
         ) : (
         <>
-          <div style={{ marginLeft: 28 }} className={cn(TASK_GRID, 'py-1.5 px-4 bg-slate-50/70 border-b border-l-[3px] border-l-transparent border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider')}>
+          <div style={{ marginLeft: 28, ...cols.gridStyle }} className={cn('grid gap-x-2 items-center py-1.5 px-4 bg-slate-50/70 border-b border-l-[3px] border-l-transparent border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider')}>
             <span /><span />
-            <ColHeader label="Code" filterKey="code" kind="text" />
+            {cols.isVisible('code') && <ColHeader label="Code" filterKey="code" kind="text" />}
             <ColHeader label="Task Name" filterKey="name" kind="text" />
-            <ColHeader label="Zone" filterKey="zone" kind="select" />
-            <ColHeader label="Deliverable" filterKey="deliverable" kind="select" />
-            <ColHeader label="Service" filterKey="service" kind="select" />
-            <span className="text-right">Est. Hours</span>
-            <span className="text-right">Logged</span>
-            <span className="text-right">Amount</span>
-            <span className="text-right">Actual ₪</span>
-            <span>Est. Start</span>
-            <span>Due Date</span>
-            <ColHeader label="Assignees" filterKey="assignee" kind="assignee" />
-            <ColHeader label="Status" filterKey="status" kind="select" />
+            {cols.isVisible('zone') && <ColHeader label="Zone" filterKey="zone" kind="select" />}
+            {cols.isVisible('deliverable') && <ColHeader label="Deliverable" filterKey="deliverable" kind="select" />}
+            {cols.isVisible('service') && <ColHeader label="Service" filterKey="service" kind="select" />}
+            {cols.isVisible('estHours') && <span className="text-right">Est. Hours</span>}
+            {cols.isVisible('loggedHours') && <span className="text-right">Logged</span>}
+            {cols.isVisible('estCost') && <span className="text-right">Amount</span>}
+            {cols.isVisible('actualCost') && <span className="text-right">Actual ₪</span>}
+            {cols.isVisible('delivDate') && <span>Deliv. Date</span>}
+            {cols.isVisible('dueDate') && <span>Due Date</span>}
+            {cols.isVisible('assignees') && <ColHeader label="Assignees" filterKey="assignee" kind="assignee" />}
+            {cols.isVisible('status') && <ColHeader label="Status" filterKey="status" kind="select" />}
             <span className="w-5 shrink-0" />
           </div>
           <SortableTaskList
@@ -4153,7 +4285,7 @@ function PlanningView({ projectId }: { projectId: number }) {
   // Service → Deliverable. '' means single-level grouping. The dropdown
   // excludes whatever the primary level is set to; flipping the primary
   // clears the secondary if they would collide. (T2.fix3, 2026-06-28.)
-  const [subGroupBy, setSubGroupBy] = useState<'' | 'service' | 'phase'>('');
+  const [subGroupBy, setSubGroupBy] = useState<'' | 'service' | 'phase' | 'zone'>('');
   // Bulk collapse/expand. `bulkCollapsed` tracks the last toolbar state
   // so the button label flips between "Collapse all" / "Expand all".
   // `bulkVersion` is bumped on every click so cards re-sync even when
@@ -4185,6 +4317,41 @@ function PlanningView({ projectId }: { projectId: number }) {
   // date set, 'no' = only tasks missing one (handy for catching tasks
   // that slipped through scheduling).
   const [filterHasDue, setFilterHasDue] = useState<'' | 'yes' | 'no'>('');
+
+  // Column visibility (client feedback 2026-08-02 item 1). Picks
+  // persist per browser via localStorage. The `columnVis.isVisible`
+  // + `computePlanningGridStyle` pair feed the PlanningColumnsContext
+  // below, which every task-row / header render site consumes to
+  // both skip hidden cells AND resize the grid template so the
+  // remaining columns close ranks.
+  const planningColumns = PLANNING_COLUMNS;
+  const columnVis = useColumnVisibility('planning-grid', planningColumns as any);
+  // Auto-hide any column that duplicates the current grouping
+  // dimension (client meeting 2026-08-04): when grouping by
+  // Deliverable, the "Deliverable" column repeats what the group
+  // header already says — so we suppress it. Same for Zone/Service.
+  // Additionally, when grouping by Deliverable, the Deliv. Date
+  // column is folded into the group header, so hide it too.
+  // Layered ON TOP of the user's manual visibility choices — the
+  // manual state is preserved and reappears when grouping is
+  // turned off. `hiddenByGrouping` powers the picker tooltip.
+  const hiddenByGrouping = useMemo(() => {
+    const set = new Set<string>();
+    for (const dim of [groupBy, subGroupBy]) {
+      if (dim === 'zone') set.add('zone');
+      if (dim === 'service') { set.add('deliverable'); set.add('delivDate'); }
+      if (dim === 'phase') set.add('service');
+    }
+    return set;
+  }, [groupBy, subGroupBy]);
+  const planningColumnsCtx = useMemo<PlanningColumnsCtx>(() => {
+    const isVisibleWithGrouping = (k: string) =>
+      !hiddenByGrouping.has(k) && columnVis.isVisible(k);
+    return {
+      isVisible: isVisibleWithGrouping,
+      gridStyle: computePlanningGridStyle(isVisibleWithGrouping),
+    };
+  }, [columnVis.visible, columnVis.isVisible, hiddenByGrouping]);
 
   // Toolbar popovers — the old action bar had 4 add-buttons + 6 filter
   // controls on screen at once, which collapsed into a chaotic 3-row
@@ -4869,6 +5036,24 @@ function PlanningView({ projectId }: { projectId: number }) {
           key = 'none-no-deliverable';
         }
         serviceLabel = t.phase?.name || '';
+      } else if (dim === 'zone') {
+        // Zone-as-sub-group. Bucket tasks by zoneId; use the zone
+        // object off the task if present (loaded via findMine /
+        // planning-data), otherwise fall back to flatZones lookup.
+        // No hierarchical rendering here — sub-zones flatten into
+        // their own bucket. Hierarchical zone DnD only applies when
+        // Zone is the OUTER (primary) group.
+        if (t.zoneId != null) {
+          const z = t.zone ?? flatZones.find((fz: any) => fz.id === t.zoneId);
+          label = z?.name ?? `Zone #${t.zoneId}`;
+          color = '#F59E0B'; // amber-500 — matches the app's Zone accent
+          sortOrder = Number(z?.sortOrder ?? 0);
+          key = `zn-${t.zoneId}`;
+        } else {
+          label = 'No Zone';
+          color = '#94a3b8';
+          key = 'none-no-zone';
+        }
       } else {
         // dim === 'phase' — Service grouping.
         if (t.phaseId != null) {
@@ -4897,7 +5082,7 @@ function PlanningView({ projectId }: { projectId: number }) {
       if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
       return a.label.localeCompare(b.label);
     });
-  }, [deliverableById, deliverableByTemplateId]);
+  }, [deliverableById, deliverableByTemplateId, flatZones]);
 
   // Effective sub-dimension. A primary collision (e.g. user picked
   // Deliverable as primary AND Deliverable as sub) collapses to no
@@ -4906,6 +5091,11 @@ function PlanningView({ projectId }: { projectId: number }) {
   const effectiveSubDim: SubGroupDim | null = (() => {
     if (!subGroupBy) return null;
     if (groupBy === 'none') return null;
+    // Primary/sub collision — same dimension on both levels makes no
+    // sense (Zone × Zone, Deliverable × Deliverable, Service × Service).
+    // Collapse to no sub-group in that case; the dropdown filter also
+    // prevents it, but this guards stale state from a primary flip.
+    if (groupBy === 'zone' && subGroupBy === 'zone') return null;
     if (groupBy === 'service' && subGroupBy === 'service') return null;
     if (groupBy === 'phase' && subGroupBy === 'phase') return null;
     return subGroupBy;
@@ -4925,6 +5115,7 @@ function PlanningView({ projectId }: { projectId: number }) {
   if (isLoading) return <div className="flex h-96 items-center justify-center text-[13px] text-slate-400">Loading...</div>;
 
   return (
+    <PlanningColumnsContext.Provider value={planningColumnsCtx}>
     <BulkCollapseContext.Provider value={{ desired: bulkCollapsed, version: bulkVersion }}>
     <TaskMessageCountsContext.Provider value={messageCounts as Record<number, number>}>
     <ProjectDeliverablesContext.Provider value={deliverableLookups}>
@@ -5153,7 +5344,13 @@ function PlanningView({ projectId }: { projectId: number }) {
               onChange={(e) => {
                 const next = e.target.value as 'zone' | 'service' | 'phase' | 'none';
                 setGroupBy(next);
-                if (next === 'none' || (next === 'service' && subGroupBy === 'service') || (next === 'phase' && subGroupBy === 'phase')) {
+                // Clear sub-group when primary would collide with it.
+                if (
+                  next === 'none'
+                  || (next === 'zone' && subGroupBy === 'zone')
+                  || (next === 'service' && subGroupBy === 'service')
+                  || (next === 'phase' && subGroupBy === 'phase')
+                ) {
                   setSubGroupBy('');
                 }
               }}
@@ -5169,11 +5366,13 @@ function PlanningView({ projectId }: { projectId: number }) {
                 <span className="text-slate-300 text-[11px]">/</span>
                 <select
                   value={subGroupBy}
-                  onChange={(e) => setSubGroupBy(e.target.value as '' | 'service' | 'phase')}
+                  onChange={(e) => setSubGroupBy(e.target.value as '' | 'service' | 'phase' | 'zone')}
                   className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
                   title="Optional secondary grouping inside each primary group"
                 >
                   <option value="">No sub-group</option>
+                  {/* Only show options that differ from the primary Group. */}
+                  {groupBy !== 'zone' && <option value="zone">Zone</option>}
                   {groupBy !== 'service' && <option value="service">Deliverable</option>}
                   {groupBy !== 'phase' && <option value="phase">Service</option>}
                 </select>
@@ -5193,6 +5392,20 @@ function PlanningView({ projectId }: { projectId: number }) {
               className="w-44 pl-8 pr-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
             />
           </div>
+
+          {/* Column-visibility picker — sits next to Filters so users
+              can shape both the row set and the column set from the
+              same spot. Persists per-browser via localStorage. */}
+          <ColumnVisibilityPicker
+            columns={planningColumns as any}
+            visible={columnVis.visible}
+            onToggle={columnVis.toggle}
+            onShowAll={columnVis.showAll}
+            onReset={columnVis.resetToDefault}
+            hiddenCount={columnVis.hiddenCount}
+            suppressedKeys={hiddenByGrouping}
+            suppressedReason="Hidden while grouping duplicates this column"
+          />
 
           {/* Filters popover — collapses the old 6-control filter row. */}
           <div className="relative" ref={filterPanelRef}>
@@ -5354,6 +5567,34 @@ function PlanningView({ projectId }: { projectId: number }) {
               className="flex items-center justify-center w-[34px] h-[34px] rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
             >
               <Archive className="w-4 h-4" />
+            </button>
+            {/* Excel export — dumps every task on the project as a flat
+                list (no grouping, no client-side filters). Users export
+                when they need to slice the data in Excel/Sheets.
+                (Tier B #5, 2026-06-30.) */}
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const resp = await client.get(`/projects/${projectId}/tasks/export`, { responseType: 'blob' });
+                  const blob = new Blob([resp.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `project-${projectId}-tasks-${new Date().toISOString().slice(0, 10)}.xlsx`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                } catch (err: any) {
+                  notify.apiError(err, 'Failed to export tasks');
+                }
+              }}
+              title="Export all tasks as Excel (flat, no groups)"
+              aria-label="Export tasks to Excel"
+              className="flex items-center justify-center w-[34px] h-[34px] rounded-lg text-slate-400 hover:text-emerald-700 hover:bg-emerald-50"
+            >
+              <Download className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -5574,6 +5815,7 @@ function PlanningView({ projectId }: { projectId: number }) {
     </ProjectDeliverablesContext.Provider>
     </TaskMessageCountsContext.Provider>
     </BulkCollapseContext.Provider>
+    </PlanningColumnsContext.Provider>
   );
 }
 

@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsDateString, IsInt } from 'class-validator';
+import { IsOptional, IsString, IsDateString, IsInt, IsEnum } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
@@ -44,4 +44,15 @@ export class ReportQueryDto {
   @IsOptional()
   @IsString()
   format?: string;
+
+  /**
+   * Personal-task filter (client feedback 2026-08-02). Applied to
+   * every timesheet/cost report by joining through the task and
+   * checking `tasks.is_personal`. Default is `include` so nothing
+   * breaks silently.
+   */
+  @ApiPropertyOptional({ description: 'Personal-task filter: include|exclude|only', enum: ['include', 'exclude', 'only'] })
+  @IsOptional()
+  @IsEnum(['include', 'exclude', 'only'] as const)
+  personal?: 'include' | 'exclude' | 'only';
 }

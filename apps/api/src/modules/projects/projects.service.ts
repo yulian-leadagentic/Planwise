@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import * as ExcelJS from 'exceljs';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProjectAccessService } from '../../common/services/project-access.service';
@@ -720,6 +721,126 @@ export class ProjectsService {
    * All data comes from the relationships table; no project columns added.
    * "Active" = validFrom <= now < validTo (BUT050-style time-bounded).
    */
+
+  /** Flat Excel export of every task on the project. No grouping, no
+   *  client-side filters — one row per task, in a shape that's easy to
+   *  slice in Excel/Sheets. Called by GET /projects/:id/tasks/export.
+   *  (Tier B #5, 2026-06-30.) */
+  async exportTasksExcel(projectId: number): Promise<{ buffer: Buffer; filename: string }> {
+    await this.findOne(projectId);
+    const [project, tasks] = await Promise.all([
+      this.prisma.project.findUnique({
+        where: { id: projectId },
+        select: { id: true, name: true, number: true },
+      }),
+      this.prisma.task.findMany({
+        where: { projectId, deletedAt: null, isArchived: false },
+        orderBy: [{ zoneId: 'asc' }, { id: 'asc' }],
+        include: {
+          zone: { select: { name: true, zoneType: true } },
+          phase: { select: { name: true } },
+          serviceType: { select: { name: true } },
+          deliverableTemplate: { select: { name: true } },
+          assignees: {
+            where: { deletedAt: null },
+            include: { user: { select: { firstName: true, lastName: true } } },
+          },
+        },
+      }),
+    ]);
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Planwise';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('Tasks');
+    ws.columns = [
+      { header: 'Code', key: 'code', width: 14 },
+      { header: 'Task', key: 'name', width: 42 },
+      // Personal flag — client feedback 2026-08-02: personal tasks
+      // must be filterable in every report. Row-level Yes/No lets
+      // users toggle personal work in Excel via AutoFilter without a
+      // backend query param round-trip.
+      { header: 'Personal?', key: 'isPersonal', width: 10 },
+      { header: 'Zone', key: 'zone', width: 24 },
+      { header: 'Deliverable', key: 'deliverable', width: 26 },
+      { header: 'Service', key: 'service', width: 20 },
+      { header: 'Status', key: 'status', width: 14 },
+      { header: 'Priority', key: 'priority', width: 12 },
+      { header: 'Requires Review', key: 'requiresReview', width: 16 },
+      { header: 'Est. Hours', key: 'budgetHours', width: 12 },
+      { header: 'Logged (min)', key: 'loggedMinutes', width: 14 },
+      { header: 'Amount (₪)', key: 'budgetAmount', width: 14 },
+      { header: 'Start Date', key: 'startDate', width: 12 },
+      { header: 'Due Date', key: 'endDate', width: 12 },
+      { header: 'Completion %', key: 'completionPct', width: 14 },
+      { header: 'Assignees', key: 'assignees', width: 40 },
+      { header: 'Description', key: 'description', width: 48 },
+    ];
+    ws.getRow(1).font = { bold: true };
+    ws.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFF1F5F9' },
+    };
+
+    const fmtDate = (d: any) => (d ? new Date(d).toISOString().slice(0, 10) : '');
+    for (const t of tasks) {
+      const names = (t.assignees ?? [])
+        .map((a: any) => `${a.user?.firstName ?? ''} ${a.user?.lastName ?? ''}`.trim())
+        .filter(Boolean)
+        .join(', ');
+      const deliverable = t.deliverableTemplate?.name || t.serviceType?.name || '';
+      ws.addRow({
+        code: t.code ?? '',
+        name: t.name ?? '',
+        isPersonal: t.isPersonal ? 'Yes' : 'No',
+        zone: t.zone?.name ?? '',
+        deliverable,
+        service: t.phase?.name ?? '',
+        status: t.status ?? '',
+        priority: t.priority ?? '',
+        requiresReview: t.requiresReview ? 'Yes' : 'No',
+        budgetHours: Number(t.budgetHours ?? 0),
+        loggedMinutes: 0, // fill from time-entry aggregation if we ever want the roll-up on export
+        budgetAmount: Number(t.budgetAmount ?? 0),
+        startDate: fmtDate(t.startDate),
+        endDate: fmtDate(t.endDate),
+        completionPct: t.completionPct ?? 0,
+        assignees: names,
+        description: (t.description ?? '').replace(/\r?\n/g, ' '),
+      });
+    }
+    // Enable AutoFilter on the header row so users can toggle the
+    // Personal? column without hunting for a menu.
+    ws.autoFilter = {
+      from: { row: 1, column: 1 },
+      to: { row: 1, column: ws.columns.length },
+    };
+
+    // Metadata sheet — makes the exported workbook self-describing.
+    const meta = wb.addWorksheet('_meta');
+    meta.addRow(['Project', project?.name ?? '']);
+    meta.addRow(['Project #', project?.number ?? '']);
+    meta.addRow(['Exported at', new Date().toISOString()]);
+    meta.addRow(['Total tasks', tasks.length]);
+
+    const arrayBuffer = await wb.xlsx.writeBuffer();
+
+    // Filename derived from the project (client feedback 2026-08-03).
+    // Strip filesystem-hostile characters and collapse whitespace so
+    // both ASCII and Hebrew names round-trip cleanly. Falls back to
+    // the numeric project id when the project has no name (unusual).
+    const safeName = (project?.name ?? `project-${projectId}`)
+      .replace(/[\/\\:*?"<>|]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const numberSuffix = project?.number ? `-${project.number}` : '';
+    const dateSuffix = new Date().toISOString().slice(0, 10);
+    const filename = `${safeName}${numberSuffix} - tasks ${dateSuffix}.xlsx`;
+
+    return { buffer: Buffer.from(arrayBuffer), filename };
+  }
+
   async getTeam(projectId: number) {
     await this.findOne(projectId);
     const now = new Date();

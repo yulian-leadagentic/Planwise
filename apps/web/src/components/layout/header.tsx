@@ -37,8 +37,10 @@ export function Header() {
       </div>
       <div className="flex-1 sm:hidden" />
 
-      {/* Clock widget */}
-      <ClockWidget />
+      {/* Clock widget removed per client feedback 2026-08-02 — timesheet
+          reporting doesn't require the punch-clock UI in the app header.
+          Import kept in case we bring it back later. */}
+      {false && <ClockWidget />}
 
       {/* Theme toggle */}
       <button

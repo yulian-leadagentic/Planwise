@@ -394,4 +394,63 @@ export class ConfigController {
     await this.prisma.seniorityLevel.delete({ where: { id } });
     return { message: 'Seniority level deleted' };
   }
+
+  // ─── Time-log note phrases (Tier C #9b, 2026-06-30) ────────────────
+  // Admin-curated pool of description snippets. GET returns active
+  // rows only for pickers; admin CRUD sees everything.
+
+  @Get('time-note-phrases')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'List time-log preset phrases' })
+  async getTimeNotePhrases() {
+    return this.prisma.timeNotePhrase.findMany({
+      orderBy: [{ isActive: 'desc' }, { sortOrder: 'asc' }, { id: 'asc' }],
+    });
+  }
+
+  // Open to any authenticated user so the picker on the time-entry
+  // form can render without needing admin:read. Returns active only.
+  @Get('time-note-phrases/active')
+  @ApiOperation({ summary: 'Active phrases, for the time-entry picker' })
+  async getActiveTimeNotePhrases() {
+    return this.prisma.timeNotePhrase.findMany({
+      where: { isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+      select: { id: true, text: true },
+    });
+  }
+
+  @Post('time-note-phrases')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Create a time-log preset phrase' })
+  async createTimeNotePhrase(@Body() body: { text: string; sortOrder?: number; isActive?: boolean }) {
+    return this.prisma.timeNotePhrase.create({
+      data: {
+        text: body.text,
+        sortOrder: body.sortOrder ?? 0,
+        isActive: body.isActive ?? true,
+      },
+    });
+  }
+
+  @Patch('time-note-phrases/:id')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Update a time-log preset phrase' })
+  async updateTimeNotePhrase(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { text?: string; sortOrder?: number; isActive?: boolean },
+  ) {
+    return this.prisma.timeNotePhrase.update({
+      where: { id },
+      data: body,
+    });
+  }
+
+  @Delete('time-note-phrases/:id')
+  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @ApiOperation({ summary: 'Delete a time-log preset phrase' })
+  async deleteTimeNotePhrase(@Param('id', ParseIntPipe) id: number) {
+    await this.prisma.timeNotePhrase.delete({ where: { id } });
+    return { message: 'Phrase deleted' };
+  }
 }

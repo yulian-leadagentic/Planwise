@@ -60,4 +60,17 @@ export class QueryTasksDto extends PaginationQueryDto {
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   archived?: boolean;
+
+  /**
+   * Personal-task filter (client feedback 2026-08-02). Tri-state so
+   * reports can request "hide personal", "only personal", or "both"
+   * (the default). Applied server-side alongside the other filters.
+   *   • `include` (default) — return every task
+   *   • `exclude` — return only project/process tasks
+   *   • `only` — return only personal tasks
+   */
+  @ApiPropertyOptional({ description: 'Personal-task filter: include|exclude|only', enum: ['include', 'exclude', 'only'] })
+  @IsOptional()
+  @IsEnum(['include', 'exclude', 'only'] as const)
+  personal?: 'include' | 'exclude' | 'only';
 }

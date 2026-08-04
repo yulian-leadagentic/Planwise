@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Filter, User as UserIcon, GripVertical, Clock, Calendar, AlertCircle, AlertTriangle, Search, X } from 'lucide-react';
+import { Plus, Filter, GripVertical, Clock, AlertCircle, AlertTriangle, Search, X } from 'lucide-react';
 import { getTaskPhaseName } from '@/features/execution-board/execution-board.util';
 import { DndContext, DragOverlay, closestCorners, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -8,9 +8,9 @@ import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
+import { TaskCardBody } from '@/components/shared/task-card-body';
 import client from '@/api/client';
 import { tasksApi } from '@/api/tasks.api';
-import { formatShortDate } from '@/lib/date-utils';
 import { TaskDrawer } from './task-drawer';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { getTaskHealth } from '@/lib/task-health';
@@ -65,141 +65,99 @@ function KanbanCard({ task, onOpen }: { task: any; onOpen: (id: number) => void 
         ? 'bg-amber-100 text-amber-700 border-amber-200'
         : 'bg-emerald-100 text-emerald-700 border-emerald-200';
 
+  // Card design normalized to the shared TaskCardBody layout (client
+  // feedback 2026-08-02 item 2). Extras that only make sense on a
+  // manager surface — task code, status/priority chips, hours pill,
+  // assignee stack — live in the header/footer around the shared
+  // labeled-field body so the visual language is consistent while
+  // manager-specific info remains one glance away.
   return (
     <div
       ref={setNodeRef}
       style={style}
       {...attributes}
       className={cn(
-        'group rounded-lg border shadow-sm hover:shadow-md transition-shadow duration-100 border-l-[3px]',
+        'group rounded-[14px] border shadow-sm hover:shadow-md transition-shadow duration-100 border-l-[3px] overflow-hidden',
         borderCls,
         ZONE_BORDER_COLORS[zoneType] || 'border-l-slate-300',
         isDragging && 'opacity-50 shadow-lg ring-2 ring-blue-300',
       )}
     >
-      <div className="flex items-start gap-1 p-3">
-        {/* Drag grip — the only listener for drag activation. */}
+      {/* Header — grip, code, status pill, health/priority marks. */}
+      <div className="flex items-center gap-2 px-3.5 pt-3 pb-1.5">
         <button
           type="button"
           aria-label="Drag to reorder or change column"
           title="Drag to move"
           {...listeners}
-          className="-ml-1 -mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-slate-500 cursor-grab active:cursor-grabbing touch-none focus:outline-none focus:ring-2 focus:ring-blue-300 focus:opacity-100"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-slate-500 cursor-grab active:cursor-grabbing touch-none focus:outline-none focus:ring-2 focus:ring-blue-300 focus:opacity-100"
         >
           <GripVertical className="h-3.5 w-3.5" />
         </button>
-
-        <button
-          type="button"
-          onClick={() => onOpen(task.id)}
-          className="flex-1 min-w-0 text-left cursor-pointer rounded -mx-1 px-1 py-0.5 hover:bg-slate-50/50 focus:outline-none focus:ring-2 focus:ring-blue-300 space-y-1.5"
-        >
-          {/* Health icon row */}
-          {(health.level === 'critical' || health.level === 'warning') && (
-            <div className="flex items-center gap-1">
-              {health.level === 'critical' && <AlertCircle className="h-3.5 w-3.5 text-red-600" />}
-              {health.level === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />}
-            </div>
-          )}
-
-          {task.code && <span className="text-[9px] font-mono text-slate-500">{task.code}</span>}
-          <p className="text-[13px] font-semibold text-slate-800 leading-tight break-words">{task.name}</p>
-
-          {/* Zone breadcrumb (or "Project Root" for zoneId=null tasks). */}
-          {breadcrumb.length > 0 ? (
-            <p className="text-[10px] text-slate-500 truncate" title={breadcrumb.join(' > ')}>
-              {breadcrumb.join(' › ')}
-            </p>
-          ) : zoneName ? (
-            <p className="text-[10px] text-slate-500 truncate">{zoneName}</p>
-          ) : (
-            <p className="text-[10px] text-slate-400 italic truncate">
-              Project Root
-              {task.phase?.name ? ` · ${task.phase.name}` : task.serviceType?.name ? ` · ${task.serviceType.name}` : ''}
-            </p>
-          )}
-
-          {/* Service + Deliverable chips */}
-          {(task.phase?.name || task.serviceType?.name) && (
-            <div className="flex items-center gap-1 flex-wrap text-[10px]">
-              {task.phase?.name && (
-                <span className="rounded bg-violet-50 px-1.5 py-0.5 text-violet-700 font-medium">
-                  {task.phase.name}
-                </span>
-              )}
-              {task.serviceType?.name && (
-                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-600">
-                  {task.serviceType.name}
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Status + priority */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider', STATUS_PILL[task.status] ?? STATUS_PILL.not_started)}>
-              {STATUS_LABEL[task.status] ?? task.status}
-            </span>
-            {task.priority === 'critical' && <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-bold text-red-600">Critical</span>}
-            {task.priority === 'high' && <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-600">High</span>}
-          </div>
-
-          {/* Hours pill */}
-          <div className={cn(
-            'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-bold tabular-nums',
-            hoursTone,
-          )}>
-            <Clock className="h-3 w-3 shrink-0" />
-            <span>{health.loggedHours}h</span>
-            {health.estimatedHours > 0 && <span className="opacity-70">/ {health.estimatedHours}h</span>}
-          </div>
-
-          {/* Due date */}
-          {task.endDate && (
-            <div className="flex items-center gap-1 text-[10px]">
-              <Calendar className={cn('h-2.5 w-2.5 shrink-0', health.isOverdue ? 'text-red-600' : 'text-slate-400')} />
-              <span className={cn(
-                'tabular-nums',
-                health.isOverdue ? 'text-red-600 font-bold' : 'text-slate-500 font-medium',
-              )}>
-                Due {formatShortDate(task.endDate)}
-                {health.isOverdue && ' (overdue)'}
-              </span>
-            </div>
-          )}
-
-          {/* Risk reason inline */}
-          {health.reasons.length > 0 && (
-            <div className={cn(
-              'rounded px-1.5 py-1 text-[10px]',
-              health.level === 'critical' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700',
-            )}>
-              {health.reasons[0]}
-            </div>
-          )}
-
-          {/* Assignee avatars stack */}
-          {Array.isArray(task.assignees) && task.assignees.length > 0 && (
-            <div className="flex items-center gap-0.5">
-              {(task.assignees as any[]).slice(0, 4).map((a) => {
-                const initials = `${a.user?.firstName?.[0] ?? ''}${a.user?.lastName?.[0] ?? ''}` || '?';
-                return (
-                  <span
-                    key={a.id}
-                    className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-[8px] font-bold border border-white -ml-1 first:ml-0"
-                    title={`${a.user?.firstName ?? ''} ${a.user?.lastName ?? ''}`.trim()}
-                  >
-                    {initials}
-                  </span>
-                );
-              })}
-              {task.assignees.length > 4 && (
-                <span className="text-[9px] text-slate-500 ml-1">+{task.assignees.length - 4}</span>
-              )}
-            </div>
-          )}
-        </button>
+        {task.code && <span className="text-[10px] font-mono text-slate-500 shrink-0">{task.code}</span>}
+        <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider shrink-0', STATUS_PILL[task.status] ?? STATUS_PILL.not_started)}>
+          {STATUS_LABEL[task.status] ?? task.status}
+        </span>
+        {task.priority === 'critical' && <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-bold text-red-600 shrink-0">Crit</span>}
+        {task.priority === 'high' && <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-600 shrink-0">High</span>}
+        <div className="ml-auto flex items-center gap-1">
+          {health.level === 'critical' && <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />}
+          {health.level === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />}
+        </div>
       </div>
+
+      {/* Body — shared labeled-field layout. Clicking opens the drawer. */}
+      <button
+        type="button"
+        onClick={() => onOpen(task.id)}
+        className="w-full text-left cursor-pointer hover:bg-slate-50/50 focus:outline-none focus:ring-2 focus:ring-blue-300"
+      >
+        <TaskCardBody task={task} isOverdue={health.isOverdue} hideProject />
+      </button>
+
+      {/* Footer — hours pill + zone breadcrumb (if any) + assignee avatars. */}
+      <div className="px-3.5 pb-3 flex items-center gap-2 flex-wrap">
+        <div className={cn(
+          'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-bold tabular-nums',
+          hoursTone,
+        )}>
+          <Clock className="h-3 w-3 shrink-0" />
+          <span>{health.loggedHours}h</span>
+          {health.estimatedHours > 0 && <span className="opacity-70">/ {health.estimatedHours}h</span>}
+        </div>
+        {breadcrumb.length > 0 && (
+          <span className="text-[10px] text-slate-400 truncate max-w-[140px]" title={breadcrumb.join(' > ')}>
+            {breadcrumb.join(' › ')}
+          </span>
+        )}
+        {Array.isArray(task.assignees) && task.assignees.length > 0 && (
+          <div className="ml-auto flex items-center gap-0.5">
+            {(task.assignees as any[]).slice(0, 4).map((a) => {
+              const initials = `${a.user?.firstName?.[0] ?? ''}${a.user?.lastName?.[0] ?? ''}` || '?';
+              return (
+                <span
+                  key={a.id}
+                  className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-[8px] font-bold border border-white -ml-1 first:ml-0"
+                  title={`${a.user?.firstName ?? ''} ${a.user?.lastName ?? ''}`.trim()}
+                >
+                  {initials}
+                </span>
+              );
+            })}
+            {task.assignees.length > 4 && (
+              <span className="text-[9px] text-slate-500 ml-1">+{task.assignees.length - 4}</span>
+            )}
+          </div>
+        )}
+      </div>
+      {health.reasons.length > 0 && (
+        <div className={cn(
+          'mx-3.5 mb-3 rounded px-1.5 py-1 text-[10px]',
+          health.level === 'critical' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700',
+        )}>
+          {health.reasons[0]}
+        </div>
+      )}
     </div>
   );
 }
@@ -297,6 +255,10 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
   const filteredTasks = useMemo(() => {
     const q = searchText.trim().toLowerCase();
     return tasks.filter((t: any) => {
+      // Kanban rule: tasks without a due date have no place on a
+      // deadline-driven board (client feedback 2026-08-02 item 7).
+      // The Planning grid still shows them so PMs can date them.
+      if (!t.endDate) return false;
       if (q && !(`${t.code ?? ''} ${t.name ?? ''}`.toLowerCase().includes(q))) return false;
       if (deliverableFilter && (getTaskPhaseName(t) ?? '') !== deliverableFilter) return false;
       if (priorityFilter && t.priority !== priorityFilter) return false;

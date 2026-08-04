@@ -290,6 +290,7 @@ model User {
   tasksCreated        Task[]                   @relation("TaskCreator")
   checklistItemsCreated TaskChecklistItem[]    @relation("ChecklistCreator")
   checklistItemsDone    TaskChecklistItem[]    @relation("ChecklistDoneBy")
+  taskReviewActions     TaskReviewEvent[]      @relation("TaskReviewActor")
   templatesCreated    Template[]               @relation("TemplateCreator")
   messages            Message[]                @relation("MessageAuthor")
   messageMentions     MessageMention[]
@@ -989,6 +990,23 @@ model TeamTemplateMember {
   @@map("team_template_members")
 }
 
+// ─── Time-log preset phrases (Tier C #9b, 2026-06-30) ─────────────────────
+// Admin-defined pool of description snippets the user can pick from
+// when logging time, so end-of-day reporting takes seconds not minutes.
+// No association to task/project/user — the pool is a single flat list
+// applied everywhere the time-log form is rendered.
+model TimeNotePhrase {
+  id        Int      @id @default(autoincrement())
+  text      String   @db.VarChar(255)
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, sortOrder])
+  @@map("time_note_phrases")
+}
+
 // ─── Zone & Spatial Models ─────────────────────────────────────────────────
 
 model Zone {
@@ -1014,6 +1032,7 @@ model Zone {
   children         Zone[]            @relation("ZoneTree")
   tasks            Task[]
   zoneServiceTypes ZoneServiceType[]
+  deliverableTargets ZoneDeliverableTarget[]
 
   @@unique([projectId, name, deletedAt])
   @@index([projectId])
@@ -1098,7 +1117,27 @@ model Task {
   // FK is the relation, not this scalar — the relation below is now
   // optional and uses SetNull semantics via Prisma.
   zoneId                Int?         @map("zone_id")
-  projectId             Int          @map("project_id")
+  // Project is now OPTIONAL to support "personal tasks" — a task an
+  // employee opens for themselves that isn't tied to any project /
+  // zone / service / deliverable. Personal tasks show in My Tasks +
+  // time reports but do NOT affect any Deliverable's completion %.
+  // If a personal task happens to be linked to a Project/Deliverable,
+  // its hours still roll into that project/deliverable's totals but
+  // it doesn't block the Deliverable's completion. (Tier D #1,
+  // 2026-06-30.)
+  projectId             Int?         @map("project_id")
+  isPersonal            Boolean      @default(false) @map("is_personal")
+  // Optional Review step (Tier D #2). When false, in_progress can
+  // transition directly to completed without passing through
+  // in_review — used by tasks that don't need a second-eye check.
+  requiresReview        Boolean      @default(true) @map("requires_review")
+  /// True when someone with permission (assignee / their managers) has
+  /// manually changed endDate away from the Deliverable's target date.
+  /// While this flag is true, a Deliverable date change WON'T
+  /// silently overwrite this task's endDate — the UI prompts the PM
+  /// to decide "keep manual dates" vs "overwrite from new target".
+  /// (Tier E #10 revision, 2026-08-02.)
+  dueDateOverridden     Boolean      @default(false) @map("due_date_overridden")
   serviceTypeId         Int?         @map("service_type_id")
   // Source Deliverable (Template with type=task_list). Direct FK so
   // the planning grid's "Group by Deliverable" can label cards by the
@@ -1132,7 +1171,7 @@ model Task {
   deletedAt             DateTime?    @map("deleted_at")
 
   zone                Zone?            @relation(fields: [zoneId], references: [id], onDelete: SetNull)
-  project             Project          @relation(fields: [projectId], references: [id])
+  project             Project?         @relation(fields: [projectId], references: [id])
   serviceType         ServiceType?     @relation(fields: [serviceTypeId], references: [id])
   phase               Phase?           @relation(fields: [phaseId], references: [id])
   deliverableTemplate Template?        @relation("TaskDeliverableTemplate", fields: [deliverableTemplateId], references: [id], onDelete: SetNull)
@@ -1145,13 +1184,37 @@ model Task {
   dependencies        TaskDependency[] @relation("TaskDeps")
   dependedBy          TaskDependency[] @relation("TaskDepBy")
   checklistItems      TaskChecklistItem[]
+  reviewEvents        TaskReviewEvent[]
 
   @@index([zoneId])
   @@index([projectId])
   @@index([serviceTypeId])
   @@index([projectDeliverableId])
   @@index([status])
+  @@index([isPersonal])
   @@map("tasks")
+}
+
+/// Persisted record of every task-review action — submit, approve,
+/// return-for-revisions. Feeds the "review analytics" dashboards the
+/// user asked for: how many returns per task, which manager is
+/// strictest, who never reviews. Kept separate from activity_logs
+/// because reviews need typed fields (result, reason) that an
+/// activity-log payload would flatten. (Tier D #2a, 2026-06-30.)
+model TaskReviewEvent {
+  id         Int      @id @default(autoincrement())
+  taskId     Int      @map("task_id")
+  actorId    Int      @map("actor_id")
+  action     String   @db.VarChar(32)   // 'submit' | 'approve' | 'return'
+  reason     String?  @db.Text          // return notes / feedback
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  task  Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  actor User @relation("TaskReviewActor", fields: [actorId], references: [id])
+
+  @@index([taskId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("task_review_events")
 }
 
 /// Checklist items inside a Task. Per the 2026-06-14 BM mapping meeting
@@ -1200,6 +1263,19 @@ model ProjectDeliverable {
   description      String?   @db.Text
   sortOrder        Int       @default(0) @map("sort_order")
   status           String    @default("active") @db.VarChar(30)
+  /// Deliverable Planning target date (Tier E #10). Set on the
+  /// "Deliverable Planning" page as N months from a base date; the
+  /// backend snaps to the first day of that week and stores it as an
+  /// absolute date. Nullable — deliverables without a target date
+  /// simply don't render a bar on the Gantt.
+  targetDate       DateTime? @map("target_date") @db.Date
+  /// Convenience — the relative-offset value the PM typed. Kept so we
+  /// can render "in N months from base" alongside the computed date.
+  targetMonths     Int?      @map("target_months")
+  /// Deliverable-level default estimated duration in CALENDAR days.
+  /// Used as the fallback when a (zone × deliverable) row doesn't
+  /// override it. (2026-08-02.)
+  estimatedDurationWeeks Int? @map("estimated_duration_weeks")
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
   deletedAt        DateTime? @map("deleted_at")
@@ -1208,10 +1284,39 @@ model ProjectDeliverable {
   sourceTemplate Template? @relation("DeliverableSourceTemplate", fields: [sourceTemplateId], references: [id], onDelete: SetNull)
   service        Phase?    @relation(fields: [serviceId], references: [id], onDelete: SetNull)
   tasks          Task[]
+  zoneTargets    ZoneDeliverableTarget[]
 
   @@index([projectId])
   @@index([sourceTemplateId])
   @@map("project_deliverables")
+}
+
+/// Per-(zone × deliverable) target date + estimated duration for the
+/// Deliverable Planning screen (Tier E #10, revised 2026-08-02).
+/// Same deliverable can appear in multiple zones and each zone can have
+/// its own delivery date and its own estimated duration. The
+/// ProjectDeliverable-level fields stay as a fallback.
+///
+/// estimatedDurationDays is CALENDAR days (not working hours). The Gantt
+/// draws the bar backward from the target date by this many days.
+model ZoneDeliverableTarget {
+  id                    Int      @id @default(autoincrement())
+  zoneId                Int      @map("zone_id")
+  projectDeliverableId  Int      @map("project_deliverable_id")
+  targetDate            DateTime? @map("target_date") @db.Date
+  targetMonths          Int?     @map("target_months")
+  /// Estimated calendar days for this (zone × deliverable). Used by the
+  /// Gantt to draw start = target − N days. (2026-08-02.)
+  estimatedDurationWeeks Int?    @map("estimated_duration_weeks")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  zone               Zone               @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  projectDeliverable ProjectDeliverable @relation(fields: [projectDeliverableId], references: [id], onDelete: Cascade)
+
+  @@unique([zoneId, projectDeliverableId])
+  @@index([projectDeliverableId])
+  @@map("zone_deliverable_targets")
 }
 
 model TaskAttachment {

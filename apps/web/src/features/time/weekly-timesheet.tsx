@@ -68,11 +68,15 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
   // dropdown couldn't pre-select it after creation.
   const currentUserId = useAuthStore((s) => s.user?.id);
 
-  // Fetch user's projects
+  // Fetch projects the current user can report time on — leader OR
+  // active member. Client feedback 2026-08-02: time-reporting should
+  // only surface the user's own projects (and their team's), not the
+  // full company-wide project catalog.
   const { data: projectsData } = useQuery({
-    queryKey: ['projects', 'active'],
+    queryKey: ['projects', 'active', 'mine', currentUserId],
+    enabled: !!currentUserId,
     staleTime: 5 * 60 * 1000,
-    queryFn: () => client.get('/projects?status=active&perPage=100').then((r) => {
+    queryFn: () => client.get('/projects', { params: { status: 'active', memberId: currentUserId, perPage: 100 } }).then((r) => {
       const d = r.data?.data ?? r.data;
       return Array.isArray(d) ? d : d?.data ?? [];
     }),

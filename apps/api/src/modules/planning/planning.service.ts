@@ -162,6 +162,32 @@ export class PlanningService {
       }
     }
 
+    // Deliverable target date lookup (Tier E #10, 2026-08-02).
+    // Prefer the per-(zone × deliverable) target when the task has a
+    // zoneId; otherwise fall back to the deliverable-level target.
+    // Pulled here so each task in the response carries its resolved
+    // deliverableTargetDate — the project tasks grid renders this
+    // as the "Deliv. Date" column (replaces the removed Est. Start).
+    const deliverableIds = Array.from(
+      new Set(tasks.map((t) => t.projectDeliverableId).filter((v): v is number => v != null)),
+    );
+    const deliverableRows = deliverableIds.length === 0 ? [] : await this.prisma.projectDeliverable.findMany({
+      where: { id: { in: deliverableIds } },
+      select: {
+        id: true,
+        targetDate: true,
+        zoneTargets: { select: { zoneId: true, targetDate: true } },
+      },
+    });
+    const deliverableTargetById = new Map<number, Date | null>();
+    const zoneDeliverableTargetById = new Map<string, Date | null>();
+    for (const d of deliverableRows) {
+      deliverableTargetById.set(d.id, d.targetDate ?? null);
+      for (const zt of d.zoneTargets) {
+        zoneDeliverableTargetById.set(`${d.id}:${zt.zoneId}`, zt.targetDate ?? null);
+      }
+    }
+
     // Build a flat zoneId → name lookup from the zone tree. Used to
     // resolve each task's full zone breadcrumb so the planning grid
     // can show "Building 1 › Typical floor" instead of just the leaf
@@ -187,14 +213,25 @@ export class PlanningService {
             .filter((n): n is string => !!n)
         : [];
       const actual = actualByTask.get(t.id);
+      // Resolve the deliverable's target date for this task —
+      // per-zone first, deliverable-level fallback. Nullable — many
+      // tasks in a project won't have a target set yet.
+      let deliverableTargetDate: Date | null = null;
+      if (t.projectDeliverableId != null) {
+        if (t.zoneId != null) {
+          deliverableTargetDate = zoneDeliverableTargetById.get(`${t.projectDeliverableId}:${t.zoneId}`) ?? null;
+        }
+        if (!deliverableTargetDate) {
+          deliverableTargetDate = deliverableTargetById.get(t.projectDeliverableId) ?? null;
+        }
+      }
       return {
         ...t,
         loggedMinutes: loggedByTask.get(t.id) ?? 0,
-        // M5 — actual cost (logged hours x hourly cost). 0 when no
-        // rateable entries exist on the task; UI renders an em-dash.
         actualCost: actual ? Number(actual.cost.toFixed(2)) : 0,
         actualCostCurrency: actual?.currency ?? null,
         zoneBreadcrumb,
+        deliverableTargetDate,
       };
     });
 

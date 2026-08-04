@@ -134,7 +134,7 @@ export class TimeEntriesService {
         where: { id: dto.taskId },
         select: { projectId: true },
       });
-      if (t) projectId = t.projectId;
+      if (t?.projectId != null) projectId = t.projectId;
     }
 
     // Overlap validation — both same-task and cross-task overlaps are
@@ -232,7 +232,11 @@ export class TimeEntriesService {
         where: { id: { in: taskIdsNeedingLookup } },
         select: { id: true, projectId: true },
       });
-      for (const t of tasks) taskProjectMap.set(t.id, t.projectId);
+      // Task.projectId is now nullable (personal tasks). Only cache the
+       // resolved mapping when the task IS tied to a project.
+      for (const t of tasks) {
+        if (t.projectId != null) taskProjectMap.set(t.id, t.projectId);
+      }
     }
 
     const data = entries.map((dto) => {

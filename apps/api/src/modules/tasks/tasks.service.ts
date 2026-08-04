@@ -67,11 +67,23 @@ export class TasksService {
   }
 
   async create(userId: number, dto: CreateTaskDto) {
-    // Two paths:
-    //   • zoned task: zoneId provided → projectId is inferred from the zone
-    //   • root task:  zoneId omitted  → projectId must be in the DTO
-    let projectId: number;
-    if (dto.zoneId) {
+    // Three paths:
+    //   • personal task: isPersonal=true → project/zone/service ALL optional
+    //   • zoned task:    zoneId provided → projectId is inferred from the zone
+    //   • root task:     zoneId omitted  → projectId must be in the DTO
+    // Personal tasks (Tier D #1) don't require any project context — an
+    // employee opens one for themselves. If they happen to link it to a
+    // project/deliverable the hours still roll up, but the task doesn't
+    // block that Deliverable's completion.
+    let projectId: number | null = null;
+    if (dto.isPersonal) {
+      // Any / all of the project context fields may be supplied but none are required.
+      projectId = dto.projectId ?? null;
+      if (dto.zoneId) {
+        const zone = await this.prisma.zone.findFirst({ where: { id: dto.zoneId } });
+        if (zone) projectId = zone.projectId;
+      }
+    } else if (dto.zoneId) {
       const zone = await this.prisma.zone.findFirst({ where: { id: dto.zoneId } });
       if (!zone) {
         throw new NotFoundException('Zone not found');
@@ -122,6 +134,13 @@ export class TasksService {
         priority: dto.priority as any,
         // Planning forecast — distinct from `startDate` (actual start).
         estimatedStartDate: dto.estimatedStartDate ? new Date(dto.estimatedStartDate) : null,
+        endDate: dto.endDate ? new Date(dto.endDate) : null,
+        startDate: dto.startDate ? new Date(dto.startDate) : null,
+        // Personal-task + optional-review flags (Tier D #1 + #2).
+        // isPersonal defaults to false at the column level; we still
+        // pass it explicitly so the API contract is visible.
+        isPersonal: dto.isPersonal ?? false,
+        requiresReview: dto.requiresReview ?? true,
         createdBy: userId,
       },
       include: {
@@ -174,6 +193,12 @@ export class TasksService {
         { code: { contains: query.search } },
       ];
     }
+    // Personal-task filter — client feedback 2026-08-02. Default
+    // (undefined / 'include') returns everything so existing callers
+    // keep working; reports pass 'exclude' or 'only' to slice by
+    // personal-ness without any UI-side filtering.
+    if (query.personal === 'exclude') where.isPersonal = false;
+    else if (query.personal === 'only') where.isPersonal = true;
 
     const [data, total] = await Promise.all([
       this.prisma.task.findMany({
@@ -289,11 +314,66 @@ export class TasksService {
       }
     }
 
+    // BIM Leader per project (batched to avoid n+1). Mirrors the
+    // findOne logic in projects.service — walks project_partner_roles
+    // where role.code = 'bim_leader', prefers the linked User row and
+    // falls back to the BP's name fields, then displayName. Attached
+    // onto task.project.bimLeader so the Kanban card can render it.
+    // (T-fix Tier A #11, 2026-06-30.)
+    const projectIds = Array.from(new Set(tasks.map((t) => t.projectId).filter((v): v is number => v != null)));
+    const bimLeaderByProject = new Map<number, { firstName: string | null; lastName: string | null } | null>();
+    if (projectIds.length > 0) {
+      const bimRoleType = await this.prisma.projectRoleType.findUnique({ where: { code: 'bim_leader' } });
+      if (bimRoleType) {
+        const now = new Date();
+        const pprs = await this.prisma.projectPartnerRole.findMany({
+          where: {
+            projectId: { in: projectIds },
+            roleId: bimRoleType.id,
+            OR: [{ validTo: { gte: now } as any }, { validTo: undefined as any }],
+          },
+          include: {
+            party: { select: { id: true, displayName: true, firstName: true, lastName: true } },
+          },
+        });
+        const bpIds = pprs.map((p) => p.party?.id).filter((v): v is number => v != null);
+        const users = bpIds.length
+          ? await this.prisma.user.findMany({
+              where: { businessPartnerId: { in: bpIds }, isActive: true },
+              select: { businessPartnerId: true, firstName: true, lastName: true },
+            })
+          : [];
+        const userByBp = new Map(users.map((u) => [u.businessPartnerId, u]));
+        for (const ppr of pprs) {
+          const bp = ppr.party;
+          if (!bp) continue;
+          const linked = userByBp.get(bp.id);
+          if (linked) {
+            bimLeaderByProject.set(ppr.projectId, { firstName: linked.firstName, lastName: linked.lastName });
+          } else {
+            const hasFullName = !!(bp.firstName && bp.lastName);
+            bimLeaderByProject.set(ppr.projectId, {
+              firstName: hasFullName ? bp.firstName : (bp.firstName ?? bp.displayName),
+              lastName: hasFullName ? bp.lastName : (bp.lastName ?? null),
+            });
+          }
+        }
+      }
+    }
+
+    // `isReady` = "the user should be working on this by now" (client
+    // feedback 2026-08-02 item 5). Derived from estimatedStartDate:
+    // if the task's forecast start is more than READY_LEAD_DAYS in
+    // the future, we tag it as not-yet-ready so the Kanban can hide
+    // it from the active board while keeping it in the underlying
+    // list. Null estStart → treated as ready (unblocked).
+    const READY_LEAD_DAYS = 7;
+    const readyThreshold = new Date();
+    readyThreshold.setUTCHours(0, 0, 0, 0);
+    readyThreshold.setUTCDate(readyThreshold.getUTCDate() + READY_LEAD_DAYS);
+
     return tasks.map((t) => {
       const agg = timeByTask.get(t.id);
-      // t.zone is optional now (tasks at the project root have zoneId
-      // null and no zone relation). Bail out to an empty breadcrumb in
-      // that case rather than blow up the type with `undefined`.
       const zoneIdForLookup = t.zone?.id;
       const zonePath = (zoneIdForLookup != null
         ? zoneById.get(zoneIdForLookup)?.path ?? ''
@@ -304,11 +384,17 @@ export class TasksService {
         .filter((n) => !Number.isNaN(n))
         .map((id) => zoneNameById.get(id)?.name)
         .filter((n): n is string => !!n);
+      const bimLeader = t.projectId != null ? bimLeaderByProject.get(t.projectId) ?? null : null;
+      const isReady = t.estimatedStartDate == null
+        ? true
+        : new Date(t.estimatedStartDate) <= readyThreshold;
       return {
         ...t,
         loggedMinutes: agg?.minutes ?? 0,
         lastActivityDate: agg?.lastDate ?? null,
         zoneBreadcrumb,
+        project: t.project ? { ...t.project, bimLeader } : t.project,
+        isReady,
       };
     });
   }
@@ -375,6 +461,17 @@ export class TasksService {
     const dateOrNull = (v: string | null | undefined) =>
       v === undefined ? undefined : (v ? new Date(v) : null);
 
+    // Detect manual due-date change so future Deliverable-target
+    // propagation doesn't silently clobber the user's edit. If endDate
+    // is present in the DTO AND different from the previous value,
+    // mark the task as user-overridden. Setting it back to the
+    // deliverable's target (or to null) via the API leaves the flag
+    // as-is; only the "Force apply target" path clears it.
+    // (Tier E #10 revision, 2026-08-02.)
+    const shouldMarkOverride =
+      endDate !== undefined &&
+      dateOrNull(endDate as any)?.getTime() !== (existing as any).endDate?.getTime();
+
     const updated = await this.prisma.task.update({
       where: { id },
       data: {
@@ -384,6 +481,7 @@ export class TasksService {
         estimatedStartDate: dateOrNull(estimatedStartDate as any),
         startDate: dateOrNull(startDate as any),
         endDate: dateOrNull(endDate as any),
+        ...(shouldMarkOverride ? { dueDateOverridden: true } : {}),
       },
       include: {
         zone: true,
@@ -836,5 +934,129 @@ export class TasksService {
     });
     if (!att) throw new NotFoundException('Attachment not found');
     await check(att.taskId);
+  }
+
+  // ─── Review workflow (Tier D #2 + #2a, 2026-06-30) ────────────────
+  // Atomic write: bump the task's status AND append a review-event
+  // row so the analytics feed always has the full trail. Only three
+  // actions are supported to keep the state machine tiny.
+  async recordReview(
+    taskId: number,
+    actorId: number,
+    action: 'submit' | 'approve' | 'return',
+    reason?: string,
+  ) {
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, deletedAt: null },
+      select: { id: true, status: true, requiresReview: true },
+    });
+    if (!task) throw new NotFoundException('Task not found');
+
+    // Map action → target status. "Approve" also honors the review
+    // flag: if a task didn't need review, its normal path is
+    // in_progress → completed; but approve from in_review always
+    // lands on completed either way.
+    let nextStatus: string;
+    switch (action) {
+      case 'submit':
+        if (task.status === 'completed' || task.status === 'cancelled') {
+          throw new BadRequestException('Cannot submit a closed task for review');
+        }
+        nextStatus = 'in_review';
+        break;
+      case 'approve':
+        nextStatus = 'completed';
+        break;
+      case 'return':
+        if (!reason || !reason.trim()) {
+          throw new BadRequestException('A reason is required when returning a task');
+        }
+        nextStatus = 'in_progress';
+        break;
+      default:
+        throw new BadRequestException('Unknown review action');
+    }
+
+    const [_event, updated] = await this.prisma.$transaction([
+      this.prisma.taskReviewEvent.create({
+        data: {
+          taskId,
+          actorId,
+          action,
+          reason: reason?.trim() || null,
+        },
+      }),
+      this.prisma.task.update({
+        where: { id: taskId },
+        data: { status: nextStatus as any },
+        select: { id: true, status: true, requiresReview: true },
+      }),
+    ]);
+
+    return { task: updated, action, reason: reason?.trim() || null };
+  }
+
+  async listReviews(taskId: number) {
+    return this.prisma.taskReviewEvent.findMany({
+      where: { taskId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        actor: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+      },
+    });
+  }
+
+  // Aggregated review stats. Returns a compact JSON the dashboard can
+  // slice: per-actor totals + rework rate (return count / submitted
+  // count). Kept SQL-free for portability across dev/staging.
+  async reviewSummary() {
+    const events = await this.prisma.taskReviewEvent.findMany({
+      orderBy: { createdAt: 'asc' },
+      include: {
+        actor: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
+
+    type ActorStat = {
+      actorId: number;
+      actorName: string;
+      submitted: number;
+      approved: number;
+      returned: number;
+      lastActivityAt: string | null;
+    };
+    const byActor = new Map<number, ActorStat>();
+    let totalSubmitted = 0;
+    let totalApproved = 0;
+    let totalReturned = 0;
+    for (const e of events) {
+      const name = `${e.actor?.firstName ?? ''} ${e.actor?.lastName ?? ''}`.trim() || `User #${e.actorId}`;
+      if (!byActor.has(e.actorId)) {
+        byActor.set(e.actorId, {
+          actorId: e.actorId,
+          actorName: name,
+          submitted: 0,
+          approved: 0,
+          returned: 0,
+          lastActivityAt: null,
+        });
+      }
+      const rec = byActor.get(e.actorId)!;
+      rec.lastActivityAt = e.createdAt.toISOString();
+      if (e.action === 'submit') { rec.submitted++; totalSubmitted++; }
+      else if (e.action === 'approve') { rec.approved++; totalApproved++; }
+      else if (e.action === 'return') { rec.returned++; totalReturned++; }
+    }
+
+    const totalHandled = totalApproved + totalReturned;
+    return {
+      totals: {
+        submitted: totalSubmitted,
+        approved: totalApproved,
+        returned: totalReturned,
+        reworkRate: totalHandled > 0 ? Math.round((totalReturned / totalHandled) * 100) : 0,
+      },
+      byActor: Array.from(byActor.values()).sort((a, b) => b.returned - a.returned || b.approved - a.approved),
+    };
   }
 }
