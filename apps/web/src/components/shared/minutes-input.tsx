@@ -45,7 +45,10 @@ export function MinutesInput({
       placeholder={placeholder}
       disabled={disabled}
       className={cn(
-        'rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50',
+        // font-mono tabular-nums so entered / re-normalized values
+        // (e.g. "2h 30m", "1.5h", "90m") render as data per the
+        // Planwise design system.
+        'font-mono tabular-nums rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50',
         className,
       )}
     />
