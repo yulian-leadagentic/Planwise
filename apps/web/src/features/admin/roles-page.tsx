@@ -9,7 +9,7 @@ import client from '@/api/client';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 
-const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
+const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
 export function RolesPage() {
   const scrollRef = useStickyHScroll();
@@ -60,20 +60,20 @@ export function RolesPage() {
       />
 
       {showCreate && (
-        <div className="bg-white rounded-[14px] border border-slate-200 p-5 space-y-3">
-          <h3 className="text-[15px] font-bold text-slate-900">New Role</h3>
+        <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 p-5 space-y-3">
+          <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">New Role</h3>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Role Name *</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Role Name *</label>
               <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Coordinator" autoFocus className={inputClass} />
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Description</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Description</label>
               <input value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="Brief description" className={inputClass} />
             </div>
           </div>
           <div className="flex justify-end gap-2">
-            <button onClick={() => setShowCreate(false)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+            <button onClick={() => setShowCreate(false)} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
             <button onClick={() => createRole.mutate()} disabled={!newName.trim() || createRole.isPending}
               className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
               {createRole.isPending ? 'Creating...' : 'Create Role'}
@@ -85,10 +85,10 @@ export function RolesPage() {
       {isLoading ? (
         <TableSkeleton rows={5} cols={4} />
       ) : roles.length === 0 ? (
-        <div className="bg-white rounded-[14px] border border-slate-200 p-8 text-center">
-          <Shield className="mx-auto h-12 w-12 text-slate-300" />
-          <h3 className="mt-3 text-sm font-medium text-slate-700">No roles yet</h3>
-          <p className="mt-1 text-sm text-slate-400">Create a role to start managing permissions.</p>
+        <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 p-8 text-center">
+          <Shield className="mx-auto h-12 w-12 text-slate-300 dark:text-slate-600" />
+          <h3 className="mt-3 text-sm font-medium text-slate-700 dark:text-slate-200">No roles yet</h3>
+          <p className="mt-1 text-sm text-slate-400 dark:text-slate-500">Create a role to start managing permissions.</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -192,53 +192,53 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
   };
 
   return (
-    <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
       {/* Header */}
       <div
-        className="flex items-center gap-3 px-5 py-4 cursor-pointer hover:bg-slate-50/60"
+        className="flex items-center gap-3 px-5 py-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50/60"
         onClick={() => setExpanded(!expanded)}
       >
         <Shield className="h-5 w-5 text-blue-600 shrink-0" />
         <div className="flex-1 min-w-0">
           {editingHeader ? (
             <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-              <input value={editName} onChange={(e) => setEditName(e.target.value)} className="px-2 py-1 rounded border border-slate-200 text-sm font-medium w-48 focus:border-blue-500 focus:outline-none" autoFocus />
-              <input value={editDesc} onChange={(e) => setEditDesc(e.target.value)} placeholder="Description" className="px-2 py-1 rounded border border-slate-200 text-sm w-48 focus:border-blue-500 focus:outline-none" />
+              <input value={editName} onChange={(e) => setEditName(e.target.value)} className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-sm font-medium w-48 focus:border-blue-500 focus:outline-none" autoFocus />
+              <input value={editDesc} onChange={(e) => setEditDesc(e.target.value)} placeholder="Description" className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-sm w-48 focus:border-blue-500 focus:outline-none" />
               <button onClick={() => updateRole.mutate({ name: editName.trim(), description: editDesc.trim() || undefined })} disabled={!editName.trim()} className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 px-2">Save</button>
-              <button onClick={() => setEditingHeader(false)} className="text-[11px] text-slate-400 hover:text-slate-600 px-1">Cancel</button>
+              <button onClick={() => setEditingHeader(false)} className="text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 px-1">Cancel</button>
             </div>
           ) : (
             <>
-              <p className="text-sm font-semibold text-slate-900">{role.name}</p>
-              {role.description && <p className="text-xs text-slate-500">{role.description}</p>}
+              <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{role.name}</p>
+              {role.description && <p className="text-xs text-slate-500 dark:text-slate-400">{role.description}</p>}
             </>
           )}
         </div>
-        <span className="text-xs text-slate-400 shrink-0">{modules.length} modules &middot; {role._count?.users ?? 0} users</span>
+        <span className="text-xs text-slate-400 dark:text-slate-500 shrink-0">{modules.length} modules &middot; {role._count?.users ?? 0} users</span>
         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
           <button onClick={() => { setEditName(role.name); setEditDesc(role.description ?? ''); setEditingHeader(true); }}
-            className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600" title="Edit role">
+            className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" title="Edit role">
             <Pencil className="h-3.5 w-3.5" />
           </button>
-          <button onClick={onDelete} className="p-1.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-600" title="Delete role">
+          <button onClick={onDelete} className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600" title="Delete role">
             <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
-        {expanded ? <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" /> : <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />}
+        {expanded ? <ChevronDown className="h-4 w-4 text-slate-400 dark:text-slate-500 shrink-0" /> : <ChevronRight className="h-4 w-4 text-slate-400 dark:text-slate-500 shrink-0" />}
       </div>
 
       {/* Permissions editor */}
       {expanded && (
-        <div className="border-t border-slate-200 px-5 pb-5 pt-4">
+        <div className="border-t border-slate-200 dark:border-slate-700 px-5 pb-5 pt-4">
           <div className="flex items-center justify-between mb-3">
-            <h4 className="text-[13px] font-semibold text-slate-700">Module Permissions</h4>
-            <p className="text-[11px] text-slate-400">Click checkboxes to toggle permissions</p>
+            <h4 className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">Module Permissions</h4>
+            <p className="text-[11px] text-slate-400 dark:text-slate-500">Click checkboxes to toggle permissions</p>
           </div>
 
-          <div className="rounded-lg border border-slate-200 overflow-hidden">
+          <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
+                <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   <th className="px-4 py-2 text-left font-semibold">Module</th>
                   <th className="px-4 py-2 text-center font-semibold w-16">Read</th>
                   <th className="px-4 py-2 text-center font-semibold w-16">Write</th>
@@ -251,14 +251,14 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
               <tbody>
                 {modules.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-400">
+                    <td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-400 dark:text-slate-500">
                       No modules assigned. Use the dropdown below to add module permissions.
                     </td>
                   </tr>
                 )}
                 {modules.map((rm: any) => (
-                  <tr key={rm.id} className="border-t border-slate-100 hover:bg-slate-50/50">
-                    <td className="px-4 py-2.5 font-medium text-slate-800">{rm.module?.name ?? `Module ${rm.moduleId}`}</td>
+                  <tr key={rm.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50/50">
+                    <td className="px-4 py-2.5 font-medium text-slate-800 dark:text-slate-100">{rm.module?.name ?? `Module ${rm.moduleId}`}</td>
                     <td className="px-4 py-2.5 text-center">
                       <PermCheckbox checked={rm.canRead} onChange={() => handleToggle(rm, 'canRead')} disabled={togglePermission.isPending} />
                     </td>
@@ -277,7 +277,7 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
                     <td className="px-4 py-2.5 text-center">
                       <button
                         onClick={() => removeModule.mutate(rm.moduleId)}
-                        className="p-1 rounded hover:bg-red-50 text-slate-300 hover:text-red-500"
+                        className="p-1 rounded hover:bg-red-50 text-slate-300 dark:text-slate-600 hover:text-red-500"
                         title="Remove module from role"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -301,7 +301,7 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
                     e.target.value = '';
                   }
                 }}
-                className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none flex-1 max-w-xs"
+                className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none flex-1 max-w-xs"
               >
                 <option value="" disabled>+ Add module permission...</option>
                 {unassignedModules.map((m: any) => (
@@ -352,28 +352,28 @@ function RoleUsersSection({ roleId, roleName }: { roleId: number; roleName: stri
   });
 
   return (
-    <div className="mt-6 pt-5 border-t border-slate-200">
+    <div className="mt-6 pt-5 border-t border-slate-200 dark:border-slate-700">
       <div className="flex items-center justify-between mb-3">
-        <h4 className="text-[13px] font-semibold text-slate-700 flex items-center gap-2">
+        <h4 className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2">
           <Users className="h-3.5 w-3.5" /> Users with the "{roleName}" role
         </h4>
-        <p className="text-[11px] text-slate-400">{users.length} user{users.length !== 1 ? 's' : ''}</p>
+        <p className="text-[11px] text-slate-400 dark:text-slate-500">{users.length} user{users.length !== 1 ? 's' : ''}</p>
       </div>
 
       {isLoading ? (
-        <p className="text-[12px] text-slate-400 py-3 text-center">Loading…</p>
+        <p className="text-[12px] text-slate-400 dark:text-slate-500 py-3 text-center">Loading…</p>
       ) : users.length === 0 ? (
-        <p className="text-[12px] text-slate-400 py-3 text-center italic">No users have this role yet.</p>
+        <p className="text-[12px] text-slate-400 dark:text-slate-500 py-3 text-center italic">No users have this role yet.</p>
       ) : (
         <div className="space-y-1.5">
           {users.map((u: any) => {
             const isSaving = reassigningId === u.id;
             return (
-              <div key={u.id} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
+              <div key={u.id} className="flex items-center gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50/60 px-3 py-2">
                 <UserAvatar firstName={u.firstName} lastName={u.lastName} avatarUrl={u.avatarUrl} size="sm" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-[13px] font-medium text-slate-800 truncate">{u.firstName} {u.lastName}</p>
-                  <p className="text-[11px] text-slate-500 truncate">{u.email}{u.position ? ` · ${u.position}` : ''}</p>
+                  <p className="text-[13px] font-medium text-slate-800 dark:text-slate-100 truncate">{u.firstName} {u.lastName}</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{u.email}{u.position ? ` · ${u.position}` : ''}</p>
                 </div>
                 <select
                   aria-label={`Reassign ${u.firstName} to another role`}
@@ -390,7 +390,7 @@ function RoleUsersSection({ roleId, roleName }: { roleId: number; roleName: stri
                     }
                   }}
                   className={cn(
-                    'rounded-md border border-slate-200 bg-white px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none',
+                    'rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none',
                     isSaving && 'opacity-50 cursor-wait',
                   )}
                 >
@@ -468,12 +468,12 @@ function StageTransitionEditor({ roleId }: { roleId: number }) {
     saveMutation.mutate([]);
   };
 
-  if (isLoading) return <p className="text-[12px] text-slate-400 py-3 text-center">Loading…</p>;
+  if (isLoading) return <p className="text-[12px] text-slate-400 dark:text-slate-500 py-3 text-center">Loading…</p>;
 
   return (
-    <div className="mt-6 pt-5 border-t border-slate-200">
+    <div className="mt-6 pt-5 border-t border-slate-200 dark:border-slate-700">
       <div className="flex items-center justify-between mb-3">
-        <h4 className="text-[13px] font-semibold text-slate-700">
+        <h4 className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">
           Kanban Stage Transitions
         </h4>
         {!isUnrestricted && (
@@ -484,26 +484,26 @@ function StageTransitionEditor({ roleId }: { roleId: number }) {
         )}
       </div>
       {isUnrestricted && (
-        <p className="text-[11px] text-slate-500 mb-2">
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-2">
           No restrictions — this role can perform all transitions. Click any cell to start configuring.
         </p>
       )}
-      <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-slate-200">
+      <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
         <table className="w-full text-[11px]">
           <thead>
-            <tr className="bg-slate-50">
-              <th className="px-2 py-1.5 text-left font-semibold text-slate-500">From ↓ / To →</th>
+            <tr className="bg-slate-50 dark:bg-slate-800/50">
+              <th className="px-2 py-1.5 text-left font-semibold text-slate-500 dark:text-slate-400">From ↓ / To →</th>
               {ALL_STATUSES.map((s) => (
-                <th key={s} className="px-2 py-1.5 text-center font-semibold text-slate-500">{STATUS_NAMES[s]}</th>
+                <th key={s} className="px-2 py-1.5 text-center font-semibold text-slate-500 dark:text-slate-400">{STATUS_NAMES[s]}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {ALL_STATUSES.map((from) => (
-              <tr key={from} className="border-t border-slate-100">
-                <td className="px-2 py-1.5 font-medium text-slate-700">{STATUS_NAMES[from]}</td>
+              <tr key={from} className="border-t border-slate-100 dark:border-slate-800">
+                <td className="px-2 py-1.5 font-medium text-slate-700 dark:text-slate-200">{STATUS_NAMES[from]}</td>
                 {ALL_STATUSES.map((to) => {
-                  if (from === to) return <td key={to} className="bg-slate-100" />;
+                  if (from === to) return <td key={to} className="bg-slate-100 dark:bg-slate-800" />;
                   const allowed = isAllowed(from, to);
                   return (
                     <td key={to} className="px-2 py-1 text-center">
@@ -534,7 +534,7 @@ function PermCheckbox({ checked, onChange, disabled }: { checked: boolean; onCha
         'w-7 h-7 rounded-md border-2 flex items-center justify-center transition-all duration-100 mx-auto',
         checked
           ? 'border-green-500 bg-green-50 text-green-600 hover:bg-green-100'
-          : 'border-slate-200 bg-white text-transparent hover:border-slate-400 hover:bg-slate-50',
+          : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-transparent hover:border-slate-400 dark:hover:border-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50',
         disabled && 'opacity-50 cursor-not-allowed',
       )}
     >
