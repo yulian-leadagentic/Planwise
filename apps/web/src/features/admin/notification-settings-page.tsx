@@ -20,7 +20,7 @@ const defaultRules: NotificationRule[] = [
   { event: 'reply', label: 'When someone replies to my message', icon: MessageSquare, color: 'text-indigo-600 bg-indigo-100', inApp: true, email: false, external: false },
   { event: 'assignment', label: 'When assigned to a task', icon: UserPlus, color: 'text-green-600 bg-green-100', inApp: true, email: true, external: true },
   { event: 'status_change', label: 'When task or project status changes', icon: AlertCircle, color: 'text-amber-600 bg-amber-100', inApp: true, email: false, external: false },
-  { event: 'message', label: 'New message in my projects', icon: MessageSquare, color: 'text-slate-600 bg-slate-100', inApp: true, email: false, external: false },
+  { event: 'message', label: 'New message in my projects', icon: MessageSquare, color: 'text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800', inApp: true, email: false, external: false },
   { event: 'overdue', label: 'Task overdue reminder', icon: AlertCircle, color: 'text-red-600 bg-red-100', inApp: true, email: true, external: true },
 ];
 
@@ -59,8 +59,8 @@ export function NotificationSettingsPage() {
       />
 
       {/* General Settings */}
-      <div className="rounded-[14px] border border-slate-200 bg-white p-6 space-y-4">
-        <h3 className="text-[15px] font-bold text-slate-900">General</h3>
+      <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 space-y-4">
+        <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">General</h3>
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
           {[
             { key: 'enableMessaging', label: 'Enable internal messaging' },
@@ -74,35 +74,35 @@ export function NotificationSettingsPage() {
                 type="checkbox"
                 checked={(generalSettings as any)[key]}
                 onChange={() => setGeneralSettings((s) => ({ ...s, [key]: !(s as any)[key] }))}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-blue-600"
               />
-              <span className="text-sm text-slate-700">{label}</span>
+              <span className="text-sm text-slate-700 dark:text-slate-200">{label}</span>
             </label>
           ))}
         </div>
       </div>
 
       {/* Delivery Settings */}
-      <div className="rounded-[14px] border border-slate-200 bg-white p-6 space-y-4">
-        <h3 className="text-[15px] font-bold text-slate-900">Delivery</h3>
+      <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 space-y-4">
+        <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Delivery</h3>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Delivery Mode</label>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Delivery Mode</label>
             <select
               value={generalSettings.deliveryMode}
               onChange={(e) => setGeneralSettings((s) => ({ ...s, deliveryMode: e.target.value as any }))}
-              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm"
+              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm"
             >
               <option value="instant">Instant notifications</option>
               <option value="digest">Daily digest</option>
             </select>
           </div>
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">External Platform</label>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">External Platform</label>
             <select
               value={generalSettings.externalPlatform}
               onChange={(e) => setGeneralSettings((s) => ({ ...s, externalPlatform: e.target.value as any }))}
-              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm"
+              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm"
             >
               <option value="none">In-app only</option>
               <option value="teams">In-app + Microsoft Teams</option>
@@ -113,11 +113,11 @@ export function NotificationSettingsPage() {
         </div>
         {generalSettings.externalPlatform !== 'none' && (
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Sync Mode</label>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Sync Mode</label>
             <select
               value={generalSettings.syncMode}
               onChange={(e) => setGeneralSettings((s) => ({ ...s, syncMode: e.target.value as any }))}
-              className="w-full max-w-md px-3 py-2.5 rounded-lg border border-slate-200 text-sm"
+              className="w-full max-w-md px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm"
             >
               <option value="notifications_only">Notifications only (one-way)</option>
               <option value="deep_link">Notify + deep link back to system</option>
@@ -129,14 +129,14 @@ export function NotificationSettingsPage() {
       </div>
 
       {/* Per-Event Rules */}
-      <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
-        <div className="px-6 py-4 border-b border-slate-100">
-          <h3 className="text-[15px] font-bold text-slate-900">Notification Rules by Event</h3>
-          <p className="text-[12px] text-slate-400 mt-0.5">Configure which channels each event type uses</p>
+      <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+        <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800">
+          <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Notification Rules by Event</h3>
+          <p className="text-[12px] text-slate-400 dark:text-slate-500 mt-0.5">Configure which channels each event type uses</p>
         </div>
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
+            <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
               <th className="px-6 py-2 text-left font-semibold">Event</th>
               <th className="px-4 py-2 text-center font-semibold w-20">In-App</th>
               <th className="px-4 py-2 text-center font-semibold w-20">Email</th>
@@ -147,13 +147,13 @@ export function NotificationSettingsPage() {
             {rules.map((rule) => {
               const Icon = rule.icon;
               return (
-                <tr key={rule.event} className="border-t border-slate-100 hover:bg-slate-50/50">
+                <tr key={rule.event} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50/50">
                   <td className="px-6 py-3">
                     <div className="flex items-center gap-3">
                       <div className={cn('flex h-8 w-8 items-center justify-center rounded-lg', rule.color)}>
                         <Icon className="h-4 w-4" />
                       </div>
-                      <span className="text-slate-800 font-medium">{rule.label}</span>
+                      <span className="text-slate-800 dark:text-slate-100 font-medium">{rule.label}</span>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-center">
@@ -199,7 +199,7 @@ function ToggleButton({ checked, onChange, disabled }: { checked: boolean; onCha
         'w-7 h-7 rounded-md border-2 flex items-center justify-center transition-all duration-100 mx-auto',
         checked
           ? 'border-green-500 bg-green-50 text-green-600'
-          : 'border-slate-200 bg-white text-transparent hover:border-slate-400',
+          : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-transparent hover:border-slate-400 dark:hover:border-slate-500',
         disabled && 'opacity-30 cursor-not-allowed',
       )}
     >
