@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "check:dark-mode": "node ../../scripts/check-dark-mode.mjs",
     "test": "vitest run"
   },
   "dependencies": {

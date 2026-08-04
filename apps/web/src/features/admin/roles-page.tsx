@@ -195,7 +195,7 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
     <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
       {/* Header */}
       <div
-        className="flex items-center gap-3 px-5 py-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50/60"
+        className="flex items-center gap-3 px-5 py-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60"
         onClick={() => setExpanded(!expanded)}
       >
         <Shield className="h-5 w-5 text-blue-600 shrink-0" />
@@ -257,7 +257,7 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
                   </tr>
                 )}
                 {modules.map((rm: any) => (
-                  <tr key={rm.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50/50">
+                  <tr key={rm.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50">
                     <td className="px-4 py-2.5 font-medium text-slate-800 dark:text-slate-100">{rm.module?.name ?? `Module ${rm.moduleId}`}</td>
                     <td className="px-4 py-2.5 text-center">
                       <PermCheckbox checked={rm.canRead} onChange={() => handleToggle(rm, 'canRead')} disabled={togglePermission.isPending} />
@@ -369,7 +369,7 @@ function RoleUsersSection({ roleId, roleName }: { roleId: number; roleName: stri
           {users.map((u: any) => {
             const isSaving = reassigningId === u.id;
             return (
-              <div key={u.id} className="flex items-center gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50/60 px-3 py-2">
+              <div key={u.id} className="flex items-center gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 px-3 py-2">
                 <UserAvatar firstName={u.firstName} lastName={u.lastName} avatarUrl={u.avatarUrl} size="sm" />
                 <div className="flex-1 min-w-0">
                   <p className="text-[13px] font-medium text-slate-800 dark:text-slate-100 truncate">{u.firstName} {u.lastName}</p>

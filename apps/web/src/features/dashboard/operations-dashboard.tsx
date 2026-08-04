@@ -211,7 +211,7 @@ export function OperationsDashboardPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {reviewQueue.map((r: any) => (
-                      <tr key={r.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50/60 group">
+                      <tr key={r.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/60 group">
                         <td className="px-4 py-2 text-slate-500 dark:text-slate-400 font-mono tabular-nums">{r.code ?? '—'}</td>
                         <td className="px-4 py-2 min-w-0">
                           <button
@@ -275,7 +275,7 @@ export function OperationsDashboardPage() {
                     <div key={project.id} className={cn('rounded-[14px] border bg-white dark:bg-slate-900 overflow-hidden transition-colors', isExp ? cfg.border : 'border-slate-200 dark:border-slate-700')}>
                       <div
                         onClick={() => setExpandedProjects((prev) => ({ ...prev, [project.id]: !prev[project.id] }))}
-                        className={cn('flex items-center gap-2.5 px-4 py-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50/80 transition-colors border-l-[4px]',
+                        className={cn('flex items-center gap-2.5 px-4 py-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors border-l-[4px]',
                           project.status === 'critical' ? 'border-l-red-600' : project.status === 'high' ? 'border-l-amber-500' : 'border-l-blue-500')}>
                         <Chev open={isExp} />
                         <span className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold shrink-0 border', cfg.bg, cfg.text, cfg.border)}>{cfg.label}</span>
@@ -322,8 +322,8 @@ export function OperationsDashboardPage() {
                                 <span className="w-[7px] h-[7px] rounded-full bg-red-600" />Overdue — immediate action needed
                               </div>
                               {overdueTasks.map((task: any) => (
-                                <div key={task.id} className="flex items-center gap-2 px-4 py-2 border-b border-slate-50 hover:bg-slate-50 dark:hover:bg-slate-800/50/50 group">
-                                  <div className={cn('w-[3px] h-8 rounded-sm shrink-0', PRI_COLORS[task.priority] ?? 'bg-slate-400')} />
+                                <div key={task.id} className="flex items-center gap-2 px-4 py-2 border-b border-slate-50 dark:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-800/50 group">
+                                  <div className={cn('w-[3px] h-8 rounded-sm shrink-0', PRI_COLORS[task.priority] ?? 'bg-slate-400 dark:bg-slate-500')} />
                                   <div className="w-6 h-6 rounded-md bg-red-50 flex items-center justify-center text-[11px] font-bold text-red-600 shrink-0">!</div>
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-1.5">
@@ -422,7 +422,7 @@ export function OperationsDashboardPage() {
                   <div key={dept.name} className={cn('rounded-[14px] border bg-white dark:bg-slate-900 overflow-hidden transition-colors', isExp ? 'border-slate-300 dark:border-slate-600' : 'border-slate-200 dark:border-slate-700')}>
                     <button type="button"
                       onClick={() => setExpandedDepts((prev) => ({ ...prev, [dept.name]: !prev[dept.name] }))}
-                      className={cn('w-full flex items-center gap-2.5 px-4 py-3 text-left transition-colors', isExp ? 'bg-slate-50 dark:bg-slate-800/50/80' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50/50')}>
+                      className={cn('w-full flex items-center gap-2.5 px-4 py-3 text-left transition-colors', isExp ? 'bg-slate-50 dark:bg-slate-800/80' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50')}>
                       <Chev open={isExp} />
                       <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center text-[13px] font-bold shrink-0">
                         {members.length}
@@ -451,7 +451,7 @@ export function OperationsDashboardPage() {
                               <button type="button"
                                 onClick={() => hasTasks && setExpandedMembers((prev) => ({ ...prev, [member.id]: !prev[member.id] }))}
                                 className={cn('w-full flex items-center gap-2 px-4 py-2 pl-11 text-left transition-colors border-l-[3px]',
-                                  hasTasks ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50/80' : 'cursor-default',
+                                  hasTasks ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/80' : 'cursor-default',
                                   isOver ? 'border-l-red-500' : isLow ? 'border-l-emerald-500' : 'border-l-transparent')}>
                                 {hasTasks ? <Chev open={isMExp} size={12} /> : <span className="w-3" />}
                                 <Avatar firstName={member.firstName} lastName={member.lastName} size={28} />
@@ -473,7 +473,7 @@ export function OperationsDashboardPage() {
                               </button>
 
                               {isMExp && hasTasks && (
-                                <div className="bg-slate-50 dark:bg-slate-800/50/80">
+                                <div className="bg-slate-50 dark:bg-slate-800/80">
                                   {memberTasks.map((task: any) => {
                                     const isOverdue = task.daysOverdue != null && task.daysOverdue > 0;
                                     return (

@@ -147,7 +147,7 @@ export function NotificationSettingsPage() {
             {rules.map((rule) => {
               const Icon = rule.icon;
               return (
-                <tr key={rule.event} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50/50">
+                <tr key={rule.event} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50">
                   <td className="px-6 py-3">
                     <div className="flex items-center gap-3">
                       <div className={cn('flex h-8 w-8 items-center justify-center rounded-lg', rule.color)}>

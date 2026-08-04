@@ -386,7 +386,7 @@ function EditorView({
 
         {/* Add member section */}
         {showAddSection && (
-          <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50/50">
+          <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
             <div className="flex flex-col sm:flex-row gap-3">
               {/* User search / select */}
               <div className="flex-1">
@@ -490,7 +490,7 @@ function EditorView({
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {template.members.map((m) => (
-                  <tr key={m.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50/50">
+                  <tr key={m.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-2.5">
                         <UserAvatar user={m.user} size="md" />

@@ -391,7 +391,7 @@ export function CalendarDaysPage() {
                 return (
                   <div key={idx} onClick={() => inMonth && handleDateClick(dateKey)}
                     className={cn('min-h-[90px] border-b border-r border-slate-100 dark:border-slate-800 px-1.5 py-1 cursor-pointer transition-colors',
-                      !inMonth && 'bg-slate-50 dark:bg-slate-800/50/50 opacity-40', inMonth && weekend && !hasEntries && 'bg-slate-50 dark:bg-slate-800/50',
+                      !inMonth && 'bg-slate-50 dark:bg-slate-800/50 opacity-40', inMonth && weekend && !hasEntries && 'bg-slate-50 dark:bg-slate-800/50',
                       inMonth && hasEntries && 'bg-red-50/30', isSelected && 'ring-2 ring-inset ring-blue-500 bg-blue-50/30',
                       inMonth && !hasEntries && !weekend && 'hover:bg-blue-50/20')}>
                     <div className="flex items-center justify-between">
