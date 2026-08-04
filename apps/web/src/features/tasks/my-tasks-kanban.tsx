@@ -15,6 +15,7 @@ import { STATUS_PILL, STATUS_LABEL, ZONE_BORDER_COLORS, formatShortDate } from '
 import { queryKeys } from '@/lib/query-keys';
 import { useAllowedTransitions } from '@/hooks/use-allowed-transitions';
 import { useOverlapConfirm } from '@/features/time/overlap-confirm';
+import { TaskCardBody } from '@/components/shared/task-card-body';
 
 type TabMode = 'time' | 'kanban' | 'upcoming';
 
@@ -1189,6 +1190,12 @@ export function MyTasksKanbanPage() {
   // than a week away (server sends `isReady=false` for those). Users
   // can opt back in to see the full pipeline.
   const [showFutureTasks, setShowFutureTasks] = useState(false);
+  // Reveal tasks the two Kanban-mandatory rules would otherwise hide
+  // (no-due-date, future-start). One-click "Reveal hidden" chip
+  // flips this and clears any user-controlled has-due filter that's
+  // also excluding them. Without this, an all-undated board would
+  // show "No tasks assigned to you" even though tasks exist.
+  const [revealHiddenKanban, setRevealHiddenKanban] = useState(false);
 
   const { data: tasksData, isLoading } = useQuery({
     queryKey: queryKeys.tasks.mine(),
@@ -1257,28 +1264,70 @@ export function MyTasksKanbanPage() {
       // Has-due-date cut (Tier D #6b) — user-controlled tri-state.
       if (filterHasDue === 'yes' && !t.endDate) return false;
       if (filterHasDue === 'no' && t.endDate) return false;
-      // Kanban view: MANDATORY due-date guard on top of the filter —
-      // a task without a due date has nowhere real to sit on a
-      // deadline-ordered board (2026-08-02 item 7).
-      if (activeTab === 'kanban' && !t.endDate) return false;
+      // Kanban view: default-hide tasks without a due date (2026-08-02
+      // item 7) — a task without one has nowhere real to sit on a
+      // deadline-ordered board. `revealHiddenKanban` bypasses this
+      // so the user can see them via the "N hidden" chip.
+      if (activeTab === 'kanban' && !revealHiddenKanban && !t.endDate) return false;
       // Kanban view: default-hide future-start tasks unless the user
       // opts in (2026-08-02 item 5). `isReady` is server-computed
       // from estimatedStartDate + a 7-day lead window.
-      if (activeTab === 'kanban' && !showFutureTasks && t.isReady === false) return false;
+      if (activeTab === 'kanban' && !revealHiddenKanban && !showFutureTasks && t.isReady === false) return false;
       return true;
     });
-  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, showFutureTasks]);
+  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, showFutureTasks, revealHiddenKanban]);
 
   const hasActiveFilter = !!(filterProjectId || filterServiceId || filterPhaseName || filterPriority || filterDueFrom || filterDueTo || filterKind || filterHasDue);
+
+  // Count of tasks the two Kanban-only rules are excluding right
+  // now — feeds the "N hidden — no due date / not started" chip.
+  // We re-run the user-controlled filters (all EXCEPT the mandatory
+  // Kanban ones), then count what the mandatory rules would drop.
+  // Only meaningful on the Kanban tab; other tabs render every task.
+  const kanbanHiddenCount = useMemo(() => {
+    if (activeTab !== 'kanban') return 0;
+    if (revealHiddenKanban) return 0;
+    let count = 0;
+    for (const t of allTasks) {
+      if (filterProjectId && t.project?.id !== filterProjectId) continue;
+      if (filterServiceId && t.phaseId !== filterServiceId) continue;
+      if (filterPhaseName) {
+        const n = t.serviceType?.name || t.description?.match(/^\[SERVICE:(.+)\]$/)?.[1] || t.phase?.name;
+        if (n !== filterPhaseName) continue;
+      }
+      if (filterPriority && t.priority !== filterPriority) continue;
+      if (filterDueFrom || filterDueTo) {
+        if (!t.endDate) continue;
+        const d = String(t.endDate).slice(0, 10);
+        if (filterDueFrom && d < filterDueFrom) continue;
+        if (filterDueTo && d > filterDueTo) continue;
+      }
+      if (filterKind === 'personal' && !t.isPersonal) continue;
+      if (filterKind === 'project' && t.isPersonal) continue;
+      if (filterHasDue === 'yes' && !t.endDate) continue;
+      if (filterHasDue === 'no' && t.endDate) continue;
+      // Now: WOULD the mandatory Kanban rules drop this one?
+      const droppedByNoDueDate = !t.endDate;
+      const droppedByFutureStart = !showFutureTasks && t.isReady === false;
+      if (droppedByNoDueDate || droppedByFutureStart) count++;
+    }
+    return count;
+  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, showFutureTasks, revealHiddenKanban]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor),
   );
 
-  const columnTasks = useMemo(() => {
+  const { columnMap, otherByStatus } = useMemo(() => {
     const map: Record<string, any[]> = {};
     for (const col of columns) map[col.id] = [];
+    // Statuses that DON'T have a board column go into a read-only
+    // "Other" section per-status. Previously they were bucketed into
+    // Not Started via `else map.not_started.push(task)` — a drag from
+    // that column would then silently overwrite their real status
+    // (on_hold → not_started, cancelled → not_started, etc.).
+    const other: Record<string, any[]> = {};
     // Cutoff for the "Done" column — only show tasks marked completed
     // (proxy: updatedAt) within the last 7 days so the column doesn't
     // become an ever-growing archive. Older completions are still in
@@ -1291,7 +1340,10 @@ export function MyTasksKanbanPage() {
         if (upd < oneWeekAgo) continue; // hide stale completions
       }
       if (map[status]) map[status].push(task);
-      else map.not_started.push(task);
+      else {
+        if (!other[status]) other[status] = [];
+        other[status].push(task);
+      }
     }
     map.not_started.sort((a, b) => getTaskScore(b) - getTaskScore(a));
     map.in_progress.sort((a, b) => {
@@ -1307,22 +1359,38 @@ export function MyTasksKanbanPage() {
       const bu = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
       return bu - au;
     });
-    return map;
+    return { columnMap: map, otherByStatus: other };
   }, [tasks]);
 
+  // Keep the original name so existing consumers below still work.
+  const columnTasks = columnMap;
+
   const moveTask = async (taskId: number, targetStatus: string) => {
-    // Optimistic update
-    queryClient.setQueryData(['tasks', 'mine'], (old: any) => {
+    const mineKey = queryKeys.tasks.mine();
+    // Snapshot BEFORE mutating so a server error rolls back to the
+    // exact prior list — no unnecessary refetch, no flicker. Prior
+    // code invalidated `tasks.mine` on error, which triggered a full
+    // network round-trip just to restore a value we already had.
+    const previous = queryClient.getQueryData(mineKey);
+    queryClient.setQueryData(mineKey, (old: any) => {
       if (!Array.isArray(old)) return old;
-      return old.map((t: any) => t.id === taskId ? { ...t, status: targetStatus } : t);
+      return old.map((t: any) => (t.id === taskId ? { ...t, status: targetStatus } : t));
     });
     try {
       await tasksApi.update(taskId, { status: targetStatus });
-      // Sync project planning views
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all });
+      // Sync project planning views only. `tasks.all` was previously
+      // invalidated too — but it's a PREFIX of `tasks.mine`, so React
+      // Query treated our just-set optimistic value as stale and
+      // refetched it, wasting a request and briefly flashing the
+      // pre-optimistic list. We don't need tasks.all here — no other
+      // active query on this page reads it, and cross-page task lists
+      // refetch on their own next mount.
       queryClient.invalidateQueries({ queryKey: queryKeys.planning.all });
     } catch (err: any) {
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.mine() });
+      // True rollback: restore the exact snapshot. Fallback to
+      // invalidation only if the snapshot was somehow missing.
+      if (previous !== undefined) queryClient.setQueryData(mineKey, previous);
+      else queryClient.invalidateQueries({ queryKey: mineKey });
       notify.apiError(err, 'Failed to update status');
     }
   };
@@ -1520,7 +1588,14 @@ export function MyTasksKanbanPage() {
         <TimeReportingTab tasks={tasks} onOpenDrawer={(id) => setDrawerTaskId(id)} />
       ) : activeTab === 'upcoming' ? (
         <UpcomingTab tasks={tasks} onOpenDrawer={(id) => setDrawerTaskId(id)} />
-      ) : tasks.length === 0 ? (
+      ) : (activeTab === 'kanban' && tasks.length === 0 && Object.keys(otherByStatus).length === 0 && kanbanHiddenCount === 0) ? (
+        <div className="py-12 text-center">
+          <UserIcon className="mx-auto h-12 w-12 text-slate-300" />
+          <p className="mt-3 text-sm text-slate-500">
+            {hasActiveFilter ? 'No tasks match the active filters' : 'No tasks assigned to you'}
+          </p>
+        </div>
+      ) : tasks.length === 0 && activeTab !== 'kanban' ? (
         <div className="py-12 text-center">
           <UserIcon className="mx-auto h-12 w-12 text-slate-300" />
           <p className="mt-3 text-sm text-slate-500">
@@ -1528,25 +1603,99 @@ export function MyTasksKanbanPage() {
           </p>
         </div>
       ) : (
-        <DndContext sensors={sensors} collisionDetection={closestCorners}
-          onDragStart={(e: DragStartEvent) => setActiveDragId(String(e.active.id))}
-          onDragEnd={handleDragEnd}>
-          <div className="grid grid-cols-4 gap-3">
-            {columns.map((col) => (
-              <DroppableColumn key={col.id} column={col} tasks={columnTasks[col.id] ?? []}
-                onOpenDrawer={(id) => setDrawerTaskId(id)}
-                onStatusChange={(taskId, status) => moveTask(taskId, status)} />
-            ))}
-          </div>
-          <DragOverlay>
-            {draggedTask && (
-              <div className="rounded-lg border-2 border-blue-400 bg-white p-3 shadow-2xl w-60">
-                {draggedTask.project?.name && <span className="text-[10px] font-semibold text-blue-600">{draggedTask.project.name}</span>}
-                <p className="text-[13px] font-medium text-slate-800">{draggedTask.name}</p>
+        <>
+          {/* Hidden-work chip — surfaces tasks the two mandatory
+              Kanban rules dropped (no due date, future-start). Before
+              this existed, an all-undated board rendered a false
+              "No tasks assigned" empty state. One click reveals them
+              inline; click again ("Hide") to restore the default view. */}
+          {activeTab === 'kanban' && kanbanHiddenCount > 0 && !revealHiddenKanban && (
+            <button
+              type="button"
+              onClick={() => setRevealHiddenKanban(true)}
+              className="mb-3 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[12px] font-semibold text-amber-800 hover:bg-amber-100"
+              title="Reveal tasks the Kanban board is hiding — no due date or not-yet-ready"
+            >
+              <AlertTriangle className="h-3.5 w-3.5" />
+              <span className="tabular-nums">{kanbanHiddenCount}</span>
+              &nbsp;hidden — no due date / not started
+              <span className="text-amber-600">· reveal</span>
+            </button>
+          )}
+          {activeTab === 'kanban' && revealHiddenKanban && (
+            <button
+              type="button"
+              onClick={() => setRevealHiddenKanban(false)}
+              className="mb-3 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[12px] font-medium text-slate-600 hover:bg-slate-100"
+            >
+              <X className="h-3.5 w-3.5" />
+              Hide undated / future-start again
+            </button>
+          )}
+
+          <DndContext sensors={sensors} collisionDetection={closestCorners}
+            onDragStart={(e: DragStartEvent) => setActiveDragId(String(e.active.id))}
+            onDragEnd={handleDragEnd}>
+            <div className="grid grid-cols-4 gap-3">
+              {columns.map((col) => (
+                <DroppableColumn key={col.id} column={col} tasks={columnTasks[col.id] ?? []}
+                  onOpenDrawer={(id) => setDrawerTaskId(id)}
+                  onStatusChange={(taskId, status) => moveTask(taskId, status)} />
+              ))}
+            </div>
+            <DragOverlay>
+              {draggedTask && (
+                <div className="rounded-lg border-2 border-blue-400 bg-white p-3 shadow-2xl w-60">
+                  {draggedTask.project?.name && <span className="text-[10px] font-semibold text-blue-600">{draggedTask.project.name}</span>}
+                  <p className="text-[13px] font-medium text-slate-800">{draggedTask.name}</p>
+                </div>
+              )}
+            </DragOverlay>
+          </DndContext>
+
+          {/* Other-status section — read-only. Tasks whose status
+              isn't one of the 4 board columns (on_hold, cancelled,
+              blocked, etc.) render here grouped by their REAL status.
+              NOT wrapped in a droppable, so a drag can't silently
+              overwrite their status by dumping them into "To Do".
+              To move an item out of Other, open its drawer and change
+              status explicitly — that's the intentional path. */}
+          {activeTab === 'kanban' && Object.keys(otherByStatus).length > 0 && (
+            <div className="mt-6 rounded-[14px] border border-slate-200 bg-slate-50/40 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <AlertCircle className="h-3.5 w-3.5 text-slate-500" />
+                <h3 className="text-[13px] font-semibold text-slate-700">Other</h3>
+                <span className="text-[11px] text-slate-500">
+                  read-only · statuses not on the board · open the task to change status
+                </span>
               </div>
-            )}
-          </DragOverlay>
-        </DndContext>
+              <div className="space-y-3">
+                {Object.entries(otherByStatus).map(([status, items]) => (
+                  <div key={status}>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className={cn('rounded-[5px] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider', STATUS_PILL[status] ?? 'bg-slate-100 text-slate-600')}>
+                        {STATUS_LABEL[status] ?? status}
+                      </span>
+                      <span className="text-[11px] text-slate-400 tabular-nums">{items.length}</span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+                      {items.map((t: any) => (
+                        <div
+                          key={t.id}
+                          onClick={() => setDrawerTaskId(t.id)}
+                          className="rounded-[14px] border border-slate-200 bg-white cursor-pointer hover:border-slate-300 opacity-80"
+                          title="Read-only in Other. Click to open and change status."
+                        >
+                          <TaskCardBody task={t} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {drawerTaskId && (
