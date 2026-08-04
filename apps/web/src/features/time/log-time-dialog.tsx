@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { X, Search, Clock, FolderKanban, ListChecks } from 'lucide-react';
 import { useProjects } from '@/hooks/use-projects';
+import { useAuthStore } from '@/stores/auth.store';
 import { useCreateTimeEntry } from '@/hooks/use-time';
 import { MinutesInput } from '@/components/shared/minutes-input';
+import { NotePresetPicker } from '@/components/shared/note-preset-picker';
 import { useDebounce } from '@/hooks/use-debounce';
 import { format } from '@/lib/date-utils';
 import { cn } from '@/lib/utils';
@@ -52,8 +54,17 @@ export function LogTimeDialog({
     }
   }, [open, defaultDate, defaultProjectId, defaultTaskId]);
 
-  // Fetch projects
-  const { data: projectsData } = useProjects({ search: debouncedProjectSearch, perPage: 50 });
+  // Fetch projects the user can report time on — leader OR member of.
+  // The client feedback (2026-08-02) said "each user only sees their
+  // projects and their team's projects" in time reporting. The
+  // /projects endpoint's memberId filter matches projects where the
+  // user is leader OR active member; that's exactly the scope we want.
+  const currentUserId = useAuthStore((s) => s.user?.id) as number | undefined;
+  const { data: projectsData } = useProjects({
+    search: debouncedProjectSearch,
+    memberId: currentUserId,
+    perPage: 50,
+  });
   const projects = projectsData?.data ?? [];
 
   // Fetch tasks for selected project
@@ -266,9 +277,14 @@ export function LogTimeDialog({
             </p>
           </div>
 
-          {/* Note */}
+          {/* Note + preset phrase picker */}
           <div>
             <label className="mb-1 block text-sm font-medium">Note</label>
+            <NotePresetPicker
+              onPick={(phrase) => {
+                setNote((prev) => (prev ? `${prev} ${phrase}`.trim() : phrase));
+              }}
+            />
             <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}

@@ -50,13 +50,17 @@ export class ProjectAccessService {
   }
 
   /**
-   * Resolves a task → projectId then asserts access. Returns the projectId.
+   * Resolves a task → projectId then asserts access. Returns the
+   * projectId, or null for personal tasks (Tier D #1) which are
+   * accessible to their creator + assignees regardless of any project
+   * membership. Callers that require a project-scoped id must guard
+   * on the null case explicitly.
    */
   async assertTaskAccess(
     userId: number,
     taskId: number,
     roleId?: number | null,
-  ): Promise<number> {
+  ): Promise<number | null> {
     if (this.isSuperAdmin(roleId)) {
       const t = await this.prisma.task.findFirst({
         where: { id: taskId, deletedAt: null },
@@ -68,9 +72,19 @@ export class ProjectAccessService {
 
     const task = await this.prisma.task.findFirst({
       where: { id: taskId, deletedAt: null },
-      select: { projectId: true },
+      select: { projectId: true, createdBy: true, assignees: { where: { userId, deletedAt: null }, select: { id: true } } },
     });
     if (!task) throw new NotFoundException('Task not found');
+
+    // Personal task: access is via the task itself (creator or assignee).
+    if (task.projectId == null) {
+      const isOwner = task.createdBy === userId;
+      const isAssigned = (task.assignees ?? []).length > 0;
+      if (!isOwner && !isAssigned) {
+        throw new ForbiddenException('You do not have access to this task');
+      }
+      return null;
+    }
 
     await this.assertProjectAccess(userId, task.projectId, roleId);
     return task.projectId;

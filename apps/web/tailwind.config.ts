@@ -20,7 +20,11 @@ const config: Config = {
         sm: 'calc(var(--radius) - 4px)',
       },
       fontFamily: {
-        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        // Planwise design system (2026-08-04): DM Sans for UI text,
+        // JetBrains Mono for data (codes, hours, amounts, IDs). See
+        // .claude/skills/planwise-design for usage rules.
+        sans: ['DM Sans', 'Segoe UI', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
       },
       colors: {
         border: 'hsl(var(--border))',

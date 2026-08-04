@@ -164,7 +164,10 @@ function Pagination({ table }: { table: ReturnType<typeof useReactTable> }) {
   return (
     <div className="flex items-center justify-between px-2">
       <span className="text-sm text-muted-foreground">
-        Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
+        Page{' '}
+        <span className="font-mono tabular-nums">{table.getState().pagination.pageIndex + 1}</span>
+        {' '}of{' '}
+        <span className="font-mono tabular-nums">{table.getPageCount()}</span>
       </span>
       <div className="flex gap-1">
         <button

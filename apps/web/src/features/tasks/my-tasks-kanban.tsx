@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Clock, User as UserIcon, GripVertical, CalendarClock, ListChecks, Columns3, Play, Check, AlertCircle, AlertTriangle, Calendar } from 'lucide-react';
+import { Clock, User as UserIcon, GripVertical, CalendarClock, ListChecks, Columns3, Play, Check, AlertCircle, AlertTriangle, Calendar, Plus, X } from 'lucide-react';
 import { DndContext, DragOverlay, closestCorners, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent, useDraggable, useDroppable } from '@dnd-kit/core';
 import { PageHeader } from '@/components/shared/page-header';
 import { TaskDrawer } from './task-drawer';
@@ -295,198 +295,148 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
   const zoneName = task.zone?.name || task.label?.name || '';
   const health = getTaskHealth(task);
 
-  const borderCls =
-    health.level === 'critical'
-      ? 'border-red-300 bg-red-50 ring-1 ring-red-200'
-      : health.level === 'warning'
-        ? 'border-amber-300 bg-amber-50/50'
-        : 'border-slate-200 bg-white';
+  // BIM Leader is enriched onto the task's project by /projects/:id/findOne;
+  // /my-tasks doesn't include it, but we surface whatever's on the payload
+  // and fall back to em-dash so the row keeps its shape.
+  const bimLeader = task.project?.bimLeader
+    ? `${task.project.bimLeader.firstName ?? ''} ${task.project.bimLeader.lastName ?? ''}`.trim()
+    : '';
+
+  const assignees: any[] = Array.isArray(task.assignees) ? task.assignees : [];
+  const extraAssignees = Math.max(0, assignees.length - 1);
+
+  const cardBorder =
+    health.level === 'critical' ? 'border-red-300 ring-1 ring-red-200'
+    : health.level === 'warning' ? 'border-amber-300'
+    : 'border-slate-200';
 
   return (
-    // Hover effect: fast shadow lift on hover. The native browser
-    // `title` tooltip used to be on the card root for the at-risk
-    // reasons, which gave a ~500ms delay before any feedback —
-    // exactly the "hover delay" the user flagged. We dropped it
-    // because the same information is already rendered inline below
-    // (the reasons banner near the bottom of the card), so the tooltip
-    // was redundant. Transitions are explicitly bound to shadow only,
-    // so layout-affecting properties don't animate.
+    // Card redesign (T-fix Tier A #11, 2026-06-30) — matches the mockup:
+    // structured labeled field rows, red due-date pill, blue Log Time
+    // CTA. Drag handle sits on the left edge; the card body opens the
+    // drawer on click; status change is still accessible via the status
+    // pill in the header.
     <div ref={setNodeRef} style={style} {...attributes}
       className={cn(
-        'rounded-lg border shadow-sm hover:shadow-md transition-shadow duration-100 border-l-[3px]',
-        borderCls,
+        'rounded-[14px] border bg-white shadow-sm hover:shadow-md transition-shadow duration-100 border-l-[3px] overflow-hidden',
+        cardBorder,
         ZONE_BORDER_COLORS[zoneType] || 'border-l-slate-300',
         isDragging && 'opacity-40 shadow-lg ring-2 ring-blue-300 z-50',
       )}
     >
-      {/* Drag handle + project — bumped project name to a more legible size
-          per spec ("project name font should be larger"). */}
-      <div {...listeners} className="flex items-center gap-1.5 px-3 pt-2 cursor-grab active:cursor-grabbing">
-        <GripVertical className="h-3.5 w-3.5 text-slate-300" />
+      {/* Header — drag handle, project name, assignee pill on the right. */}
+      <div {...listeners} className="flex items-center gap-2 px-3.5 pt-3 pb-1.5 cursor-grab active:cursor-grabbing">
+        <GripVertical className="h-3.5 w-3.5 text-slate-300 shrink-0" />
         {projectName && (
-          <span className="text-[13px] font-bold text-blue-700 truncate max-w-[180px]">{projectName}</span>
+          <span className="text-[13px] font-bold text-slate-900 truncate flex-1" title={projectName}>{projectName}</span>
         )}
-        <div className="ml-auto flex items-center gap-1">
-          {health.level === 'critical' && <AlertCircle className="h-3.5 w-3.5 text-red-600" />}
-          {health.level === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />}
-        </div>
+        {assignees.length > 0 && (
+          <span
+            className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 shrink-0"
+            title={assignees.map(a => `${a.user?.firstName ?? ''} ${a.user?.lastName ?? ''}`.trim()).join(', ')}
+          >
+            <UserIcon className="h-3 w-3" />
+            {extraAssignees > 0 ? `+${extraAssignees}` : '1'}
+          </span>
+        )}
+        {health.level === 'critical' && <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />}
+        {health.level === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />}
       </div>
 
-      {/* Clickable area → open drawer */}
-      <div className="px-3 pb-3 pt-1 cursor-pointer space-y-1.5" onClick={() => onOpenDrawer(task.id)}>
-        {task.code && <span className="text-[9px] font-mono text-slate-500">{task.code}</span>}
-        <p className="text-[13px] font-semibold text-slate-800 leading-tight break-words">{task.name}</p>
+      {/* Body — clickable to open drawer. Fields laid out as labeled rows. */}
+      <div className="px-3.5 pb-3 pt-1 cursor-pointer" onClick={() => onOpenDrawer(task.id)}>
+        {/* Task name (subtitle to the project). */}
+        <p className="text-[13px] font-semibold text-slate-800 leading-tight break-words mb-2.5">
+          {task.name}
+        </p>
 
-        {/* Zone breadcrumb — walks the zone tree. Falls back to just the
-            leaf zone name when the breadcrumb hasn't been computed yet
-            (older API responses or transitional state). For root tasks
-            (no zone) we surface "Project Root" + phase so the card isn't
-            silently context-less. */}
-        {Array.isArray((task as any).zoneBreadcrumb) && (task as any).zoneBreadcrumb.length > 0 ? (
-          <p className="text-[10px] text-slate-500 truncate" title={(task as any).zoneBreadcrumb.join(' > ')}>
-            {(task as any).zoneBreadcrumb.join(' › ')}
-          </p>
-        ) : zoneName ? (
-          <p className="text-[10px] text-slate-500 truncate">{zoneName}</p>
-        ) : (
-          <p className="text-[10px] text-slate-400 italic truncate">
-            Project Root
-            {task.phase?.name ? ` · ${task.phase.name}` : task.serviceType?.name ? ` · ${task.serviceType.name}` : ''}
-          </p>
-        )}
-
-        {/* Service + Deliverable chips — same data the Tasks list page
-            surfaces, so the Kanban card now carries equal context. The
-            user asked for "all relevant data on the card including
-            breadcrumbs"; phase (Service) and serviceType (Deliverable)
-            were missing. Render in muted slate so they don't compete
-            with the status pill. */}
-        {(task.phase?.name || task.serviceType?.name) && (
-          <div className="flex items-center gap-1 flex-wrap text-[10px]">
-            {task.phase?.name && (
-              <span className="rounded bg-violet-50 px-1.5 py-0.5 text-violet-700 font-medium">
-                {task.phase.name}
-              </span>
-            )}
-            {task.serviceType?.name && (
-              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-600">
-                {task.serviceType.name}
-              </span>
-            )}
+        {/* Labeled field grid — ZONE / SERVICE / DELIVERABLE / BIM LEADER.
+            Each row: 10px uppercase slate-400 label + slate-700 value. */}
+        <dl className="text-[12px] space-y-1 mb-3">
+          <div className="flex items-baseline gap-2">
+            <dt className="w-[74px] shrink-0 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Zone</dt>
+            <dd className="text-slate-700 truncate min-w-0" title={zoneName || 'Project Root'}>
+              {zoneName || <span className="text-slate-400 italic">Project Root</span>}
+            </dd>
           </div>
-        )}
-
-        {/* Kanban stage pill — progress bar removed per spec ("the progress
-            bar on the card is unnecessary"). */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider', STATUS_PILL[task.status] ?? STATUS_PILL.not_started)}>
-            {STATUS_LABEL[task.status] ?? task.status}
-          </span>
-          {task.priority === 'critical' && <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-bold text-red-600">Critical</span>}
-          {task.priority === 'high' && <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-600">High</span>}
-        </div>
-
-        {/* Hours — YOUR own logged time on this task. The findMine endpoint
-            scopes time-entries by userId so this card shows what *you*
-            reported, not the team's combined hours.
-
-            Visibility upgrade: rendered as a colored pill so the
-            "X.XXh / Yh" reading pops on the card. Color tracks budget
-            usage so over-budget tasks scream red without needing the
-            "Over budget" risk reason. */}
-        {(() => {
-          const logged = health.loggedHours;
-          const est = health.estimatedHours;
-          const pct = est > 0 ? (logged / est) * 100 : 0;
-          // Bucket the color: green under 80%, amber 80–100%, red over.
-          // Always uses the loggedHours value direct from health, which
-          // recomputes from the freshly-invalidated tasks.mine query.
-          const tone = est <= 0
-            ? 'bg-slate-100 text-slate-600 border-slate-200'
-            : pct >= 100
-              ? 'bg-red-100 text-red-700 border-red-200'
-              : pct >= 80
-                ? 'bg-amber-100 text-amber-700 border-amber-200'
-                : 'bg-emerald-100 text-emerald-700 border-emerald-200';
-          return (
-            <div className={cn(
-              'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-bold tabular-nums',
-              tone,
-            )}>
-              <Clock className="h-3 w-3 shrink-0" />
-              <span>{logged}h</span>
-              {est > 0 && (
-                <>
-                  <span className="opacity-60">/</span>
-                  <span>{est}h</span>
-                  <span className="opacity-70 font-semibold">· {Math.round(pct)}%</span>
-                </>
-              )}
-            </div>
-          );
-        })()}
-
-        {/* Due date */}
-        {task.endDate && (
-          <div className="flex items-center gap-1 text-[10px]">
-            <Calendar className={cn('h-2.5 w-2.5 shrink-0', health.isOverdue ? 'text-red-600' : 'text-slate-400')} />
-            <span className={cn(
-              'tabular-nums',
-              health.isOverdue ? 'text-red-600 font-bold' : 'text-slate-500 font-medium',
-            )}>
-              Due {formatShortDate(task.endDate)}
-              {health.isOverdue && ' (overdue)'}
-            </span>
+          <div className="flex items-baseline gap-2">
+            <dt className="w-[74px] shrink-0 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Service</dt>
+            <dd className="text-slate-700 truncate min-w-0" title={task.phase?.name ?? ''}>
+              {task.phase?.name || <span className="text-slate-300">—</span>}
+            </dd>
           </div>
-        )}
+          <div className="flex items-baseline gap-2">
+            <dt className="w-[74px] shrink-0 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Deliverable</dt>
+            <dd className="text-slate-700 truncate min-w-0" title={task.deliverableTemplate?.name ?? task.serviceType?.name ?? ''}>
+              {task.deliverableTemplate?.name || task.serviceType?.name || <span className="text-slate-300">—</span>}
+            </dd>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <dt className="w-[74px] shrink-0 text-[10px] font-semibold uppercase tracking-wider text-slate-400">BIM Leader</dt>
+            <dd className="text-slate-700 truncate min-w-0" title={bimLeader}>
+              {bimLeader || <span className="text-slate-300">—</span>}
+            </dd>
+          </div>
+        </dl>
 
-        {/* Risk reasons (visible) */}
+        {/* Risk banner — kept subtle, right above the CTA row. */}
         {health.reasons.length > 0 && (
           <div className={cn(
-            'rounded px-1.5 py-1 text-[10px]',
-            health.level === 'critical' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700',
+            'rounded-md px-2 py-1 text-[10px] mb-2 font-medium',
+            health.level === 'critical' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-amber-50 text-amber-700 border border-amber-200',
           )}>
             {health.reasons[0]}
           </div>
         )}
 
-        {/* Assignee avatars — emphasized per user feedback 2026-06-22.
-            Larger circles + heavier border so "who's on this task" is
-            scannable without opening the drawer. */}
-        {Array.isArray((task as any).assignees) && (task as any).assignees.length > 0 && (
-          <div className="flex items-center gap-0.5">
-            {((task as any).assignees as any[]).slice(0, 4).map((a) => {
-              const initials = `${a.user?.firstName?.[0] ?? ''}${a.user?.lastName?.[0] ?? ''}` || '?';
-              return (
-                <span
-                  key={a.id}
-                  className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-extrabold ring-2 ring-white -ml-1.5 first:ml-0 shadow-sm"
-                  title={`${a.user?.firstName ?? ''} ${a.user?.lastName ?? ''}`.trim()}
-                >
-                  {initials}
-                </span>
-              );
-            })}
-            {(task as any).assignees.length > 4 && (
-              <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-slate-200 text-slate-700 text-[10px] font-bold ring-2 ring-white -ml-1.5 shadow-sm">
-                +{(task as any).assignees.length - 4}
-              </span>
-            )}
+        {/* Bottom row — due-date pill on the left, Log Time CTA on the
+            right. The date pill is red when overdue, slate otherwise. */}
+        <div className="flex items-center gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
+          {task.endDate ? (
+            <span className={cn(
+              'inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] font-semibold tabular-nums',
+              health.isOverdue
+                ? 'bg-red-50 border-red-200 text-red-700'
+                : 'bg-slate-50 border-slate-200 text-slate-700',
+            )}>
+              <Calendar className="h-3 w-3" />
+              {formatShortDate(task.endDate)}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-slate-200 px-2 py-1.5 text-[11px] text-slate-400">
+              <Calendar className="h-3 w-3" />
+              No date
+            </span>
+          )}
+          <div className="ml-auto">
+            <QuickTimeLog taskId={task.id} taskProjectId={task.projectId} />
           </div>
-        )}
+        </div>
 
-        {/* Keyboard-accessible status change (WCAG 2.5.7 Dragging Movements alternative) */}
-        <div className="pt-1 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-          <KanbanStatusSelect status={task.status} onStatusChange={(s) => onStatusChange(task.id, s)} />
-          <QuickTimeLog taskId={task.id} taskProjectId={task.projectId} />
+        {/* Status change — still reachable but demoted below the CTA
+            row. Full-width select so it's obvious it's actionable
+            without competing with the primary Log Time button. */}
+        <div className="pt-2" onClick={(e) => e.stopPropagation()}>
+          <KanbanStatusSelect
+            status={task.status}
+            requiresReview={task.requiresReview !== false}
+            onStatusChange={(s) => onStatusChange(task.id, s)}
+          />
         </div>
       </div>
     </div>
   );
 }
 
-function KanbanStatusSelect({ status, onStatusChange }: { status: string; onStatusChange: (s: string) => void }) {
+function KanbanStatusSelect({ status, requiresReview = true, onStatusChange }: { status: string; requiresReview?: boolean; onStatusChange: (s: string) => void }) {
   const { allowedStatuses } = useAllowedTransitions(status);
+  // Optional Review step (Tier D #2). When the task doesn't require
+  // review, hide the "In Review" option from the picker so users go
+  // In Progress → Done directly. Doesn't affect the column itself on
+  // the Kanban board — that stays visible for tasks that DO need it.
+  const opts = requiresReview
+    ? columns
+    : columns.filter((c) => c.id !== 'in_review');
   return (
     <select
       aria-label="Change task status"
@@ -494,7 +444,7 @@ function KanbanStatusSelect({ status, onStatusChange }: { status: string; onStat
       onChange={(e) => onStatusChange(e.target.value)}
       className="flex-1 rounded border border-slate-200 bg-white px-1.5 py-1 text-[10px] focus:border-blue-400 focus:outline-none"
     >
-      {columns.filter((c) => allowedStatuses.includes(c.id)).map((c) => (
+      {opts.filter((c) => allowedStatuses.includes(c.id)).map((c) => (
         <option key={c.id} value={c.id}>{c.label}</option>
       ))}
     </select>
@@ -1211,6 +1161,7 @@ function TimeReportingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer:
 export function MyTasksKanbanPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabMode>('kanban');
+  const [showPersonalTaskDialog, setShowPersonalTaskDialog] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   // Drawer ID lives in ?task=N so browser-back and outbound-link returns
   // restore the open task automatically. See useDrawerRoute docs.
@@ -1228,6 +1179,16 @@ export function MyTasksKanbanPage() {
   const [filterPriority, setFilterPriority] = useState<string>('');
   const [filterDueFrom, setFilterDueFrom] = useState<string>('');
   const [filterDueTo, setFilterDueTo] = useState<string>('');
+  // Tier D #1 (personal-tasks) + #6a+b filters — personal task cut and
+  // has-due-date cut. Both default to 'any' so the initial view is
+  // unfiltered.
+  const [filterKind, setFilterKind] = useState<'' | 'personal' | 'project'>('');
+  const [filterHasDue, setFilterHasDue] = useState<'' | 'yes' | 'no'>('');
+  // "Upcoming/future tasks" toggle (client feedback 2026-08-02 item
+  // 5). By default the Kanban hides tasks whose estStart is more
+  // than a week away (server sends `isReady=false` for those). Users
+  // can opt back in to see the full pipeline.
+  const [showFutureTasks, setShowFutureTasks] = useState(false);
 
   const { data: tasksData, isLoading } = useQuery({
     queryKey: queryKeys.tasks.mine(),
@@ -1270,7 +1231,11 @@ export function MyTasksKanbanPage() {
     return Array.from(names).sort();
   }, [allTasks]);
 
-  // Apply filters
+  // Apply filters. Kanban view enforces "must have due date" as a
+  // hard rule (client feedback 2026-08-02 item 7 — kanban should
+  // only show tasks that have a DUE DATE; other task-display
+  // surfaces follow the same rule except the Planning grid which
+  // stays exhaustive so PMs can still see uncommitted work).
   const tasks = useMemo(() => {
     return allTasks.filter((t) => {
       if (filterProjectId && t.project?.id !== filterProjectId) return false;
@@ -1286,11 +1251,25 @@ export function MyTasksKanbanPage() {
         if (filterDueFrom && d < filterDueFrom) return false;
         if (filterDueTo && d > filterDueTo) return false;
       }
+      // Personal-task cut (Tier D #1).
+      if (filterKind === 'personal' && !t.isPersonal) return false;
+      if (filterKind === 'project' && t.isPersonal) return false;
+      // Has-due-date cut (Tier D #6b) — user-controlled tri-state.
+      if (filterHasDue === 'yes' && !t.endDate) return false;
+      if (filterHasDue === 'no' && t.endDate) return false;
+      // Kanban view: MANDATORY due-date guard on top of the filter —
+      // a task without a due date has nowhere real to sit on a
+      // deadline-ordered board (2026-08-02 item 7).
+      if (activeTab === 'kanban' && !t.endDate) return false;
+      // Kanban view: default-hide future-start tasks unless the user
+      // opts in (2026-08-02 item 5). `isReady` is server-computed
+      // from estimatedStartDate + a 7-day lead window.
+      if (activeTab === 'kanban' && !showFutureTasks && t.isReady === false) return false;
       return true;
     });
-  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo]);
+  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, showFutureTasks]);
 
-  const hasActiveFilter = !!(filterProjectId || filterServiceId || filterPhaseName || filterPriority || filterDueFrom || filterDueTo);
+  const hasActiveFilter = !!(filterProjectId || filterServiceId || filterPhaseName || filterPriority || filterDueFrom || filterDueTo || filterKind || filterHasDue);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -1300,8 +1279,17 @@ export function MyTasksKanbanPage() {
   const columnTasks = useMemo(() => {
     const map: Record<string, any[]> = {};
     for (const col of columns) map[col.id] = [];
+    // Cutoff for the "Done" column — only show tasks marked completed
+    // (proxy: updatedAt) within the last 7 days so the column doesn't
+    // become an ever-growing archive. Older completions are still in
+    // the DB and reachable via reports; the kanban is for current work.
+    const oneWeekAgo = Date.now() - 7 * 86_400_000;
     for (const task of tasks) {
       const status = task.status || 'not_started';
+      if (status === 'completed') {
+        const upd = task.updatedAt ? new Date(task.updatedAt).getTime() : 0;
+        if (upd < oneWeekAgo) continue; // hide stale completions
+      }
       if (map[status]) map[status].push(task);
       else map.not_started.push(task);
     }
@@ -1311,6 +1299,13 @@ export function MyTasksKanbanPage() {
       if (!a.endDate) return 1;
       if (!b.endDate) return -1;
       return new Date(a.endDate).getTime() - new Date(b.endDate).getTime();
+    });
+    // Newest completions first in the Done column so the freshest
+    // finishes float to the top.
+    map.completed.sort((a, b) => {
+      const au = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+      const bu = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      return bu - au;
     });
     return map;
   }, [tasks]);
@@ -1356,8 +1351,27 @@ export function MyTasksKanbanPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      {/* Personal-task modal — created lazily so the form only mounts on click. */}
+      {showPersonalTaskDialog && (
+        <PersonalTaskDialog
+          onClose={() => setShowPersonalTaskDialog(false)}
+          onCreated={() => {
+            queryClient.invalidateQueries({ queryKey: queryKeys.tasks.mine() });
+            setShowPersonalTaskDialog(false);
+          }}
+        />
+      )}
+      <div className="flex items-center justify-between gap-3">
         <PageHeader title="My Tasks" description={activeTab === 'time' ? 'List of your tasks with quick time reporting' : 'Drag to change status, click card to view details'} />
+        <button
+          type="button"
+          onClick={() => setShowPersonalTaskDialog(true)}
+          className="flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 shrink-0"
+          title="Create a personal task for yourself (no project needed)"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          New personal task
+        </button>
         <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5">
           <button onClick={() => setActiveTab('time')}
             className={cn('flex items-center gap-1.5 px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
@@ -1422,6 +1436,42 @@ export function MyTasksKanbanPage() {
           <option value="medium">Medium</option>
           <option value="low">Low</option>
         </select>
+        {/* Personal-task cut (Tier D #1) + has-due-date cut (#6b). */}
+        <select
+          value={filterKind}
+          onChange={(e) => setFilterKind(e.target.value as '' | 'personal' | 'project')}
+          className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+          title="Personal-task filter"
+        >
+          <option value="">Any kind</option>
+          <option value="personal">Personal only</option>
+          <option value="project">Project only</option>
+        </select>
+        <select
+          value={filterHasDue}
+          onChange={(e) => setFilterHasDue(e.target.value as '' | 'yes' | 'no')}
+          className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+          title="Has due date"
+        >
+          <option value="">Due date: any</option>
+          <option value="yes">Has due date</option>
+          <option value="no">Missing due date</option>
+        </select>
+        {/* Show future-start tasks on the Kanban (client 2026-08-02
+            item 5). Off by default — Kanban shows what to work on
+            NOW; tasks whose estStart is >7 days out live in the
+            underlying pipeline until they get close. */}
+        {activeTab === 'kanban' && (
+          <label className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] text-slate-600 hover:border-slate-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showFutureTasks}
+              onChange={(e) => setShowFutureTasks(e.target.checked)}
+              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+            />
+            Include future tasks
+          </label>
+        )}
         {/* Due-date range — same control set as the Execution board's
             date filter. Either side optional. */}
         <div className="flex items-center gap-1 text-[12px] text-slate-500">
@@ -1451,6 +1501,8 @@ export function MyTasksKanbanPage() {
               setFilterPriority('');
               setFilterDueFrom('');
               setFilterDueTo('');
+              setFilterKind('');
+              setFilterHasDue('');
             }}
             className="text-[12px] text-slate-500 hover:text-slate-700 underline"
           >
@@ -1501,6 +1553,229 @@ export function MyTasksKanbanPage() {
         <TaskDrawer taskId={drawerTaskId} onClose={closeDrawer} />
       )}
 
+    </div>
+  );
+}
+
+/**
+ * Personal-task creation dialog (Tier D #1, 2026-06-30).
+ *
+ * Personal tasks belong to the individual employee — not any project,
+ * zone, service, or deliverable. This modal is the entry point on the
+ * My Tasks page and is intentionally lean: name (required), optional
+ * description + due date + est. hours + review flag. The backend's
+ * create() path already relaxes the project-required validation when
+ * isPersonal=true; we just POST /tasks with that flag.
+ */
+function PersonalTaskDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [budgetHours, setBudgetHours] = useState('');
+  // Optional project context — cascading pickers. Personal tasks don't
+  // REQUIRE a project link; if the user picks one, zones + deliverables
+  // filter to that project. (Client feedback 2026-08-02.)
+  const [projectId, setProjectId] = useState<number | ''>('');
+  const [zoneId, setZoneId] = useState<number | ''>('');
+  const [projectDeliverableId, setProjectDeliverableId] = useState<number | ''>('');
+  // Personal tasks default to NO review — per client spec.
+  const [saving, setSaving] = useState(false);
+
+  // Projects the user can pick from. Same source the Time-log dialog uses.
+  const { data: projectsResp } = useQuery({
+    queryKey: queryKeys.projects.all,
+    queryFn: () => client.get('/projects', { params: { perPage: 200 } }).then((r) => r.data),
+  });
+  const projects: any[] = Array.isArray(projectsResp?.data) ? projectsResp.data : [];
+
+  // Zones for the currently-picked project (cascading).
+  const { data: zonesResp } = useQuery({
+    queryKey: ['project-zones', projectId],
+    enabled: !!projectId,
+    queryFn: () => client.get(`/projects/${projectId}/planning-data`).then((r) => r.data?.data ?? r.data),
+  });
+  const zones: any[] = Array.isArray(zonesResp?.zones) ? zonesResp.zones : [];
+
+  // Deliverables for the currently-picked project.
+  const { data: deliverablesResp } = useQuery({
+    queryKey: ['project-deliverables', projectId],
+    enabled: !!projectId,
+    queryFn: () => client.get('/project-deliverables', { params: { projectId } }).then((r) => r.data?.data ?? r.data),
+  });
+  const deliverables: any[] = Array.isArray(deliverablesResp) ? deliverablesResp : [];
+
+  // Due date is required for personal tasks (client feedback).
+  const canSave = name.trim().length > 0 && !!endDate && !saving;
+
+  const submit = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    try {
+      await tasksApi.create({
+        code: `PERSONAL-${Date.now().toString(36).toUpperCase()}`,
+        name: name.trim(),
+        description: description.trim() || undefined,
+        endDate,
+        budgetHours: budgetHours ? Number(budgetHours) : undefined,
+        projectId: projectId || undefined,
+        zoneId: zoneId || undefined,
+        projectDeliverableId: projectDeliverableId || undefined,
+        isPersonal: true,
+        // Personal tasks skip the review step by default.
+        requiresReview: false,
+      } as any);
+      notify.success('Personal task created', { code: 'TASK-CREATE-200' });
+      onCreated();
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to create personal task');
+      setSaving(false);
+    }
+  };
+
+  // Clear cascading pickers when project changes.
+  const handleProjectChange = (v: string) => {
+    setProjectId(v ? Number(v) : '');
+    setZoneId('');
+    setProjectDeliverableId('');
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-[500px] max-w-[92vw] max-h-[85vh] overflow-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <div>
+            <h2 className="text-base font-bold text-slate-900">New personal task</h2>
+            <p className="text-[12px] text-slate-500 mt-0.5">Just for you. Project / zone / deliverable are optional; Due date is required.</p>
+          </div>
+          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <form
+          onSubmit={(e) => { e.preventDefault(); submit(); }}
+          className="p-5 space-y-4"
+        >
+          <div>
+            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+              Task name <span className="text-red-500">*</span>
+            </label>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Review latest drawings"
+              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Description</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              placeholder="Optional details…"
+              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none resize-none"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+                Due date <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Est. hours</label>
+              <input
+                type="number"
+                min="0"
+                step="0.25"
+                value={budgetHours}
+                onChange={(e) => setBudgetHours(e.target.value)}
+                placeholder="0"
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+          </div>
+          {/* Optional project context — cascading. Zone + Deliverable
+              pickers are disabled until a project is chosen. */}
+          <div className="border-t border-slate-100 pt-4 space-y-3">
+            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+              Optional project context
+            </div>
+            <div>
+              <label className="text-[12px] text-slate-600 mb-1 block">Project</label>
+              <select
+                value={projectId}
+                onChange={(e) => handleProjectChange(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+              >
+                <option value="">— None —</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}{p.number ? ` (${p.number})` : ''}</option>
+                ))}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[12px] text-slate-600 mb-1 block">Zone</label>
+                <select
+                  value={zoneId}
+                  disabled={!projectId}
+                  onChange={(e) => setZoneId(e.target.value ? Number(e.target.value) : '')}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <option value="">— None —</option>
+                  {zones.map((z) => (
+                    <option key={z.id} value={z.id}>{z.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[12px] text-slate-600 mb-1 block">Deliverable</label>
+                <select
+                  value={projectDeliverableId}
+                  disabled={!projectId}
+                  onChange={(e) => setProjectDeliverableId(e.target.value ? Number(e.target.value) : '')}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <option value="">— None —</option>
+                  {deliverables.map((d) => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!canSave}
+              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[13px] font-semibold px-4 py-2 rounded-lg"
+            >
+              {saving ? 'Creating…' : 'Create task'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

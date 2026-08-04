@@ -106,6 +106,14 @@ export function ProjectListPage() {
   const isClosedFilter = projectStatus[0] === '__closed__';
   const apiStatus = isClosedFilter ? undefined : (projectStatus.length ? projectStatus[0] : undefined);
 
+  // Per-column client-side filters (Tier C #3). Chevron in the column
+  // header opens a small popover with an input; typed text narrows the
+  // visible rows without a server round-trip. Empty string = no filter.
+  // Kept as a single object so adding another column later is a one-key
+  // append with no new useState.
+  const [colFilters, setColFilters] = useState<{ code: string; name: string; type: string }>({ code: '', name: '', type: '' });
+  const [openColFilter, setOpenColFilter] = useState<null | keyof typeof colFilters>(null);
+
   const { data, isLoading } = useProjects({
     search: debouncedSearch || undefined,
     status: apiStatus,
@@ -175,7 +183,18 @@ export function ProjectListPage() {
   // its temporal-dead-zone, throwing "Cannot access 'y' before
   // initialization" at first render.
   const rawProjects = data?.data ?? data;
-  const projects: any[] = Array.isArray(rawProjects) ? rawProjects : [];
+  const rawList: any[] = Array.isArray(rawProjects) ? rawProjects : [];
+  // Apply per-column client-side filters on top of what the API returned.
+  // Case-insensitive substring on text columns; exact-match id on the
+  // typed dropdown. Empty filter values pass through untouched.
+  const projects: any[] = rawList.filter((p) => {
+    const codeFilter = colFilters.code.trim().toLowerCase();
+    if (codeFilter && !String(p.number ?? '').toLowerCase().includes(codeFilter)) return false;
+    const nameFilter = colFilters.name.trim().toLowerCase();
+    if (nameFilter && !String(p.name ?? '').toLowerCase().includes(nameFilter)) return false;
+    if (colFilters.type && String(p.projectTypeId ?? '') !== colFilters.type) return false;
+    return true;
+  });
 
   // ─── Group By ─────────────────────────────────────────────────────────
   // Single-value grouping (or null = no grouping). The dropdown lists
@@ -471,8 +490,60 @@ export function ProjectListPage() {
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-500">
-                  <th className="px-4 py-3 text-left font-semibold">Project Code</th>
-                  <th className="px-4 py-3 text-left font-semibold">Project Name</th>
+                  <th className="px-4 py-3 text-left font-semibold">
+                    <ColumnHeaderWithFilter
+                      label="Project Code"
+                      isOpen={openColFilter === 'code'}
+                      onToggle={() => setOpenColFilter((c) => c === 'code' ? null : 'code')}
+                      value={colFilters.code}
+                      hasFilter={!!colFilters.code}
+                    >
+                      <input
+                        type="text"
+                        autoFocus
+                        value={colFilters.code}
+                        onChange={(e) => setColFilters((f) => ({ ...f, code: e.target.value }))}
+                        placeholder="Filter code…"
+                        className="w-full px-2 py-1.5 rounded border border-slate-200 text-[12px] focus:border-blue-500 focus:outline-none"
+                      />
+                      {colFilters.code && (
+                        <button
+                          type="button"
+                          onClick={() => setColFilters((f) => ({ ...f, code: '' }))}
+                          className="mt-1.5 text-[11px] text-blue-600 hover:text-blue-700 font-medium"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </ColumnHeaderWithFilter>
+                  </th>
+                  <th className="px-4 py-3 text-left font-semibold">
+                    <ColumnHeaderWithFilter
+                      label="Project Name"
+                      isOpen={openColFilter === 'name'}
+                      onToggle={() => setOpenColFilter((c) => c === 'name' ? null : 'name')}
+                      value={colFilters.name}
+                      hasFilter={!!colFilters.name}
+                    >
+                      <input
+                        type="text"
+                        autoFocus
+                        value={colFilters.name}
+                        onChange={(e) => setColFilters((f) => ({ ...f, name: e.target.value }))}
+                        placeholder="Filter name…"
+                        className="w-full px-2 py-1.5 rounded border border-slate-200 text-[12px] focus:border-blue-500 focus:outline-none"
+                      />
+                      {colFilters.name && (
+                        <button
+                          type="button"
+                          onClick={() => setColFilters((f) => ({ ...f, name: '' }))}
+                          className="mt-1.5 text-[11px] text-blue-600 hover:text-blue-700 font-medium"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </ColumnHeaderWithFilter>
+                  </th>
                   {/* Team Leader is no longer a static column — it's just
                       another Project Role Type now (seeded as
                       'team_leader'). Add it via Columns customizer if
@@ -484,7 +555,53 @@ export function ProjectListPage() {
                   ))}
                   {/* Department column removed (V3) — field is unused. */}
                   <th className="px-4 py-3 text-left font-semibold">Status</th>
-                  <th className="px-4 py-3 text-left font-semibold">Category</th>
+                  <th className="px-4 py-3 text-left font-semibold">
+                    <ColumnHeaderWithFilter
+                      label="Category"
+                      isOpen={openColFilter === 'type'}
+                      onToggle={() => setOpenColFilter((c) => c === 'type' ? null : 'type')}
+                      value={colFilters.type}
+                      hasFilter={!!colFilters.type}
+                    >
+                      {(() => {
+                        // Derive Category options from the current result
+                        // set — cheaper than a dedicated projectTypes
+                        // query, and the picker always matches what's on
+                        // screen.
+                        const opts = Array.from(
+                          new Map<number, string>(
+                            rawList
+                              .filter((r) => r.projectType?.id && r.projectType?.name)
+                              .map((r) => [r.projectType.id, r.projectType.name] as [number, string]),
+                          ).entries(),
+                        ).sort(([, a], [, b]) => a.localeCompare(b));
+                        return (
+                          <>
+                            <select
+                              autoFocus
+                              value={colFilters.type}
+                              onChange={(e) => setColFilters((f) => ({ ...f, type: e.target.value }))}
+                              className="w-full px-2 py-1.5 rounded border border-slate-200 text-[12px] focus:border-blue-500 focus:outline-none"
+                            >
+                              <option value="">All categories</option>
+                              {opts.map(([id, name]) => (
+                                <option key={id} value={String(id)}>{name}</option>
+                              ))}
+                            </select>
+                            {colFilters.type && (
+                              <button
+                                type="button"
+                                onClick={() => setColFilters((f) => ({ ...f, type: '' }))}
+                                className="mt-1.5 text-[11px] text-blue-600 hover:text-blue-700 font-medium"
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </ColumnHeaderWithFilter>
+                  </th>
                   {/* Finance-gated columns. Hidden entirely when the
                       caller lacks finance:read so the table degrades
                       to a hours/team/status view (still useful for
@@ -659,6 +776,63 @@ export function ProjectListPage() {
           entityId={chatProjectId}
           title={chatProjectName}
         />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Table-column header with a small filter chevron on the right. Click
+ * the chevron to open a compact popover with the filter control
+ * (input, select — any children). Closes on outside click.
+ *
+ * Tier C #3 — per-column filtering on the Projects list, 2026-06-30.
+ * The `label` retains its uppercase-tracked look; the chevron tints
+ * blue when a filter is active so the user can see at a glance
+ * which columns are narrowed.
+ */
+function ColumnHeaderWithFilter({
+  label,
+  isOpen,
+  onToggle,
+  hasFilter,
+  children,
+}: {
+  label: string;
+  isOpen: boolean;
+  onToggle: () => void;
+  value?: string;
+  hasFilter: boolean;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!isOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onToggle();
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [isOpen, onToggle]);
+  return (
+    <div ref={ref} className="relative inline-flex items-center gap-1">
+      <span>{label}</span>
+      <button
+        type="button"
+        onClick={onToggle}
+        className={cn(
+          'flex items-center justify-center w-[16px] h-[16px] rounded transition-colors',
+          hasFilter ? 'text-blue-600' : 'text-slate-400 hover:text-slate-700',
+        )}
+        aria-label={`Filter ${label}`}
+        title={hasFilter ? `${label} is filtered` : `Filter ${label}`}
+      >
+        <ChevronDown className="h-3 w-3" />
+      </button>
+      {isOpen && (
+        <div className="absolute left-0 top-full z-40 mt-1 w-[240px] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-3">
+          {children}
+        </div>
       )}
     </div>
   );

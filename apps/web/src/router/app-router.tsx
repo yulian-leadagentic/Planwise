@@ -47,6 +47,7 @@ const InboxPage = lazy(() => import('@/features/messaging/inbox-page').then(m =>
 const MessagingDashboardPage = lazy(() => import('@/features/messaging/messaging-dashboard-page').then(m => ({ default: m.MessagingDashboardPage })));
 const MessageSearchPage = lazy(() => import('@/features/messaging/message-search-page').then(m => ({ default: m.MessageSearchPage })));
 const NotificationSettingsPage = lazy(() => import('@/features/admin/notification-settings-page').then(m => ({ default: m.NotificationSettingsPage })));
+const TimeNotePhrasesPage = lazy(() => import('@/features/admin/time-note-phrases-page').then(m => ({ default: m.TimeNotePhrasesPage })));
 const ProjectTypesPage = lazy(() => import('@/features/admin/project-types-page').then(m => ({ default: m.ProjectTypesPage })));
 const NumberRangesPage = lazy(() => import('@/features/admin/number-ranges-page').then(m => ({ default: m.NumberRangesPage })));
 const ObjectNumberingPage = lazy(() => import('@/features/admin/object-numbering-page').then(m => ({ default: m.ObjectNumberingPage })));
@@ -155,6 +156,7 @@ export function AppRouter() {
         <Route path="admin/work-schedules" element={<L><WorkSchedulesPage /></L>} />
         <Route path="admin/calendar" element={<L><CalendarDaysPage /></L>} />
         <Route path="admin/notification-settings" element={<L><NotificationSettingsPage /></L>} />
+        <Route path="admin/time-note-phrases" element={<L><TimeNotePhrasesPage /></L>} />
         <Route path="admin/clock-dashboard" element={<L><ClockDashboardPage /></L>} />
         <Route path="admin/partner-types" element={<L><PartnerTypesPage /></L>} />
         <Route path="admin/number-ranges" element={<L><NumberRangesPage /></L>} />

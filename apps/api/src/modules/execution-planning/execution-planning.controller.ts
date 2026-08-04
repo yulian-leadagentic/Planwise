@@ -161,14 +161,34 @@ export class ExecutionPlanningController {
 
   @Get('dashboard/operations')
   @RequirePermissions({ module: 'projects', action: 'read' })
-  @ApiOperation({ summary: 'Operations dashboard — projects at risk, team load, overdue tasks' })
-  async getOperationsDashboard(@CurrentUser() user: any) {
+  @ApiOperation({ summary: 'Operations dashboard — projects at risk, team load, review queue' })
+  async getOperationsDashboard(
+    @CurrentUser() user: any,
+    // Client feedback 2026-08-02: each manager sees only their
+    // department. Passing `myDeptOnly=true` restricts the employee
+    // list and review queue to people whose `department` matches
+    // the caller's `department`. When the caller has no department
+    // set (admins), the filter no-ops and everyone is returned.
+    @Query('myDeptOnly') myDeptOnly?: string,
+  ) {
     const prisma = this.eps['prisma'];
     const now = new Date();
+    const scopeToMyDept = String(myDeptOnly ?? '').toLowerCase() === 'true';
 
     // Scope to projects the caller can access
     const acc = await this.access.getAccessibleProjectIds(user.id, user.roleId);
     const projectScope = acc.all ? {} : { id: { in: acc.projectIds } };
+
+    // Resolve caller's department for optional employee scoping. If
+    // scopeToMyDept was requested but the caller has no department,
+    // the filter degrades to a no-op (we don't want to hide the
+    // entire team from an unscoped admin who ticked the box).
+    const caller = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { department: true },
+    });
+    const callerDept = caller?.department ?? null;
+    const applyDeptScope = scopeToMyDept && !!callerDept;
 
     const activeProjects = await prisma.project.findMany({
       where: { ...projectScope, deletedAt: null, status: { in: ['active', 'on_hold'] } },
@@ -258,9 +278,16 @@ export class ExecutionPlanningController {
     .filter((p: any) => p.status !== 'ok' || p.overdueTasks.length > 0)
     .sort((a: any, b: any) => { const rank: any = { critical: 0, high: 1, medium: 2, ok: 3 }; return (rank[a.status] ?? 3) - (rank[b.status] ?? 3); });
 
-    // Team load by department
+    // Team load by department. When the caller opted into "my dept
+    // only" (client feedback 2026-08-02), narrow the employee set so
+    // managers see only their own people.
     const employees = await prisma.user.findMany({
-      where: { isActive: true, userType: { in: ['employee', 'both'] }, deletedAt: null },
+      where: {
+        isActive: true,
+        userType: { in: ['employee', 'both'] },
+        deletedAt: null,
+        ...(applyDeptScope ? { department: callerDept } : {}),
+      },
       select: { id: true, firstName: true, lastName: true, avatarUrl: true, position: true, department: true, dailyStandardHours: true },
     });
 
@@ -312,14 +339,77 @@ export class ExecutionPlanningController {
     const overloaded = employees.filter((e) => (hoursMap.get(e.id) ?? 0) > Number(e.dailyStandardHours ?? 8) * 5);
     const available = employees.filter((e) => (hoursMap.get(e.id) ?? 0) < Number(e.dailyStandardHours ?? 8) * 5 * 0.7);
 
+    // ── Review queue (client feedback 2026-08-02) ─────────────────
+    // Tasks currently sitting in `in_review` waiting on a manager.
+    // Same project scope as the rest of the dashboard; when
+    // `myDeptOnly` is on, only tasks whose CREATOR (submitter) lives
+    // in the caller's department are shown — that's what a "team
+    // manager" wants to triage.
+    const submitterFilter = applyDeptScope
+      ? { creator: { department: callerDept ?? undefined } }
+      : {};
+    const reviewTasks = await prisma.task.findMany({
+      where: {
+        projectId: { in: projectIds },
+        deletedAt: null,
+        isArchived: false,
+        status: 'in_review',
+        ...submitterFilter,
+      },
+      include: {
+        project: { select: { id: true, name: true, number: true } },
+        zone: { select: { id: true, name: true } },
+        creator: { select: { id: true, firstName: true, lastName: true, avatarUrl: true, department: true } },
+        assignees: { where: { deletedAt: null }, include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } } },
+        reviewEvents: { orderBy: { createdAt: 'desc' }, take: 1, select: { action: true, actorId: true, createdAt: true, reason: true } },
+      },
+      orderBy: [{ updatedAt: 'desc' }],
+      take: 100,
+    });
+    const reviewQueue = reviewTasks.map((t: any) => {
+      const returnCount = 0; // filled below via aggregate for accuracy
+      return {
+        id: t.id,
+        code: t.code,
+        name: t.name,
+        priority: t.priority,
+        projectId: t.projectId,
+        projectName: t.project?.name,
+        zone: t.zone?.name ?? 'Project Root',
+        submitter: t.creator ? { id: t.creator.id, firstName: t.creator.firstName, lastName: t.creator.lastName, department: t.creator.department } : null,
+        assignee: t.assignees?.[0]?.user ?? null,
+        submittedAt: t.reviewEvents?.[0]?.createdAt ?? t.updatedAt,
+        lastAction: t.reviewEvents?.[0]?.action ?? 'submit',
+        returnCount,
+      };
+    });
+    // One aggregate query for return counts across the whole
+    // in-review batch (avoids N+1 in the map above).
+    if (reviewQueue.length > 0) {
+      const returns = await prisma.taskReviewEvent.groupBy({
+        by: ['taskId'],
+        where: { taskId: { in: reviewQueue.map((r) => r.id) }, action: 'return' },
+        _count: true,
+      });
+      const returnMap = new Map(returns.map((r: any) => [r.taskId, r._count]));
+      for (const r of reviewQueue) r.returnCount = Number(returnMap.get(r.id) ?? 0);
+    }
+
     return {
       summary: {
         totalOverdue: overdueTasks.length, totalBlocked: blockedByOverdue.length,
         overloadedCount: overloaded.length, availableCount: available.length,
         availableHours: available.reduce((s, e) => s + (Number(e.dailyStandardHours ?? 8) * 5 - (hoursMap.get(e.id) ?? 0)), 0),
+        reviewCount: reviewQueue.length,
       },
       projects,
       departments,
+      reviewQueue,
+      // Echo the scoping mode so the UI can label "showing my dept only".
+      scope: {
+        myDeptOnly: applyDeptScope,
+        deptName: applyDeptScope ? callerDept : null,
+      },
     };
   }
 }

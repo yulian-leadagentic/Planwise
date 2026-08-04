@@ -31,15 +31,20 @@ export class ReportsService {
   async timesheetDetailed(query: ReportQueryDto) {
     const { from, to } = this.getDateRange(query);
 
+    // Compose the task-level filter — resolve project via the task
+    // (entry.projectId is NULL on many historical rows), and apply
+    // the personal-task cut when the caller asked for one.
+    const taskFilter: any = {};
+    if (query.projectId) taskFilter.projectId = Number(query.projectId);
+    if (query.personal === 'exclude') taskFilter.isPersonal = false;
+    else if (query.personal === 'only') taskFilter.isPersonal = true;
+
     const entries = await this.prisma.timeEntry.findMany({
       where: {
         deletedAt: null,
         date: { gte: from, lte: to },
         ...(query.userId ? { userId: Number(query.userId) } : {}),
-        // Resolve project via the task — entry.projectId is NULL on many
-        // historical rows (QuickTimeLog / TaskDrawer didn't always set
-        // it), and filtering on it would silently drop those entries.
-        ...(query.projectId ? { task: { projectId: Number(query.projectId) } } : {}),
+        ...(Object.keys(taskFilter).length > 0 ? { task: taskFilter } : {}),
       },
       orderBy: [{ date: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
       select: {

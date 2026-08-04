@@ -139,6 +139,43 @@ export class TasksController {
     return this.tasksService.restore(id);
   }
 
+  // ─── Review workflow (Tier D #2 + #2a) ─────────────────────────
+  // POST /tasks/:id/review — record a review action + optional reason.
+  //   action: 'submit'  → task goes to in_review
+  //           'approve' → task goes to completed
+  //           'return'  → task goes back to in_progress with a reason
+  // The write is a single atomic step: bump the task's status AND
+  // append a row to task_review_events for the analytics feed.
+  @Post(':id/review')
+  @RequirePermissions({ module: 'tasks', action: 'write' })
+  @ApiOperation({ summary: 'Record a task review action (submit/approve/return)' })
+  async recordReview(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { action: 'submit' | 'approve' | 'return'; reason?: string },
+    @CurrentUser() user: any,
+  ) {
+    await this.access.assertTaskAccess(user.id, id, user.roleId);
+    return this.tasksService.recordReview(id, user.id, body.action, body.reason);
+  }
+
+  @Get(':id/reviews')
+  @RequirePermissions({ module: 'tasks', action: 'read' })
+  @ApiOperation({ summary: 'List review events on this task, newest first' })
+  async listReviews(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: any,
+  ) {
+    await this.access.assertTaskAccess(user.id, id, user.roleId);
+    return this.tasksService.listReviews(id);
+  }
+
+  @Get('reports/review-summary')
+  @RequirePermissions({ module: 'reports', action: 'read' })
+  @ApiOperation({ summary: 'Aggregate review stats — returns per actor + task counts' })
+  async reviewSummary() {
+    return this.tasksService.reviewSummary();
+  }
+
   // Assignees
   @Post(':id/assignees')
   @RequirePermissions({ module: 'tasks', action: 'write' })

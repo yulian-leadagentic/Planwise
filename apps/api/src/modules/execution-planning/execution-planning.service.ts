@@ -315,8 +315,14 @@ export class ExecutionPlanningService {
   // ─── PROGRESS ENGINE ────────────────────────────────────────────────────
 
   async getProjectProgress(projectId: number) {
+    // Personal tasks are EXCLUDED from the progress rollup — per
+    // spec (Tier D #1) they don't affect any deliverable's or
+    // project's completion %. Hours still count in time reports
+    // (aggregated elsewhere from time_entries directly), but a
+    // person's own to-do list shouldn't drag a project's
+    // completion bar around.
     const tasks = await this.prisma.task.findMany({
-      where: { projectId, deletedAt: null, isArchived: false },
+      where: { projectId, deletedAt: null, isArchived: false, isPersonal: false },
       select: {
         id: true, name: true, status: true, budgetHours: true, completionPct: true,
         zoneId: true, phaseId: true,
@@ -393,7 +399,7 @@ export class ExecutionPlanningService {
           userId,
           type: 'alert:overdue',
           title: `Task overdue: "${task.name}"`,
-          body: `Task in project "${task.project.name}" was due ${task.endDate?.toLocaleDateString()}`,
+          body: `Task in project "${task.project?.name ?? '(personal)'}" was due ${task.endDate?.toLocaleDateString()}`,
           entityType: 'task',
           entityId: task.id,
         })),

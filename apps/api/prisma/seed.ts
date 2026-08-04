@@ -52,13 +52,25 @@ async function main() {
     { name: 'Roles', route: 'roles', icon: 'Shield', sortOrder: 93, parentId: adminMod?.id },
     { name: 'Operations', route: '/operations', icon: 'Activity', sortOrder: 10, parentId: dashboardMod?.id },
   ];
+  // Idempotent sub-module upsert keyed on `route` (unique). Fixes the
+  // long-standing "Operations doesn't appear in Add Module" bug — the
+  // old find-by-name pattern was best-effort and never re-ran once a
+  // seed created a partial set, so any sub-module added later never
+  // made it onto older environments. Using upsert here means every
+  // startup guarantees the full catalog. (T-fix Tier A #9a, 2026-06-30.)
   for (const sm of subModuleData) {
     if (!sm.parentId) continue;
-    const existing = await prisma.module.findFirst({ where: { name: sm.name } });
-    if (!existing) {
-      const sub = await prisma.module.create({ data: sm });
-      modules.push(sub);
-    }
+    const sub = await prisma.module.upsert({
+      where: { route: sm.route },
+      update: {
+        name: sm.name,
+        icon: sm.icon,
+        sortOrder: sm.sortOrder,
+        parentId: sm.parentId,
+      },
+      create: sm,
+    });
+    modules.push(sub);
   }
   console.log(`  Seeded ${subModuleData.length} sub-modules`);
 
