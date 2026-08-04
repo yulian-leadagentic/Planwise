@@ -310,15 +310,15 @@ export function CalendarDaysPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           {/* View toggle */}
-          <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5">
+          <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
             <button onClick={() => setViewMode('month')}
               className={cn('px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
-                viewMode === 'month' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+                viewMode === 'month' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100')}>
               Month
             </button>
             <button onClick={() => setViewMode('year')}
               className={cn('px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
-                viewMode === 'year' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+                viewMode === 'year' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100')}>
               Year
             </button>
           </div>
@@ -334,13 +334,13 @@ export function CalendarDaysPage() {
           )}
           <div className="flex items-center gap-1.5">
             <select value={importYear} onChange={(e) => setImportYear(Number(e.target.value))}
-              className="rounded-lg border border-slate-200 px-2 py-1.5 text-[12px]">
+              className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5 text-[12px]">
               {[2025, 2026, 2027, 2028].map((y) => <option key={y} value={y}>{y}</option>)}
             </select>
             <button onClick={() => importHolidays(importYear)}
               className={cn('flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors',
                 importedYears.has(importYear)
-                  ? 'border border-slate-200 text-slate-500 hover:bg-slate-50'
+                  ? 'border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
                   : 'bg-blue-600 text-white hover:bg-blue-700')}>
               <Download className="h-3.5 w-3.5" />
               {importedYears.has(importYear) ? `Re-import ${importYear}` : `Import ${importYear}`}
@@ -354,14 +354,14 @@ export function CalendarDaysPage() {
         <>
           {/* Month navigation + working days count */}
           <div className="flex items-center justify-between">
-            <button onClick={prevMonth} className="rounded-md p-2 hover:bg-slate-100"><ChevronLeft className="h-5 w-5" /></button>
+            <button onClick={prevMonth} className="rounded-md p-2 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronLeft className="h-5 w-5" /></button>
             <div className="text-center">
-              <h2 className="text-lg font-bold text-slate-900">{monthName}</h2>
-              <p className="text-[12px] text-slate-400">
-                <span className="font-semibold text-slate-700">{monthWorkingDays}</span> working days this month
+              <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">{monthName}</h2>
+              <p className="text-[12px] text-slate-400 dark:text-slate-500">
+                <span className="font-semibold text-slate-700 dark:text-slate-200">{monthWorkingDays}</span> working days this month
               </p>
             </div>
-            <button onClick={nextMonth} className="rounded-md p-2 hover:bg-slate-100"><ChevronRight className="h-5 w-5" /></button>
+            <button onClick={nextMonth} className="rounded-md p-2 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronRight className="h-5 w-5" /></button>
           </div>
 
           {/* Legend */}
@@ -370,14 +370,14 @@ export function CalendarDaysPage() {
             <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-500" /> Company Day Off</div>
             <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-blue-500" /> Half Day</div>
             <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-purple-500" /> Special</div>
-            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-slate-200" /> Weekend</div>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-slate-200 dark:bg-slate-700" /> Weekend</div>
           </div>
 
           {/* Calendar Grid */}
-          <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
-            <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
+          <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+            <div className="grid grid-cols-7 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
               {DAY_NAMES.map((day) => (
-                <div key={day} className="px-2 py-2.5 text-center text-[11px] font-semibold text-slate-500 uppercase tracking-wider">{day}</div>
+                <div key={day} className="px-2 py-2.5 text-center text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">{day}</div>
               ))}
             </div>
             <div className="grid grid-cols-7">
@@ -390,15 +390,15 @@ export function CalendarDaysPage() {
                 const isSelected = selectedDate === dateKey;
                 return (
                   <div key={idx} onClick={() => inMonth && handleDateClick(dateKey)}
-                    className={cn('min-h-[90px] border-b border-r border-slate-100 px-1.5 py-1 cursor-pointer transition-colors',
-                      !inMonth && 'bg-slate-50/50 opacity-40', inMonth && weekend && !hasEntries && 'bg-slate-50',
+                    className={cn('min-h-[90px] border-b border-r border-slate-100 dark:border-slate-800 px-1.5 py-1 cursor-pointer transition-colors',
+                      !inMonth && 'bg-slate-50 dark:bg-slate-800/50/50 opacity-40', inMonth && weekend && !hasEntries && 'bg-slate-50 dark:bg-slate-800/50',
                       inMonth && hasEntries && 'bg-red-50/30', isSelected && 'ring-2 ring-inset ring-blue-500 bg-blue-50/30',
                       inMonth && !hasEntries && !weekend && 'hover:bg-blue-50/20')}>
                     <div className="flex items-center justify-between">
-                      <span className={cn('text-[13px] font-medium', !inMonth ? 'text-slate-300' : isToday ? 'text-white bg-blue-600 rounded-full w-7 h-7 flex items-center justify-center' : 'text-slate-700', weekend && inMonth && !isToday && 'text-slate-400')}>
+                      <span className={cn('text-[13px] font-medium', !inMonth ? 'text-slate-300 dark:text-slate-600' : isToday ? 'text-white bg-blue-600 rounded-full w-7 h-7 flex items-center justify-center' : 'text-slate-700 dark:text-slate-200', weekend && inMonth && !isToday && 'text-slate-400 dark:text-slate-500')}>
                         {date.getDate()}
                       </span>
-                      {weekend && inMonth && <span className="text-[9px] text-slate-400 font-medium">Weekend</span>}
+                      {weekend && inMonth && <span className="text-[9px] text-slate-400 dark:text-slate-500 font-medium">Weekend</span>}
                     </div>
                     {entries.map((entry: any) => {
                       const style = TYPE_STYLES[entry.type] ?? TYPE_STYLES.special;
@@ -414,18 +414,18 @@ export function CalendarDaysPage() {
                             {isHoliday ? (
                               hasWorkingHours ? (
                                 <button onClick={() => clearWorkingDay(entry)} title="Remove working hours"
-                                  className="h-4 w-4 flex items-center justify-center rounded hover:bg-white/50">
+                                  className="h-4 w-4 flex items-center justify-center rounded hover:bg-white dark:hover:bg-slate-900/50">
                                   <X className="h-2.5 w-2.5" />
                                 </button>
                               ) : (
                                 <button onClick={() => handleSetWorkingDay(entry)} title="Set as working day"
-                                  className="h-4 flex items-center gap-0.5 rounded px-1 hover:bg-white/50 text-[9px] font-bold text-blue-700">
+                                  className="h-4 flex items-center gap-0.5 rounded px-1 hover:bg-white dark:hover:bg-slate-900/50 text-[9px] font-bold text-blue-700">
                                   <Clock className="h-2.5 w-2.5" />Work
                                 </button>
                               )
                             ) : (
                               <button onClick={() => { if (confirm(`Remove "${entry.name}"?`)) deleteMutation.mutate(entry.id); }}
-                                className="h-4 w-4 flex items-center justify-center rounded hover:bg-white/50">
+                                className="h-4 w-4 flex items-center justify-center rounded hover:bg-white dark:hover:bg-slate-900/50">
                                 <X className="h-2.5 w-2.5" />
                               </button>
                             )}
@@ -445,15 +445,15 @@ export function CalendarDaysPage() {
       {viewMode === 'year' && (
         <>
           <div className="flex items-center justify-between">
-            <button onClick={() => setViewYear(viewYear - 1)} className="rounded-md p-2 hover:bg-slate-100"><ChevronLeft className="h-5 w-5" /></button>
+            <button onClick={() => setViewYear(viewYear - 1)} className="rounded-md p-2 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronLeft className="h-5 w-5" /></button>
             <div className="text-center">
-              <h2 className="text-lg font-bold text-slate-900">{viewYear}</h2>
-              <p className="text-[12px] text-slate-400">
-                <span className="font-semibold text-slate-700">{yearTotalWorking}</span> working days
+              <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">{viewYear}</h2>
+              <p className="text-[12px] text-slate-400 dark:text-slate-500">
+                <span className="font-semibold text-slate-700 dark:text-slate-200">{yearTotalWorking}</span> working days
                 {yearTotalHolidays > 0 && <> · <span className="text-red-500">{yearTotalHolidays} holidays</span></>}
               </p>
             </div>
-            <button onClick={() => setViewYear(viewYear + 1)} className="rounded-md p-2 hover:bg-slate-100"><ChevronRight className="h-5 w-5" /></button>
+            <button onClick={() => setViewYear(viewYear + 1)} className="rounded-md p-2 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronRight className="h-5 w-5" /></button>
           </div>
 
           <div className="grid grid-cols-3 lg:grid-cols-4 gap-3">
@@ -461,11 +461,11 @@ export function CalendarDaysPage() {
               const isCurrent = viewYear === today.getFullYear() && m.index === today.getMonth();
               return (
                 <div key={m.index}
-                  className={cn('rounded-[14px] border bg-white p-4 cursor-pointer hover:border-blue-300 transition-colors',
-                    isCurrent ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200')}
+                  className={cn('rounded-[14px] border bg-white dark:bg-slate-900 p-4 cursor-pointer hover:border-blue-300 transition-colors',
+                    isCurrent ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200 dark:border-slate-700')}
                   onClick={() => { setViewMonth(m.index); setViewMode('month'); }}>
                   <div className="flex items-center justify-between mb-3">
-                    <h3 className={cn('text-sm font-semibold', isCurrent ? 'text-blue-600' : 'text-slate-900')}>{m.name}</h3>
+                    <h3 className={cn('text-sm font-semibold', isCurrent ? 'text-blue-600' : 'text-slate-900 dark:text-slate-100')}>{m.name}</h3>
                     {m.holidays > 0 && (
                       <span className="text-[10px] font-bold text-red-600 bg-red-50 rounded px-1.5 py-0.5">{m.holidays}</span>
                     )}
@@ -474,21 +474,21 @@ export function CalendarDaysPage() {
                   {/* Stats */}
                   <div className="grid grid-cols-3 gap-2 text-center mb-3">
                     <div>
-                      <p className="text-lg font-bold text-slate-700">{m.working}</p>
-                      <p className="text-[9px] text-slate-400">Working</p>
+                      <p className="text-lg font-bold text-slate-700 dark:text-slate-200">{m.working}</p>
+                      <p className="text-[9px] text-slate-400 dark:text-slate-500">Working</p>
                     </div>
                     <div>
-                      <p className={cn('text-lg font-bold', m.holidays > 0 ? 'text-red-600' : 'text-slate-300')}>{m.holidays}</p>
-                      <p className="text-[9px] text-slate-400">Holidays</p>
+                      <p className={cn('text-lg font-bold', m.holidays > 0 ? 'text-red-600' : 'text-slate-300 dark:text-slate-600')}>{m.holidays}</p>
+                      <p className="text-[9px] text-slate-400 dark:text-slate-500">Holidays</p>
                     </div>
                     <div>
-                      <p className="text-lg font-bold text-slate-400">{m.total}</p>
-                      <p className="text-[9px] text-slate-400">Total</p>
+                      <p className="text-lg font-bold text-slate-400 dark:text-slate-500">{m.total}</p>
+                      <p className="text-[9px] text-slate-400 dark:text-slate-500">Total</p>
                     </div>
                   </div>
 
                   {/* Working days progress bar */}
-                  <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden mb-2">
+                  <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden mb-2">
                     <div className="h-full bg-blue-500 rounded-full" style={{ width: `${(m.working / m.total) * 100}%` }} />
                   </div>
 
@@ -500,12 +500,12 @@ export function CalendarDaysPage() {
                         return (
                           <div key={i} className="flex items-center gap-1.5">
                             <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', style.dot)} />
-                            <span className="text-[10px] text-slate-500 truncate">{h.day} - {h.name}</span>
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{h.day} - {h.name}</span>
                           </div>
                         );
                       })}
                       {m.holidayList.length > 3 && (
-                        <span className="text-[10px] text-slate-400">+{m.holidayList.length - 3} more</span>
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500">+{m.holidayList.length - 3} more</span>
                       )}
                     </div>
                   )}
@@ -515,13 +515,13 @@ export function CalendarDaysPage() {
           </div>
 
           {/* Year summary table */}
-          <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
-            <div className="bg-slate-50 px-5 py-3 border-b border-slate-200">
-              <h3 className="text-[13px] font-semibold text-slate-700">{viewYear} Summary</h3>
+          <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+            <div className="bg-slate-50 dark:bg-slate-800/50 px-5 py-3 border-b border-slate-200 dark:border-slate-700">
+              <h3 className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">{viewYear} Summary</h3>
             </div>
             <table className="w-full text-[13px]">
               <thead>
-                <tr className="bg-[#FAFBFC] text-[11px] uppercase text-slate-400 tracking-[0.05em]">
+                <tr className="bg-[#FAFBFC] text-[11px] uppercase text-slate-400 dark:text-slate-500 tracking-[0.05em]">
                   <th className="px-5 py-2.5 text-left font-semibold">Month</th>
                   <th className="px-5 py-2.5 text-center font-semibold">Working</th>
                   <th className="px-5 py-2.5 text-center font-semibold">Holidays</th>
@@ -533,24 +533,24 @@ export function CalendarDaysPage() {
                 {yearMonths.map((m) => {
                   const isCurrent = viewYear === today.getFullYear() && m.index === today.getMonth();
                   return (
-                    <tr key={m.index} className={cn('border-t border-slate-100 hover:bg-slate-50 cursor-pointer', isCurrent && 'bg-blue-50/30')}
+                    <tr key={m.index} className={cn('border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer', isCurrent && 'bg-blue-50/30')}
                       onClick={() => { setViewMonth(m.index); setViewMode('month'); }}>
-                      <td className={cn('px-5 py-2.5 font-medium', isCurrent ? 'text-blue-600' : 'text-slate-700')}>{m.name}</td>
-                      <td className="px-5 py-2.5 text-center font-mono font-semibold text-slate-700">{m.working}</td>
+                      <td className={cn('px-5 py-2.5 font-medium', isCurrent ? 'text-blue-600' : 'text-slate-700 dark:text-slate-200')}>{m.name}</td>
+                      <td className="px-5 py-2.5 text-center font-mono font-semibold text-slate-700 dark:text-slate-200">{m.working}</td>
                       <td className="px-5 py-2.5 text-center font-mono">
-                        {m.holidays > 0 ? <span className="font-semibold text-red-600">{m.holidays}</span> : <span className="text-slate-300">0</span>}
+                        {m.holidays > 0 ? <span className="font-semibold text-red-600">{m.holidays}</span> : <span className="text-slate-300 dark:text-slate-600">0</span>}
                       </td>
-                      <td className="px-5 py-2.5 text-center font-mono text-slate-400">{m.weekends}</td>
-                      <td className="px-5 py-2.5 text-center font-mono text-slate-400">{m.total}</td>
+                      <td className="px-5 py-2.5 text-center font-mono text-slate-400 dark:text-slate-500">{m.weekends}</td>
+                      <td className="px-5 py-2.5 text-center font-mono text-slate-400 dark:text-slate-500">{m.total}</td>
                     </tr>
                   );
                 })}
-                <tr className="border-t-2 border-slate-200 bg-slate-50 font-bold">
-                  <td className="px-5 py-2.5 text-slate-900">Total</td>
-                  <td className="px-5 py-2.5 text-center font-mono text-slate-900">{yearTotalWorking}</td>
+                <tr className="border-t-2 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 font-bold">
+                  <td className="px-5 py-2.5 text-slate-900 dark:text-slate-100">Total</td>
+                  <td className="px-5 py-2.5 text-center font-mono text-slate-900 dark:text-slate-100">{yearTotalWorking}</td>
                   <td className="px-5 py-2.5 text-center font-mono text-red-600">{yearTotalHolidays}</td>
-                  <td className="px-5 py-2.5 text-center font-mono text-slate-400">{yearMonths.reduce((s, m) => s + m.weekends, 0)}</td>
-                  <td className="px-5 py-2.5 text-center font-mono text-slate-400">{yearMonths.reduce((s, m) => s + m.total, 0)}</td>
+                  <td className="px-5 py-2.5 text-center font-mono text-slate-400 dark:text-slate-500">{yearMonths.reduce((s, m) => s + m.weekends, 0)}</td>
+                  <td className="px-5 py-2.5 text-center font-mono text-slate-400 dark:text-slate-500">{yearMonths.reduce((s, m) => s + m.total, 0)}</td>
                 </tr>
               </tbody>
             </table>
@@ -562,24 +562,24 @@ export function CalendarDaysPage() {
       {showAddForm && selectedDate && (
         <div className="rounded-[14px] border border-blue-200 bg-blue-50/30 p-5 space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-900">
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
               Add Non-Working Day — {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
             </h3>
-            <button onClick={() => { setShowAddForm(false); setSelectedDate(null); }} className="rounded-md p-1.5 hover:bg-slate-200 text-slate-400">
+            <button onClick={() => { setShowAddForm(false); setSelectedDate(null); }} className="rounded-md p-1.5 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 dark:text-slate-500">
               <X className="h-4 w-4" />
             </button>
           </div>
           <form onSubmit={handleSubmit} className="flex items-end gap-3">
             <div className="flex-1">
-              <label className="block text-[12px] font-semibold text-slate-600 mb-1">Name *</label>
+              <label className="block text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1">Name *</label>
               <input value={formName} onChange={(e) => setFormName(e.target.value)}
                 placeholder="e.g. Team Building Day, Rosh Hashana"
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
             </div>
             <div className="w-48">
-              <label className="block text-[12px] font-semibold text-slate-600 mb-1">Type</label>
+              <label className="block text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1">Type</label>
               <select value={formType} onChange={(e) => setFormType(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
                 <option value="holiday">Holiday</option>
                 <option value="company_day_off">Company Day Off</option>
                 <option value="half_day">Half Day</option>
@@ -597,26 +597,26 @@ export function CalendarDaysPage() {
       {/* Working hours modal for holidays */}
       {workingDayEdit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setWorkingDayEdit(null)}>
-          <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl border border-slate-200" onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-slate-100">
-              <h3 className="text-sm font-bold text-slate-900">Set Working Hours on Holiday</h3>
-              <p className="text-[12px] text-slate-500 mt-1">
+          <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Set Working Hours on Holiday</h3>
+              <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-1">
                 Mark <strong>{workingDayEdit.name}</strong> as a working day with reduced hours.
                 It will still display as a holiday.
               </p>
             </div>
             <div className="px-5 py-4">
-              <label className="text-[12px] font-semibold text-slate-600 mb-1.5 block">Working Hours</label>
+              <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1.5 block">Working Hours</label>
               <div className="flex items-center gap-2">
                 <input type="number" min="1" max="12" step="0.5" value={workingDayEdit.hours}
                   onChange={(e) => setWorkingDayEdit({ ...workingDayEdit, hours: e.target.value })}
-                  className="w-20 rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-blue-500 focus:outline-none" autoFocus />
-                <span className="text-[13px] text-slate-500">hours (standard day = 8h)</span>
+                  className="w-20 rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm font-mono focus:border-blue-500 focus:outline-none" autoFocus />
+                <span className="text-[13px] text-slate-500 dark:text-slate-400">hours (standard day = 8h)</span>
               </div>
             </div>
-            <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-100">
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-100 dark:border-slate-800">
               <button onClick={() => setWorkingDayEdit(null)}
-                className="rounded-lg border border-slate-200 px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50">Cancel</button>
+                className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-[13px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">Cancel</button>
               <button onClick={saveWorkingDay} disabled={updateMutation.isPending}
                 className="rounded-lg bg-blue-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
                 {updateMutation.isPending ? 'Saving...' : 'Set Working Hours'}
@@ -628,8 +628,8 @@ export function CalendarDaysPage() {
 
       {/* All Non-Working Days list */}
       {(data ?? []).length > 0 && (
-        <div className="rounded-[14px] border border-slate-200 bg-white p-5">
-          <h3 className="text-sm font-bold text-slate-900 mb-3">All Non-Working Days</h3>
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
+          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-3">All Non-Working Days</h3>
           <div className="space-y-1.5">
             {(data as any[]).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime()).map((d: any) => {
               const style = TYPE_STYLES[d.type] ?? TYPE_STYLES.special;
@@ -637,10 +637,10 @@ export function CalendarDaysPage() {
               const isHoliday = d.type === 'holiday';
               const hasWorkingHours = isHoliday && d.halfDayUntil;
               return (
-                <div key={d.id} className={cn('flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-slate-50', isPast && 'opacity-50')}>
+                <div key={d.id} className={cn('flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50', isPast && 'opacity-50')}>
                   <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', style.dot)} />
-                  <span className="text-[13px] font-medium text-slate-700 w-32">{new Date(d.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/\s+/g, '-')}</span>
-                  <span className="text-[13px] text-slate-800 flex-1">
+                  <span className="text-[13px] font-medium text-slate-700 dark:text-slate-200 w-32">{new Date(d.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/\s+/g, '-')}</span>
+                  <span className="text-[13px] text-slate-800 dark:text-slate-100 flex-1">
                     {d.name}
                     {hasWorkingHours && (
                       <span className="ml-2 text-[11px] font-bold text-blue-600 bg-blue-50 rounded px-1.5 py-0.5">+{d.halfDayUntil}h working</span>
@@ -655,7 +655,7 @@ export function CalendarDaysPage() {
                     </button>
                   ) : (
                     <button onClick={() => { if (confirm(`Remove "${d.name}"?`)) deleteMutation.mutate(d.id); }}
-                      className="rounded p-1 text-slate-300 hover:text-red-600 hover:bg-red-50">
+                      className="rounded p-1 text-slate-300 dark:text-slate-600 hover:text-red-600 hover:bg-red-50">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   )}
