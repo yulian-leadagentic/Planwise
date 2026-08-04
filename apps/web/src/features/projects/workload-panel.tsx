@@ -17,7 +17,7 @@ export function WorkloadPanel({ projectId }: { projectId: number }) {
   const from = format(weekStart, 'yyyy-MM-dd');
   const to = format(addDays(weekStart, 6), 'yyyy-MM-dd');
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['workload', 'project', projectId, from, to],
     queryFn: () => client.get(`/projects/${projectId}/workload`, { params: { from, to } }).then((r) => r.data?.data ?? r.data),
     staleTime: 60 * 1000,
@@ -42,6 +42,11 @@ export function WorkloadPanel({ projectId }: { projectId: number }) {
 
       {isLoading ? (
         <div className="py-6 text-center text-sm text-slate-400">Loading workload...</div>
+      ) : isError ? (
+        <div className="py-6 text-center text-sm text-slate-400">
+          Couldn't load workload.{' '}
+          <button onClick={() => refetch()} className="font-medium text-blue-600 hover:underline">Retry</button>
+        </div>
       ) : members.length === 0 ? (
         <div className="py-6 text-center text-sm text-slate-400">No team members</div>
       ) : (

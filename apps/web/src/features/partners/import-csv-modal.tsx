@@ -31,22 +31,28 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
     return () => { document.body.style.overflow = original; };
   }, []);
 
+  // dryRun is passed as the mutation VARIABLE, not read from component state.
+  // Previously mutationFn/onSuccess closed over the `dryRun` state, but the
+  // "Import for real" button called setDryRun(false) and mutate() synchronously
+  // — React hadn't re-rendered yet, so the closure still saw dryRun=true. Result:
+  // the real import ran as a dry run AND onSuccess skipped invalidate + the
+  // success toast. Threading the flag through mutate() removes the race.
   const importMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (isDryRun: boolean) => {
       if (!file) throw new Error('No file selected');
       const fd = new FormData();
       fd.append('file', file);
       fd.append('skipExisting', String(skipExisting));
-      fd.append('dryRun', String(dryRun));
+      fd.append('dryRun', String(isDryRun));
       return client
         .post<ImportResult | { data: ImportResult }>('/business-partners/import', fd, {
           headers: { 'Content-Type': 'multipart/form-data' },
         })
         .then((r) => (r.data as any)?.data ?? r.data);
     },
-    onSuccess: (res: ImportResult) => {
+    onSuccess: (res: ImportResult, isDryRun: boolean) => {
       setResult(res);
-      if (!dryRun) {
+      if (!isDryRun) {
         queryClient.invalidateQueries({ queryKey: ['business-partners'] });
         notify.success(`Imported ${res.summary.created} partner(s)`, { code: 'BP-IMPORT-200' });
       }
@@ -179,7 +185,7 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
             ) : (
               <>
                 <button
-                  onClick={() => { setDryRun(true); importMutation.mutate(); }}
+                  onClick={() => { setDryRun(true); importMutation.mutate(true); }}
                   disabled={importMutation.isPending}
                   className="bg-slate-700 hover:bg-slate-800 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
                   title="Validate the file without writing anything"
@@ -187,7 +193,7 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
                   {importMutation.isPending && dryRun ? 'Validating…' : 'Run Dry Run'}
                 </button>
                 <button
-                  onClick={() => { setDryRun(false); importMutation.mutate(); }}
+                  onClick={() => { setDryRun(false); importMutation.mutate(false); }}
                   disabled={importMutation.isPending}
                   className={cn(
                     'text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50',

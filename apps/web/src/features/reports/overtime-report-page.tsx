@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Download } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
@@ -23,14 +22,11 @@ export function OvertimeReportPage() {
 
   return (
     <div className="space-y-6">
+      {/* Export intentionally omitted until wired to a real endpoint —
+          the button was previously inert (no onClick). */}
       <PageHeader
         title="Overtime Report"
         description="Overtime hours by employee"
-        actions={
-          <button className="flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent">
-            <Download className="h-4 w-4" /> Export
-          </button>
-        }
       />
 
       <div className="flex flex-wrap gap-3">

@@ -520,6 +520,12 @@ function InlineEditCell({ value, type = 'number', prefix, suffix, width, onSave 
 }) {
   const [editing, setEditing] = useState(false);
   const [editVal, setEditVal] = useState('');
+  // Escape must CANCEL, not save. Previously onBlur unconditionally called
+  // onSave, and Escape only setEditing(false) — which unmounts the input and
+  // fires blur, so Escape ended up committing the edit. This ref lets blur
+  // distinguish a cancel from a real commit, and also skips redundant saves
+  // (a network PATCH) when the value didn't actually change.
+  const cancelledRef = useRef(false);
 
   const display = value != null && value !== '' && Number(value) !== 0
     ? `${prefix || ''}${type === 'number' ? Number(value).toLocaleString() : value}${suffix || ''}`
@@ -531,8 +537,13 @@ function InlineEditCell({ value, type = 'number', prefix, suffix, width, onSave 
         type={type}
         value={editVal}
         onChange={(e) => setEditVal(e.target.value)}
-        onBlur={() => { setEditing(false); onSave(editVal); }}
-        onKeyDown={(e) => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } if (e.key === 'Escape') setEditing(false); }}
+        onBlur={() => {
+          setEditing(false);
+          if (cancelledRef.current) { cancelledRef.current = false; return; }
+          const orig = value != null ? String(value) : '';
+          if (editVal !== orig) onSave(editVal);
+        }}
+        onKeyDown={(e) => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } if (e.key === 'Escape') { cancelledRef.current = true; setEditing(false); } }}
         className={cn('font-mono text-[11px] text-right bg-white border border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-300', width)}
         autoFocus
       />

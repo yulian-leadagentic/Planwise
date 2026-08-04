@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route } from 'react-router-dom';
 import { Suspense, lazy } from 'react';
 import { PrivateRoute } from './private-route';
 import { RoutePermissionGuard } from './route-permission-guard';
@@ -61,6 +61,8 @@ const DataImportPage = lazy(() => import('@/features/data-import/data-import-pag
 const ImportHistoryPage = lazy(() => import('@/features/data-import/import-history-page').then(m => ({ default: m.ImportHistoryPage })));
 const ProjectStatusBoardPage = lazy(() => import('@/features/project-status-board/project-status-board-page').then(m => ({ default: m.ProjectStatusBoardPage })));
 const StageMilestonesPage = lazy(() => import('@/features/admin/stage-milestones-page').then(m => ({ default: m.StageMilestonesPage })));
+const ProfilePage = lazy(() => import('@/features/misc/profile-page').then(m => ({ default: m.ProfilePage })));
+const NotFoundPage = lazy(() => import('@/features/misc/not-found-page').then(m => ({ default: m.NotFoundPage })));
 
 // DnD-heavy (kept lazy to avoid @dnd-kit React version conflicts)
 const MyTasksKanbanPage = lazy(() => import('@/features/tasks/my-tasks-kanban').then(m => ({ default: m.MyTasksKanbanPage })));
@@ -167,10 +169,14 @@ export function AppRouter() {
         <Route path="admin/data-import" element={<L><DataImportPage /></L>} />
         <Route path="admin/data-import/history" element={<L><ImportHistoryPage /></L>} />
         <Route path="admin/project-stage-milestones" element={<L><StageMilestonesPage /></L>} />
-      </Route>
 
-      {/* Catch-all */}
-      <Route path="*" element={<Navigate to="/" replace />} />
+        {/* Account */}
+        <Route path="profile" element={<L><ProfilePage /></L>} />
+
+        {/* Authenticated catch-all — render a real 404 inside the shell so the
+            user keeps navigation, instead of silently redirecting to "/". */}
+        <Route path="*" element={<L><NotFoundPage /></L>} />
+      </Route>
     </Routes>
   );
 }

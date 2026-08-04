@@ -302,9 +302,16 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       const durDraft = durationDrafts[r.key] ?? '';
       const durServer = r.savedDurationWeeks == null ? '' : String(r.savedDurationWeeks);
       if (durDraft !== durServer) return true;
+      // A Gantt target-date drag writes ONLY targetDateDrafts. This dimension
+      // was missing from the dirty check, so such a drag left "Save all"
+      // disabled and no unsaved banner — the drag was silently lost on refresh.
+      // Only a row that was actually dragged has an entry here, so unchanged
+      // rows never register as dirty.
+      const tgtDraft = targetDateDrafts[r.key];
+      if (tgtDraft != null && tgtDraft !== '' && tgtDraft !== (r.savedDate ?? '')) return true;
     }
     return false;
-  }, [rows, drafts, durationDrafts]);
+  }, [rows, drafts, durationDrafts, targetDateDrafts]);
 
   const resetDrafts = () => {
     const initial: Record<string, string> = {};
@@ -315,6 +322,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     }
     setDrafts(initial);
     setDurationDrafts(initialDur);
+    // Discard pending Gantt target-date drags too (pristine state is empty).
+    // Previously Reset skipped this, so a dragged-but-reset row still had a
+    // stale target-date draft that got persisted on the next save.
+    setTargetDateDrafts({});
   };
 
   // Filtered rows for display (only affects the visible view; save

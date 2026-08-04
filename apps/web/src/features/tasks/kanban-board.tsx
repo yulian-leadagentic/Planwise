@@ -210,7 +210,7 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
   // pointing back here restore the drawer (see useDrawerRoute docs).
   const { drawerId: drawerTaskId, openDrawer: setDrawerTaskId, closeDrawer } = useDrawerRoute('task');
 
-  const { data: planningData, isLoading } = useQuery({
+  const { data: planningData, isLoading, isError, refetch } = useQuery({
     queryKey: ['planning', projectId],
     queryFn: () => client.get(`/projects/${projectId}/planning-data`).then((r) => r.data?.data ?? r.data),
     enabled: !!projectId,
@@ -322,6 +322,15 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
 
   if (isLoading) {
     return <div className="py-12 text-center text-sm text-slate-400">Loading board...</div>;
+  }
+
+  if (isError) {
+    return (
+      <div className="py-12 text-center text-sm text-slate-400">
+        Couldn't load the board.{' '}
+        <button onClick={() => refetch()} className="font-medium text-blue-600 hover:underline">Retry</button>
+      </div>
+    );
   }
 
   return (

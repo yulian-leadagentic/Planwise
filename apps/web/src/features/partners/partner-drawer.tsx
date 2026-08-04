@@ -135,7 +135,7 @@ export function PartnerDrawer({
     return () => document.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  const { data: bp, isLoading } = useQuery<BusinessPartnerFull>({
+  const { data: bp, isLoading, isError, refetch } = useQuery<BusinessPartnerFull>({
     queryKey: ['business-partners', partnerId],
     queryFn: () => client.get(`/business-partners/${partnerId}`).then((r) => r.data?.data ?? r.data),
   });
@@ -188,7 +188,12 @@ export function PartnerDrawer({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {isLoading || !bp ? (
+          {isError ? (
+            <div className="text-sm text-slate-400 text-center py-8">
+              Couldn't load this partner.{' '}
+              <button onClick={() => refetch()} className="font-medium text-blue-600 hover:underline">Retry</button>
+            </div>
+          ) : isLoading || !bp ? (
             <div className="text-sm text-slate-400 text-center py-8">Loading...</div>
           ) : tab === 'details' ? (
             <DetailsTab bp={bp} canWrite={canWrite} canDelete={canDelete} onClose={onClose} />

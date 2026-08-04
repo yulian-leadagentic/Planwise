@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, ArrowLeft, Trash2, Layers, ChevronRight, ChevronDown, Link, X, Search, BookOpen, Copy, CheckSquare } from 'lucide-react';
@@ -52,11 +52,22 @@ function ZoneTypeBadge({ zoneType }: { zoneType: string }) {
 function InstanceCountStepper({ value, onChange }: { value: number; onChange: (n: number) => void }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(Math.max(1, Math.floor(value || 1))));
+  // Escape must CANCEL, not commit. It sets draft back to `value` and closes,
+  // but closing unmounts the input and fires onBlur -> commit(), which read the
+  // still-stale draft (setState is async) and saved the typed value. This ref
+  // lets commit() bail out on a cancel.
+  const cancelledRef = useRef(false);
 
   // Re-sync draft when the saved value changes (e.g. another tab updated).
   useEffect(() => { setDraft(String(Math.max(1, Math.floor(value || 1)))); }, [value]);
 
   const commit = () => {
+    if (cancelledRef.current) {
+      cancelledRef.current = false;
+      setEditing(false);
+      setDraft(String(Math.max(1, Math.floor(value || 1))));
+      return;
+    }
     const n = Math.max(1, Math.min(50, Math.floor(Number(draft) || 1)));
     setEditing(false);
     if (n !== value) onChange(n);
@@ -74,7 +85,7 @@ function InstanceCountStepper({ value, onChange }: { value: number; onChange: (n
         onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === 'Enter') commit();
-          if (e.key === 'Escape') { setDraft(String(value)); setEditing(false); }
+          if (e.key === 'Escape') { cancelledRef.current = true; setDraft(String(value)); setEditing(false); }
         }}
         autoFocus
         className="w-12 rounded border border-blue-400 px-1 py-0.5 text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-300"
@@ -326,7 +337,11 @@ function AddZoneTaskForm({
           await client.post(`/templates/${catalog.id}/tasks`, payload);
           queryClient.invalidateQueries({ queryKey: ['templates', catalog.id] });
         }
-      } catch { /* ignore catalog errors */ }
+      } catch {
+        // The zone task itself is still added below — but don't let the
+        // catalog copy fail silently while the user sees a success toast.
+        notify.warning('Task added to the zone, but saving a copy to the catalog failed.', { code: 'TASK-CATALOG-207' });
+      }
     }
     addMutation.mutate(payload);
   };

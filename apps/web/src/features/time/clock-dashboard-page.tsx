@@ -7,18 +7,45 @@ import { minutesToDisplay } from '@/types';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 
 export function ClockDashboardPage() {
-  const { data: dashboard, isLoading } = useTeamClockDashboard();
+  const { data: dashboard, isLoading, isError, refetch } = useTeamClockDashboard();
 
   if (isLoading) return <PageSkeleton />;
+
+  if (isError) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="Clock Dashboard"
+          description="Real-time team attendance overview"
+        />
+        <div className="rounded-lg border border-border bg-background p-8 text-center">
+          <AlertTriangle className="mx-auto h-8 w-8 text-muted-foreground" />
+          <p className="mt-2 text-sm text-muted-foreground">
+            Couldn't load the clock dashboard.
+          </p>
+          <button
+            onClick={() => refetch()}
+            className="mt-3 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!dashboard) return null;
 
   // Defensive fallbacks: tolerate a backend response that's missing
   // a bucket (older API, partial deploy, mock data) instead of crashing
   // with "Cannot read properties of undefined (reading 'length')".
-  const clockedIn = clockedIn ?? [];
-  const notYet = notYet ?? [];
-  const late = late ?? [];
-  const onLeave = onLeave ?? [];
+  // FIX: these previously referenced themselves (e.g.
+  // `const clockedIn = clockedIn ?? []`), throwing a ReferenceError on
+  // every render and leaving the page blank. Read from `dashboard.*`.
+  const clockedIn = dashboard.clockedIn ?? [];
+  const notYet = dashboard.notYet ?? [];
+  const late = dashboard.late ?? [];
+  const onLeave = dashboard.onLeave ?? [];
 
   return (
     <div className="space-y-6">

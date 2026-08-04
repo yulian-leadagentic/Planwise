@@ -230,7 +230,11 @@ export function CalendarDaysPage() {
 
   const importHolidays = async (year: number) => {
     const holidays = getIsraeliHolidays(year);
-    const existingDates = new Set((data ?? []).map((d: any) => typeof d.date === 'string' ? d.date.split('T')[0] : new Date(d.date).toISOString().split('T')[0]));
+    // Use the SAME local date-key as holidayDates below. Previously this branch
+    // used UTC (toISOString), so for a negative-UTC user the key was shifted a
+    // day and existing holidays weren't detected — they got POSTed again (the
+    // errors were then swallowed and the "added" count was misleading).
+    const existingDates = new Set((data ?? []).map((d: any) => typeof d.date === 'string' ? d.date.split('T')[0] : formatDateKey(new Date(d.date))));
     let added = 0;
     for (const h of holidays) {
       if (existingDates.has(h.date)) continue;

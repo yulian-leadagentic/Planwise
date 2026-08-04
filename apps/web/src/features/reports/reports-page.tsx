@@ -19,6 +19,9 @@ interface ReportCard {
   color: string;
   /** When true, only users with finance:read see this card. */
   requiresFinance?: boolean;
+  /** When true, the report page is not implemented yet — the card is shown
+   *  as a disabled "Soon" tile instead of a link to an empty placeholder. */
+  comingSoon?: boolean;
 }
 
 const reportCards: ReportCard[] = [
@@ -49,6 +52,7 @@ const reportCards: ReportCard[] = [
     icon: AlertCircle,
     href: '/reports/late-arrivals',
     color: 'bg-amber-100 text-amber-700',
+    comingSoon: true,
   },
   {
     title: 'Cost Report',
@@ -64,6 +68,7 @@ const reportCards: ReportCard[] = [
     icon: Milestone,
     href: '/reports/milestones',
     color: 'bg-orange-100 text-orange-700',
+    comingSoon: true,
   },
   {
     title: 'Billing Forecast',
@@ -72,6 +77,7 @@ const reportCards: ReportCard[] = [
     href: '/reports/billing-forecast',
     color: 'bg-rose-100 text-rose-700',
     requiresFinance: true,
+    comingSoon: true,
   },
 ];
 
@@ -90,19 +96,49 @@ export function ReportsPage() {
       <PageHeader title="Reports" description="View and export reports" />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {visibleCards.map((card) => (
-          <Link
-            key={card.href}
-            to={card.href}
-            className="rounded-lg border bg-card p-5 hover:shadow-md transition-shadow"
-          >
-            <div className={`inline-flex p-2 rounded-lg ${card.color} mb-3`}>
-              <card.icon className="h-5 w-5" />
-            </div>
-            <h3 className="font-semibold text-sm">{card.title}</h3>
-            <p className="text-xs text-muted-foreground mt-1">{card.description}</p>
-          </Link>
-        ))}
+        {visibleCards.map((card) => {
+          const inner = (
+            <>
+              <div className={`inline-flex p-2 rounded-lg ${card.color} mb-3`}>
+                <card.icon className="h-5 w-5" />
+              </div>
+              <h3 className="font-semibold text-sm flex items-center gap-2">
+                {card.title}
+                {card.comingSoon && (
+                  <span className="rounded-[5px] bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                    Soon
+                  </span>
+                )}
+              </h3>
+              <p className="text-xs text-muted-foreground mt-1">{card.description}</p>
+            </>
+          );
+
+          // Not-yet-implemented reports render as a disabled tile rather than
+          // linking to an empty placeholder page (avoids a dead-end click).
+          if (card.comingSoon) {
+            return (
+              <div
+                key={card.href}
+                aria-disabled="true"
+                className="rounded-lg border bg-card p-5 opacity-60 cursor-not-allowed"
+                title="Coming soon"
+              >
+                {inner}
+              </div>
+            );
+          }
+
+          return (
+            <Link
+              key={card.href}
+              to={card.href}
+              className="rounded-lg border bg-card p-5 hover:border-brand-400 transition-colors"
+            >
+              {inner}
+            </Link>
+          );
+        })}
       </div>
     </div>
   );

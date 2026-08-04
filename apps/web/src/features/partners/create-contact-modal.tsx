@@ -139,6 +139,10 @@ export function CreateContactModal({
         mainRoleTypeId: form.mainRoleTypeId ? Number(form.mainRoleTypeId) : undefined,
       }).then((r) => r.data?.data ?? r.data);
 
+      // Track sub-steps that fail silently so we can warn instead of
+      // claiming full success — create is NOT atomic across these calls.
+      const warnings: string[] = [];
+
       // 2a) Set the primary Job Title (profession) if the user picked
       //     one. Single PUT replaces the full list; we're creating the
       //     contact, so the "full list" is just this one item.
@@ -148,7 +152,7 @@ export function CreateContactModal({
             professionIds: [Number(form.primaryProfessionId)],
             primaryProfessionId: Number(form.primaryProfessionId),
           })
-          .catch(() => undefined);
+          .catch(() => { warnings.push('job title'); });
       }
 
       // 2b) Wire the worker_of relationship to the chosen organization,
@@ -163,15 +167,26 @@ export function CreateContactModal({
             relationshipTypeId: workerOf.id,
             roleInContext: form.roleInContext.trim() || undefined,
             isPrimary: true,
-          }).catch(() => undefined);
+          }).catch(() => { warnings.push('employer link'); });
+        } else {
+          // No worker_of relationship type configured — the employer the user
+          // picked can't be linked. Don't fail silently.
+          warnings.push('employer link');
         }
       }
 
-      return created;
+      return { created, warnings };
     },
-    onSuccess: (created: any) => {
+    onSuccess: ({ created, warnings }: { created: any; warnings: string[] }) => {
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });
-      notify.success('Contact created', { code: 'CONTACT-CREATE-200' });
+      if (warnings.length > 0) {
+        notify.warning(
+          `Contact created, but couldn't save: ${warnings.join(', ')}. Open the contact to finish setting it up.`,
+          { code: 'CONTACT-CREATE-207' },
+        );
+      } else {
+        notify.success('Contact created', { code: 'CONTACT-CREATE-200' });
+      }
       onCreated(created.id);
     },
     onError: (err: any) => notify.apiError(err, 'Failed to create contact'),
@@ -214,14 +229,17 @@ export function CreateContactModal({
           {/* Identity */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">First Name *</label>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">First Name</label>
               <input value={form.firstName} onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))} className={inputClass} autoFocus />
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Last Name *</label>
+              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Last Name</label>
               <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className={inputClass} />
             </div>
           </div>
+          {/* Validation requires first OR last (not both) — so neither carries a
+              hard required-asterisk; this line states the real rule. */}
+          <p className="text-[11px] text-slate-400">Enter a first and/or last name (at least one).</p>
           {/* Hebrew name (T3.3, 2026-06-28) — bilingual search picks
               these up so contacts are findable in either language. */}
           <div className="grid grid-cols-2 gap-3">

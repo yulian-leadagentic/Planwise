@@ -61,7 +61,7 @@ function configFor(key: string) {
 }
 
 export function ActivityFeed({ projectId }: { projectId: number }) {
-  const { data: items = [], isLoading } = useQuery<FeedItem[]>({
+  const { data: items = [], isLoading, isError, refetch } = useQuery<FeedItem[]>({
     queryKey: ['activity', 'project', projectId],
     queryFn: async () => {
       const [logsResult, msgResult, notifResult] = await Promise.all([
@@ -133,6 +133,12 @@ export function ActivityFeed({ projectId }: { projectId: number }) {
 
       {isLoading ? (
         <div className="py-6 text-center text-sm text-slate-400">Loading activity...</div>
+      ) : isError ? (
+        <div className="py-8 text-center">
+          <AlertCircle className="mx-auto h-10 w-10 text-slate-300" />
+          <p className="mt-2 text-sm text-slate-400">Couldn't load activity.</p>
+          <button onClick={() => refetch()} className="mt-1 text-[12px] font-medium text-blue-600 hover:underline">Retry</button>
+        </div>
       ) : items.length === 0 ? (
         <div className="py-8 text-center">
           <Activity className="mx-auto h-10 w-10 text-slate-300" />
