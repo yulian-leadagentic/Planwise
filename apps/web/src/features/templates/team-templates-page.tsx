@@ -53,7 +53,7 @@ function UserAvatar({ user, size = 'sm' }: { user: UserInfo; size?: 'sm' | 'md' 
 }
 
 function TypeBadge({ type }: { type?: string | null }) {
-  if (!type) return <span className="text-xs text-slate-400">--</span>;
+  if (!type) return <span className="text-xs text-slate-400 dark:text-slate-500">--</span>;
   const isPartner = type.toLowerCase().includes('partner');
   return (
     <span
@@ -176,11 +176,11 @@ export function TeamTemplatesPage() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/templates')}
-            className="rounded-lg p-1.5 hover:bg-slate-100"
+            className="rounded-lg p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
-            <ArrowLeft className="h-5 w-5 text-slate-500" />
+            <ArrowLeft className="h-5 w-5 text-slate-500 dark:text-slate-400" />
           </button>
-          <h1 className="text-xl font-bold text-slate-800">Team Templates</h1>
+          <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100">Team Templates</h1>
         </div>
         <button
           onClick={() => setShowCreateInput(true)}
@@ -192,8 +192,8 @@ export function TeamTemplatesPage() {
 
       {/* Create inline form */}
       {showCreateInput && (
-        <div className="bg-white rounded-[14px] border border-slate-200 p-4">
-          <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+        <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 p-4">
+          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
             Template Name
           </label>
           <div className="flex gap-2">
@@ -202,7 +202,7 @@ export function TeamTemplatesPage() {
               onChange={(e) => setNewTemplateName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
               placeholder="e.g. BIM Coordination Team"
-              className="flex-1 px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+              className="flex-1 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
               autoFocus
             />
             <button
@@ -217,7 +217,7 @@ export function TeamTemplatesPage() {
                 setShowCreateInput(false);
                 setNewTemplateName('');
               }}
-              className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-500 hover:bg-slate-50"
+              className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
             >
               Cancel
             </button>
@@ -231,19 +231,19 @@ export function TeamTemplatesPage() {
           {[1, 2, 3].map((i) => (
             <div
               key={i}
-              className="bg-white rounded-[14px] border border-slate-200 p-5 animate-pulse"
+              className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 p-5 animate-pulse"
             >
-              <div className="h-4 bg-slate-100 rounded w-2/3 mb-3" />
-              <div className="h-3 bg-slate-100 rounded w-1/3" />
+              <div className="h-4 bg-slate-100 dark:bg-slate-800 rounded w-2/3 mb-3" />
+              <div className="h-3 bg-slate-100 dark:bg-slate-800 rounded w-1/3" />
             </div>
           ))}
         </div>
       ) : templates.length === 0 ? (
         /* Empty state */
-        <div className="bg-white rounded-[14px] border border-slate-200 p-12 text-center">
-          <Users className="mx-auto h-12 w-12 text-slate-300" />
-          <h3 className="mt-4 text-sm font-semibold text-slate-700">No team templates yet</h3>
-          <p className="mt-1 text-sm text-slate-400">
+        <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 p-12 text-center">
+          <Users className="mx-auto h-12 w-12 text-slate-300 dark:text-slate-600" />
+          <h3 className="mt-4 text-sm font-semibold text-slate-700 dark:text-slate-200">No team templates yet</h3>
+          <p className="mt-1 text-sm text-slate-400 dark:text-slate-500">
             Create templates to save and reuse team compositions across projects.
           </p>
           <button
@@ -260,12 +260,12 @@ export function TeamTemplatesPage() {
             <div
               key={t.id}
               onClick={() => setSelectedTemplateId(t.id)}
-              className="bg-white rounded-[14px] border border-slate-200 p-5 cursor-pointer hover:border-blue-300 hover:shadow-sm transition-all group"
+              className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 p-5 cursor-pointer hover:border-blue-300 hover:shadow-sm transition-all group"
             >
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-2 min-w-0">
                   <Users className="h-4 w-4 text-blue-500 shrink-0" />
-                  <span className="text-sm font-semibold text-slate-800 truncate">
+                  <span className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">
                     {t.name}
                   </span>
                 </div>
@@ -274,14 +274,14 @@ export function TeamTemplatesPage() {
                     e.stopPropagation();
                     if (confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id);
                   }}
-                  className="hover:bg-red-50 text-slate-300 hover:text-red-600 rounded-md p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="hover:bg-red-50 text-slate-300 dark:text-slate-600 hover:text-red-600 rounded-md p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
               </div>
 
               <div className="mt-3 flex items-center justify-between">
-                <span className="text-xs text-slate-400">
+                <span className="text-xs text-slate-400 dark:text-slate-500">
                   {t._count.members} member{t._count.members !== 1 ? 's' : ''}
                 </span>
                 {t.members.length > 0 && (
@@ -290,7 +290,7 @@ export function TeamTemplatesPage() {
                       <UserAvatar key={m.id} user={m.user} size="sm" />
                     ))}
                     {t.members.length > 5 && (
-                      <span className="h-7 w-7 inline-flex items-center justify-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-500 ring-2 ring-white">
+                      <span className="h-7 w-7 inline-flex items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-[10px] font-semibold text-slate-500 dark:text-slate-400 ring-2 ring-white">
                         +{t.members.length - 5}
                       </span>
                     )}
@@ -363,19 +363,19 @@ function EditorView({
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <button onClick={onBack} className="rounded-lg p-1.5 hover:bg-slate-100">
-          <ArrowLeft className="h-5 w-5 text-slate-500" />
+        <button onClick={onBack} className="rounded-lg p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800">
+          <ArrowLeft className="h-5 w-5 text-slate-500 dark:text-slate-400" />
         </button>
-        <h1 className="text-xl font-bold text-slate-800">{template.name}</h1>
-        <span className="text-sm text-slate-400 ml-1">
+        <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100">{template.name}</h1>
+        <span className="text-sm text-slate-400 dark:text-slate-500 ml-1">
           {template._count.members} member{template._count.members !== 1 ? 's' : ''}
         </span>
       </div>
 
       {/* Members card */}
-      <div className="bg-white rounded-[14px] border border-slate-200">
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-800">Members</h2>
+      <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700">
+        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Members</h2>
           <button
             onClick={() => setShowAddSection(!showAddSection)}
             className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg flex items-center gap-2"
@@ -386,15 +386,15 @@ function EditorView({
 
         {/* Add member section */}
         {showAddSection && (
-          <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50">
+          <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50/50">
             <div className="flex flex-col sm:flex-row gap-3">
               {/* User search / select */}
               <div className="flex-1">
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
                   Search User
                 </label>
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500" />
                   <input
                     value={searchQuery}
                     onChange={(e) => {
@@ -402,14 +402,14 @@ function EditorView({
                       setSelectedUserId(null);
                     }}
                     placeholder="Search by name or email..."
-                    className="w-full pl-9 px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                    className="w-full pl-9 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                   />
                 </div>
                 {/* Dropdown results */}
                 {searchQuery.trim() && !selectedUserId && (
-                  <div className="mt-1 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+                  <div className="mt-1 max-h-48 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm">
                     {filteredUsers.length === 0 ? (
-                      <div className="px-3 py-2 text-sm text-slate-400">No users found</div>
+                      <div className="px-3 py-2 text-sm text-slate-400 dark:text-slate-500">No users found</div>
                     ) : (
                       filteredUsers.slice(0, 20).map((u) => (
                         <button
@@ -422,10 +422,10 @@ function EditorView({
                         >
                           <UserAvatar user={u} size="sm" />
                           <div className="min-w-0">
-                            <div className="font-medium text-slate-700 truncate">
+                            <div className="font-medium text-slate-700 dark:text-slate-200 truncate">
                               {u.firstName} {u.lastName}
                             </div>
-                            <div className="text-xs text-slate-400 truncate">{u.email}</div>
+                            <div className="text-xs text-slate-400 dark:text-slate-500 truncate">{u.email}</div>
                           </div>
                           <TypeBadge type={u.userType} />
                         </button>
@@ -437,14 +437,14 @@ function EditorView({
 
               {/* Role */}
               <div className="sm:w-48">
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
                   Role (optional)
                 </label>
                 <input
                   value={roleInput}
                   onChange={(e) => setRoleInput(e.target.value)}
                   placeholder="e.g. Lead"
-                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                 />
               </div>
 
@@ -465,49 +465,49 @@ function EditorView({
         {/* Members table */}
         {template.members.length === 0 ? (
           <div className="px-5 py-10 text-center">
-            <Users className="mx-auto h-10 w-10 text-slate-300" />
-            <p className="mt-2 text-sm text-slate-400">No members yet. Add members to this template.</p>
+            <Users className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600" />
+            <p className="mt-2 text-sm text-slate-400 dark:text-slate-500">No members yet. Add members to this template.</p>
           </div>
         ) : (
           <div ref={scrollRef} className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="bg-[#FAFBFC]">
-                  <th className="text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] px-5 py-3">
+                  <th className="text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] px-5 py-3">
                     Member
                   </th>
-                  <th className="text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] px-5 py-3">
+                  <th className="text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] px-5 py-3">
                     Email
                   </th>
-                  <th className="text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] px-5 py-3">
+                  <th className="text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] px-5 py-3">
                     Type
                   </th>
-                  <th className="text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] px-5 py-3">
+                  <th className="text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] px-5 py-3">
                     Role
                   </th>
                   <th className="w-12 px-5 py-3" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {template.members.map((m) => (
-                  <tr key={m.id} className="hover:bg-slate-50/50">
+                  <tr key={m.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50/50">
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-2.5">
                         <UserAvatar user={m.user} size="md" />
-                        <span className="text-sm font-medium text-slate-700">
+                        <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
                           {m.user.firstName} {m.user.lastName}
                         </span>
                       </div>
                     </td>
-                    <td className="px-5 py-3 text-sm text-slate-500">{m.user.email}</td>
+                    <td className="px-5 py-3 text-sm text-slate-500 dark:text-slate-400">{m.user.email}</td>
                     <td className="px-5 py-3">
                       <TypeBadge type={m.user.userType} />
                     </td>
-                    <td className="px-5 py-3 text-sm text-slate-500">{m.role || '--'}</td>
+                    <td className="px-5 py-3 text-sm text-slate-500 dark:text-slate-400">{m.role || '--'}</td>
                     <td className="px-5 py-3">
                       <button
                         onClick={() => removeMemberMutation_confirm(m, onRemoveMember)}
-                        className="hover:bg-red-50 text-slate-300 hover:text-red-600 rounded-md p-1.5 transition-colors"
+                        className="hover:bg-red-50 text-slate-300 dark:text-slate-600 hover:text-red-600 rounded-md p-1.5 transition-colors"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
