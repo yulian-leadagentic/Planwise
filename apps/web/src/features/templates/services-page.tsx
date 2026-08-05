@@ -2,11 +2,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Check, Plus, Search, Trash2, X, Palette } from 'lucide-react';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import type { ColumnDef } from '@tanstack/react-table';
+import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { DataTable } from '@/components/shared/data-table';
 import { EmptyState } from '@/components/shared/empty-state';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
-import { cn } from '@/lib/utils';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 
 interface EditState {
@@ -15,6 +17,14 @@ interface EditState {
   code: string;
   color: string;
 }
+
+interface CreateFormState {
+  name: string;
+  code: string;
+  color: string;
+}
+
+const emptyCreate: CreateFormState = { name: '', code: '', color: '' };
 
 function resolveColor(c?: string | null): string | undefined {
   if (!c) return undefined;
@@ -30,9 +40,7 @@ export function PhasesPage() {
 
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
-  const [formName, setFormName] = useState('');
-  const [formCode, setFormCode] = useState('');
-  const [formColor, setFormColor] = useState('');
+  const [createForm, setCreateForm] = useState<CreateFormState>(emptyCreate);
   const [editing, setEditing] = useState<EditState | null>(null);
 
   const { data, isLoading } = useQuery({
@@ -77,9 +85,7 @@ export function PhasesPage() {
 
   function resetForm() {
     setShowForm(false);
-    setFormName('');
-    setFormCode('');
-    setFormColor('');
+    setCreateForm(emptyCreate);
   }
 
   const saveEditing = useCallback(() => {
@@ -94,6 +100,8 @@ export function PhasesPage() {
     });
   }, [editing, updateMutation]);
 
+  // Escape cancels the ambient inline edit — kept from the previous
+  // hand-rolled version so keyboard users don't lose the shortcut.
   useEffect(() => {
     if (!editing) return;
     function handleKeyDown(e: KeyboardEvent) {
@@ -105,12 +113,12 @@ export function PhasesPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmedName = formName.trim();
+    const trimmedName = createForm.name.trim();
     if (!trimmedName) return;
     createMutation.mutate({
       name: trimmedName,
-      code: formCode.trim() || undefined,
-      color: formColor.trim() || undefined,
+      code: createForm.code.trim() || undefined,
+      color: createForm.color.trim() || undefined,
     });
   };
 
@@ -123,176 +131,183 @@ export function PhasesPage() {
     );
   }, [data, search]);
 
-  return (
-    <div className="mx-auto max-w-4xl space-y-6 px-2 py-6">
-      {/* Back link */}
-      <button onClick={() => navigate('/templates')}
-        className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
-        <ArrowLeft className="h-4 w-4" /> Back to Templates
-      </button>
-
-      <div>
-        <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">Services</h1>
-        <p className="mt-1 text-[13px] text-slate-400 dark:text-slate-500">Manage services with color coding for visual identification across the app</p>
-      </div>
-
-      {/* Card */}
-      <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 overflow-hidden">
-        {/* Toolbar */}
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-          <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300 dark:text-slate-600" />
-            <input type="text" placeholder="Search services..." value={search} onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
-          </div>
-          <button onClick={() => setShowForm(!showForm)}
-            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
-            <Plus className="h-4 w-4" /> Add Service
+  const columns = useMemo<ColumnDef<any, unknown>[]>(() => [
+    { id: 'color', header: 'Color', enableSorting: false, size: 64,
+      cell: ({ row }) => {
+        const resolved = resolveColor(row.original.color);
+        return resolved
+          ? <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: resolved }} />
+          : <span className="inline-block h-3 w-3 rounded-full bg-slate-200 dark:bg-slate-700" />;
+      } },
+    { accessorKey: 'code', header: 'Code', enableSorting: false, size: 112,
+      cell: ({ row }) => (
+        row.original.code
+          ? <span className="rounded-[5px] bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 text-[11px] font-bold tracking-wide px-2 py-0.5">{row.original.code}</span>
+          : <span className="text-slate-300 dark:text-slate-600">—</span>
+      ) },
+    { accessorKey: 'name', header: 'Service Name', enableSorting: false,
+      cell: ({ row }) => <span className="font-medium">{row.original.name}</span> },
+    { id: 'actions', header: 'Actions', enableSorting: false, size: 112,
+      cell: ({ row }) => (
+        <div className="flex items-center justify-end gap-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditing({ id: row.original.id, name: row.original.name, code: row.original.code ?? '', color: row.original.color ?? '' });
+              setShowForm(false);
+            }}
+            aria-label={`Edit ${row.original.name}`}
+            className="text-xs text-blue-600 hover:underline"
+          >
+            Edit
+          </button>
+          <button
+            onClick={async (e) => {
+              e.stopPropagation();
+              if (await confirm(`Delete "${row.original.name}"?`)) deleteMutation.mutate(row.original.id);
+            }}
+            aria-label={`Delete ${row.original.name}`}
+            className="ml-2 inline-flex items-center gap-1 text-xs text-red-600 hover:underline"
+          >
+            <Trash2 className="h-3 w-3" aria-hidden="true" /> Delete
           </button>
         </div>
+      ) },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [confirm, deleteMutation]);
 
-        {/* Inline add form */}
-        {showForm && (
-          <form onSubmit={handleSubmit} className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/60 px-5 py-4">
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px_160px] gap-3 items-end">
-              <div>
-                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Name <span className="text-red-400">*</span></label>
-                <input value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="e.g. BIM Coordination, MEP"
-                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" autoFocus />
-              </div>
-              <div>
-                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Code</label>
-                <input value={formCode} onChange={(e) => setFormCode(e.target.value.toUpperCase())} placeholder="e.g. BIM" maxLength={10}
-                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
-              </div>
-              <div>
-                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Color</label>
-                <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 focus-within:border-blue-500">
-                  <span className="inline-block h-3.5 w-3.5 rounded-full shrink-0 border border-slate-200 dark:border-slate-700" style={{ backgroundColor: resolveColor(formColor) ?? '#CBD5E1' }} />
-                  <span className="text-sm text-slate-400 dark:text-slate-500">#</span>
-                  <input value={formColor} onChange={(e) => setFormColor(e.target.value.replace(/^#/, ''))} placeholder="3B82F6" maxLength={7}
-                    className="flex-1 text-sm text-slate-700 dark:text-slate-200 focus:outline-none bg-transparent" />
-                </div>
+  return (
+    <div className="mx-auto max-w-4xl space-y-6 px-2 py-6">
+      <button onClick={() => navigate('/templates')}
+        className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back to Templates
+      </button>
+
+      <PageHeader
+        title="Services"
+        description="Manage services with color coding for visual identification across the app"
+        actions={
+          !showForm && !editing ? (
+            <button
+              onClick={() => { setShowForm(true); setEditing(null); }}
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg transition-colors"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" /> Add Service
+            </button>
+          ) : null
+        }
+      />
+
+      {/* Create form — hoisted above the DataTable (was previously an
+          inline row inside the shared card). */}
+      {showForm && (
+        <form onSubmit={handleSubmit} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 p-4 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px_160px] gap-3 items-end">
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Name <span className="text-red-400">*</span></label>
+              <input value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} placeholder="e.g. BIM Coordination, MEP"
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-background text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" autoFocus />
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Code</label>
+              <input value={createForm.code} onChange={(e) => setCreateForm({ ...createForm, code: e.target.value.toUpperCase() })} placeholder="e.g. BIM" maxLength={10}
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-background text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Color</label>
+              <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 focus-within:border-blue-500 bg-background">
+                <span className="inline-block h-3.5 w-3.5 rounded-full shrink-0 border border-slate-200 dark:border-slate-700" style={{ backgroundColor: resolveColor(createForm.color) ?? '#CBD5E1' }} />
+                <span className="text-sm text-slate-400 dark:text-slate-500">#</span>
+                <input value={createForm.color} onChange={(e) => setCreateForm({ ...createForm, color: e.target.value.replace(/^#/, '') })} placeholder="3B82F6" maxLength={7}
+                  className="flex-1 text-sm text-slate-700 dark:text-slate-200 focus:outline-none bg-transparent" />
               </div>
             </div>
-            <div className="flex gap-2 mt-4">
-              <button type="submit" disabled={createMutation.isPending}
-                className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-50">
-                {createMutation.isPending ? 'Creating...' : 'Create'}
-              </button>
-              <button type="button" onClick={resetForm}
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg transition-colors">
-                Cancel
-              </button>
-            </div>
-          </form>
-        )}
-
-        {/* Table */}
-        {isLoading ? (
-          <div className="p-5"><TableSkeleton rows={5} cols={4} /></div>
-        ) : rows.length === 0 ? (
-          <EmptyState
-            icon={Palette}
-            title={search ? 'No services match your search' : 'No services configured yet'}
-            description={search ? 'Try a different name or code.' : 'Add a service (e.g. BIM Coordination, MEP) to start tagging tasks and templates.'}
-          />
-        ) : (
-          <table className="w-full">
-            <thead>
-              <tr className="bg-[#FAFBFC]">
-                <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] w-14">Color</th>
-                <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] w-28">Code</th>
-                <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em]">Service Name</th>
-                <th className="px-5 py-2.5 text-right text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] w-28">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row: any) => {
-                const isEditing = editing?.id === row.id;
-
-                if (isEditing && editing) {
-                  return (
-                    <tr key={row.id} className="text-[13px] bg-blue-50/30 border-t border-slate-100 dark:border-slate-800">
-                      <td className="px-5 py-2.5">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-4 h-4 rounded-full border border-slate-200 dark:border-slate-700 shrink-0"
-                            style={{ backgroundColor: resolveColor(editing.color) || '#6B7280' }} />
-                          <input type="text" value={editing.color} onChange={(e) => setEditing({ ...editing, color: e.target.value })}
-                            placeholder="#hex" className="w-20 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-xs font-mono focus:border-blue-500 focus:outline-none" />
-                        </div>
-                      </td>
-                      <td className="px-5 py-2.5">
-                        <input value={editing.code} onChange={(e) => setEditing({ ...editing, code: e.target.value.toUpperCase() })}
-                          onKeyDown={(e) => { if (e.key === 'Enter') saveEditing(); if (e.key === 'Escape') setEditing(null); }}
-                          maxLength={10} placeholder="CODE"
-                          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
-                      </td>
-                      <td className="px-5 py-2.5">
-                        <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                          onKeyDown={(e) => { if (e.key === 'Enter') saveEditing(); if (e.key === 'Escape') setEditing(null); }}
-                          placeholder="Name"
-                          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-                          autoFocus />
-                      </td>
-                      <td className="px-5 py-2.5 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <button onClick={saveEditing} disabled={updateMutation.isPending}
-                            className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50" title="Save">
-                            <Check className="h-3.5 w-3.5" />
-                          </button>
-                          <button onClick={() => setEditing(null)}
-                            className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 transition-colors" title="Cancel">
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                }
-
-                return (
-                  <tr key={row.id}
-                    onClick={() => setEditing({ id: row.id, name: row.name, code: row.code ?? '', color: row.color ?? '' })}
-                    className="text-[13px] hover:bg-slate-50 dark:hover:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 transition-colors cursor-pointer">
-                    <td className="px-5 py-3">
-                      {resolveColor(row.color) ? (
-                        <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: resolveColor(row.color) }} />
-                      ) : (
-                        <span className="inline-block h-3 w-3 rounded-full bg-slate-200 dark:bg-slate-700" />
-                      )}
-                    </td>
-                    <td className="px-5 py-3">
-                      {row.code ? (
-                        <span className="rounded-[5px] bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 text-[11px] font-bold tracking-wide px-2 py-0.5">{row.code}</span>
-                      ) : (
-                        <span className="text-slate-300 dark:text-slate-600">--</span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 font-medium text-slate-700 dark:text-slate-200">{row.name}</td>
-                    <td className="px-5 py-3 text-right">
-                      <button onClick={async (e) => { e.stopPropagation(); if (await confirm(`Delete "${row.name}"?`)) deleteMutation.mutate(row.id); }}
-                        className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] hover:bg-red-50 text-slate-300 dark:text-slate-600 hover:text-red-600 transition-colors" title={`Delete ${row.name}`}>
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-
-        {/* Footer count */}
-        {!isLoading && rows.length > 0 && (
-          <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 bg-[#FAFBFC]">
-            <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 tracking-wide">
-              {rows.length} {rows.length === 1 ? 'service' : 'services'}
-              {search && ' matching'}
-            </span>
           </div>
-        )}
+          <div className="flex gap-2">
+            <button type="submit" disabled={createMutation.isPending}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-50">
+              {createMutation.isPending ? 'Creating...' : 'Create'}
+            </button>
+            <button type="button" onClick={resetForm}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg transition-colors">
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* Edit form — hoisted above the DataTable in the same slot the
+          click-a-row-to-edit used to render an inline edit row. */}
+      {editing && (
+        <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-blue-50/30 dark:bg-blue-950/30 p-4 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px_160px] gap-3 items-end">
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Name <span className="text-red-400">*</span></label>
+              <input value={editing.name}
+                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                onKeyDown={(e) => { if (e.key === 'Enter') saveEditing(); }}
+                placeholder="Name" autoFocus
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-background text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Code</label>
+              <input value={editing.code}
+                onChange={(e) => setEditing({ ...editing, code: e.target.value.toUpperCase() })}
+                onKeyDown={(e) => { if (e.key === 'Enter') saveEditing(); }}
+                maxLength={10} placeholder="CODE"
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-background text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
+            </div>
+            <div>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Color</label>
+              <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 focus-within:border-blue-500 bg-background">
+                <span className="inline-block h-3.5 w-3.5 rounded-full shrink-0 border border-slate-200 dark:border-slate-700" style={{ backgroundColor: resolveColor(editing.color) || '#6B7280' }} />
+                <input value={editing.color}
+                  onChange={(e) => setEditing({ ...editing, color: e.target.value })}
+                  placeholder="#hex"
+                  className="flex-1 text-sm text-slate-700 dark:text-slate-200 focus:outline-none bg-transparent" />
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button type="button" onClick={saveEditing} disabled={updateMutation.isPending}
+              className="inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-50">
+              <Check className="h-3.5 w-3.5" aria-hidden="true" /> Save
+            </button>
+            <button type="button" onClick={() => setEditing(null)}
+              className="inline-flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg transition-colors">
+              <X className="h-3.5 w-3.5" aria-hidden="true" /> Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Search stays above the table (was toolbar-inside-card previously). */}
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300 dark:text-slate-600" aria-hidden="true" />
+        <input type="text" placeholder="Search services..." value={search} onChange={(e) => setSearch(e.target.value)}
+          className="w-full pl-9 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-background text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+          aria-label="Search services" />
       </div>
+
+      {isLoading ? (
+        <TableSkeleton rows={5} cols={4} />
+      ) : rows.length === 0 ? (
+        <EmptyState
+          icon={Palette}
+          title={search ? 'No services match your search' : 'No services configured yet'}
+          description={search ? 'Try a different name or code.' : 'Add a service (e.g. BIM Coordination, MEP) to start tagging tasks and templates.'}
+        />
+      ) : (
+        <DataTable
+          columns={columns}
+          data={rows}
+          pageSize={1000}
+          onRowClick={(row: any) => {
+            setEditing({ id: row.id, name: row.name, code: row.code ?? '', color: row.color ?? '' });
+            setShowForm(false);
+          }}
+        />
+      )}
     </div>
   );
 }
