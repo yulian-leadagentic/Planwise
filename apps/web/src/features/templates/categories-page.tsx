@@ -1,17 +1,18 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft } from 'lucide-react';
-import { useState } from 'react';
+import { Plus, ArrowLeft, Palette } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import type { ColumnDef } from '@tanstack/react-table';
 import { PageHeader } from '@/components/shared/page-header';
-import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { DataTable } from '@/components/shared/data-table';
+import { EmptyState } from '@/components/shared/empty-state';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 
 export function CategoriesPage() {
   const confirm = useConfirm();
-  const scrollRef = useStickyHScroll();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
@@ -60,18 +61,46 @@ export function CategoriesPage() {
 
   const serviceTypes = data ?? [];
 
+  const columns = useMemo<ColumnDef<any, unknown>[]>(() => [
+    { id: 'color', header: 'Color', enableSorting: false, size: 64,
+      cell: ({ row }) => (
+        row.original.color
+          ? <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: row.original.color.startsWith('#') ? row.original.color : `#${row.original.color}` }} />
+          : <span className="text-muted-foreground">-</span>
+      ) },
+    { accessorKey: 'name', header: 'Service Type Name', enableSorting: false,
+      cell: ({ row }) => <span className="font-medium">{row.original.name}</span> },
+    { accessorKey: 'code', header: 'Code', enableSorting: false,
+      cell: ({ row }) => (
+        row.original.code
+          ? <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{row.original.code}</span>
+          : <span className="text-muted-foreground">-</span>
+      ) },
+    { id: 'actions', header: 'Actions', enableSorting: false, size: 96,
+      cell: ({ row }) => (
+        <button
+          onClick={async () => { if (await confirm(`Delete "${row.original.name}"?`)) deleteMutation.mutate(row.original.id); }}
+          aria-label={`Delete service type ${row.original.name}`}
+          className="text-xs text-red-600 hover:underline"
+        >
+          Delete
+        </button>
+      ) },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], []);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <button onClick={() => navigate('/templates')} className="rounded-md p-1.5 hover:bg-accent">
-          <ArrowLeft className="h-5 w-5" />
+        <button onClick={() => navigate('/templates')} aria-label="Back to templates" className="rounded-md p-1.5 hover:bg-accent">
+          <ArrowLeft className="h-5 w-5" aria-hidden="true" />
         </button>
         <PageHeader
           title="Service Types"
           description="Types like BIM, MEP, Structural, Architecture"
           actions={
             <button onClick={() => setShowForm(!showForm)} className="flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
-              <Plus className="h-4 w-4" /> Add Service Type
+              <Plus className="h-4 w-4" aria-hidden="true" /> Add Service Type
             </button>
           }
         />
@@ -108,36 +137,13 @@ export function CategoriesPage() {
       {isLoading ? (
         <TableSkeleton rows={5} cols={2} />
       ) : serviceTypes.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">No service types yet. Click "Add Service Type" to create one.</p>
+        <EmptyState
+          icon={Palette}
+          title="No service types yet"
+          description={'Click "Add Service Type" to create one.'}
+        />
       ) : (
-        <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/50">
-                <th className="px-4 py-2.5 text-left font-medium">Color</th>
-                <th className="px-4 py-2.5 text-left font-medium">Service Type Name</th>
-                <th className="px-4 py-2.5 text-left font-medium">Code</th>
-                <th className="px-4 py-2.5 text-right font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {serviceTypes.map((c: any) => (
-                <tr key={c.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                  <td className="px-4 py-3 w-12">
-                    {c.color ? (
-                      <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: c.color.startsWith('#') ? c.color : `#${c.color}` }} />
-                    ) : <span className="text-muted-foreground">-</span>}
-                  </td>
-                  <td className="px-4 py-3 font-medium">{c.name}</td>
-                  <td className="px-4 py-3">{c.code ? <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{c.code}</span> : <span className="text-muted-foreground">-</span>}</td>
-                  <td className="px-4 py-3 text-right">
-                    <button onClick={async () => { if (await confirm(`Delete "${c.name}"?`)) deleteMutation.mutate(c.id); }} className="text-xs text-red-600 hover:underline">Delete</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable columns={columns} data={serviceTypes} pageSize={1000} />
       )}
     </div>
   );
