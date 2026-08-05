@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronRight, Grid3X3, FolderKanban, MapPin, AlertTriangle, AlertCircle, Calendar, Clock } from 'lucide-react';
+import { ChevronRight, Grid3X3, FolderKanban, MapPin, AlertTriangle, AlertCircle, Calendar, Clock, RefreshCw } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -448,7 +448,11 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   // multi-select filter is client-side so the API always returns the
   // user's full project list — that way the multi-select options stay
   // populated regardless of how many are selected.
-  const { data, isLoading } = useExecutionBoard(forcedProjectId ?? null, null);
+  //
+  // isError / error / refetch drive the retryable error state — a
+  // failed fetch used to render as a silent EmptyState "no data",
+  // indistinguishable from an actual empty project set.
+  const { data, isLoading, isError, error, refetch, isFetching } = useExecutionBoard(forcedProjectId ?? null, null);
 
   const toggleZoneExpand = useCallback((zoneId: number) => {
     setExpandedZones((prev) => {
@@ -726,22 +730,64 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     return m;
   }, [filteredTasks]);
 
-  const getAggregatedTasks = useCallback(
-    (zoneId: number, phaseName: string): Task[] => {
-      // Synthetic 'Project Root' rows use id = -projectId. Resolve from
-      // the dedicated root map.
-      if (zoneId < 0) {
-        return rootTasksByProject.get(-zoneId)?.get(phaseName) ?? [];
-      }
-      const descIds = zoneDescendants.get(zoneId) ?? [zoneId];
-      const result: Task[] = [];
+  // Aggregated-task lookup, keyed `${zoneId}|${phaseName}`. Built once
+  // per data change (used to be a per-cell useCallback that walked
+  // zoneDescendants + directMatrix on EVERY render — rows × columns
+  // times, plus a fresh array allocation per cell).
+  //
+  // Coverage:
+  //   • real zones — one entry per (zone in tree, phaseName seen among
+  //     descendants), unioned from the descendant leaves.
+  //   • synthetic 'Project Root' rows (id = -projectId) — mirrored from
+  //     rootTasksByProject using the negative-id convention flatRows
+  //     emits for those synthetic rows.
+  const aggregatedTasksByKey = useMemo(() => {
+    // Pre-index directMatrix by leafZoneId so the union-per-phase step
+    // touches each leaf O(1) instead of scanning directMatrix per key.
+    const leafToPhaseTasks = new Map<number, Map<string, Task[]>>();
+    for (const [key, tasks] of directMatrix.entries()) {
+      const sep = key.indexOf('|');
+      if (sep < 0) continue;
+      const leafId = Number(key.slice(0, sep));
+      const phaseName = key.slice(sep + 1);
+      if (!leafToPhaseTasks.has(leafId)) leafToPhaseTasks.set(leafId, new Map());
+      leafToPhaseTasks.get(leafId)!.set(phaseName, tasks);
+    }
+
+    const out = new Map<string, Task[]>();
+    // Real zones — union descendant-leaf tasks per phase.
+    for (const [zoneId, descIds] of zoneDescendants.entries()) {
+      const perPhase = new Map<string, Task[]>();
       for (const id of descIds) {
-        const tasks = directMatrix.get(`${id}|${phaseName}`);
-        if (tasks) result.push(...tasks);
+        const phases = leafToPhaseTasks.get(id);
+        if (!phases) continue;
+        for (const [phaseName, tasks] of phases.entries()) {
+          const existing = perPhase.get(phaseName);
+          if (existing) existing.push(...tasks);
+          // Copy the leaf array so appending onto `existing` in a later
+          // iteration can't mutate directMatrix's stored arrays.
+          else perPhase.set(phaseName, tasks.slice());
+        }
       }
-      return result;
-    },
-    [zoneDescendants, directMatrix, rootTasksByProject],
+      for (const [phaseName, tasks] of perPhase.entries()) {
+        out.set(`${zoneId}|${phaseName}`, tasks);
+      }
+    }
+    // Synthetic 'Project Root' rows.
+    for (const [pid, perPhase] of rootTasksByProject.entries()) {
+      for (const [phaseName, tasks] of perPhase.entries()) {
+        out.set(`${-pid}|${phaseName}`, tasks);
+      }
+    }
+    return out;
+  }, [zoneDescendants, directMatrix, rootTasksByProject]);
+
+  // Cheap lookup — replaces the per-cell walker. Same signature as the
+  // old function so call sites don't need to change.
+  const getAggregatedTasks = useCallback(
+    (zoneId: number, phaseName: string): Task[] =>
+      aggregatedTasksByKey.get(`${zoneId}|${phaseName}`) ?? [],
+    [aggregatedTasksByKey],
   );
 
   // Aggregate health per project
@@ -923,10 +969,66 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     });
   }, [flatRows, isFilterActive, filteredTasks, zoneDescendants]);
 
+  // Palette lookup for the project-header row. Rebuilt only when the
+  // project list changes; the previous version allocated a fresh Map on
+  // every render (i.e., every keystroke in a filter input).
+  const projectColorMapMemo = useMemo(() => {
+    const map = new Map<number, (typeof PROJECT_COLORS)[0]>();
+    (data?.projects ?? []).forEach((p, i) => map.set(p.id, PROJECT_COLORS[i % PROJECT_COLORS.length]));
+    return map;
+  }, [data?.projects]);
+
   if (isLoading) return <PageSkeleton />;
 
-  const projectColorMap = new Map<number, (typeof PROJECT_COLORS)[0]>();
-  (data?.projects ?? []).forEach((p, i) => projectColorMap.set(p.id, PROJECT_COLORS[i % PROJECT_COLORS.length]));
+  // Fetch failed — surface the error with a Retry so the user isn't
+  // staring at an empty matrix wondering whether they actually have
+  // zero projects or the request just died. `isError` is React Query's
+  // authoritative failure flag (any queryFn throw or 4xx/5xx after
+  // retries are exhausted). Rendered inside the page shell so the tab
+  // bar + filters stay in place if the user wants to change scope
+  // before retrying.
+  if (isError) {
+    const msg = (error as any)?.response?.data?.message
+      ?? (error as any)?.message
+      ?? 'The execution board could not be loaded.';
+    return (
+      <div className="space-y-5">
+        {forcedProjectId == null && (
+          <PageHeader
+            title="Execution Board"
+            description="Zone × Deliverable task matrix across projects — risk indicators highlight overdue, at-risk, and stale tasks"
+          />
+        )}
+        <div
+          role="alert"
+          className="rounded-[14px] border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 px-6 py-8 flex flex-col items-center text-center gap-3"
+        >
+          <AlertCircle className="h-8 w-8 text-red-500 dark:text-red-400" aria-hidden="true" />
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-red-800 dark:text-red-200">
+              Failed to load the execution board
+            </p>
+            <p className="text-[12px] text-red-700 dark:text-red-300 max-w-md">{msg}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="inline-flex items-center gap-1.5 rounded-md border border-red-300 dark:border-red-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[13px] font-semibold text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-50"
+            aria-label="Retry loading the execution board"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', isFetching && 'animate-spin')} aria-hidden="true" />
+            {isFetching ? 'Retrying…' : 'Retry'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Palette lookup for the project-header row background/border/icon.
+  // Rebuilt only when the project list changes — was previously a fresh
+  // Map on every render (allocating 6+ Map entries per keystroke).
+  const projectColorMap = projectColorMapMemo;
 
   return (
     <div className="space-y-5">
