@@ -170,7 +170,7 @@ export function ColumnVisibilityPicker({
                     checked={visible.has(c.key) && !suppressed}
                     onChange={() => !disabled && onToggle(c.key)}
                     disabled={disabled}
-                    className="rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
+                    className="rounded border-slate-300 dark:border-slate-600 text-blue-600 focus-visible:ring-2 focus-visible:ring-blue-500"
                   />
                   <span className="flex-1">{c.label}</span>
                   {c.required && <Check className="h-3 w-3 text-slate-400 dark:text-slate-500" />}

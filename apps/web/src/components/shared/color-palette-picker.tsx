@@ -62,7 +62,7 @@ export function ColorPalettePicker({ value, onChange, className, allowCustom = t
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 rounded-md border border-input bg-background px-2.5 py-1.5 text-sm hover:border-blue-400 focus:outline-none focus:ring-2 focus:ring-ring"
+        className="flex items-center gap-2 rounded-md border border-input bg-background px-2.5 py-1.5 text-sm hover:border-blue-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-label="Choose colour"
       >
         <span
@@ -120,7 +120,7 @@ export function ColorPalettePicker({ value, onChange, className, allowCustom = t
                     if (safeHex(v)) onChange(v);
                   }}
                   placeholder="#3B82F6"
-                  className="flex-1 rounded-md border border-input bg-background px-2 py-1 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="flex-1 rounded-md border border-input bg-background px-2 py-1 font-mono text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
             </>

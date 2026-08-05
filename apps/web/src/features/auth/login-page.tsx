@@ -66,7 +66,7 @@ export function LoginPage() {
                 autoComplete="email"
                 placeholder="you@example.com"
                 className={cn(
-                  'mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring',
+                  'mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   errors.email && 'border-red-500',
                 )}
               />
@@ -88,7 +88,7 @@ export function LoginPage() {
                   autoComplete="current-password"
                   placeholder="Enter your password"
                   className={cn(
-                    'w-full rounded-md border border-input bg-background px-3 py-2 pr-10 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring',
+                    'w-full rounded-md border border-input bg-background px-3 py-2 pr-10 text-sm placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                     errors.password && 'border-red-500',
                   )}
                 />

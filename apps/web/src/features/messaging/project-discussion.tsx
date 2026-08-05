@@ -29,24 +29,36 @@ export function ProjectDiscussion({ projectId }: ProjectDiscussionProps) {
   const pd = (planningData as any)?.data ?? planningData;
   const tasks = pd?.tasks ?? [];
 
-  // Fetch message counts per task (lightweight)
-  const { data: taskMsgCounts = {} } = useQuery({
-    queryKey: ['messages', 'task-counts', projectId],
-    queryFn: async () => {
-      const counts: Record<number, number> = {};
-      // For efficiency, we check first 50 tasks
-      for (const task of tasks.slice(0, 50)) {
-        try {
-          const r = await client.get('/messages', {
-            params: { entityType: 'task', entityId: task.id, perPage: 1 },
-          });
-          const total = (r.data as any)?.meta?.total ?? (r.data as any)?.data?.meta?.total ?? 0;
-          if (total > 0) counts[task.id] = total;
-        } catch { /* skip */ }
-      }
-      return counts;
-    },
-    enabled: tasks.length > 0,
+  // Batch fetch — one call to GET /messages/counts?entityType=task&
+  // entityIds=1,2,3 instead of the previous N sequential GET /messages
+  // calls (capped at 50 for that same reason). The backend endpoint
+  // already existed (see messages.controller.ts::counts +
+  // messages.service.ts::countByEntities); this frontend swap turns
+  // an O(N) request fan-out into O(1) and removes the 50-task ceiling
+  // so tasks past 50 now surface their discussion counts too.
+  //
+  // Query key is stable across renders — a task list re-order won't
+  // refetch, only its length + projectId matter for cache identity.
+  const taskIds = useMemo(() => (tasks as any[]).map((t: any) => t.id).sort((a, b) => a - b), [tasks]);
+  const { data: taskMsgCounts = {} } = useQuery<Record<number, number>>({
+    queryKey: ['messages', 'task-counts', projectId, taskIds.length],
+    queryFn: () =>
+      client
+        .get('/messages/counts', {
+          params: { entityType: 'task', entityIds: taskIds.join(',') },
+        })
+        .then((r) => {
+          const body = r.data?.data ?? r.data ?? {};
+          // Normalise number-string keys (JSON transport) back to numbers
+          // for consumer callsites that key by task.id (a number).
+          const out: Record<number, number> = {};
+          for (const [k, v] of Object.entries(body)) {
+            const id = Number(k);
+            if (Number.isFinite(id)) out[id] = Number(v) || 0;
+          }
+          return out;
+        }),
+    enabled: taskIds.length > 0,
     staleTime: 60 * 1000,
   });
 

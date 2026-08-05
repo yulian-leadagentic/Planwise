@@ -124,7 +124,7 @@ const columns: ColumnDef<TaskRow, unknown>[] = [
     accessorKey: 'budgetHours',
     header: 'Hours',
     cell: ({ row }) => (
-      <span className="text-sm">
+      <span className="font-mono tabular-nums text-sm">
         {row.original.budgetHours != null ? row.original.budgetHours : '-'}
       </span>
     ),
@@ -136,7 +136,7 @@ const columns: ColumnDef<TaskRow, unknown>[] = [
       const amt = row.original.budgetAmount;
       if (amt == null) return <span className="text-sm">-</span>;
       return (
-        <span className="text-sm">
+        <span className="font-mono tabular-nums text-sm">
           {Number(amt).toLocaleString(undefined, {
             minimumFractionDigits: 0,
             maximumFractionDigits: 2,

@@ -74,7 +74,7 @@ export function TemplatesPage() {
           <Link
             key={card.href}
             to={card.href}
-            className="rounded-lg border bg-card p-5 hover:shadow-md transition-shadow"
+            className="rounded-lg border border-border bg-card p-5 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-colors"
           >
             <div className={`inline-flex p-2 rounded-lg ${card.color} mb-3`}>
               <card.icon className="h-5 w-5" />

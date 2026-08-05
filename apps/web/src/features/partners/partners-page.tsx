@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect } from 'react';
-import { Plus, Building2, Search, X, Upload } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Plus, Building2, Search, X, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams, Navigate } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/page-header';
@@ -13,6 +13,16 @@ import client from '@/api/client';
 import { PartnerDrawer } from './partner-drawer';
 import { CreateOrganizationModal } from './create-organization-modal';
 import { ImportCsvModal } from './import-csv-modal';
+
+// Page size for the paginated organizations list. Matches the pattern
+// /contacts uses (see ux/contacts) — server-driven page + meta.total so
+// no rows past the old perPage=200 cap silently disappear.
+const ORGS_PAGE_SIZE = 50;
+
+type OrgsPage = {
+  data: BusinessPartner[];
+  meta: { total: number; page: number; perPage: number; totalPages: number };
+};
 
 interface PartnerRoleSummary {
   id: number;
@@ -107,24 +117,43 @@ export function PartnersPage() {
   // Organizations only. The Contacts tab is gone — that surface lives at
   // /contacts and has richer filters (server-side org filter, pagination,
   // By-Customer view).
-  const { data, isLoading } = useQuery({
-    queryKey: ['business-partners', 'organizations', debouncedSearch],
+  //
+  // Server-side pagination (ux/polish): the previous fetch capped at
+  // perPage=200 and silently dropped rows beyond it. Now driven by
+  // page + meta the same way /contacts is.
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [debouncedSearch]);
+
+  const { data: orgsPage, isLoading } = useQuery<OrgsPage>({
+    queryKey: ['business-partners', 'organizations', page, debouncedSearch],
     queryFn: () =>
       client
         .get('/business-partners', {
           params: {
             partnerType: 'organization',
+            page,
+            perPage: ORGS_PAGE_SIZE,
             search: debouncedSearch || undefined,
-            perPage: 200,
           },
         })
-        .then((r) => r.data?.data ?? r.data),
+        .then((r) => {
+          // Same normalisation shape /contacts uses — handles both the
+          // wrapped { data: { data, meta } } envelope and older flat
+          // list responses.
+          const body = r.data?.data ?? r.data;
+          if (Array.isArray(body)) {
+            return { data: body as BusinessPartner[], meta: { total: body.length, page: 1, perPage: body.length || ORGS_PAGE_SIZE, totalPages: 1 } };
+          }
+          const rows = (body?.data as BusinessPartner[]) ?? [];
+          const meta = body?.meta ?? { total: rows.length, page: 1, perPage: ORGS_PAGE_SIZE, totalPages: 1 };
+          return { data: rows, meta };
+        }),
   });
 
-  const partners: BusinessPartner[] = useMemo(() => {
-    const raw = data?.data ?? data ?? [];
-    return Array.isArray(raw) ? raw : [];
-  }, [data]);
+  const partners: BusinessPartner[] = orgsPage?.data ?? [];
+  const meta = orgsPage?.meta;
+  const totalCount = meta?.total ?? partners.length;
+  const totalPages = meta?.totalPages ?? 1;
 
   // Redirect deep-link happens here — after all hooks — so the hook
   // count stays constant across renders (React rule of hooks).
@@ -173,11 +202,29 @@ export function PartnersPage() {
           <button
             onClick={() => setSearch('')}
             className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+            aria-label="Clear search"
           >
-            <X className="h-3.5 w-3.5" />
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
         )}
       </div>
+
+      {/* Result count line — reads from server meta so it reflects the
+          TRUE match count, not just the current page. Matches the
+          /contacts page's header for consistency. */}
+      {!isLoading && totalCount > 0 && (
+        <p className="text-[12px] text-slate-500 dark:text-slate-400">
+          Showing{' '}
+          <span className="font-mono tabular-nums font-semibold text-slate-700 dark:text-slate-200">
+            {(meta ? (meta.page - 1) * meta.perPage + 1 : 1)}
+            –
+            {(meta ? Math.min(meta.page * meta.perPage, totalCount) : partners.length)}
+          </span>
+          {' '}of{' '}
+          <span className="font-mono tabular-nums font-semibold text-slate-700 dark:text-slate-200">{totalCount}</span>
+          {' '}organizations
+        </p>
+      )}
 
       {/* Body */}
       {isLoading ? (
@@ -189,7 +236,39 @@ export function PartnersPage() {
           description="Add the first organization you work with — customers, suppliers, partner companies."
         />
       ) : (
-        <OrganizationsList partners={partners} onSelect={setSelectedId} />
+        <>
+          <OrganizationsList partners={partners} onSelect={setSelectedId} />
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1 || isLoading}
+                aria-label="Previous page"
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-50"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                Prev
+              </button>
+              <span className="text-[12px] text-slate-500 dark:text-slate-400">
+                Page{' '}
+                <span className="font-mono tabular-nums text-slate-700 dark:text-slate-200">{page}</span>
+                {' '}of{' '}
+                <span className="font-mono tabular-nums text-slate-700 dark:text-slate-200">{totalPages}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages || isLoading}
+                aria-label="Next page"
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-50"
+              >
+                Next
+                <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       {showAdd && (
