@@ -33,9 +33,14 @@ const DEFAULT_TARGET = path.join(ROOT, 'apps', 'web', 'src');
 // Classes that MUST have a paired dark: variant. When one of these
 // appears in a class list without an adjacent dark:* on the same
 // property axis (bg/text/border/divide), it's a warning.
+//
+// Dark scrim overlays (`bg-slate-700+/N` with opacity) are
+// intentionally dark-mode-agnostic — they're modal / drawer backdrops
+// that need to look the same in both themes. Excluded from the check.
 const RULES = [
   { pattern: /^bg-white$/,                                axis: 'bg',     needsDarkPrefix: 'dark:bg-' },
-  { pattern: /^bg-(slate|gray)-\d+(?:\/\d+)?$/,           axis: 'bg',     needsDarkPrefix: 'dark:bg-' },
+  { pattern: /^bg-(slate|gray)-([1-6])00(?:\/\d+)?$/,     axis: 'bg',     needsDarkPrefix: 'dark:bg-' },
+  { pattern: /^bg-(slate|gray)-50(?:\/\d+)?$/,            axis: 'bg',     needsDarkPrefix: 'dark:bg-' },
   { pattern: /^hover:bg-(slate|gray|white)/,              axis: 'hover-bg', needsDarkPrefix: 'dark:hover:bg-' },
   { pattern: /^text-(slate|gray)-\d+$/,                   axis: 'text',   needsDarkPrefix: 'dark:text-' },
   { pattern: /^hover:text-(slate|gray)-\d+$/,             axis: 'hover-text', needsDarkPrefix: 'dark:hover:text-' },
