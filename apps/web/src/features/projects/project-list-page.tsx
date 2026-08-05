@@ -62,7 +62,7 @@ function saveGroupBy(v: string | null) {
 }
 
 const statusColors: Record<string, { bg: string; text: string; label: string }> = {
-  draft: { bg: 'bg-slate-100', text: 'text-slate-600', label: 'Draft' },
+  draft: { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-600 dark:text-slate-300', label: 'Draft' },
   active: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Active' },
   on_hold: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'On Hold' },
   completed: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Completed' },
@@ -304,16 +304,16 @@ export function ProjectListPage() {
       {/* Filters */}
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500" />
           <input value={projectSearch} onChange={(e) => setProjectFilters({ projectSearch: e.target.value })}
-            placeholder="Search projects..." className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+            placeholder="Search projects..." className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
         </div>
         {/* Status dropdown — includes a synthetic "Closed" option that
             flips closedOnly on the API. The user expected to find closed
             projects via the same status control, so we surface it here
             instead of behind a separate checkbox. (T3.6 follow-up.) */}
         <select value={projectStatus[0] ?? ''} onChange={(e) => setProjectFilters({ projectStatus: e.target.value ? [e.target.value] : [] })}
-          className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+          className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm">
           <option value="">All Status</option>
           <option value="draft">Draft</option>
           <option value="active">Active</option>
@@ -327,7 +327,7 @@ export function ProjectListPage() {
         <select
           value={memberFilter ?? ''}
           onChange={(e) => setMemberFilter(e.target.value ? Number(e.target.value) : null)}
-          className="rounded-lg border border-slate-200 px-3 py-2 text-sm max-w-[200px]"
+          className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm max-w-[200px]"
           title="Filter by team member"
         >
           <option value="">All Team Members</option>
@@ -339,7 +339,7 @@ export function ProjectListPage() {
           <button
             type="button"
             onClick={() => setMemberFilter(null)}
-            className="text-[12px] text-slate-500 hover:text-slate-700 underline"
+            className="text-[12px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 underline"
           >
             Clear
           </button>
@@ -350,11 +350,11 @@ export function ProjectListPage() {
             user has enabled. Persisted in localStorage so the chosen
             grouping survives reloads. */}
         <div className="ml-auto flex items-center gap-1.5">
-          <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Group by</label>
+          <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Group by</label>
           <select
             value={groupBy ?? ''}
             onChange={(e) => setGroupBy(e.target.value || null)}
-            className="h-9 rounded-lg border border-slate-200 px-3 text-sm bg-white"
+            className="h-9 rounded-lg border border-slate-200 dark:border-slate-700 px-3 text-sm bg-white dark:bg-slate-900"
             title="Bucket projects by a field — value column header turns into the group label"
           >
             <option value="">No grouping</option>
@@ -378,29 +378,29 @@ export function ProjectListPage() {
           <button
             type="button"
             onClick={() => setColumnsMenuOpen((o) => !o)}
-            className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 px-3 text-sm hover:bg-slate-50"
+            className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 px-3 text-sm hover:bg-slate-50 dark:hover:bg-slate-800/50"
             title="Show / hide role columns"
           >
-            <Columns3 className="h-4 w-4 text-slate-500" />
+            <Columns3 className="h-4 w-4 text-slate-500 dark:text-slate-400" />
             Columns
             {selectedRoleIds.length > 0 && (
               <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">
                 {selectedRoleIds.length}
               </span>
             )}
-            <ChevronDown className="h-3 w-3 text-slate-400" />
+            <ChevronDown className="h-3 w-3 text-slate-400 dark:text-slate-500" />
           </button>
           {columnsMenuOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded-md border border-slate-200 bg-white shadow-lg">
-              <div className="border-b border-slate-100 px-3 py-2">
-                <p className="text-[12px] font-semibold text-slate-700">Role columns</p>
-                <p className="text-[10px] text-slate-500">
+            <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg">
+              <div className="border-b border-slate-100 dark:border-slate-800 px-3 py-2">
+                <p className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">Role columns</p>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">
                   Pick Project Role Types to add as columns on the list.
                 </p>
               </div>
               <div className="max-h-72 overflow-y-auto py-1">
                 {roleTypes.length === 0 ? (
-                  <p className="px-3 py-3 text-[12px] text-slate-400 italic">
+                  <p className="px-3 py-3 text-[12px] text-slate-400 dark:text-slate-500 italic">
                     No Project Role Types defined — add them in Admin → Project Role Types.
                   </p>
                 ) : (
@@ -409,26 +409,26 @@ export function ProjectListPage() {
                     return (
                       <label
                         key={rt.id}
-                        className="flex items-center gap-2 px-3 py-1.5 text-[13px] hover:bg-slate-50 cursor-pointer"
+                        className="flex items-center gap-2 px-3 py-1.5 text-[13px] hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer"
                       >
                         <input
                           type="checkbox"
                           checked={checked}
                           onChange={() => toggleRoleColumn(rt.id)}
-                          className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer"
+                          className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 cursor-pointer"
                         />
-                        <span className="text-slate-700">{rt.name}</span>
+                        <span className="text-slate-700 dark:text-slate-200">{rt.name}</span>
                       </label>
                     );
                   })
                 )}
               </div>
               {selectedRoleIds.length > 0 && (
-                <div className="border-t border-slate-100 px-3 py-2">
+                <div className="border-t border-slate-100 dark:border-slate-800 px-3 py-2">
                   <button
                     type="button"
                     onClick={() => setSelectedRoleIds([])}
-                    className="text-[11px] text-slate-500 hover:text-slate-700 underline"
+                    className="text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 underline"
                   >
                     Clear all
                   </button>
@@ -452,32 +452,32 @@ export function ProjectListPage() {
 
       {/* Project Table */}
       {isLoading ? (
-        <div className="py-12 text-center text-sm text-slate-400">Loading projects...</div>
+        <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading projects...</div>
       ) : projects.length === 0 ? (
         // Empty state — distinguish "no projects in DB" from "filter
         // hides them" so users with a stale status filter persisted in
         // localStorage (U6 in the bug list) can recover. The filter
         // store is zustand+persist, so a prior session's status pick
         // sticks across reloads.
-        <div className="rounded-[14px] border border-slate-200 bg-white py-12 text-center space-y-3">
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center space-y-3">
           {(() => {
             const hasFilter = !!projectSearch || projectStatus.length > 0 || !!memberFilter;
             return hasFilter ? (
               <>
-                <p className="text-sm text-slate-500">No projects match your current filters.</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">No projects match your current filters.</p>
                 <button
                   onClick={() => {
                     setProjectFilters({ projectSearch: '', projectStatus: [] });
                     setMemberFilter(null);
                   }}
-                  className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+                  className="rounded-lg bg-slate-200 dark:bg-slate-700 px-4 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600"
                 >
                   Clear filters
                 </button>
               </>
             ) : (
               <>
-                <p className="text-sm text-slate-500">No projects yet.</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">No projects yet.</p>
                 <button onClick={() => navigate('/projects/new')}
                   className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">Create Project</button>
               </>
@@ -485,11 +485,11 @@ export function ProjectListPage() {
           })()}
         </div>
       ) : (
-        <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
           <div ref={tableScrollRef} className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-500">
+                <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   <th className="px-4 py-3 text-left font-semibold">
                     <ColumnHeaderWithFilter
                       label="Project Code"
@@ -504,7 +504,7 @@ export function ProjectListPage() {
                         value={colFilters.code}
                         onChange={(e) => setColFilters((f) => ({ ...f, code: e.target.value }))}
                         placeholder="Filter code…"
-                        className="w-full px-2 py-1.5 rounded border border-slate-200 text-[12px] focus:border-blue-500 focus:outline-none"
+                        className="w-full px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-[12px] focus:border-blue-500 focus:outline-none"
                       />
                       {colFilters.code && (
                         <button
@@ -531,7 +531,7 @@ export function ProjectListPage() {
                         value={colFilters.name}
                         onChange={(e) => setColFilters((f) => ({ ...f, name: e.target.value }))}
                         placeholder="Filter name…"
-                        className="w-full px-2 py-1.5 rounded border border-slate-200 text-[12px] focus:border-blue-500 focus:outline-none"
+                        className="w-full px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-[12px] focus:border-blue-500 focus:outline-none"
                       />
                       {colFilters.name && (
                         <button
@@ -581,7 +581,7 @@ export function ProjectListPage() {
                               autoFocus
                               value={colFilters.type}
                               onChange={(e) => setColFilters((f) => ({ ...f, type: e.target.value }))}
-                              className="w-full px-2 py-1.5 rounded border border-slate-200 text-[12px] focus:border-blue-500 focus:outline-none"
+                              className="w-full px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-[12px] focus:border-blue-500 focus:outline-none"
                             >
                               <option value="">All categories</option>
                               {opts.map(([id, name]) => (
@@ -630,13 +630,13 @@ export function ProjectListPage() {
                         label sits across the full table width. Count
                         gives instant size feedback at the bucket level. */}
                     {groupBy && (
-                      <tr className="bg-slate-100/80 border-y border-slate-200">
+                      <tr className="bg-slate-100/80 dark:bg-slate-800/80 border-y border-slate-200 dark:border-slate-700">
                         <td
                           colSpan={(showFinance ? 11 : 8) + visibleRoleColumns.length}
-                          className="px-4 py-2 text-[12px] font-bold text-slate-700"
+                          className="px-4 py-2 text-[12px] font-bold text-slate-700 dark:text-slate-200"
                         >
                           {g.label}
-                          <span className="ml-3 font-normal text-slate-500">
+                          <span className="ml-3 font-normal text-slate-500 dark:text-slate-400">
                             · {g.items.length} project{g.items.length === 1 ? '' : 's'}
                           </span>
                         </td>
@@ -654,16 +654,16 @@ export function ProjectListPage() {
                   return (
                     <tr key={p.id}
                       onClick={() => navigate(`/projects/${p.id}`)}
-                      className={cn('border-b border-slate-100 cursor-pointer hover:bg-blue-50/30 transition-colors',
-                        idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/30')}>
-                      <td className="px-4 py-3 font-mono text-slate-500 whitespace-nowrap">{p.number || '-'}</td>
+                      className={cn('border-b border-slate-100 dark:border-slate-800 cursor-pointer hover:bg-blue-50/30 transition-colors',
+                        idx % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-50/30')}>
+                      <td className="px-4 py-3 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">{p.number || '-'}</td>
                       <td className="px-4 py-3 max-w-[280px]">
                         {/* Long project names were overflowing the cell
                             (no min-w-0 on the parent flex/grid context,
                             no truncate on the inner <p>). Cap the cell
                             at 280px and truncate with a hover tooltip
                             so the full name is still discoverable. */}
-                        <p className="font-semibold text-slate-800 truncate" title={p.name}>{p.name}</p>
+                        <p className="font-semibold text-slate-800 dark:text-slate-100 truncate" title={p.name}>{p.name}</p>
                       </td>
                       {/* Team Leader static cell removed — surface it via
                           the Columns customizer (it's seeded as a system
@@ -687,7 +687,7 @@ export function ProjectListPage() {
                         return (
                           <td key={rt.id} className="px-4 py-3">
                             {assignees.length === 0 ? (
-                              <span className="text-slate-300">—</span>
+                              <span className="text-slate-300 dark:text-slate-600">—</span>
                             ) : (
                               <div className="flex flex-col gap-0.5 text-[12px]">
                                 {assignees.map((a: any) => (
@@ -695,7 +695,7 @@ export function ProjectListPage() {
                                     key={a.id}
                                     className={cn(
                                       'truncate',
-                                      a.isPrimary ? 'font-semibold text-slate-800' : 'text-slate-600',
+                                      a.isPrimary ? 'font-semibold text-slate-800 dark:text-slate-100' : 'text-slate-600 dark:text-slate-300',
                                     )}
                                     title={a.titleInProject ? `${a.party.displayName} — ${a.titleInProject}` : a.party.displayName}
                                   >
@@ -711,40 +711,40 @@ export function ProjectListPage() {
                       <td className="px-4 py-3">
                         <span className={cn('rounded-[5px] px-2 py-0.5 text-[10px] font-bold', st.bg, st.text)}>{st.label}</span>
                       </td>
-                      <td className="px-4 py-3 text-slate-600">{category}</td>
+                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{category}</td>
                       {/* Finance-gated cells — mirror the header gates
                           so the row stays column-aligned for either
                           permission state. */}
                       {showFinance && (
-                        <td className="px-4 py-3 text-right font-mono text-slate-700">
+                        <td className="px-4 py-3 text-right font-mono text-slate-700 dark:text-slate-200">
                           {p.budget ? `₪${Number(p.budget).toLocaleString()}` : '-'}
                         </td>
                       )}
                       <td className="px-4 py-3 text-center">
                         <div className="flex items-center justify-center gap-1.5">
-                          <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                          <div className="w-16 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                             <div className="h-full bg-blue-500 rounded-full" style={{ width: '0%' }} />
                           </div>
-                          <span className="text-[11px] text-slate-500">0%</span>
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400">0%</span>
                         </div>
                       </td>
                       {showFinance && (
                         <>
-                          <td className="px-4 py-3 text-right font-mono text-slate-500">-</td>
-                          <td className="px-4 py-3 text-right font-mono text-slate-500">-</td>
+                          <td className="px-4 py-3 text-right font-mono text-slate-500 dark:text-slate-400">-</td>
+                          <td className="px-4 py-3 text-right font-mono text-slate-500 dark:text-slate-400">-</td>
                         </>
                       )}
                       <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-0.5">
                           <button onClick={() => { setChatProjectId(p.id); setChatProjectName(p.name); }}
                             title="Project discussion"
-                            className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+                            className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors">
                             <MessageSquare className="h-3.5 w-3.5" />
                           </button>
                           {leader && (
                             <button onClick={() => { setChatProjectId(p.id); setChatProjectName(`Message to ${leader.firstName}`); }}
                               title={`Quick message to ${leader.firstName} ${leader.lastName}`}
-                              className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors">
+                              className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 transition-colors">
                               <Send className="h-3.5 w-3.5" />
                             </button>
                           )}
@@ -752,7 +752,7 @@ export function ProjectListPage() {
                       </td>
                       <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                         <button onClick={() => { if (confirm(`Delete "${p.name}"?`)) deleteProject.mutate(p.id); }}
-                          className="w-7 h-7 rounded-md flex items-center justify-center text-slate-300 hover:text-red-600 hover:bg-red-50 transition-colors">
+                          className="w-7 h-7 rounded-md flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-red-600 hover:bg-red-50 transition-colors">
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
                       </td>
@@ -822,7 +822,7 @@ function ColumnHeaderWithFilter({
         onClick={onToggle}
         className={cn(
           'flex items-center justify-center w-[16px] h-[16px] rounded transition-colors',
-          hasFilter ? 'text-blue-600' : 'text-slate-400 hover:text-slate-700',
+          hasFilter ? 'text-blue-600' : 'text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100',
         )}
         aria-label={`Filter ${label}`}
         title={hasFilter ? `${label} is filtered` : `Filter ${label}`}
@@ -830,7 +830,7 @@ function ColumnHeaderWithFilter({
         <ChevronDown className="h-3 w-3" />
       </button>
       {isOpen && (
-        <div className="absolute left-0 top-full z-40 mt-1 w-[240px] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-3">
+        <div className="absolute left-0 top-full z-40 mt-1 w-[240px] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white dark:bg-slate-900 p-3">
           {children}
         </div>
       )}

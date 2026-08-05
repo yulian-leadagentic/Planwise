@@ -63,11 +63,11 @@ const FIELD_LABELS: Record<string, string> = {
 type ProjectFormData = z.infer<typeof projectSchema>;
 
 const inputClass =
-  'w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
+  'w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 const inputErrorClass =
-  'w-full px-3 py-2.5 rounded-lg border border-red-400 text-sm text-slate-700 focus:border-red-500 focus:outline-none';
-const labelClass = 'text-[13px] font-semibold text-slate-700 mb-1.5 block';
-const sectionHeadingClass = 'text-[15px] font-bold text-slate-900';
+  'w-full px-3 py-2.5 rounded-lg border border-red-400 text-sm text-slate-700 dark:text-slate-200 focus:border-red-500 focus:outline-none';
+const labelClass = 'text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block';
+const sectionHeadingClass = 'text-[15px] font-bold text-slate-900 dark:text-slate-100';
 
 export function ProjectFormPage() {
   const { id } = useParams<{ id: string }>();
@@ -345,19 +345,19 @@ export function ProjectFormPage() {
   const isPending = createProject.isPending || updateProject.isPending;
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-800/50">
       <div className="max-w-[640px] mx-auto py-8 px-4">
         {/* Back button */}
         <button
           onClick={() => navigate(-1)}
-          className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-500 hover:text-slate-700 mb-5"
+          className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 mb-5"
         >
           <ArrowLeft className="h-4 w-4" />
           Back
         </button>
 
         {/* Page title */}
-        <h1 className="text-xl font-bold tracking-tight text-slate-900 mb-6">
+        <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 mb-6">
           {isEdit ? 'Edit Project' : 'New Project'}
         </h1>
 
@@ -425,7 +425,7 @@ export function ProjectFormPage() {
             </div>
           )}
 
-          <div className="bg-white rounded-[14px] border border-slate-200">
+          <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700">
             {/* Section 1: Project Details */}
             <div className="p-6">
               <h2 className={sectionHeadingClass}>PROJECT DETAILS</h2>
@@ -459,10 +459,10 @@ export function ProjectFormPage() {
                         type="text"
                         readOnly
                         value={isEdit ? (watch('number') || '—') : (numberConfig?.preview ?? 'Auto-generated')}
-                        className={`${inputClass} bg-slate-50 cursor-not-allowed text-slate-500`}
+                        className={`${inputClass} bg-slate-50 dark:bg-slate-800/50 cursor-not-allowed text-slate-500 dark:text-slate-400`}
                         title="Assigned automatically by the system"
                       />
-                      <p className="mt-1 text-[11px] text-slate-400">
+                      <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
                         {isEdit
                           ? 'System-managed — the project number can’t be changed.'
                           : (
@@ -481,7 +481,7 @@ export function ProjectFormPage() {
                         className={inputClass}
                       />
                       {numberMode && (
-                        <p className="mt-1 text-[11px] text-slate-400">
+                        <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
                           Required — must match the configured project number range
                           {numberConfig?.externalPattern ? ' pattern.' : '.'}
                         </p>
@@ -502,7 +502,7 @@ export function ProjectFormPage() {
                       const selectedType = (projectTypes ?? []).find((t: any) => String(t.id) === String(selectedId));
                       const color = selectedType?.color;
                       return color ? (
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border border-slate-200 z-10"
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border border-slate-200 dark:border-slate-700 z-10"
                           style={{ backgroundColor: color.startsWith('#') ? color : `#${color}` }} />
                       ) : null;
                     })()}
@@ -537,7 +537,7 @@ export function ProjectFormPage() {
                   <select
                     {...register('customerOrgId')}
                     disabled={!canChangeCustomer || (!isEdit && customers.length === 0)}
-                    className={`${errors.customerOrgId ? inputErrorClass : inputClass} ${!canChangeCustomer ? 'bg-slate-50 cursor-not-allowed' : ''}`}
+                    className={`${errors.customerOrgId ? inputErrorClass : inputClass} ${!canChangeCustomer ? 'bg-slate-50 dark:bg-slate-800/50 cursor-not-allowed' : ''}`}
                   >
                     <option value="">
                       {customers.length === 0 && !isEdit
@@ -554,7 +554,7 @@ export function ProjectFormPage() {
                   {errors.customerOrgId && (
                     <p className="mt-1 text-[12px] text-red-500">{errors.customerOrgId.message}</p>
                   )}
-                  <p className="mt-1 text-[11px] text-slate-400">
+                  <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
                     {!isEdit ? (
                       customers.length === 0 ? (
                         // Empty-state explainer — the dropdown was silently empty
@@ -600,7 +600,7 @@ export function ProjectFormPage() {
             </div>
 
             {/* Divider */}
-            <div className="border-t border-slate-200" />
+            <div className="border-t border-slate-200 dark:border-slate-700" />
 
             {/* Section 2: Budget & Schedule */}
             <div className="p-6">
@@ -615,7 +615,7 @@ export function ProjectFormPage() {
                   <div>
                     <label className={labelClass}>Budget</label>
                     <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500 dark:text-slate-400">
                         &#8362;
                       </span>
                       <input
@@ -623,7 +623,7 @@ export function ProjectFormPage() {
                         type="number"
                         step="0.01"
                         placeholder="0.00"
-                        className="w-full pl-7 pr-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                        className="w-full pl-7 pr-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                       />
                     </div>
                   </div>
@@ -639,7 +639,7 @@ export function ProjectFormPage() {
                 <div>
                   <label className={labelClass}>End Date</label>
                   <input {...register('endDate')} type="date" className={inputClass} />
-                  <p className="mt-1 text-[11px] text-slate-400">
+                  <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
                     Defaults to <code>9999-12-31</code> (open-ended) — set a real date when the project has a known finish.
                   </p>
                 </div>
@@ -660,7 +660,7 @@ export function ProjectFormPage() {
             </div>
 
             {/* Divider */}
-            <div className="border-t border-slate-200" />
+            <div className="border-t border-slate-200 dark:border-slate-700" />
 
             {/* Section 3: Team */}
             <div className="p-6">
@@ -693,14 +693,14 @@ export function ProjectFormPage() {
                 {/* Other team members are managed from the Team tab on
                     the project detail page — keeping the create flow
                     focused on the required people. */}
-                <p className="text-[11px] text-slate-400 italic">
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 italic">
                   Additional team members are managed from the project's <strong>Team</strong> tab after the project is created.
                 </p>
               </div>
             </div>
 
             {/* Divider */}
-            <div className="border-t border-slate-200" />
+            <div className="border-t border-slate-200 dark:border-slate-700" />
 
             {/* Section 4: Description */}
             <div className="p-6">
@@ -711,7 +711,7 @@ export function ProjectFormPage() {
                   {...register('description')}
                   rows={3}
                   placeholder="Add a project description..."
-                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none resize-none"
+                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none resize-none"
                 />
               </div>
 
@@ -732,14 +732,14 @@ export function ProjectFormPage() {
             </div>
 
             {/* Divider */}
-            <div className="border-t border-slate-200" />
+            <div className="border-t border-slate-200 dark:border-slate-700" />
 
             {/* Footer buttons */}
             <div className="p-6 flex justify-end gap-3">
               <button
                 type="button"
                 onClick={() => navigate(-1)}
-                className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
               >
                 Cancel
               </button>
@@ -794,7 +794,7 @@ function QuickLinkBlock({
   return (
     <div className="mt-5">
       <label className={labelClass}>Quick link (optional)</label>
-      <p className="text-[12px] text-slate-500 mb-2">
+      <p className="text-[12px] text-slate-500 dark:text-slate-400 mb-2">
         Paste a Google Drive folder, network share, or external URL so the team has it on day one.
         More links can be added later from the Files tab.
       </p>
@@ -806,7 +806,7 @@ function QuickLinkBlock({
         className={`${inputClass} font-mono text-[12px]`}
       />
       <div className="mt-1.5 flex items-center justify-between text-[11px]">
-        <span className="text-slate-500">
+        <span className="text-slate-500 dark:text-slate-400">
           {isCloud
             ? <>Detected as <span className="font-semibold">{provider}</span> — that'll be the saved name unless you set one below.</>
             : url.trim()
@@ -835,7 +835,7 @@ function QuickLinkBlock({
           <button
             type="button"
             onClick={() => { onChangeName(''); setShowName(false); }}
-            className="text-[11px] text-slate-500 hover:text-slate-700"
+            className="text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100"
             title="Hide custom name; default to the provider"
           >
             Clear
@@ -912,7 +912,7 @@ function RequiredRolePicker({
           . Ask an admin to add one under Admin → Employees first.
         </p>
       ) : (
-        <p className="mt-1 text-[11px] text-slate-400">
+        <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
           {role.description || `Required for project creation (admin configured ${role.name} as required).`}
         </p>
       )}

@@ -54,7 +54,7 @@ interface ProjectFile {
   uploader?: { id: number; firstName: string; lastName: string; avatarUrl: string | null };
 }
 
-const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
+const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
 function formatBytes(bytes: number | null): string {
   if (bytes == null) return '';
@@ -178,8 +178,8 @@ export function FilesTab({ projectId }: { projectId: number }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-base font-bold text-slate-900">Project Files</h3>
-          <p className="text-[12px] text-slate-500 mt-0.5">
+          <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Project Files</h3>
+          <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">
             Upload documents or link to files on a network share or shared drive
           </p>
         </div>
@@ -190,7 +190,7 @@ export function FilesTab({ projectId }: { projectId: number }) {
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={upload.isPending}
-              className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg flex items-center gap-1.5 disabled:opacity-50"
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg flex items-center gap-1.5 disabled:opacity-50"
             >
               <Upload className="h-3.5 w-3.5" />
               {upload.isPending ? 'Uploading...' : 'Upload File'}
@@ -208,12 +208,12 @@ export function FilesTab({ projectId }: { projectId: number }) {
       </div>
 
       {isLoading ? (
-        <div className="py-12 text-center text-sm text-slate-400">Loading files...</div>
+        <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading files...</div>
       ) : files.length === 0 ? (
-        <div className="rounded-[14px] border border-dashed border-slate-200 bg-slate-50/40 p-10 text-center">
-          <FileText className="mx-auto h-10 w-10 text-slate-300" />
-          <p className="mt-3 text-sm font-medium text-slate-600">No files yet</p>
-          <p className="text-[12px] text-slate-400 mt-1">
+        <div className="rounded-[14px] border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50/40 dark:bg-slate-800/40 p-10 text-center">
+          <FileText className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600" />
+          <p className="mt-3 text-sm font-medium text-slate-600 dark:text-slate-300">No files yet</p>
+          <p className="text-[12px] text-slate-400 dark:text-slate-500 mt-1">
             {canWrite ? 'Upload a file or paste a link to a shared location' : 'Files will appear here once added'}
           </p>
         </div>
@@ -364,38 +364,38 @@ function SectionPanel({
 
   return (
     <section className={cn(
-      'rounded-[14px] border bg-white overflow-hidden',
-      accent === 'indigo' ? 'border-indigo-100' : 'border-slate-200',
+      'rounded-[14px] border bg-white dark:bg-slate-900 overflow-hidden',
+      accent === 'indigo' ? 'border-indigo-100' : 'border-slate-200 dark:border-slate-700',
     )}>
       <header className={cn(
         'flex items-baseline justify-between gap-3 px-5 py-3 border-b',
-        accent === 'indigo' ? 'bg-indigo-50/50 border-indigo-100' : 'bg-slate-50 border-slate-200',
+        accent === 'indigo' ? 'bg-indigo-50/50 border-indigo-100' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700',
       )}>
         <div>
           <h4 className={cn(
             'text-[13px] font-bold uppercase tracking-wider',
-            accent === 'indigo' ? 'text-indigo-700' : 'text-slate-700',
+            accent === 'indigo' ? 'text-indigo-700' : 'text-slate-700 dark:text-slate-200',
           )}>
             {title}
             <span className={cn(
               'ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold',
-              accent === 'indigo' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-700',
+              accent === 'indigo' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200',
             )}>
               {count}
             </span>
           </h4>
-          <p className="text-[11px] text-slate-500 mt-0.5">{subtitle}</p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">{subtitle}</p>
         </div>
       </header>
       {files.length === 0 ? (
-        <div className="p-6 text-center text-[12px] text-slate-400 italic">
+        <div className="p-6 text-center text-[12px] text-slate-400 dark:text-slate-500 italic">
           {emptyHint}
         </div>
       ) : (
         <div ref={scrollRef} className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-slate-50/60 text-[11px] uppercase tracking-wider text-slate-500">
+              <tr className="bg-slate-50/60 dark:bg-slate-800/60 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 <th className="px-2 py-2 text-center font-semibold w-10"></th>
                 <th className="px-4 py-2 text-left font-semibold">Name</th>
                 <th className="px-4 py-2 text-left font-semibold w-32">Type</th>
@@ -500,7 +500,7 @@ function FileRow({
   const openable = f.kind === 'link' && isHttpUrl(f.url);
   return (
     <tr className={cn(
-      'border-t border-slate-100 hover:bg-slate-50/40',
+      'border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50/40 dark:hover:bg-slate-800/40',
       isFavorite && 'bg-yellow-50/30',
     )}>
       <td className="px-2 py-3 text-center">
@@ -508,7 +508,7 @@ function FileRow({
           onClick={() => toggleFavorite(f.id)}
           className={cn(
             'p-1 rounded transition-colors',
-            isFavorite ? 'text-yellow-500 hover:text-yellow-600' : 'text-slate-300 hover:text-yellow-500',
+            isFavorite ? 'text-yellow-500 hover:text-yellow-600' : 'text-slate-300 dark:text-slate-600 hover:text-yellow-500',
           )}
           title={isFavorite ? 'Unpin from top' : 'Pin to top'}
           aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
@@ -535,7 +535,7 @@ function FileRow({
                 target="_blank"
                 rel="noopener noreferrer"
                 title={f.url}
-                className="font-medium text-slate-800 hover:text-blue-600 hover:underline truncate block"
+                className="font-medium text-slate-800 dark:text-slate-100 hover:text-blue-600 hover:underline truncate block"
               >
                 {f.name}
               </a>
@@ -544,21 +544,21 @@ function FileRow({
                 type="button"
                 onClick={() => handleDownload(f)}
                 title={`Download ${f.name}`}
-                className="font-medium text-slate-800 hover:text-blue-600 hover:underline truncate block text-left"
+                className="font-medium text-slate-800 dark:text-slate-100 hover:text-blue-600 hover:underline truncate block text-left"
               >
                 {f.name}
               </button>
             ) : (
-              <p className="font-medium text-slate-800 truncate" title={f.url}>{f.name}</p>
+              <p className="font-medium text-slate-800 dark:text-slate-100 truncate" title={f.url}>{f.name}</p>
             )}
             {f.kind === 'upload' && (
-              <p className="text-[11px] text-slate-500 mt-0.5">
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
                 {formatBytes(f.fileSize)}
                 {f.mimeType ? ` · ${f.mimeType}` : ''}
               </p>
             )}
             {f.description && (
-              <p className="text-[12px] text-slate-600 mt-1">{f.description}</p>
+              <p className="text-[12px] text-slate-600 dark:text-slate-300 mt-1">{f.description}</p>
             )}
           </div>
         </div>
@@ -577,11 +577,11 @@ function FileRow({
         {f.uploader && (
           <div className="flex items-center gap-2">
             <UserAvatar firstName={f.uploader.firstName} lastName={f.uploader.lastName} avatarUrl={f.uploader.avatarUrl} size="sm" />
-            <span className="text-[12px] text-slate-700">{f.uploader.firstName} {f.uploader.lastName}</span>
+            <span className="text-[12px] text-slate-700 dark:text-slate-200">{f.uploader.firstName} {f.uploader.lastName}</span>
           </div>
         )}
       </td>
-      <td className="px-4 py-3 text-[12px] text-slate-600">
+      <td className="px-4 py-3 text-[12px] text-slate-600 dark:text-slate-300">
         {formatUploadDate(f.createdAt)}
       </td>
       <td className="px-4 py-3">
@@ -589,7 +589,7 @@ function FileRow({
           {f.kind === 'upload' ? (
             <button
               onClick={() => handleDownload(f)}
-              className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
+              className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
               title="Download"
             >
               <Download className="h-3.5 w-3.5" />
@@ -601,7 +601,7 @@ function FileRow({
                   href={f.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
+                  className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
                   title="Open link"
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
@@ -609,7 +609,7 @@ function FileRow({
               )}
               <button
                 onClick={() => handleCopy(f.id, f.url)}
-                className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
+                className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
                 title="Copy path"
               >
                 {copiedId === f.id ? (
@@ -623,7 +623,7 @@ function FileRow({
           {canDelete && (
             <button
               onClick={() => onRemove(f)}
-              className="p-1.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-600"
+              className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
               title="Remove"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -673,15 +673,15 @@ function AddLinkModal({ projectId, onClose }: { projectId: number; onClose: () =
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[480px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <h2 className="text-base font-bold text-slate-900">Add File Link</h2>
-          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[480px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Add File Link</h2>
+          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
             <X className="h-4 w-4" />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <p className="text-[12px] text-slate-500">
+          <p className="text-[12px] text-slate-500 dark:text-slate-400">
             Reference a file on a shared drive, network location, or cloud service. Examples:
             <span className="font-mono"> \\server\share\file.docx</span>,
             <span className="font-mono"> https://drive.google.com/file/d/...</span>,
@@ -689,7 +689,7 @@ function AddLinkModal({ projectId, onClose }: { projectId: number; onClose: () =
             <span className="font-mono"> file:///C:/Path/file.pdf</span>
           </p>
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Display Name *</label>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Display Name *</label>
             <input
               autoFocus
               value={name}
@@ -699,7 +699,7 @@ function AddLinkModal({ projectId, onClose }: { projectId: number; onClose: () =
             />
           </div>
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Path / URL *</label>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Path / URL *</label>
             <div className="flex items-stretch gap-2">
               <input
                 value={url}
@@ -712,7 +712,7 @@ function AddLinkModal({ projectId, onClose }: { projectId: number; onClose: () =
                   shortcut: it auto-fills the file name as a starting point,
                   with a hint to prepend the share / folder prefix. */}
               <label
-                className="rounded-lg border border-slate-200 bg-white hover:border-slate-400 text-slate-700 text-[12px] font-semibold px-3 py-2 cursor-pointer flex items-center gap-1.5 shrink-0"
+                className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-2 cursor-pointer flex items-center gap-1.5 shrink-0"
                 title="Browser security limits us to the file's name — append your share/folder prefix manually."
               >
                 <HardDrive className="h-3.5 w-3.5" />
@@ -739,7 +739,7 @@ function AddLinkModal({ projectId, onClose }: { projectId: number; onClose: () =
                 />
               </label>
             </div>
-            <p className="mt-1 text-[11px] text-slate-400">
+            <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
               Browsers can't read the full file path for security — paste the network share or URL,
               or use <strong>Browse…</strong> to grab the file name and prepend the prefix manually
               (e.g. <span className="font-mono">\\server\share\</span>).
@@ -748,14 +748,14 @@ function AddLinkModal({ projectId, onClose }: { projectId: number; onClose: () =
               const provider = detectLinkProvider(url.trim());
               if (provider === 'generic') return null;
               return (
-                <p className="mt-1 text-[11px] text-slate-500 flex items-center gap-1">
+                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1">
                   <HardDrive className="h-3 w-3" /> Detected as <span className="font-semibold">{PROVIDER_LABEL[provider]}</span>
                 </p>
               );
             })()}
           </div>
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Notes (optional)</label>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Notes (optional)</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -763,8 +763,8 @@ function AddLinkModal({ projectId, onClose }: { projectId: number; onClose: () =
               className={cn(inputClass, 'resize-none')}
             />
           </div>
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-            <button type="button" onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <button type="button" onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
             <button type="submit" disabled={create.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
               {create.isPending ? 'Adding...' : 'Add Link'}
             </button>

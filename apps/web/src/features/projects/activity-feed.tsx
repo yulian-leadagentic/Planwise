@@ -38,7 +38,7 @@ const ICON_CONFIG: Record<string, { icon: any; color: string }> = {
   'project:member_add':     { icon: UserPlus,    color: 'text-green-600 bg-green-100' },
   'project:member_remove':  { icon: UserPlus,    color: 'text-amber-600 bg-amber-100' },
   'project:role_assign':    { icon: Briefcase,   color: 'text-indigo-600 bg-indigo-100' },
-  'project:role_end':       { icon: Briefcase,   color: 'text-slate-500 bg-slate-100' },
+  'project:role_end':       { icon: Briefcase,   color: 'text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800' },
   'project:file_add':       { icon: Paperclip,   color: 'text-cyan-600 bg-cyan-100' },
   'project:file_remove':    { icon: Paperclip,   color: 'text-rose-500 bg-rose-100' },
   'task:create':            { icon: FileText,    color: 'text-blue-600 bg-blue-100' },
@@ -51,9 +51,9 @@ const ICON_CONFIG: Record<string, { icon: any; color: string }> = {
   'task:attachment_remove': { icon: Paperclip,   color: 'text-rose-500 bg-rose-100' },
   'time:create':            { icon: Clock,       color: 'text-violet-600 bg-violet-100' },
   'time:delete':            { icon: Clock,       color: 'text-rose-500 bg-rose-100' },
-  'message':                { icon: MessageSquare, color: 'text-slate-600 bg-slate-100' },
+  'message':                { icon: MessageSquare, color: 'text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800' },
   'mention':                { icon: MessageSquare, color: 'text-blue-600 bg-blue-100' },
-  'system':                 { icon: AlertCircle,   color: 'text-slate-500 bg-slate-100' },
+  'system':                 { icon: AlertCircle,   color: 'text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800' },
 };
 
 function configFor(key: string) {
@@ -125,29 +125,29 @@ export function ActivityFeed({ projectId }: { projectId: number }) {
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <Activity className="h-4 w-4 text-blue-600" />
-        <h3 className="text-sm font-semibold text-slate-700">Activity Feed</h3>
+        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Activity Feed</h3>
         {items.length > 0 && (
-          <span className="text-[11px] text-slate-400">· {items.length} {items.length === 1 ? 'entry' : 'entries'}</span>
+          <span className="text-[11px] text-slate-400 dark:text-slate-500">· {items.length} {items.length === 1 ? 'entry' : 'entries'}</span>
         )}
       </div>
 
       {isLoading ? (
-        <div className="py-6 text-center text-sm text-slate-400">Loading activity...</div>
+        <div className="py-6 text-center text-sm text-slate-400 dark:text-slate-500">Loading activity...</div>
       ) : isError ? (
         <div className="py-8 text-center">
-          <AlertCircle className="mx-auto h-10 w-10 text-slate-300" />
-          <p className="mt-2 text-sm text-slate-400">Couldn't load activity.</p>
+          <AlertCircle className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600" />
+          <p className="mt-2 text-sm text-slate-400 dark:text-slate-500">Couldn't load activity.</p>
           <button onClick={() => refetch()} className="mt-1 text-[12px] font-medium text-blue-600 hover:underline">Retry</button>
         </div>
       ) : items.length === 0 ? (
         <div className="py-8 text-center">
-          <Activity className="mx-auto h-10 w-10 text-slate-300" />
-          <p className="mt-2 text-sm text-slate-400">No activity yet</p>
-          <p className="mt-1 text-[11px] text-slate-400">Changes to this project will appear here automatically.</p>
+          <Activity className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600" />
+          <p className="mt-2 text-sm text-slate-400 dark:text-slate-500">No activity yet</p>
+          <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">Changes to this project will appear here automatically.</p>
         </div>
       ) : (
         <div className="relative">
-          <div className="absolute left-4 top-0 bottom-0 w-px bg-slate-200" />
+          <div className="absolute left-4 top-0 bottom-0 w-px bg-slate-200 dark:bg-slate-700" />
 
           <div className="space-y-0">
             {items.map((item) => {
@@ -159,11 +159,11 @@ export function ActivityFeed({ projectId }: { projectId: number }) {
                     <Icon className="h-3.5 w-3.5" />
                   </div>
                   <div className="flex-1 min-w-0 pt-0.5">
-                    <p className="text-[13px] text-slate-700">{item.title}</p>
+                    <p className="text-[13px] text-slate-700 dark:text-slate-200">{item.title}</p>
                     {item.body && (
-                      <p className="mt-0.5 text-[12px] text-slate-500 line-clamp-2">{item.body}</p>
+                      <p className="mt-0.5 text-[12px] text-slate-500 dark:text-slate-400 line-clamp-2">{item.body}</p>
                     )}
-                    <p className="mt-0.5 text-[11px] text-slate-400">
+                    <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">
                       {formatRelative(item.createdAt)}
                       {item.actorName && ` · ${item.actorName}`}
                     </p>

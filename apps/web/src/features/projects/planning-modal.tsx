@@ -58,27 +58,27 @@ function FeasibilityBadge({ projectId }: { projectId: number }) {
     OK: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'On Track', icon: '✓' },
     AT_RISK: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'At Risk', icon: '⚠' },
     IMPOSSIBLE: { bg: 'bg-red-100', text: 'text-red-700', label: 'Impossible', icon: '✗' },
-    UNKNOWN: { bg: 'bg-slate-100', text: 'text-slate-500', label: 'Checking...', icon: '…' },
+    UNKNOWN: { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-500 dark:text-slate-400', label: 'Checking...', icon: '…' },
   };
   const cfg = statusConfig[status] || statusConfig.UNKNOWN;
 
-  if (isLoading) return <span className="text-[11px] text-slate-400">Analyzing...</span>;
+  if (isLoading) return <span className="text-[11px] text-slate-400 dark:text-slate-500">Analyzing...</span>;
 
   return (
     <div className="flex items-center gap-3">
       {/* Progress bar */}
       <div className="flex items-center gap-2">
-        <span className="text-[11px] font-medium text-slate-500">Progress</span>
-        <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden">
+        <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Progress</span>
+        <div className="w-24 h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
           <div
             className={cn(
               'h-full rounded-full transition-all',
-              progress >= 80 ? 'bg-emerald-500' : progress >= 50 ? 'bg-blue-500' : progress >= 25 ? 'bg-amber-500' : 'bg-slate-400',
+              progress >= 80 ? 'bg-emerald-500' : progress >= 50 ? 'bg-blue-500' : progress >= 25 ? 'bg-amber-500' : 'bg-slate-400 dark:bg-slate-500',
             )}
             style={{ width: `${Math.min(100, progress)}%` }}
           />
         </div>
-        <span className="text-[11px] font-semibold text-slate-700">{progress}%</span>
+        <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">{progress}%</span>
       </div>
 
       {/* Feasibility badge */}
@@ -121,7 +121,7 @@ function StatusBadgeDropdown({
   }, [open]);
 
   const allStatuses = [
-    { value: 'not_started', label: 'To Do', bg: 'bg-slate-100', text: 'text-slate-600', dot: 'bg-slate-400' },
+    { value: 'not_started', label: 'To Do', bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-600 dark:text-slate-300', dot: 'bg-slate-400 dark:bg-slate-500' },
     { value: 'in_progress', label: 'In Progress', bg: 'bg-blue-100', text: 'text-blue-700', dot: 'bg-blue-500' },
     { value: 'in_review', label: 'In Review', bg: 'bg-violet-100', text: 'text-violet-700', dot: 'bg-violet-500' },
     { value: 'completed', label: 'Done', bg: 'bg-emerald-100', text: 'text-emerald-700', dot: 'bg-emerald-500' },
@@ -175,12 +175,12 @@ function StatusBadgeDropdown({
         <ChevronDown className="h-2.5 w-2.5 opacity-60" />
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-30 w-40 rounded-lg border border-slate-200 bg-white shadow-xl py-1">
+        <div className="absolute right-0 top-full mt-1 z-30 w-40 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1">
           {allStatuses.map((s) => (
             <button key={s.value} onClick={() => handleChange(s.value)}
-              className={cn('w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-slate-50', s.value === currentStatus && 'bg-blue-50')}>
+              className={cn('w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-slate-50 dark:hover:bg-slate-800/50', s.value === currentStatus && 'bg-blue-50')}>
               <span className={cn('w-2 h-2 rounded-full', s.dot)} />
-              <span className="text-slate-700">{s.label}</span>
+              <span className="text-slate-700 dark:text-slate-200">{s.label}</span>
             </button>
           ))}
         </div>
@@ -206,7 +206,7 @@ function StatusMenu({ taskId, currentStatus, projectId }: { taskId: number; curr
   }, [open]);
 
   const statuses = [
-    { value: 'not_started', label: 'To Do', dot: 'bg-slate-400' },
+    { value: 'not_started', label: 'To Do', dot: 'bg-slate-400 dark:bg-slate-500' },
     { value: 'in_progress', label: 'In Progress', dot: 'bg-blue-500' },
     { value: 'in_review', label: 'In Review', dot: 'bg-violet-500' },
     { value: 'completed', label: 'Done', dot: 'bg-emerald-500' },
@@ -231,24 +231,24 @@ function StatusMenu({ taskId, currentStatus, projectId }: { taskId: number; curr
       <button
         onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
         title="Change status"
-        className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors shrink-0"
+        className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
       >
         <ChevronDown className="w-3.5 h-3.5" />
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-30 w-44 rounded-lg border border-slate-200 bg-white shadow-xl py-1">
-          <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase">Set Status</div>
+        <div className="absolute right-0 top-full mt-1 z-30 w-44 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1">
+          <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase">Set Status</div>
           {statuses.map((s) => (
             <button
               key={s.value}
               onClick={() => handleChange(s.value)}
               className={cn(
-                'w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-slate-50',
+                'w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-slate-50 dark:hover:bg-slate-800/50',
                 s.value === currentStatus && 'bg-blue-50 font-medium',
               )}
             >
               <span className={cn('w-2 h-2 rounded-full', s.dot)} />
-              <span className="text-slate-700">{s.label}</span>
+              <span className="text-slate-700 dark:text-slate-200">{s.label}</span>
               {s.value === currentStatus && <span className="ml-auto text-[10px] text-blue-500">current</span>}
             </button>
           ))}
@@ -307,22 +307,22 @@ function MoveToMenu({ taskId, currentZoneId, zones, projectId, onMoved }: {
       <button
         onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
         title="Move to zone..."
-        className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors shrink-0"
+        className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
       >
         <Layers className="w-3.5 h-3.5" />
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-30 w-56 rounded-lg border border-slate-200 bg-white shadow-xl py-1">
-          <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase">Move to zone</div>
+        <div className="absolute right-0 top-full mt-1 z-30 w-56 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1">
+          <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase">Move to zone</div>
           {flatZones.map((z) => (
             <button
               key={z.id}
               onClick={() => handleMove(z.id)}
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-slate-50"
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-slate-50 dark:hover:bg-slate-800/50"
               style={{ paddingLeft: `${12 + z.depth * 16}px` }}
             >
-              <span className="text-slate-700">{z.name}</span>
-              <span className="text-[10px] text-slate-400">{z.zoneType}</span>
+              <span className="text-slate-700 dark:text-slate-200">{z.name}</span>
+              <span className="text-[10px] text-slate-400 dark:text-slate-500">{z.zoneType}</span>
             </button>
           ))}
         </div>
@@ -406,16 +406,16 @@ function TaskAttachmentButton({ taskId, projectId }: { taskId: number; projectId
         title="Attachments"
         className={cn(
           'w-7 h-7 rounded-md flex items-center justify-center shrink-0 transition-colors',
-          'text-slate-400 hover:text-amber-600 hover:bg-amber-50',
+          'text-slate-400 dark:text-slate-500 hover:text-amber-600 hover:bg-amber-50',
         )}
       >
         <Paperclip className="w-3.5 h-3.5" />
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-30 w-72 rounded-[14px] border border-slate-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-          <div className="border-b border-slate-100 px-4 py-3 flex items-center justify-between">
-            <h4 className="text-[13px] font-semibold text-slate-800">Attachments</h4>
+        <div className="absolute right-0 top-full mt-1 z-30 w-72 rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="border-b border-slate-100 dark:border-slate-800 px-4 py-3 flex items-center justify-between">
+            <h4 className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Attachments</h4>
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={uploading}
@@ -427,8 +427,8 @@ function TaskAttachmentButton({ taskId, projectId }: { taskId: number; projectId
           <div className="max-h-48 overflow-y-auto">
             {attachments.length === 0 ? (
               <div className="py-6 text-center">
-                <Paperclip className="mx-auto h-6 w-6 text-slate-300" />
-                <p className="mt-1 text-[11px] text-slate-400">No attachments</p>
+                <Paperclip className="mx-auto h-6 w-6 text-slate-300 dark:text-slate-600" />
+                <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">No attachments</p>
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   className="mt-2 text-[11px] font-semibold text-blue-600 hover:text-blue-700"
@@ -437,21 +437,21 @@ function TaskAttachmentButton({ taskId, projectId }: { taskId: number; projectId
                 </button>
               </div>
             ) : (
-              <div className="divide-y divide-slate-50 py-1">
+              <div className="divide-y divide-slate-50 dark:divide-slate-800 py-1">
                 {attachments.map((att: any) => (
-                  <div key={att.id} className="flex items-center gap-2 px-4 py-2 hover:bg-slate-50">
-                    <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                  <div key={att.id} className="flex items-center gap-2 px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                    <FileText className="w-4 h-4 text-slate-400 dark:text-slate-500 shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-[12px] font-medium text-slate-700 truncate">{att.fileName}</p>
-                      <p className="text-[10px] text-slate-400">
+                      <p className="text-[12px] font-medium text-slate-700 dark:text-slate-200 truncate">{att.fileName}</p>
+                      <p className="text-[10px] text-slate-400 dark:text-slate-500">
                         {att.fileSize ? `${Math.round(att.fileSize / 1024)}KB` : ''}
                         {att.uploader ? ` · ${att.uploader.firstName}` : ''}
                       </p>
                     </div>
-                    <a href={att.fileUrl} target="_blank" rel="noopener noreferrer" className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-blue-50">
+                    <a href={att.fileUrl} target="_blank" rel="noopener noreferrer" className="w-6 h-6 rounded flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50">
                       <Download className="w-3 h-3" />
                     </a>
-                    <button onClick={() => handleRemove(att.id)} className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50">
+                    <button onClick={() => handleRemove(att.id)} className="w-6 h-6 rounded flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-red-600 hover:bg-red-50">
                       <X className="w-3 h-3" />
                     </button>
                   </div>
@@ -491,7 +491,7 @@ function TaskDiscussionButton({ taskId, taskName }: { taskId: number; taskName: 
         title={`Discussion${msgCount > 0 ? ` (${msgCount})` : ''}`}
         className={cn(
           'w-7 h-7 rounded-md flex items-center justify-center shrink-0 relative transition-colors',
-          msgCount > 0 ? 'text-blue-600 hover:bg-blue-100' : 'text-slate-400 hover:text-blue-600 hover:bg-blue-50',
+          msgCount > 0 ? 'text-blue-600 hover:bg-blue-100' : 'text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50',
         )}
       >
         <MessageSquare className="w-3.5 h-3.5" />
@@ -544,7 +544,7 @@ function InlineEditCell({ value, type = 'number', prefix, suffix, width, onSave 
           if (editVal !== orig) onSave(editVal);
         }}
         onKeyDown={(e) => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } if (e.key === 'Escape') { cancelledRef.current = true; setEditing(false); } }}
-        className={cn('font-mono text-[11px] text-right bg-white border border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-300', width)}
+        className={cn('font-mono text-[11px] text-right bg-white dark:bg-slate-900 border border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-300', width)}
         autoFocus
       />
     );
@@ -553,7 +553,7 @@ function InlineEditCell({ value, type = 'number', prefix, suffix, width, onSave 
   return (
     <span
       onClick={() => { setEditVal(value != null ? String(value) : ''); setEditing(true); }}
-      className={cn('font-mono text-[11px] cursor-pointer hover:bg-blue-50 hover:text-blue-700 rounded px-1 py-0.5 text-right block truncate', width, value ? 'text-slate-700' : 'text-slate-300')}
+      className={cn('font-mono text-[11px] cursor-pointer hover:bg-blue-50 hover:text-blue-700 rounded px-1 py-0.5 text-right block truncate', width, value ? 'text-slate-700 dark:text-slate-200' : 'text-slate-300 dark:text-slate-600')}
       title="Click to edit"
     >
       {display}
@@ -564,7 +564,7 @@ function InlineEditCell({ value, type = 'number', prefix, suffix, width, onSave 
 // ─── Sortable Task Row ──────────────────────────────────────────────────────
 
 const statusMap: Record<string, { bg: string; text: string; label: string }> = {
-  not_started: { bg: 'bg-slate-100', text: 'text-slate-600', label: 'To Do' },
+  not_started: { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-600 dark:text-slate-300', label: 'To Do' },
   in_progress: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'In Progress' },
   in_review: { bg: 'bg-violet-100', text: 'text-violet-700', label: 'In Review' },
   completed: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Done' },
@@ -761,7 +761,7 @@ function ColHeader({
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
         className={cn(
           'inline-flex h-4 w-4 items-center justify-center rounded transition-colors',
-          active ? 'text-blue-600' : 'text-slate-300 hover:text-slate-500',
+          active ? 'text-blue-600' : 'text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-300',
         )}
         title={active ? `Filtered: ${cur}` : `Filter by ${label}`}
         aria-label={`Filter by ${label}`}
@@ -774,7 +774,7 @@ function ColHeader({
       {open && (
         <div
           onClick={(e) => e.stopPropagation()}
-          className="absolute top-5 left-0 z-50 w-48 rounded-lg border border-slate-200 bg-white shadow-xl p-2 normal-case tracking-normal font-normal text-slate-700"
+          className="absolute top-5 left-0 z-50 w-48 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-2 normal-case tracking-normal font-normal text-slate-700 dark:text-slate-200"
         >
           {kind === 'text' ? (
             <input
@@ -782,14 +782,14 @@ function ColHeader({
               value={cur}
               onChange={(e) => ctx.setFilter(filterKey, e.target.value)}
               placeholder={`Filter ${label}…`}
-              className="w-full rounded border border-slate-200 px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none"
+              className="w-full rounded border border-slate-200 dark:border-slate-700 px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none"
             />
           ) : kind === 'assignee' ? (
             <select
               autoFocus
               value={cur}
               onChange={(e) => ctx.setFilter(filterKey, e.target.value)}
-              className="w-full rounded border border-slate-200 px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none"
+              className="w-full rounded border border-slate-200 dark:border-slate-700 px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none"
             >
               <option value="">All</option>
               {ctx.options.assignee.map((a) => (
@@ -801,7 +801,7 @@ function ColHeader({
               autoFocus
               value={cur}
               onChange={(e) => ctx.setFilter(filterKey, e.target.value)}
-              className="w-full rounded border border-slate-200 px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none"
+              className="w-full rounded border border-slate-200 dark:border-slate-700 px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none"
             >
               <option value="">All</option>
               {(ctx.options[filterKey as 'zone' | 'deliverable' | 'service' | 'status'] ?? []).map((v) => (
@@ -812,7 +812,7 @@ function ColHeader({
           {active && (
             <button
               onClick={() => { ctx.setFilter(filterKey, ''); setOpen(false); }}
-              className="mt-1.5 w-full text-[11px] text-slate-500 hover:text-slate-700 underline"
+              className="mt-1.5 w-full text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 underline"
             >
               Clear
             </button>
@@ -1053,7 +1053,7 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       zoneBorderColors[zoneType] || 'border-l-slate-300',
       isDragging && 'opacity-40 bg-blue-50 shadow-lg z-10 border-blue-300',
       isOver && !isDragging && 'border-t-2 border-t-blue-500',
-      isSelected ? 'bg-blue-50/60 border-slate-200' : idx % 2 === 0 ? 'bg-white border-slate-100' : 'bg-slate-50/50 border-slate-100',
+      isSelected ? 'bg-blue-50/60 border-slate-200 dark:border-slate-700' : idx % 2 === 0 ? 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800' : 'bg-slate-50/50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800',
       !isDragging && !isOver && 'hover:bg-blue-50/30',
     )}>
       {/* Drag handle. The hit area is the full grid cell (not just the icon)
@@ -1065,15 +1065,15 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
         title="Drag to reorder"
         {...listeners}
         {...attributes}
-        className="-ml-2 flex h-7 w-7 items-center justify-center rounded cursor-grab active:cursor-grabbing text-slate-400 hover:text-blue-600 hover:bg-blue-50 shrink-0 touch-none focus:outline-none focus:ring-2 focus:ring-blue-300"
+        className="-ml-2 flex h-7 w-7 items-center justify-center rounded cursor-grab active:cursor-grabbing text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50 shrink-0 touch-none focus:outline-none focus:ring-2 focus:ring-blue-300"
       >
         <GripVertical className="w-4 h-4" />
       </button>
-      <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
+      <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 cursor-pointer" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
       {cols.isVisible('code') && (
-        <span className="font-mono text-[11px] font-medium text-slate-500 truncate" title={task.code || ''}>{task.code || '-'}</span>
+        <span className="font-mono text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate" title={task.code || ''}>{task.code || '-'}</span>
       )}
-      <span className="font-medium text-slate-900 min-w-0 truncate" title={task.name}>
+      <span className="font-medium text-slate-900 dark:text-slate-100 min-w-0 truncate" title={task.name}>
         {task.name}
         {task.dependencies?.length > 0 && (
           <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] text-amber-600" title={`Depends on: ${task.dependencies.map((d: any) => d.dependsOn?.name || d.dependsOn?.code).join(', ')}`}>
@@ -1092,7 +1092,7 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
         if (task.zoneId == null) {
           return (
             <span className="text-[11px] truncate">
-              <span className="italic text-slate-400">Project Root</span>
+              <span className="italic text-slate-400 dark:text-slate-500">Project Root</span>
             </span>
           );
         }
@@ -1101,8 +1101,8 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           : (task.zone?.name ? [task.zone.name] : []);
         const fullPath = crumbs.join(' › ');
         return (
-          <span className="text-[11px] truncate text-slate-600" title={fullPath}>
-            {crumbs.length > 0 ? fullPath : <span className="text-slate-300">-</span>}
+          <span className="text-[11px] truncate text-slate-600 dark:text-slate-300" title={fullPath}>
+            {crumbs.length > 0 ? fullPath : <span className="text-slate-300 dark:text-slate-600">-</span>}
           </span>
         );
       })()}
@@ -1156,7 +1156,7 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           <span
             className={cn(
               'text-right text-[11px] font-mono tabular-nums',
-              loggedHours === 0 ? 'text-slate-300' : overBudget ? 'text-red-600 font-semibold' : 'text-slate-700',
+              loggedHours === 0 ? 'text-slate-300 dark:text-slate-600' : overBudget ? 'text-red-600 font-semibold' : 'text-slate-700 dark:text-slate-200',
             )}
             title="Total hours reported by team members on this task"
           >
@@ -1171,7 +1171,7 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
         showFinance ? (
           <InlineEditCell value={task.budgetAmount} prefix="₪" width="w-16" onSave={(v) => saveField('budgetAmount', v)} />
         ) : (
-          <span className="text-right text-[11px] font-mono text-slate-300">—</span>
+          <span className="text-right text-[11px] font-mono text-slate-300 dark:text-slate-600">—</span>
         )
       )}
       {/* M5 — Actual cost (read-only). Sum of each contributor's logged
@@ -1189,7 +1189,7 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
             <span
               className={cn(
                 'text-right text-[11px] font-mono tabular-nums font-semibold',
-                ac === 0 ? 'text-slate-300' : overBudget ? 'text-red-600' : 'text-slate-700',
+                ac === 0 ? 'text-slate-300 dark:text-slate-600' : overBudget ? 'text-red-600' : 'text-slate-700 dark:text-slate-200',
               )}
               title={overBudget
                 ? `Over budget: ${sym}${ac.toLocaleString()} actual vs ${sym}${budget.toLocaleString()} budget`
@@ -1199,7 +1199,7 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
             </span>
           );
         })() : (
-          <span className="text-right text-[11px] font-mono text-slate-300">—</span>
+          <span className="text-right text-[11px] font-mono text-slate-300 dark:text-slate-600">—</span>
         )
       )}
       {/* Deliverable date — read-only display of the Deliverable's
@@ -1212,8 +1212,8 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       {cols.isVisible('delivDate') && (
         <span
           className={cn(
-            'text-[11px] tabular-nums text-slate-600',
-            !task.deliverableTargetDate && 'text-slate-300',
+            'text-[11px] tabular-nums text-slate-600 dark:text-slate-300',
+            !task.deliverableTargetDate && 'text-slate-300 dark:text-slate-600',
           )}
           title={task.deliverableTargetDate ? `Deliverable target: ${String(task.deliverableTargetDate).slice(0, 10)}` : 'No deliverable target set'}
         >
@@ -1228,8 +1228,8 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
             onChange={(e) => saveField('endDate', e.target.value)}
             className={cn(
               'w-full px-1 py-0.5 rounded border text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400',
-              isOverdue ? 'border-red-300 text-red-600 bg-red-50' : 'border-slate-200 text-slate-600 bg-transparent',
-              !dueDate && 'text-slate-300',
+              isOverdue ? 'border-red-300 text-red-600 bg-red-50' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 bg-transparent',
+              !dueDate && 'text-slate-300 dark:text-slate-600',
             )}
           />
         </span>
@@ -1248,7 +1248,7 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
         <button
           onClick={() => onDeleteTask(task.id)}
           title="Delete task"
-          className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+          className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors"
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
@@ -1340,23 +1340,23 @@ function CatalogPickerForZone({ zoneId, projectId, onClose, onDone }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="mx-4 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-[14px] border border-slate-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+      <div className="mx-4 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-5 py-4">
           <h2 className="text-base font-semibold">Add Tasks from Catalog</h2>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100"><X className="h-4 w-4" /></button>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>
         </div>
-        <div className="border-b border-slate-200 px-5 py-3">
+        <div className="border-b border-slate-200 dark:border-slate-700 px-5 py-3">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tasks..." className="w-full pl-9 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tasks..." className="w-full pl-9 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {isLoading ? <p className="py-8 text-center text-sm text-slate-400">Loading catalog...</p> : filtered.length === 0 ? (
-            <p className="py-8 text-center text-sm text-slate-400">{search ? 'No tasks match.' : 'No tasks in catalog.'}</p>
+          {isLoading ? <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">Loading catalog...</p> : filtered.length === 0 ? (
+            <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">{search ? 'No tasks match.' : 'No tasks in catalog.'}</p>
           ) : (
             <table className="w-full text-sm">
-              <thead><tr className="border-b border-slate-100 bg-slate-50 text-xs">
+              <thead><tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-xs">
                 <th className="px-3 py-2 w-10"></th>
                 <th className="px-3 py-2 text-left font-medium">Code</th>
                 <th className="px-3 py-2 text-left font-medium">Name</th>
@@ -1365,9 +1365,9 @@ function CatalogPickerForZone({ zoneId, projectId, onClose, onDone }: {
               </tr></thead>
               <tbody>
                 {filtered.map((t: any) => (
-                  <tr key={t.id} className={cn('border-b border-slate-50 cursor-pointer', selected.has(t.id) ? 'bg-blue-50' : 'hover:bg-slate-50')} onClick={() => { const n = new Set(selected); n.has(t.id) ? n.delete(t.id) : n.add(t.id); setSelected(n); }}>
+                  <tr key={t.id} className={cn('border-b border-slate-50 dark:border-slate-800 cursor-pointer', selected.has(t.id) ? 'bg-blue-50' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50')} onClick={() => { const n = new Set(selected); n.has(t.id) ? n.delete(t.id) : n.add(t.id); setSelected(n); }}>
                     <td className="px-3 py-2"><input type="checkbox" checked={selected.has(t.id)} onChange={() => {}} className="h-3.5 w-3.5" /></td>
-                    <td className="px-3 py-2 font-mono text-xs text-slate-500">{t.code || '-'}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-slate-500 dark:text-slate-400">{t.code || '-'}</td>
                     <td className="px-3 py-2 font-medium">{t.name}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetHours ? Number(t.defaultBudgetHours) : '-'}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetAmount ? Number(t.defaultBudgetAmount).toLocaleString() : '-'}</td>
@@ -1377,10 +1377,10 @@ function CatalogPickerForZone({ zoneId, projectId, onClose, onDone }: {
             </table>
           )}
         </div>
-        <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">
-          <span className="text-xs text-slate-400">{filtered.length} tasks</span>
+        <div className="flex items-center justify-between border-t border-slate-200 dark:border-slate-700 px-5 py-4">
+          <span className="text-xs text-slate-400 dark:text-slate-500">{filtered.length} tasks</span>
           <div className="flex gap-2">
-            <button onClick={onClose} className="bg-white border border-slate-200 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:border-slate-400">Cancel</button>
+            <button onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:border-slate-400 dark:hover:border-slate-500">Cancel</button>
             <button onClick={handleAdd} disabled={selected.size === 0 || adding} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
               {adding ? 'Adding...' : `Add ${selected.size} Task${selected.size !== 1 ? 's' : ''}`}
             </button>
@@ -1441,23 +1441,23 @@ function PhaseTemplatePickerForZone({ zoneId, projectId, onClose, onDone }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-[14px] border border-slate-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+      <div className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-5 py-4">
           <h2 className="text-base font-semibold">Select Deliverable Templates</h2>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100"><X className="h-4 w-4" /></button>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>
         </div>
-        <div className="border-b border-slate-200 px-5 py-3">
+        <div className="border-b border-slate-200 dark:border-slate-700 px-5 py-3">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search templates..." className="w-full pl-9 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search templates..." className="w-full pl-9 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {isLoading ? <p className="py-8 text-center text-sm text-slate-400">Loading...</p> : filtered.length === 0 ? (
-            <p className="py-8 text-center text-sm text-slate-400">{search ? 'No templates match.' : 'No deliverable templates available.'}</p>
+          {isLoading ? <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">Loading...</p> : filtered.length === 0 ? (
+            <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">{search ? 'No templates match.' : 'No deliverable templates available.'}</p>
           ) : (
             <table className="w-full text-sm">
-              <thead><tr className="border-b border-slate-100 bg-slate-50 text-xs">
+              <thead><tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-xs">
                 <th className="px-3 py-2 w-10"></th>
                 <th className="px-3 py-2 text-left font-medium">Name</th>
                 <th className="px-3 py-2 text-left font-medium">Service</th>
@@ -1465,10 +1465,10 @@ function PhaseTemplatePickerForZone({ zoneId, projectId, onClose, onDone }: {
               </tr></thead>
               <tbody>
                 {filtered.map((t: any) => (
-                  <tr key={t.id} className={cn('border-b border-slate-50 cursor-pointer', selected.has(t.id) ? 'bg-blue-50' : 'hover:bg-slate-50')} onClick={() => { const n = new Set(selected); n.has(t.id) ? n.delete(t.id) : n.add(t.id); setSelected(n); }}>
+                  <tr key={t.id} className={cn('border-b border-slate-50 dark:border-slate-800 cursor-pointer', selected.has(t.id) ? 'bg-blue-50' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50')} onClick={() => { const n = new Set(selected); n.has(t.id) ? n.delete(t.id) : n.add(t.id); setSelected(n); }}>
                     <td className="px-3 py-2"><input type="checkbox" checked={selected.has(t.id)} onChange={() => {}} className="h-3.5 w-3.5" /></td>
                     <td className="px-3 py-2 font-medium">{t.name}</td>
-                    <td className="px-3 py-2">{t.phase ? <span className="rounded-full bg-cyan-100 px-1.5 py-0.5 text-[11px] font-medium text-cyan-700">{t.phase.name}</span> : <span className="text-slate-300">-</span>}</td>
+                    <td className="px-3 py-2">{t.phase ? <span className="rounded-full bg-cyan-100 px-1.5 py-0.5 text-[11px] font-medium text-cyan-700">{t.phase.name}</span> : <span className="text-slate-300 dark:text-slate-600">-</span>}</td>
                     <td className="px-3 py-2 text-right">{t._count?.templateTasks ?? 0}</td>
                   </tr>
                 ))}
@@ -1476,10 +1476,10 @@ function PhaseTemplatePickerForZone({ zoneId, projectId, onClose, onDone }: {
             </table>
           )}
         </div>
-        <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">
-          <span className="text-xs text-slate-400">{filtered.length} templates</span>
+        <div className="flex items-center justify-between border-t border-slate-200 dark:border-slate-700 px-5 py-4">
+          <span className="text-xs text-slate-400 dark:text-slate-500">{filtered.length} templates</span>
           <div className="flex gap-2">
-            <button onClick={onClose} className="bg-white border border-slate-200 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:border-slate-400">Cancel</button>
+            <button onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:border-slate-400 dark:hover:border-slate-500">Cancel</button>
             <button onClick={handleAdd} disabled={selected.size === 0 || adding} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
               {adding ? 'Adding...' : `Apply ${selected.size} Template${selected.size !== 1 ? 's' : ''}`}
             </button>
@@ -1670,7 +1670,7 @@ function BulkActionBar({
   if (selectedCount === 0) return null;
 
   const statusOptions = [
-    { value: 'not_started', label: 'To Do', dot: 'bg-slate-400' },
+    { value: 'not_started', label: 'To Do', dot: 'bg-slate-400 dark:bg-slate-500' },
     { value: 'in_progress', label: 'In Progress', dot: 'bg-blue-500' },
     { value: 'in_review', label: 'In Review', dot: 'bg-violet-500' },
     { value: 'completed', label: 'Done', dot: 'bg-emerald-500' },
@@ -1679,7 +1679,7 @@ function BulkActionBar({
   ];
 
   const priorityOptions = [
-    { value: 'low',      label: 'Low',      dot: 'bg-slate-400' },
+    { value: 'low',      label: 'Low',      dot: 'bg-slate-400 dark:bg-slate-500' },
     { value: 'medium',   label: 'Medium',   dot: 'bg-blue-500' },
     { value: 'high',     label: 'High',     dot: 'bg-amber-500' },
     { value: 'critical', label: 'Critical', dot: 'bg-red-500' },
@@ -1687,22 +1687,22 @@ function BulkActionBar({
 
   return (
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40">
-      <div className="flex items-center gap-3 rounded-[14px] border border-slate-200 bg-white px-4 py-3 shadow-2xl">
+      <div className="flex items-center gap-3 rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 shadow-2xl">
         <div className="flex items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white text-xs font-bold">
             {selectedCount}
           </span>
-          <span className="text-sm font-semibold text-slate-700">
+          <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
             task{selectedCount !== 1 ? 's' : ''} selected
             {selectedCount > 1 && (
-              <span className="ml-2 text-[11px] font-normal text-slate-500">
+              <span className="ml-2 text-[11px] font-normal text-slate-500 dark:text-slate-400">
                 — edits to any selected row apply to all
               </span>
             )}
           </span>
         </div>
 
-        <div className="h-5 w-px bg-slate-200" />
+        <div className="h-5 w-px bg-slate-200 dark:bg-slate-700" />
 
         {/* Bulk Delete — triggers the styled confirm modal owned by the
             parent. Selection is cleared inside the modal's execute()
@@ -1721,7 +1721,7 @@ function BulkActionBar({
           type="button"
           onClick={onClear}
           disabled={busy}
-          className="text-[13px] font-semibold text-slate-500 hover:text-slate-700 disabled:opacity-50"
+          className="text-[13px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 disabled:opacity-50"
         >
           Clear
         </button>
@@ -1866,7 +1866,7 @@ function AssigneePicker({
             );
           })}
           {assignees.length > 3 && (
-            <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-500 text-[9px] font-semibold flex items-center justify-center ring-2 ring-white">
+            <span className="w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[9px] font-semibold flex items-center justify-center ring-2 ring-white">
               +{assignees.length - 3}
             </span>
           )}
@@ -1878,7 +1878,7 @@ function AssigneePicker({
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-          className="w-5 h-5 rounded-full border border-dashed border-slate-300 text-slate-400 flex items-center justify-center hover:border-blue-500 hover:text-blue-600"
+          className="w-5 h-5 rounded-full border border-dashed border-slate-300 dark:border-slate-600 text-slate-400 dark:text-slate-500 flex items-center justify-center hover:border-blue-500 hover:text-blue-600"
           title="Assign people"
         >
           <Plus className="h-3 w-3" />
@@ -1887,13 +1887,13 @@ function AssigneePicker({
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-20 w-52 rounded-lg border border-slate-200 bg-white shadow-lg">
-          <div className="px-3 py-2 border-b border-slate-100 text-[11px] font-semibold text-slate-500">
+        <div className="absolute left-0 top-full mt-1 z-20 w-52 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg">
+          <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
             Assign People
           </div>
           <div className="max-h-48 overflow-y-auto py-1">
             {available.length === 0 ? (
-              <p className="px-3 py-2 text-[11px] text-slate-400">
+              <p className="px-3 py-2 text-[11px] text-slate-400 dark:text-slate-500">
                 {members.length === 0 ? 'No project members' : 'Everyone is already assigned'}
               </p>
             ) : (
@@ -1907,12 +1907,12 @@ function AssigneePicker({
                     type="button"
                     disabled={busy}
                     onClick={(e) => { e.stopPropagation(); addOne(uid); }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-slate-50 disabled:opacity-50"
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-slate-50 dark:hover:bg-slate-800/50 disabled:opacity-50"
                   >
                     <span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-semibold flex items-center justify-center shrink-0">
                       {(u.firstName?.[0] ?? '') + (u.lastName?.[0] ?? '')}
                     </span>
-                    <span className="truncate text-slate-700">{name}</span>
+                    <span className="truncate text-slate-700 dark:text-slate-200">{name}</span>
                   </button>
                 );
               })
@@ -1970,20 +1970,20 @@ function TemplatePickerDialog({ projectId, onClose, onApplied }: { projectId: nu
   });
 
   return (
-    <div className="bg-white rounded-[14px] border border-slate-200 overflow-hidden">
-      <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-        <h3 className="text-[15px] font-bold text-slate-900">Add Zone from Template</h3>
-        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
+    <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 overflow-hidden">
+      <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+        <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Add Zone from Template</h3>
+        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
           <X className="w-4 h-4" />
         </button>
       </div>
 
       {/* Zone name — ALWAYS visible at top */}
-      <div className="px-5 py-4 border-b border-slate-100 bg-blue-50/20">
-        <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Zone Name for This Project *</label>
+      <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 bg-blue-50/20">
+        <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Zone Name for This Project *</label>
         <div className="flex items-center gap-3">
           <input value={zoneName} onChange={(e) => setZoneName(e.target.value)} placeholder="e.g. Tower A - Ground Floor"
-            className="flex-1 px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" autoFocus />
+            className="flex-1 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" autoFocus />
           {selected && (
             <button onClick={() => applyMutation.mutate()} disabled={applyMutation.isPending || !zoneName.trim()}
               className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50 whitespace-nowrap">
@@ -1991,17 +1991,17 @@ function TemplatePickerDialog({ projectId, onClose, onApplied }: { projectId: nu
             </button>
           )}
         </div>
-        {selected && <p className="text-[11px] text-slate-400 mt-1.5">Selected: <strong className="text-slate-700">{selected.name}</strong> — {selected._count?.templateTasks ?? 0} tasks will be created</p>}
-        {!selected && <p className="text-[11px] text-slate-400 mt-1.5">Enter a name, then select a template below</p>}
+        {selected && <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1.5">Selected: <strong className="text-slate-700 dark:text-slate-200">{selected.name}</strong> — {selected._count?.templateTasks ?? 0} tasks will be created</p>}
+        {!selected && <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1.5">Enter a name, then select a template below</p>}
       </div>
 
       {/* Search + Sort */}
-      <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-3">
+      <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search templates..." className="w-full pl-9 px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" autoFocus />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search templates..." className="w-full pl-9 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" autoFocus />
         </div>
-        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none">
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none">
           <option value="usage">Most Used</option>
           <option value="name">Name A-Z</option>
         </select>
@@ -2013,19 +2013,19 @@ function TemplatePickerDialog({ projectId, onClose, onApplied }: { projectId: nu
           return (
             <div key={t.id} onClick={() => { setSelectedId(isSelected ? null : t.id); if (!isSelected) setZoneName(t.name); }}
               className={cn('rounded-[14px] p-4 cursor-pointer transition-all duration-150',
-                isSelected ? 'border-2 border-blue-500 bg-blue-50/40 shadow-sm' : 'border border-slate-200 hover:border-blue-300 hover:bg-blue-50/30')}>
+                isSelected ? 'border-2 border-blue-500 bg-blue-50/40 shadow-sm' : 'border border-slate-200 dark:border-slate-700 hover:border-blue-300 hover:bg-blue-50/30')}>
               <div className="flex items-center gap-2 mb-2">
-                <h4 className={cn('text-[13px] font-semibold flex-1', isSelected ? 'text-blue-700' : 'text-slate-900')}>{t.name}</h4>
+                <h4 className={cn('text-[13px] font-semibold flex-1', isSelected ? 'text-blue-700' : 'text-slate-900 dark:text-slate-100')}>{t.name}</h4>
                 {isSelected && <span className="rounded-[5px] bg-blue-600 text-white text-[11px] font-bold px-2 py-0.5">Selected</span>}
               </div>
-              {t.description && <p className={cn('text-[12px] mb-2 line-clamp-2', isSelected ? 'text-blue-600/70' : 'text-slate-500')}>{t.description}</p>}
-              <div className={cn('text-[11px] font-medium', isSelected ? 'text-blue-400' : 'text-slate-400')}>
+              {t.description && <p className={cn('text-[12px] mb-2 line-clamp-2', isSelected ? 'text-blue-600/70' : 'text-slate-500 dark:text-slate-400')}>{t.description}</p>}
+              <div className={cn('text-[11px] font-medium', isSelected ? 'text-blue-400' : 'text-slate-400 dark:text-slate-500')}>
                 {t._count?.templateZones ?? 0} zones · {svcCount} services · {t._count?.templateTasks ?? 0} tasks · Used {t.usageCount ?? 0}x
               </div>
             </div>
           );
         })}
-        {templates.length === 0 && <p className="col-span-3 py-8 text-center text-[13px] text-slate-400">No zone templates available.</p>}
+        {templates.length === 0 && <p className="col-span-3 py-8 text-center text-[13px] text-slate-400 dark:text-slate-500">No zone templates available.</p>}
       </div>
     </div>
   );
@@ -2099,20 +2099,20 @@ function ProjectArchivedTasksModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-3xl rounded-[14px] bg-white shadow-2xl overflow-hidden max-h-[85vh] flex flex-col"
+        className="w-full max-w-3xl rounded-[14px] bg-white dark:bg-slate-900 shadow-2xl overflow-hidden max-h-[85vh] flex flex-col"
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700">
           <div>
-            <h2 id="archive-modal-title" className="text-sm font-bold text-slate-900">Archived Tasks</h2>
-            <p className="text-[11px] text-slate-400">Soft-deleted tasks on this project. Click Restore to bring one back.</p>
+            <h2 id="archive-modal-title" className="text-sm font-bold text-slate-900 dark:text-slate-100">Archived Tasks</h2>
+            <p className="text-[11px] text-slate-400 dark:text-slate-500">Soft-deleted tasks on this project. Click Restore to bring one back.</p>
           </div>
-          <button onClick={onClose} className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100">
+          <button onClick={onClose} className="rounded-md p-1.5 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
             <X className="h-4 w-4" />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto">
           {isLoading || isFetching ? (
-            <div className="py-12 text-center text-[12px] text-slate-400">Loading…</div>
+            <div className="py-12 text-center text-[12px] text-slate-400 dark:text-slate-500">Loading…</div>
           ) : error ? (
             <div className="py-12 text-center text-[12px] text-red-500">
               Failed to load: {(error as any)?.message ?? 'unknown error'}.
@@ -2126,9 +2126,9 @@ function ProjectArchivedTasksModal({
               </div>
             </div>
           ) : rows.length === 0 ? (
-            <div className="py-12 text-center text-[12px] text-slate-400 italic">
+            <div className="py-12 text-center text-[12px] text-slate-400 dark:text-slate-500 italic">
               No archived tasks on this project.
-              <div className="mt-2 text-[10px] text-slate-400">
+              <div className="mt-2 text-[10px] text-slate-400 dark:text-slate-500">
                 Tip: deleted tasks land here. If you just deleted one, click Retry below.
               </div>
               <button
@@ -2140,7 +2140,7 @@ function ProjectArchivedTasksModal({
             </div>
           ) : (
             <table className="w-full text-[12px]">
-              <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 tracking-wider sticky top-0">
+              <thead className="bg-slate-50 dark:bg-slate-800/50 text-[10px] uppercase text-slate-500 dark:text-slate-400 tracking-wider sticky top-0">
                 <tr>
                   <th className="px-3 py-2 text-left">Code</th>
                   <th className="px-3 py-2 text-left">Name</th>
@@ -2149,18 +2149,18 @@ function ProjectArchivedTasksModal({
                   <th className="px-3 py-2 text-right">Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {rows.map((t: any) => (
                   <Fragment key={t.id}>
-                    <tr className="hover:bg-slate-50/50">
-                      <td className="px-3 py-2 font-mono text-[11px] text-slate-500 whitespace-nowrap">{t.code}</td>
+                    <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
+                      <td className="px-3 py-2 font-mono text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap">{t.code}</td>
                       <td className="px-3 py-2 max-w-[280px]">
-                        <span className="block truncate font-medium text-slate-700" title={t.name}>{t.name}</span>
+                        <span className="block truncate font-medium text-slate-700 dark:text-slate-200" title={t.name}>{t.name}</span>
                       </td>
-                      <td className="px-3 py-2 text-slate-600 truncate max-w-[200px]">
-                        {t.zone?.name ?? <span className="italic text-slate-400">Project Root</span>}
+                      <td className="px-3 py-2 text-slate-600 dark:text-slate-300 truncate max-w-[200px]">
+                        {t.zone?.name ?? <span className="italic text-slate-400 dark:text-slate-500">Project Root</span>}
                       </td>
-                      <td className="px-3 py-2 text-slate-500 tabular-nums whitespace-nowrap">
+                      <td className="px-3 py-2 text-slate-500 dark:text-slate-400 tabular-nums whitespace-nowrap">
                         {t.deletedAt ? new Date(t.deletedAt).toLocaleDateString() : '—'}
                       </td>
                       <td className="px-3 py-2 text-right whitespace-nowrap">
@@ -2171,7 +2171,7 @@ function ProjectArchivedTasksModal({
                             so we just toggle visibility. */}
                         <button
                           onClick={() => setViewId((cur) => (cur === t.id ? null : t.id))}
-                          className="rounded-md border border-slate-200 px-3 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 mr-1.5"
+                          className="rounded-md border border-slate-200 dark:border-slate-700 px-3 py-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 mr-1.5"
                         >
                           {viewId === t.id ? 'Hide' : 'View'}
                         </button>
@@ -2185,18 +2185,18 @@ function ProjectArchivedTasksModal({
                       </td>
                     </tr>
                     {viewId === t.id && (
-                      <tr className="bg-slate-50/60">
+                      <tr className="bg-slate-50/60 dark:bg-slate-800/60">
                         <td colSpan={5} className="px-4 py-3">
                           <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-[12px]">
-                            <div><span className="text-slate-400">Description: </span><span className="text-slate-700">{t.description || <span className="italic text-slate-400">none</span>}</span></div>
-                            <div><span className="text-slate-400">Deliverable: </span><span className="text-slate-700">{t.deliverableTemplate?.name ?? t.serviceType?.name ?? '—'}</span></div>
-                            <div><span className="text-slate-400">Service: </span><span className="text-slate-700">{t.phase?.name ?? '—'}</span></div>
-                            <div><span className="text-slate-400">Est. Hours: </span><span className="text-slate-700">{t.budgetHours ?? '—'}</span></div>
-                            <div><span className="text-slate-400">Due: </span><span className="text-slate-700">{t.endDate ? new Date(t.endDate).toLocaleDateString() : '—'}</span></div>
-                            <div><span className="text-slate-400">Status: </span><span className="text-slate-700">{STATUS_LABEL[t.status] ?? t.status}</span></div>
+                            <div><span className="text-slate-400 dark:text-slate-500">Description: </span><span className="text-slate-700 dark:text-slate-200">{t.description || <span className="italic text-slate-400 dark:text-slate-500">none</span>}</span></div>
+                            <div><span className="text-slate-400 dark:text-slate-500">Deliverable: </span><span className="text-slate-700 dark:text-slate-200">{t.deliverableTemplate?.name ?? t.serviceType?.name ?? '—'}</span></div>
+                            <div><span className="text-slate-400 dark:text-slate-500">Service: </span><span className="text-slate-700 dark:text-slate-200">{t.phase?.name ?? '—'}</span></div>
+                            <div><span className="text-slate-400 dark:text-slate-500">Est. Hours: </span><span className="text-slate-700 dark:text-slate-200">{t.budgetHours ?? '—'}</span></div>
+                            <div><span className="text-slate-400 dark:text-slate-500">Due: </span><span className="text-slate-700 dark:text-slate-200">{t.endDate ? new Date(t.endDate).toLocaleDateString() : '—'}</span></div>
+                            <div><span className="text-slate-400 dark:text-slate-500">Status: </span><span className="text-slate-700 dark:text-slate-200">{STATUS_LABEL[t.status] ?? t.status}</span></div>
                             <div className="col-span-2">
-                              <span className="text-slate-400">Assignees: </span>
-                              <span className="text-slate-700">
+                              <span className="text-slate-400 dark:text-slate-500">Assignees: </span>
+                              <span className="text-slate-700 dark:text-slate-200">
                                 {Array.isArray(t.assignees) && t.assignees.length > 0
                                   ? t.assignees.map((a: any) => `${a.user?.firstName ?? ''} ${a.user?.lastName ?? ''}`.trim()).filter(Boolean).join(', ')
                                   : '—'}
@@ -2212,8 +2212,8 @@ function ProjectArchivedTasksModal({
             </table>
           )}
         </div>
-        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex justify-end">
-          <button onClick={onClose} className="rounded-md border border-slate-200 px-3 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-100">
+        <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex justify-end">
+          <button onClick={onClose} className="rounded-md border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800">
             Close
           </button>
         </div>
@@ -2236,26 +2236,26 @@ function AddZoneManuallyDialog({ projectId, onClose, onCreated }: { projectId: n
   });
 
   return (
-    <div className="bg-white rounded-[14px] border border-slate-200 p-5 space-y-3">
+    <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 p-5 space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-[15px] font-bold text-slate-900">Add Zone Manually</h3>
-        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400"><X className="w-4 h-4" /></button>
+        <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Add Zone Manually</h3>
+        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500"><X className="w-4 h-4" /></button>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Zone Name *</label>
+          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Zone Name *</label>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Tower A - Ground Floor" autoFocus
-            className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+            className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
         </div>
         <div>
-          <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Zone Type</label>
-          <select value={zoneType} onChange={(e) => setZoneType(e.target.value)} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none">
+          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Zone Type</label>
+          <select value={zoneType} onChange={(e) => setZoneType(e.target.value)} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none">
             {ZONE_TYPES.map(zt => <option key={zt} value={zt}>{zt.charAt(0).toUpperCase() + zt.slice(1)}</option>)}
           </select>
         </div>
       </div>
       <div className="flex justify-end gap-2">
-        <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+        <button onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
         <button onClick={() => createZone.mutate()} disabled={createZone.isPending || !name.trim()} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
           {createZone.isPending ? 'Creating...' : 'Create Zone'}
         </button>
@@ -2344,13 +2344,13 @@ function ProjectScopedPicker({
 
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">{label}</label>
+      <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{label}</label>
       {!creating ? (
         <div className="flex items-center gap-1.5">
           <select
             value={value ?? ''}
             onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
-            className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] focus:border-blue-500 focus:outline-none"
+            className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] focus:border-blue-500 focus:outline-none"
           >
             <option value="">{placeholder}</option>
             {scoped.map((x: any) => (
@@ -2373,13 +2373,13 @@ function ProjectScopedPicker({
             placeholder={`New ${label} name`}
             autoFocus
             onKeyDown={(e) => { if (e.key === 'Enter' && newName.trim()) create(); if (e.key === 'Escape') setCreating(false); }}
-            className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] focus:border-blue-500 focus:outline-none"
+            className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] focus:border-blue-500 focus:outline-none"
           />
           <input
             type="color"
             value={newColor}
             onChange={(e) => setNewColor(e.target.value)}
-            className="w-9 h-8 rounded border border-slate-200 cursor-pointer p-0"
+            className="w-9 h-8 rounded border border-slate-200 dark:border-slate-700 cursor-pointer p-0"
             title="Color"
           />
           <button
@@ -2393,7 +2393,7 @@ function ProjectScopedPicker({
           <button
             type="button"
             onClick={() => { setCreating(false); setNewName(''); }}
-            className="text-[12px] text-slate-400 hover:text-slate-600 px-1"
+            className="text-[12px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 px-1"
           >
             ×
           </button>
@@ -2552,7 +2552,7 @@ function CompactPickerCell({
             {currentLabel}
           </span>
         ) : (
-          <span className="text-slate-300 text-[11px]">-</span>
+          <span className="text-slate-300 dark:text-slate-600 text-[11px]">-</span>
         )}
       </button>
     );
@@ -2566,7 +2566,7 @@ function CompactPickerCell({
       onChange={(e) => handleChange(e.target.value)}
       onBlur={() => setEditing(false)}
       onClick={(e) => e.stopPropagation()}
-      className="w-full px-1 py-0.5 rounded border border-blue-300 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+      className="w-full px-1 py-0.5 rounded border border-blue-300 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white dark:bg-slate-900"
     >
       <option value="">— None —</option>
       {list.map((x: any) => (
@@ -2665,7 +2665,7 @@ function ProjectDeliverablePickerCell({
             {currentLabel}
           </span>
         ) : (
-          <span className="text-slate-300 text-[11px]">-</span>
+          <span className="text-slate-300 dark:text-slate-600 text-[11px]">-</span>
         )}
       </button>
     );
@@ -2679,7 +2679,7 @@ function ProjectDeliverablePickerCell({
       onChange={(e) => handleChange(e.target.value)}
       onBlur={() => setEditing(false)}
       onClick={(e) => e.stopPropagation()}
-      className="w-full px-1 py-0.5 rounded border border-blue-300 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+      className="w-full px-1 py-0.5 rounded border border-blue-300 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white dark:bg-slate-900"
     >
       <option value="">— None —</option>
       {list.map((d: any) => (
@@ -2790,19 +2790,19 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
   };
 
   return (
-    <div className="bg-white rounded-[14px] border border-slate-200 p-5 space-y-3">
+    <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 p-5 space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-[15px] font-bold text-slate-900">Add Task at Project Root</h3>
-        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400"><X className="w-4 h-4" /></button>
+        <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Add Task at Project Root</h3>
+        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500"><X className="w-4 h-4" /></button>
       </div>
 
       {/* Mode tabs */}
-      <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5 w-fit">
+      <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 w-fit">
         <button
           onClick={() => setMode('manual')}
           className={cn(
             'px-3 py-1 rounded-md text-[12px] font-semibold transition-colors',
-            mode === 'manual' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+            mode === 'manual' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
           )}
         >
           Manual
@@ -2811,14 +2811,14 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
           onClick={() => setMode('catalog')}
           className={cn(
             'px-3 py-1 rounded-md text-[12px] font-semibold transition-colors',
-            mode === 'catalog' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+            mode === 'catalog' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
           )}
         >
           From Catalog
         </button>
       </div>
 
-      <p className="text-[12px] text-slate-500">
+      <p className="text-[12px] text-slate-500 dark:text-slate-400">
         This task will not be tied to any zone. It appears in the Project Root section.
       </p>
 
@@ -2826,13 +2826,13 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
         <>
           <div className="grid grid-cols-[120px_1fr_120px_120px] gap-2">
             <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code *" autoFocus
-              className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+              className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Task name *"
-              className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+              className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
             <input value={budgetHours} onChange={(e) => setBudgetHours(e.target.value)} placeholder="Hours" type="number"
-              className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+              className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
             <input value={budgetAmount} onChange={(e) => setBudgetAmount(e.target.value)} placeholder="Amount" type="number"
-              className="px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+              className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
           </div>
           {/* Deliverable + Service pickers — project-scoped lists, with
               an inline "Create new" that POSTs to the matching catalog
@@ -2858,7 +2858,7 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
             />
           </div>
           <div className="flex justify-end gap-2">
-            <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+            <button onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
             <button onClick={() => { if (!code.trim() || !name.trim()) { notify.warning('Code and Name required'); return; } createTask.mutate(); }}
               disabled={createTask.isPending || !code.trim() || !name.trim()}
               className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
@@ -2871,20 +2871,20 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
           {/* Catalog search + list — same shape as CatalogPickerForZone but
               tasks land at zoneId=null. */}
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search catalog..."
-              className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
+              className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
           </div>
-          <div className="max-h-[360px] overflow-y-auto border border-slate-100 rounded-lg">
+          <div className="max-h-[360px] overflow-y-auto border border-slate-100 dark:border-slate-800 rounded-lg">
             {catalogLoading ? (
-              <p className="py-8 text-center text-sm text-slate-400">Loading catalog...</p>
+              <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">Loading catalog...</p>
             ) : !catalogEntry ? (
-              <p className="py-8 text-center text-sm text-slate-400">No task catalog found. Create one in Templates → Task Catalog.</p>
+              <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No task catalog found. Create one in Templates → Task Catalog.</p>
             ) : filtered.length === 0 ? (
-              <p className="py-8 text-center text-sm text-slate-400">{search ? 'No tasks match.' : 'Catalog is empty.'}</p>
+              <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">{search ? 'No tasks match.' : 'Catalog is empty.'}</p>
             ) : (
               <table className="w-full text-sm">
-                <thead><tr className="border-b border-slate-100 bg-slate-50 text-xs">
+                <thead><tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-xs">
                   <th className="px-3 py-2 w-10"></th>
                   <th className="px-3 py-2 text-left font-medium">Code</th>
                   <th className="px-3 py-2 text-left font-medium">Name</th>
@@ -2893,9 +2893,9 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
                 </tr></thead>
                 <tbody>
                   {filtered.map((t: any) => (
-                    <tr key={t.id} className={cn('border-b border-slate-50 cursor-pointer', selected.has(t.id) ? 'bg-blue-50' : 'hover:bg-slate-50')} onClick={() => toggleSelected(t.id)}>
+                    <tr key={t.id} className={cn('border-b border-slate-50 dark:border-slate-800 cursor-pointer', selected.has(t.id) ? 'bg-blue-50' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50')} onClick={() => toggleSelected(t.id)}>
                       <td className="px-3 py-2"><input type="checkbox" checked={selected.has(t.id)} onChange={() => toggleSelected(t.id)} className="h-3.5 w-3.5" /></td>
-                      <td className="px-3 py-2 font-mono text-xs text-slate-500">{t.code || '-'}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-slate-500 dark:text-slate-400">{t.code || '-'}</td>
                       <td className="px-3 py-2 font-medium">{t.name}</td>
                       <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetHours ? Number(t.defaultBudgetHours) : '-'}</td>
                       <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetAmount ? Number(t.defaultBudgetAmount).toLocaleString() : '-'}</td>
@@ -2906,9 +2906,9 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
             )}
           </div>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] text-slate-400">{selected.size} selected · {filtered.length} in catalog</span>
+            <span className="text-[11px] text-slate-400 dark:text-slate-500">{selected.size} selected · {filtered.length} in catalog</span>
             <div className="flex gap-2">
-              <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+              <button onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
               <button
                 onClick={addFromCatalog}
                 disabled={adding || selected.size === 0}
@@ -3019,26 +3019,26 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
   };
 
   return (
-    <div className="bg-white rounded-[14px] border border-slate-200 p-5 space-y-3">
+    <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 p-5 space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-[15px] font-bold text-slate-900">Add Deliverable at Project Root</h3>
-        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400"><X className="w-4 h-4" /></button>
+        <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Add Deliverable at Project Root</h3>
+        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500"><X className="w-4 h-4" /></button>
       </div>
-      <p className="text-[12px] text-slate-500">Pick a deliverable template; its tasks are added directly to this project (no zone).</p>
+      <p className="text-[12px] text-slate-500 dark:text-slate-400">Pick a deliverable template; its tasks are added directly to this project (no zone).</p>
       <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search deliverables..."
-        className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
-      <div className="max-h-[360px] overflow-y-auto border border-slate-100 rounded-lg">
-        {isLoading ? <p className="py-8 text-center text-sm text-slate-400">Loading...</p>
-          : list.length === 0 ? <p className="py-8 text-center text-sm text-slate-400">No deliverables found</p>
+        className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
+      <div className="max-h-[360px] overflow-y-auto border border-slate-100 dark:border-slate-800 rounded-lg">
+        {isLoading ? <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">Loading...</p>
+          : list.length === 0 ? <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">No deliverables found</p>
           : list.map((t: any) => {
             const count = taskCountFor(t);
             return (
               <button key={t.id} onClick={() => applyTemplate(t)} disabled={applying || count === 0}
-                className="w-full text-left px-3 py-2.5 border-b border-slate-100 last:border-0 hover:bg-blue-50/40 disabled:opacity-50">
+                className="w-full text-left px-3 py-2.5 border-b border-slate-100 dark:border-slate-800 last:border-0 hover:bg-blue-50/40 disabled:opacity-50">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-[13px] font-semibold text-slate-800 truncate">{t.name}</p>
-                    <p className="text-[11px] text-slate-500">
+                    <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">{t.name}</p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
                       {t.phase?.name ? <span className="rounded px-1 py-0.5 bg-violet-50 text-violet-700">{t.phase.name}</span> : null}
                       <span className={cn('ml-1.5', count === 0 && 'text-amber-600')}>
                         {count} task{count !== 1 ? 's' : ''}
@@ -3053,7 +3053,7 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
         }
       </div>
       <div className="flex justify-end">
-        <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Close</button>
+        <button onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Close</button>
       </div>
     </div>
   );
@@ -3110,7 +3110,7 @@ function ZoneNameWithRename({
         type="button"
         onClick={(e) => { e.stopPropagation(); setDraft(zone.name); setEditing(true); }}
         title="Rename zone"
-        className="shrink-0 text-slate-300 hover:text-blue-600 hover:bg-blue-50 rounded p-0.5 transition-colors"
+        className="shrink-0 text-slate-300 dark:text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded p-0.5 transition-colors"
       >
         <Pencil className="h-3 w-3" />
       </button>
@@ -3146,14 +3146,14 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
   const loggedHours = Math.round(tasks.reduce((s: number, t: any) => s + Number(t.loggedMinutes || 0), 0) / 60 * 10) / 10;
 
   return (
-    <div className="border-b border-slate-100 last:border-0">
+    <div className="border-b border-slate-100 dark:border-slate-800 last:border-0">
       <div className="flex items-center gap-2.5 px-5 py-2.5 bg-[#FAFBFC] cursor-pointer" onClick={() => setCollapsed(!collapsed)}>
-        {collapsed ? <ChevronRight className="w-3 h-3 text-slate-400" /> : <ChevronDown className="w-3 h-3 text-slate-400" />}
-        <ZoneNameWithRename zone={zone} projectId={projectId} nameClassName="text-[13px] font-semibold text-slate-900" />
-        <span className="rounded-[5px] bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-400">{zone.zoneType}</span>
-        <span className="ml-auto text-[11px] font-medium text-slate-400">
+        {collapsed ? <ChevronRight className="w-3 h-3 text-slate-400 dark:text-slate-500" /> : <ChevronDown className="w-3 h-3 text-slate-400 dark:text-slate-500" />}
+        <ZoneNameWithRename zone={zone} projectId={projectId} nameClassName="text-[13px] font-semibold text-slate-900 dark:text-slate-100" />
+        <span className="rounded-[5px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[11px] font-bold text-slate-400 dark:text-slate-500">{zone.zoneType}</span>
+        <span className="ml-auto text-[11px] font-medium text-slate-400 dark:text-slate-500">
           {tasks.length} tasks · {hours}h budget
-          <span className={cn('ml-1 font-semibold', loggedHours === 0 ? 'text-slate-400' : loggedHours > hours && hours > 0 ? 'text-red-500' : 'text-blue-500')}>
+          <span className={cn('ml-1 font-semibold', loggedHours === 0 ? 'text-slate-400 dark:text-slate-500' : loggedHours > hours && hours > 0 ? 'text-red-500' : 'text-blue-500')}>
             · {loggedHours}h logged
           </span>
           <span> · ₪{amount.toLocaleString()}</span>
@@ -3163,14 +3163,14 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
             <Plus className="w-3 h-3" /> Add Task
           </button>
           {showTaskMenu && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-1.5">
-              <button onClick={() => { setShowCatalogPicker(true); setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 hover:bg-slate-50">From Catalog</button>
-              <button onClick={() => { setShowAddTask(true); setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 hover:bg-slate-50">Create New Task</button>
+            <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white dark:bg-slate-900 p-1.5">
+              <button onClick={() => { setShowCatalogPicker(true); setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">From Catalog</button>
+              <button onClick={() => { setShowAddTask(true); setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">Create New Task</button>
             </div>
           )}
         </div>
         <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete zone "${zone.name}" and all its tasks?`)) onDeleteZone(zone.id); }}
-          className="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600">
+          className="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-red-600">
           <Trash2 className="w-3 h-3" />
         </button>
       </div>
@@ -3178,23 +3178,23 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
       {!collapsed && (
         <>
           {showAddTask && (
-            <div className="px-5 py-2 bg-blue-50/20 flex items-center gap-2 border-b border-slate-50">
-              <input value={newTask.code} onChange={(e) => setNewTask(f => ({ ...f, code: e.target.value }))} placeholder="Code *" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
-              <input value={newTask.name} onChange={(e) => setNewTask(f => ({ ...f, name: e.target.value }))} placeholder="Task name *" className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
-              <input value={newTask.budgetHours} onChange={(e) => setNewTask(f => ({ ...f, budgetHours: e.target.value }))} placeholder="Hours" type="number" className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
-              <input value={newTask.budgetAmount} onChange={(e) => setNewTask(f => ({ ...f, budgetAmount: e.target.value }))} placeholder="Amount" type="number" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+            <div className="px-5 py-2 bg-blue-50/20 flex items-center gap-2 border-b border-slate-50 dark:border-slate-800">
+              <input value={newTask.code} onChange={(e) => setNewTask(f => ({ ...f, code: e.target.value }))} placeholder="Code *" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
+              <input value={newTask.name} onChange={(e) => setNewTask(f => ({ ...f, name: e.target.value }))} placeholder="Task name *" className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
+              <input value={newTask.budgetHours} onChange={(e) => setNewTask(f => ({ ...f, budgetHours: e.target.value }))} placeholder="Hours" type="number" className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
+              <input value={newTask.budgetAmount} onChange={(e) => setNewTask(f => ({ ...f, budgetAmount: e.target.value }))} placeholder="Amount" type="number" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
               <button onClick={() => { if (!newTask.code.trim() || !newTask.name.trim()) { notify.warning('Code and Name required'); return; } createTask.mutate({ zoneId: zone.id, code: newTask.code.trim(), name: newTask.name.trim(), budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined, budgetAmount: newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined }); }}
                 disabled={createTask.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-3 py-1.5 rounded-md disabled:opacity-50">Save</button>
-              <button onClick={() => setShowAddTask(false)} className="text-[11px] text-slate-400 hover:text-slate-600 px-2 py-1.5">Cancel</button>
+              <button onClick={() => setShowAddTask(false)} className="text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 px-2 py-1.5">Cancel</button>
             </div>
           )}
           <table className="w-full table-fixed">
             <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
+              <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
                 <th className="w-10 pl-5">
                   <input
                     type="checkbox"
-                    className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer"
+                    className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 cursor-pointer"
                     checked={tasks.length > 0 && tasks.every((t: any) => selectedTaskIds?.has(t.id))}
                     ref={(el) => {
                       if (el) {
@@ -3240,17 +3240,17 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                 return (
                   <tr key={task.id} className={cn(
                     'border-b hover:bg-blue-50/30 transition-colors',
-                    isSelected ? 'bg-blue-50/60 border-slate-200' : idx % 2 === 0 ? 'bg-white border-slate-100' : 'bg-slate-50/50 border-slate-100',
+                    isSelected ? 'bg-blue-50/60 border-slate-200 dark:border-slate-700' : idx % 2 === 0 ? 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800' : 'bg-slate-50/50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800',
                   )}>
                     <td className="pl-5 py-2">
-                      <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
+                      <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 cursor-pointer" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
                     </td>
-                    <td className="px-3 py-2 font-mono text-xs font-medium text-slate-500">{task.code || '-'}</td>
-                    <td className="px-3 py-2 font-medium text-slate-900">{task.name}</td>
-                    <td className="px-3 py-2 text-[12px] text-slate-500">{task.zone?.name || '-'}</td>
-                    <td className="px-3 py-2">{svcName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold" style={{ backgroundColor: `${svcColor}15`, color: svcColor }}>{svcName}</span> : <span className="text-slate-300">-</span>}</td>
-                    <td className="px-3 py-2 text-[12px] text-slate-500">{task.phase?.name || '-'}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs font-medium text-slate-700">{task.budgetHours ? `${Number(task.budgetHours)}h` : '-'}</td>
+                    <td className="px-3 py-2 font-mono text-xs font-medium text-slate-500 dark:text-slate-400">{task.code || '-'}</td>
+                    <td className="px-3 py-2 font-medium text-slate-900 dark:text-slate-100">{task.name}</td>
+                    <td className="px-3 py-2 text-[12px] text-slate-500 dark:text-slate-400">{task.zone?.name || '-'}</td>
+                    <td className="px-3 py-2">{svcName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold" style={{ backgroundColor: `${svcColor}15`, color: svcColor }}>{svcName}</span> : <span className="text-slate-300 dark:text-slate-600">-</span>}</td>
+                    <td className="px-3 py-2 text-[12px] text-slate-500 dark:text-slate-400">{task.phase?.name || '-'}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs font-medium text-slate-700 dark:text-slate-200">{task.budgetHours ? `${Number(task.budgetHours)}h` : '-'}</td>
                     {/* Reported / logged time on this task. Red if it has
                         exceeded the estimate. Read-only here (logging
                         happens on the task drawer or My Tasks). */}
@@ -3261,7 +3261,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                       return (
                         <td className={cn(
                           'px-3 py-2 text-right font-mono text-xs',
-                          lh === 0 ? 'text-slate-300' : over ? 'text-red-600 font-bold' : 'text-slate-700 font-medium',
+                          lh === 0 ? 'text-slate-300 dark:text-slate-600' : over ? 'text-red-600 font-bold' : 'text-slate-700 dark:text-slate-200 font-medium',
                         )}>
                           {lh > 0 ? `${lh.toFixed(1)}h` : '-'}
                         </td>
@@ -3272,7 +3272,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                         above). */}
                     {showFinance && (
                       <>
-                        <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-slate-700">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</td>
+                        <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-slate-700 dark:text-slate-200">{task.budgetAmount ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}</td>
                         {/* M5 — Actual cost. Computed server-side from each
                             contributor's logged time x their seniority hourly
                             cost (planning.service.ts → actualCost). Em-dash
@@ -3285,7 +3285,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                           return (
                             <td className={cn(
                               'px-3 py-2 text-right font-mono text-xs font-semibold',
-                              ac === 0 ? 'text-slate-300' : overBudget ? 'text-red-600' : 'text-slate-700',
+                              ac === 0 ? 'text-slate-300 dark:text-slate-600' : overBudget ? 'text-red-600' : 'text-slate-700 dark:text-slate-200',
                             )} title={overBudget ? `Over budget (${sym}${ac.toLocaleString()} actual vs ${sym}${budget.toLocaleString()} budget)` : undefined}>
                               {ac > 0 ? `${sym}${ac.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '-'}
                             </td>
@@ -3293,7 +3293,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                         })()}
                       </>
                     )}
-                    <td className="px-3 py-2"><input type="date" value={dueDate} className="w-full px-1 py-0.5 rounded border border-slate-200 text-[10px] text-slate-600 bg-transparent focus:outline-none focus:ring-1 focus:ring-blue-400" /></td>
+                    <td className="px-3 py-2"><input type="date" value={dueDate} className="w-full px-1 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-[10px] text-slate-600 dark:text-slate-300 bg-transparent focus:outline-none focus:ring-1 focus:ring-blue-400" /></td>
                     <td className="px-3 py-2">
                       <AssigneePicker task={task} members={members} projectId={projectId} onUpdate={onUpdate} />
                     </td>
@@ -3301,7 +3301,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                       <span className={cn('inline-block rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold', st.bg, st.text)}>{st.label}</span>
                     </td>
                     <td className="px-3 py-2">
-                      <button onClick={() => onDeleteTask(task.id)} className="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600">
+                      <button onClick={() => onDeleteTask(task.id)} className="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-red-600">
                         <Trash2 className="w-3 h-3" />
                       </button>
                     </td>
@@ -3309,7 +3309,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                 );
               })}
               {tasks.length === 0 && !showAddTask && (
-                <tr><td colSpan={12} className="px-5 py-6 text-center text-[13px] text-slate-400">No tasks.</td></tr>
+                <tr><td colSpan={12} className="px-5 py-6 text-center text-[13px] text-slate-400 dark:text-slate-500">No tasks.</td></tr>
               )}
             </tbody>
           </table>
@@ -3422,9 +3422,9 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
   const zc = zoneColors[zone.zoneType] || zoneColors.zone;
 
   return (
-    <div style={{ marginLeft: depth > 0 ? depth * 28 : 0 }} className={cn(depth === 0 && 'rounded-[14px] border border-slate-200 bg-white mb-3 shadow-sm')}>
+    <div style={{ marginLeft: depth > 0 ? depth * 28 : 0 }} className={cn(depth === 0 && 'rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 mb-3 shadow-sm')}>
       {/* Zone row — full width with colored left border */}
-      <div className={cn('flex items-center gap-2.5 py-3 px-4 border-l-[3px] cursor-pointer hover:bg-slate-50/80 group transition-colors duration-100', zc.border, depth === 0 ? 'bg-slate-50/60' : 'border-b border-slate-100')}
+      <div className={cn('flex items-center gap-2.5 py-3 px-4 border-l-[3px] cursor-pointer hover:bg-slate-50/80 dark:hover:bg-slate-800/80 group transition-colors duration-100', zc.border, depth === 0 ? 'bg-slate-50/60 dark:bg-slate-800/60' : 'border-b border-slate-100 dark:border-slate-800')}
         onClick={() => setCollapsed(!collapsed)}>
         {/* Drag handle — only top-level zones (passed zoneDragHandleProps
             from the SortableTopZone wrapper). Sub-zones get a placeholder
@@ -3436,17 +3436,17 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
             title="Drag to reorder"
             {...zoneDragHandleProps}
             onClick={(e) => e.stopPropagation()}
-            className="-ml-2 flex h-7 w-7 items-center justify-center rounded cursor-grab active:cursor-grabbing text-slate-400 hover:text-blue-600 hover:bg-blue-50 shrink-0 touch-none focus:outline-none focus:ring-2 focus:ring-blue-300"
+            className="-ml-2 flex h-7 w-7 items-center justify-center rounded cursor-grab active:cursor-grabbing text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50 shrink-0 touch-none focus:outline-none focus:ring-2 focus:ring-blue-300"
           >
             <GripVertical className="w-4 h-4" />
           </button>
         ) : (
           <span className="w-5 shrink-0" />
         )}
-        {collapsed ? <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+        {collapsed ? <ChevronRight className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 shrink-0" />}
         <input
           type="checkbox"
-          className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer shrink-0"
+          className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 cursor-pointer shrink-0"
           checked={allZoneTasks.length > 0 && allZoneTasks.every((t: any) => selectedTaskIds?.has(t.id))}
           ref={(el) => {
             if (el) {
@@ -3460,8 +3460,8 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           title={`Select all ${allZoneTasks.length} tasks in this zone`}
         />
         <span className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide shrink-0', zc.bg, zc.text)}>{zone.zoneType}</span>
-        <ZoneNameWithRename zone={zone} projectId={projectId} nameClassName={cn('font-semibold', depth === 0 ? 'text-[15px] text-slate-900' : 'text-[13px] text-slate-800')} />
-        {hasChildren && <span className="text-[11px] text-slate-400">({zone.children.length} sub-zones)</span>}
+        <ZoneNameWithRename zone={zone} projectId={projectId} nameClassName={cn('font-semibold', depth === 0 ? 'text-[15px] text-slate-900 dark:text-slate-100' : 'text-[13px] text-slate-800 dark:text-slate-100')} />
+        {hasChildren && <span className="text-[11px] text-slate-400 dark:text-slate-500">({zone.children.length} sub-zones)</span>}
         <div className="ml-auto flex items-center gap-3 shrink-0">
           {/* Mini progress bar */}
           {(() => {
@@ -3470,19 +3470,19 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               : 0;
             return (
               <div className="flex items-center gap-1.5">
-                <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                <div className="w-16 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                   <div className={cn('h-full rounded-full', zoneProgress >= 80 ? 'bg-emerald-500' : zoneProgress >= 50 ? 'bg-blue-500' : 'bg-amber-500')} style={{ width: `${zoneProgress}%` }} />
                 </div>
-                <span className="text-[10px] font-semibold text-slate-500">{zoneProgress}%</span>
+                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">{zoneProgress}%</span>
               </div>
             );
           })()}
-          <span className="text-[11px] font-medium text-slate-400">
+          <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
             {allZoneTasks.length} tasks · {totalHours}h budget
             {/* Always show the zone's logged-hours total, even when 0, so PMs
                 see at a glance how much of the budget has been consumed.
                 Red when actuals exceed budget. */}
-            <span className={cn('ml-1 font-semibold', totalLoggedHours === 0 ? 'text-slate-400' : totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-blue-500')}>
+            <span className={cn('ml-1 font-semibold', totalLoggedHours === 0 ? 'text-slate-400 dark:text-slate-500' : totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-blue-500')}>
               · {totalLoggedHours}h logged
             </span>
             <span> · ₪{totalAmount.toLocaleString()}</span>
@@ -3495,27 +3495,27 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <Plus className="w-3 h-3" /> Add
             </button>
             {showAddMenu && (
-              <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-1.5">
-                <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Tasks</div>
-                <button onClick={() => { setShowAddTask(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Create New Task</button>
-                <button onClick={() => { setShowCatalogPicker(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Task from Catalog</button>
-                <div className="my-1 border-t border-slate-100" />
-                <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Deliverable</div>
-                <button onClick={() => { setShowPhasePicker(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">From Template</button>
-                <div className="my-1 border-t border-slate-100" />
-                <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Zones</div>
-                <button onClick={() => { setShowAddZone(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50">Add Sub-Zone</button>
+              <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white dark:bg-slate-900 p-1.5">
+                <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Tasks</div>
+                <button onClick={() => { setShowAddTask(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">Create New Task</button>
+                <button onClick={() => { setShowCatalogPicker(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">Task from Catalog</button>
+                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+                <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Deliverable</div>
+                <button onClick={() => { setShowPhasePicker(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">From Template</button>
+                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+                <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Zones</div>
+                <button onClick={() => { setShowAddZone(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">Add Sub-Zone</button>
               </div>
             )}
           </div>
           {depth === 0 && onDuplicateZone && (
             <button onClick={() => { setDuplicateName(`${zone.name} (copy)`); setShowDuplicateModal(true); }}
-              className="text-slate-400 hover:text-blue-600 text-[11px] font-medium px-2 py-1 rounded-md hover:bg-blue-50 flex items-center gap-1">
+              className="text-slate-400 dark:text-slate-500 hover:text-blue-600 text-[11px] font-medium px-2 py-1 rounded-md hover:bg-blue-50 flex items-center gap-1">
               <Copy className="w-3 h-3" /> Dup
             </button>
           )}
           <button onClick={() => { if (confirm(`Delete "${zone.name}"?`)) onDeleteZone(zone.id); }}
-            className="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 hover:text-red-600">
+            className="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-red-600">
             <Trash2 className="w-3 h-3" />
           </button>
         </div>
@@ -3524,28 +3524,28 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
       {!collapsed && (
         <>
           {showAddTask && (
-            <div style={{ marginLeft: 28 }} className="flex items-center gap-2 py-2 px-4 border-b border-slate-50 bg-blue-50/20">
-              <input value={newTask.code} onChange={(e) => setNewTask(f => ({ ...f, code: e.target.value }))} placeholder="Code *" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
-              <input value={newTask.name} onChange={(e) => setNewTask(f => ({ ...f, name: e.target.value }))} placeholder="Task name *" className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
-              <input value={newTask.budgetHours} onChange={(e) => setNewTask(f => ({ ...f, budgetHours: e.target.value }))} placeholder="Hrs" type="number" className="w-14 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
-              <input value={newTask.budgetAmount} onChange={(e) => setNewTask(f => ({ ...f, budgetAmount: e.target.value }))} placeholder="Amt" type="number" className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+            <div style={{ marginLeft: 28 }} className="flex items-center gap-2 py-2 px-4 border-b border-slate-50 dark:border-slate-800 bg-blue-50/20">
+              <input value={newTask.code} onChange={(e) => setNewTask(f => ({ ...f, code: e.target.value }))} placeholder="Code *" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
+              <input value={newTask.name} onChange={(e) => setNewTask(f => ({ ...f, name: e.target.value }))} placeholder="Task name *" className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
+              <input value={newTask.budgetHours} onChange={(e) => setNewTask(f => ({ ...f, budgetHours: e.target.value }))} placeholder="Hrs" type="number" className="w-14 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
+              <input value={newTask.budgetAmount} onChange={(e) => setNewTask(f => ({ ...f, budgetAmount: e.target.value }))} placeholder="Amt" type="number" className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
               <button onClick={async () => {
                 if (!newTask.code.trim() || !newTask.name.trim()) { notify.warning('Code and Name required'); return; }
                 const payload = { code: newTask.code.trim(), name: newTask.name.trim(), budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined, budgetAmount: newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined };
                 if (saveToCatalog) { try { const cats = await client.get('/templates?type=task_list').then(r => r.data.data ?? r.data); const cat = (Array.isArray(cats) ? cats : []).find((t: any) => t.code === '__TASK_CATALOG__'); if (cat) await client.post(`/templates/${cat.id}/tasks`, { ...payload, defaultBudgetHours: payload.budgetHours, defaultBudgetAmount: payload.budgetAmount }); } catch {} }
                 createTask.mutate({ zoneId: zone.id, ...payload });
               }} disabled={createTask.isPending} className="bg-blue-600 text-white text-[11px] font-semibold px-3 py-1.5 rounded-md disabled:opacity-50">Save</button>
-              <label className="flex items-center gap-1 text-[11px] text-slate-400 cursor-pointer whitespace-nowrap"><input type="checkbox" checked={saveToCatalog} onChange={(e) => setSaveToCatalog(e.target.checked)} className="h-3 w-3 rounded" />Catalog</label>
-              <button onClick={() => setShowAddTask(false)} className="text-[11px] text-slate-400 px-1">✕</button>
+              <label className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 cursor-pointer whitespace-nowrap"><input type="checkbox" checked={saveToCatalog} onChange={(e) => setSaveToCatalog(e.target.checked)} className="h-3 w-3 rounded" />Catalog</label>
+              <button onClick={() => setShowAddTask(false)} className="text-[11px] text-slate-400 dark:text-slate-500 px-1">✕</button>
             </div>
           )}
 
           {showAddZone && (
-            <div style={{ marginLeft: 28 }} className="flex items-center gap-2 py-2 px-4 border-b border-slate-50 bg-amber-50/30">
+            <div style={{ marginLeft: 28 }} className="flex items-center gap-2 py-2 px-4 border-b border-slate-50 dark:border-slate-800 bg-amber-50/30">
               <input value={newZone.name} onChange={(e) => setNewZone(f => ({ ...f, name: e.target.value }))} placeholder="Zone name *" autoFocus
-                className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none" />
+                className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
               <select value={newZone.zoneType} onChange={(e) => setNewZone(f => ({ ...f, zoneType: e.target.value }))}
-                className="w-28 px-2 py-1.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none">
+                className="w-28 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none">
                 {ZONE_TYPES.map(zt => <option key={zt} value={zt}>{zt.charAt(0).toUpperCase() + zt.slice(1)}</option>)}
               </select>
               <button onClick={() => {
@@ -3554,7 +3554,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               }} disabled={createZoneMutation.isPending} className="bg-amber-600 text-white text-[11px] font-semibold px-3 py-1.5 rounded-md disabled:opacity-50">
                 {createZoneMutation.isPending ? 'Creating...' : 'Add Zone'}
               </button>
-              <button onClick={() => setShowAddZone(false)} className="text-[11px] text-slate-400 px-1">✕</button>
+              <button onClick={() => setShowAddZone(false)} className="text-[11px] text-slate-400 dark:text-slate-500 px-1">✕</button>
             </div>
           )}
 
@@ -3562,7 +3562,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           {subCtx && directTasks.length > 0 ? (
             // Multi-level: render direct tasks as nested deliverable / service
             // cards (the chosen sub-dimension) instead of a flat task table.
-            <div style={{ marginLeft: 28 }} className="px-3 py-2 space-y-1.5 bg-slate-50/40">
+            <div style={{ marginLeft: 28 }} className="px-3 py-2 space-y-1.5 bg-slate-50/40 dark:bg-slate-800/40">
               {subCtx.bucketize(directTasks).map((sg) => (
                 <ProjectRootDeliverableGroup
                   key={sg.key}
@@ -3587,7 +3587,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           ) : (
             <>
               {directTasks.length > 0 && (
-                <div style={{ marginLeft: 28, ...cols.gridStyle }} className={cn('grid gap-x-2 items-center py-1.5 px-4 bg-slate-50/70 border-b border-l-[3px] border-l-transparent border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider')}>
+                <div style={{ marginLeft: 28, ...cols.gridStyle }} className={cn('grid gap-x-2 items-center py-1.5 px-4 bg-slate-50/70 dark:bg-slate-800/70 border-b border-l-[3px] border-l-transparent border-slate-100 dark:border-slate-800 text-[10px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-wider')}>
                   <span />
                   <span />
                   {cols.isVisible('code') && <ColHeader label="Code" filterKey="code" kind="text" />}
@@ -3660,19 +3660,19 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
 
       {showDuplicateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={() => setShowDuplicateModal(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-[440px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-slate-100">
-              <h3 className="text-base font-bold text-slate-900">Duplicate Zone</h3>
-              <p className="text-[13px] text-slate-400 mt-0.5">Copy "{zone.name}" with all tasks and sub-zones</p>
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[440px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Duplicate Zone</h3>
+              <p className="text-[13px] text-slate-400 dark:text-slate-500 mt-0.5">Copy "{zone.name}" with all tasks and sub-zones</p>
             </div>
             <div className="p-5">
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">New Zone Name *</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">New Zone Name *</label>
               <input value={duplicateName} onChange={(e) => setDuplicateName(e.target.value)} autoFocus
                 onKeyDown={(e) => { if (e.key === 'Enter' && duplicateName.trim()) { onDuplicateZone(zone.id, duplicateName.trim()); setShowDuplicateModal(false); } }}
-                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
             </div>
-            <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
-              <button onClick={() => setShowDuplicateModal(false)} className="bg-white border border-slate-200 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+            <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">
+              <button onClick={() => setShowDuplicateModal(false)} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
               <button onClick={() => { if (duplicateName.trim()) { onDuplicateZone(zone.id, duplicateName.trim()); setShowDuplicateModal(false); } }}
                 disabled={!duplicateName.trim()} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">Duplicate</button>
             </div>
@@ -3796,13 +3796,13 @@ function ProjectRootDeliverableGroup({
       ref={dndId ? sortable.setNodeRef : undefined}
       style={sortableStyle}
       className={cn(
-        'rounded-[14px] border border-slate-200 bg-white mb-3 shadow-sm group',
+        'rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 mb-3 shadow-sm group',
         sortable.isDragging && dndId && 'opacity-50 ring-2 ring-blue-300 z-10',
       )}
       {...(dndId ? sortable.attributes : {})}
     >
       <div
-        className="flex items-center gap-2.5 py-3 px-4 border-l-[3px] cursor-pointer hover:bg-slate-50/60"
+        className="flex items-center gap-2.5 py-3 px-4 border-l-[3px] cursor-pointer hover:bg-slate-50/60 dark:hover:bg-slate-800/60"
         style={{ borderLeftColor: color, backgroundColor: `${color}10` }}
         onClick={() => setCollapsed(!collapsed)}
       >
@@ -3816,17 +3816,17 @@ function ProjectRootDeliverableGroup({
             title="Drag to reorder"
             {...sortable.listeners}
             onClick={(e) => e.stopPropagation()}
-            className="-ml-1 flex h-6 w-6 items-center justify-center rounded text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-slate-600 cursor-grab active:cursor-grabbing shrink-0 touch-none focus:outline-none focus:ring-2 focus:ring-blue-300 focus:opacity-100"
+            className="-ml-1 flex h-6 w-6 items-center justify-center rounded text-slate-300 dark:text-slate-600 opacity-0 group-hover:opacity-100 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-200 cursor-grab active:cursor-grabbing shrink-0 touch-none focus:outline-none focus:ring-2 focus:ring-blue-300 focus:opacity-100"
           >
             <GripVertical className="w-4 h-4" />
           </button>
         ) : (
           <span className="w-5 shrink-0" />
         )}
-        {collapsed ? <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+        {collapsed ? <ChevronRight className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 shrink-0" />}
         <input
           type="checkbox"
-          className="h-3.5 w-3.5 rounded border-slate-300 cursor-pointer shrink-0"
+          className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 cursor-pointer shrink-0"
           checked={tasks.length > 0 && tasks.every((t: any) => selectedTaskIds.has(t.id))}
           ref={(el) => {
             if (el) {
@@ -3867,10 +3867,10 @@ function ProjectRootDeliverableGroup({
                 if (e.key === 'Escape') { setRenaming(false); setDraftName(label); }
               }}
               placeholder="(empty = use template name)"
-              className="text-[15px] font-semibold text-slate-900 bg-transparent border-b-2 border-blue-400 focus:outline-none min-w-0 max-w-[260px]"
+              className="text-[15px] font-semibold text-slate-900 dark:text-slate-100 bg-transparent border-b-2 border-blue-400 focus:outline-none min-w-0 max-w-[260px]"
             />
           ) : (
-            <span className="text-[15px] font-semibold text-slate-900 truncate" title={label}>{label}</span>
+            <span className="text-[15px] font-semibold text-slate-900 dark:text-slate-100 truncate" title={label}>{label}</span>
           )}
           {/* Pencil affordance only when this group is editable (Template-
               backed). The pencil is hidden until row hover so the header
@@ -3880,7 +3880,7 @@ function ProjectRootDeliverableGroup({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setDraftName(label); setRenaming(true); }}
-              className="text-[11px] text-slate-300 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity"
+              className="text-[11px] text-slate-300 dark:text-slate-600 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity"
               title="Rename this Deliverable for this project"
               aria-label="Rename deliverable"
             >
@@ -3888,7 +3888,7 @@ function ProjectRootDeliverableGroup({
             </button>
           )}
           {serviceLabel && (
-            <span className="text-[11px] text-slate-400 truncate" title={`Service: ${serviceLabel}`}>
+            <span className="text-[11px] text-slate-400 dark:text-slate-500 truncate" title={`Service: ${serviceLabel}`}>
               · {serviceLabel}
             </span>
           )}
@@ -3917,9 +3917,9 @@ function ProjectRootDeliverableGroup({
             </span>
           );
         })()}
-        <span className="ml-auto text-[11px] font-medium text-slate-400">
+        <span className="ml-auto text-[11px] font-medium text-slate-400 dark:text-slate-500">
           {tasks.length} tasks · {totalHours}h budget
-          <span className={cn('ml-1 font-semibold', totalLoggedHours === 0 ? 'text-slate-400' : totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-blue-500')}>
+          <span className={cn('ml-1 font-semibold', totalLoggedHours === 0 ? 'text-slate-400 dark:text-slate-500' : totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-blue-500')}>
             · {totalLoggedHours}h logged
           </span>
           <span> · ₪{totalAmount.toLocaleString()}</span>
@@ -3932,7 +3932,7 @@ function ProjectRootDeliverableGroup({
           // ProjectRootDeliverableGroup with isSubGroup=true so it falls
           // through to the leaf rendering. dndId is intentionally omitted
           // for sub-cards — reorder DnD stays scoped to the top level.
-          <div className="px-3 py-2 space-y-1.5 bg-slate-50/40">
+          <div className="px-3 py-2 space-y-1.5 bg-slate-50/40 dark:bg-slate-800/40">
             {subCtx!.bucketize(tasks).map((sg) => (
               <ProjectRootDeliverableGroup
                 key={sg.key}
@@ -3956,7 +3956,7 @@ function ProjectRootDeliverableGroup({
           </div>
         ) : (
         <>
-          <div style={{ marginLeft: 28, ...cols.gridStyle }} className={cn('grid gap-x-2 items-center py-1.5 px-4 bg-slate-50/70 border-b border-l-[3px] border-l-transparent border-slate-100 text-[10px] uppercase font-semibold text-slate-400 tracking-wider')}>
+          <div style={{ marginLeft: 28, ...cols.gridStyle }} className={cn('grid gap-x-2 items-center py-1.5 px-4 bg-slate-50/70 dark:bg-slate-800/70 border-b border-l-[3px] border-l-transparent border-slate-100 dark:border-slate-800 text-[10px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-wider')}>
             <span /><span />
             {cols.isVisible('code') && <ColHeader label="Code" filterKey="code" kind="text" />}
             <ColHeader label="Task Name" filterKey="name" kind="text" />
@@ -4905,7 +4905,7 @@ function PlanningView({ projectId }: { projectId: number }) {
 
   const handleSort = (col: string) => { if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc'); else { setSortCol(col); setSortDir('asc'); } };
   const sortIcon = (col: string) => sortCol === col ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
-  const thClass = "px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] cursor-pointer select-none hover:text-slate-600";
+  const thClass = "px-3 py-1.5 text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] cursor-pointer select-none hover:text-slate-600 dark:hover:text-slate-200";
 
   // Group tasks
   const flatZones = useMemo(() => { const r: any[] = []; function walk(z: any[]) { for (const n of z) { r.push(n); if (n.children) walk(n.children); } } walk(zones); return r; }, [zones]);
@@ -5135,7 +5135,7 @@ function PlanningView({ projectId }: { projectId: number }) {
   const totalLoggedMinutes = sorted.reduce((s: number, t: any) => s + (t.loggedMinutes || 0), 0);
   const totalLoggedHours = Math.round(totalLoggedMinutes / 60 * 10) / 10;
 
-  if (isLoading) return <div className="flex h-96 items-center justify-center text-[13px] text-slate-400">Loading...</div>;
+  if (isLoading) return <div className="flex h-96 items-center justify-center text-[13px] text-slate-400 dark:text-slate-500">Loading...</div>;
 
   return (
     <PlanningColumnsContext.Provider value={planningColumnsCtx}>
@@ -5164,25 +5164,25 @@ function PlanningView({ projectId }: { projectId: number }) {
           DOM never updated, so canceling = the original state stays). */}
       {pendingZoneMove && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={() => setPendingZoneMove(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-[460px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-slate-100 flex items-start gap-3">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[460px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-start gap-3">
               <div className="w-9 h-9 rounded-full bg-amber-50 flex items-center justify-center shrink-0">
                 <AlertTriangle className="w-5 h-5 text-amber-600" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">Move task between zones?</h3>
-                <p className="text-[13px] text-slate-500 mt-0.5">This will reassign the task to a different zone.</p>
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Move task between zones?</h3>
+                <p className="text-[13px] text-slate-500 dark:text-slate-400 mt-0.5">This will reassign the task to a different zone.</p>
               </div>
             </div>
-            <div className="px-5 py-4 text-[13px] text-slate-700 space-y-1.5">
-              <div><span className="text-slate-400">Task:</span> <span className="font-semibold text-slate-900">{pendingZoneMove.taskName}</span></div>
-              <div><span className="text-slate-400">From:</span> <span className="font-semibold">{pendingZoneMove.fromZoneName || '—'}</span></div>
-              <div><span className="text-slate-400">To:</span> <span className="font-semibold text-blue-700">{pendingZoneMove.toZoneName}</span></div>
+            <div className="px-5 py-4 text-[13px] text-slate-700 dark:text-slate-200 space-y-1.5">
+              <div><span className="text-slate-400 dark:text-slate-500">Task:</span> <span className="font-semibold text-slate-900 dark:text-slate-100">{pendingZoneMove.taskName}</span></div>
+              <div><span className="text-slate-400 dark:text-slate-500">From:</span> <span className="font-semibold">{pendingZoneMove.fromZoneName || '—'}</span></div>
+              <div><span className="text-slate-400 dark:text-slate-500">To:</span> <span className="font-semibold text-blue-700">{pendingZoneMove.toZoneName}</span></div>
             </div>
-            <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
+            <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">
               <button
                 onClick={() => setPendingZoneMove(null)}
-                className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
               >
                 Cancel
               </button>
@@ -5211,41 +5211,41 @@ function PlanningView({ projectId }: { projectId: number }) {
           onClick={() => setPendingTaskDelete(null)}
         >
           <div
-            className="bg-white rounded-2xl shadow-2xl w-[460px] max-w-[92vw]"
+            className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[460px] max-w-[92vw]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-5 py-4 border-b border-slate-100 flex items-start gap-3">
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-start gap-3">
               <div className="w-9 h-9 rounded-full bg-red-50 flex items-center justify-center shrink-0">
                 <Trash2 className="w-5 h-5 text-red-600" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
                   {pendingTaskDelete.ids.length === 1
                     ? 'Delete this task?'
                     : `Delete ${pendingTaskDelete.ids.length} tasks?`}
                 </h3>
-                <p className="text-[13px] text-slate-500 mt-0.5">
+                <p className="text-[13px] text-slate-500 dark:text-slate-400 mt-0.5">
                   This cannot be undone.
                 </p>
               </div>
             </div>
-            <div className="px-5 py-4 text-[13px] text-slate-700 space-y-1.5 max-h-48 overflow-y-auto">
+            <div className="px-5 py-4 text-[13px] text-slate-700 dark:text-slate-200 space-y-1.5 max-h-48 overflow-y-auto">
               {pendingTaskDelete.names.slice(0, 5).map((n, i) => (
                 <div key={i} className="truncate" title={n}>
-                  <span className="text-slate-400">•</span>{' '}
-                  <span className="font-medium text-slate-800">{n}</span>
+                  <span className="text-slate-400 dark:text-slate-500">•</span>{' '}
+                  <span className="font-medium text-slate-800 dark:text-slate-100">{n}</span>
                 </div>
               ))}
               {pendingTaskDelete.ids.length > 5 && (
-                <div className="text-[12px] text-slate-500 pt-1">
+                <div className="text-[12px] text-slate-500 dark:text-slate-400 pt-1">
                   +{pendingTaskDelete.ids.length - 5} more
                 </div>
               )}
             </div>
-            <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
+            <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">
               <button
                 onClick={() => setPendingTaskDelete(null)}
-                className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
               >
                 Cancel
               </button>
@@ -5271,35 +5271,35 @@ function PlanningView({ projectId }: { projectId: number }) {
           task table, surfaced prominently so PMs see project-wide totals
           without scrolling. Updates live as filters/edits change. */}
       {!showTemplatePicker && !showManualZone && sorted.length > 0 && (
-        <div className="rounded-[14px] border border-slate-200 bg-gradient-to-br from-blue-50/40 to-white px-5 py-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-[12px]">
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-gradient-to-br from-blue-50/40 to-white px-5 py-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-[12px]">
           <div>
-            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Tasks</div>
-            <div className="text-[18px] font-bold text-slate-900 tabular-nums">{sorted.length}</div>
+            <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Tasks</div>
+            <div className="text-[18px] font-bold text-slate-900 dark:text-slate-100 tabular-nums">{sorted.length}</div>
           </div>
-          <span className="h-8 w-px bg-slate-200" />
+          <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
           <div>
-            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Budget hours</div>
-            <div className="text-[18px] font-bold text-slate-900 tabular-nums">{totalHours}h</div>
+            <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Budget hours</div>
+            <div className="text-[18px] font-bold text-slate-900 dark:text-slate-100 tabular-nums">{totalHours}h</div>
           </div>
-          <span className="h-8 w-px bg-slate-200" />
+          <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
           <div>
-            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Logged hours</div>
+            <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Logged hours</div>
             <div className={cn(
               'text-[18px] font-bold tabular-nums',
-              totalLoggedHours === 0 ? 'text-slate-400'
+              totalLoggedHours === 0 ? 'text-slate-400 dark:text-slate-500'
                 : totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-600'
                 : 'text-blue-600',
             )}>{totalLoggedHours}h</div>
           </div>
-          <span className="h-8 w-px bg-slate-200" />
+          <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
           <div>
-            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Budget amount</div>
-            <div className="text-[18px] font-bold text-slate-900 tabular-nums">₪{totalAmount.toLocaleString()}</div>
+            <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Budget amount</div>
+            <div className="text-[18px] font-bold text-slate-900 dark:text-slate-100 tabular-nums">₪{totalAmount.toLocaleString()}</div>
           </div>
-          <span className="h-8 w-px bg-slate-200" />
+          <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
           <div>
-            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Progress</div>
-            <div className="text-[18px] font-bold text-slate-900 tabular-nums">
+            <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Progress</div>
+            <div className="text-[18px] font-bold text-slate-900 dark:text-slate-100 tabular-nums">
               {totalHours > 0 ? `${Math.min(100, Math.round((totalLoggedHours / totalHours) * 100))}%` : '—'}
             </div>
           </div>
@@ -5329,39 +5329,39 @@ function PlanningView({ projectId }: { projectId: number }) {
               <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showAddMenu && 'rotate-180')} />
             </button>
             {showAddMenu && (
-              <div className="absolute left-0 top-full z-50 mt-1.5 w-60 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-1.5">
-                <div className="px-2 pt-1 pb-0.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Zone</div>
+              <div className="absolute left-0 top-full z-50 mt-1.5 w-60 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white dark:bg-slate-900 p-1.5">
+                <div className="px-2 pt-1 pb-0.5 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Zone</div>
                 <button onClick={() => { setShowTemplatePicker(true); setShowAddMenu(false); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50 text-left">
-                  <Layers className="h-3.5 w-3.5 text-slate-400" />
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-left">
+                  <Layers className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
                   <span className="flex-1">From Template</span>
                 </button>
                 <button onClick={() => { setShowManualZone(true); setShowAddMenu(false); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50 text-left">
-                  <Plus className="h-3.5 w-3.5 text-slate-400" />
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-left">
+                  <Plus className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
                   <span className="flex-1">Manually</span>
                 </button>
-                <div className="my-1 h-px bg-slate-100" />
-                <div className="px-2 pt-1 pb-0.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Project Root</div>
+                <div className="my-1 h-px bg-slate-100 dark:bg-slate-800" />
+                <div className="px-2 pt-1 pb-0.5 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Project Root</div>
                 <button onClick={() => { setShowRootTemplate(true); setShowAddMenu(false); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50 text-left">
-                  <FileText className="h-3.5 w-3.5 text-slate-400" />
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-left">
+                  <FileText className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
                   <span className="flex-1">New Deliverable</span>
                 </button>
                 <button onClick={() => { setShowRootTask(true); setShowAddMenu(false); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 hover:bg-slate-50 text-left">
-                  <Plus className="h-3.5 w-3.5 text-slate-400" />
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-left">
+                  <Plus className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
                   <span className="flex-1">New Task</span>
                 </button>
               </div>
             )}
           </div>
 
-          <span className="mx-1 h-5 w-px bg-slate-200" />
+          <span className="mx-1 h-5 w-px bg-slate-200 dark:bg-slate-700" />
 
           {/* Group controls — primary + optional secondary dimension. */}
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-semibold text-slate-400">Group</span>
+            <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500">Group</span>
             <select
               value={groupBy}
               onChange={(e) => {
@@ -5377,7 +5377,7 @@ function PlanningView({ projectId }: { projectId: number }) {
                   setSubGroupBy('');
                 }
               }}
-              className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+              className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
             >
               <option value="zone">Zone</option>
               <option value="service">Deliverable</option>
@@ -5386,11 +5386,11 @@ function PlanningView({ projectId }: { projectId: number }) {
             </select>
             {groupBy !== 'none' && (
               <>
-                <span className="text-slate-300 text-[11px]">/</span>
+                <span className="text-slate-300 dark:text-slate-600 text-[11px]">/</span>
                 <select
                   value={subGroupBy}
                   onChange={(e) => setSubGroupBy(e.target.value as '' | 'service' | 'phase' | 'zone')}
-                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                   title="Optional secondary grouping inside each primary group"
                 >
                   <option value="">No sub-group</option>
@@ -5403,16 +5403,16 @@ function PlanningView({ projectId }: { projectId: number }) {
             )}
           </div>
 
-          <span className="mx-1 h-5 w-px bg-slate-200" />
+          <span className="mx-1 h-5 w-px bg-slate-200 dark:bg-slate-700" />
 
           {/* Search — always inline, narrow but visible. */}
           <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search tasks…"
-              className="w-44 pl-8 pr-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+              className="w-44 pl-8 pr-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
             />
           </div>
 
@@ -5439,7 +5439,7 @@ function PlanningView({ projectId }: { projectId: number }) {
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[13px] font-semibold transition-colors',
                 activeFilterCount > 0
                   ? 'border-blue-300 bg-blue-50 text-blue-700 hover:border-blue-400'
-                  : 'border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300',
+                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-slate-300 dark:hover:border-slate-600',
               )}
             >
               <SlidersHorizontal className="h-3.5 w-3.5" />
@@ -5451,9 +5451,9 @@ function PlanningView({ projectId }: { projectId: number }) {
               )}
             </button>
             {showFilterPanel && (
-              <div className="absolute right-0 top-full z-50 mt-1.5 w-[440px] max-w-[92vw] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-4">
+              <div className="absolute right-0 top-full z-50 mt-1.5 w-[440px] max-w-[92vw] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white dark:bg-slate-900 p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Task Filters</span>
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Task Filters</span>
                   {hasTaskFilter && (
                     <button
                       type="button"
@@ -5466,11 +5466,11 @@ function PlanningView({ projectId }: { projectId: number }) {
                 </div>
                 <div className="grid grid-cols-2 gap-x-3 gap-y-3">
                   <label className="block">
-                    <span className="block text-[11px] font-semibold text-slate-500 mb-1">Status</span>
+                    <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Status</span>
                     <select
                       value={filterStatus}
                       onChange={(e) => setFilterStatus(e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                     >
                       <option value="">All statuses</option>
                       {(['not_started', 'in_progress', 'in_review', 'completed', 'on_hold', 'cancelled'] as const).map((s) => (
@@ -5479,11 +5479,11 @@ function PlanningView({ projectId }: { projectId: number }) {
                     </select>
                   </label>
                   <label className="block">
-                    <span className="block text-[11px] font-semibold text-slate-500 mb-1">Priority</span>
+                    <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Priority</span>
                     <select
                       value={filterPriority}
                       onChange={(e) => setFilterPriority(e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                     >
                       <option value="">Any priority</option>
                       <option value="critical">Critical</option>
@@ -5493,11 +5493,11 @@ function PlanningView({ projectId }: { projectId: number }) {
                     </select>
                   </label>
                   <label className="block col-span-2">
-                    <span className="block text-[11px] font-semibold text-slate-500 mb-1">Assignee</span>
+                    <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Assignee</span>
                     <select
                       value={filterAssigneeId}
                       onChange={(e) => setFilterAssigneeId(e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                     >
                       <option value="">Any assignee</option>
                       {Array.from(
@@ -5520,31 +5520,31 @@ function PlanningView({ projectId }: { projectId: number }) {
                     </select>
                   </label>
                   <label className="block">
-                    <span className="block text-[11px] font-semibold text-slate-500 mb-1">Estimated start</span>
+                    <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Estimated start</span>
                     <div className="flex items-center gap-1.5">
                       <input type="date" value={filterStartFrom} onChange={(e) => setFilterStartFrom(e.target.value)}
-                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none" />
-                      <span className="text-slate-300 text-xs">→</span>
+                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
+                      <span className="text-slate-300 dark:text-slate-600 text-xs">→</span>
                       <input type="date" value={filterStartTo} onChange={(e) => setFilterStartTo(e.target.value)}
-                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none" />
+                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
                     </div>
                   </label>
                   <label className="block">
-                    <span className="block text-[11px] font-semibold text-slate-500 mb-1">Due date</span>
+                    <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Due date</span>
                     <div className="flex items-center gap-1.5">
                       <input type="date" value={filterDueFrom} onChange={(e) => setFilterDueFrom(e.target.value)}
-                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none" />
-                      <span className="text-slate-300 text-xs">→</span>
+                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
+                      <span className="text-slate-300 dark:text-slate-600 text-xs">→</span>
                       <input type="date" value={filterDueTo} onChange={(e) => setFilterDueTo(e.target.value)}
-                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 text-[12px] text-slate-700 focus:border-blue-500 focus:outline-none" />
+                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
                     </div>
                   </label>
                   <label className="block col-span-2">
-                    <span className="block text-[11px] font-semibold text-slate-500 mb-1">Has due date</span>
+                    <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Has due date</span>
                     <select
                       value={filterHasDue}
                       onChange={(e) => setFilterHasDue(e.target.value as '' | 'yes' | 'no')}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                     >
                       <option value="">Any</option>
                       <option value="yes">Has a due date set</option>
@@ -5577,7 +5577,7 @@ function PlanningView({ projectId }: { projectId: number }) {
                 onClick={handleUndo}
                 title="Undo last action (Ctrl+Z)"
                 aria-label="Undo last action"
-                className="flex items-center justify-center w-[34px] h-[34px] rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                className="flex items-center justify-center w-[34px] h-[34px] rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
               >
                 <Undo2 className="w-4 h-4" />
               </button>
@@ -5587,7 +5587,7 @@ function PlanningView({ projectId }: { projectId: number }) {
               onClick={() => setShowArchiveModal(true)}
               title="View archived tasks for this project"
               aria-label="View archived tasks"
-              className="flex items-center justify-center w-[34px] h-[34px] rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+              className="flex items-center justify-center w-[34px] h-[34px] rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
             >
               <Archive className="w-4 h-4" />
             </button>
@@ -5615,7 +5615,7 @@ function PlanningView({ projectId }: { projectId: number }) {
               }}
               title="Export all tasks as Excel (flat, no groups)"
               aria-label="Export tasks to Excel"
-              className="flex items-center justify-center w-[34px] h-[34px] rounded-lg text-slate-400 hover:text-emerald-700 hover:bg-emerald-50"
+              className="flex items-center justify-center w-[34px] h-[34px] rounded-lg text-slate-400 dark:text-slate-500 hover:text-emerald-700 hover:bg-emerald-50"
             >
               <Download className="w-4 h-4" />
             </button>
@@ -5626,11 +5626,11 @@ function PlanningView({ projectId }: { projectId: number }) {
       {/* Task table — full width */}
       {sorted.length > 0 || flatZones.length > 0 ? (
         <div>
-          <div className="flex items-center justify-between py-3 border-b border-slate-200">
+          <div className="flex items-center justify-between py-3 border-b border-slate-200 dark:border-slate-700">
             <div>
-              <h3 className="text-[15px] font-bold text-slate-900">Project Tasks</h3>
-              <span className="text-[11px] font-medium text-slate-400">
-                {sorted.length} tasks · {totalHours}h budget · <span className={cn('font-semibold', totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-slate-500')}>{totalLoggedHours}h logged</span> · ₪{totalAmount.toLocaleString()}
+              <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Project Tasks</h3>
+              <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
+                {sorted.length} tasks · {totalHours}h budget · <span className={cn('font-semibold', totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-slate-500 dark:text-slate-400')}>{totalLoggedHours}h logged</span> · ₪{totalAmount.toLocaleString()}
               </span>
             </div>
             {/* Feasibility + Progress */}
@@ -5769,9 +5769,9 @@ function PlanningView({ projectId }: { projectId: number }) {
             )}
             {activeDragId != null && (
               <DragOverlay>
-                <div className="flex items-center gap-3 py-2 px-4 bg-white border border-blue-300 shadow-xl rounded-lg text-[13px] opacity-90">
+                <div className="flex items-center gap-3 py-2 px-4 bg-white dark:bg-slate-900 border border-blue-300 shadow-xl rounded-lg text-[13px] opacity-90">
                   <GripVertical className="w-3.5 h-3.5 text-blue-500" />
-                  <span className="font-medium text-slate-900">
+                  <span className="font-medium text-slate-900 dark:text-slate-100">
                     {(() => {
                       // Identify the dragged item to render a useful preview.
                       // Order matters: deliverable strings start with "d-",
@@ -5798,28 +5798,28 @@ function PlanningView({ projectId }: { projectId: number }) {
             )}
           </DndContext>
 
-          <div className="flex items-center gap-6 px-4 py-2.5 border-t border-slate-200 bg-[#FAFBFC] text-[12px]">
-            <div><span className="text-slate-400">Total:</span> <span className="font-mono text-xs font-semibold text-slate-900 ml-1">{sorted.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span></div>
+          <div className="flex items-center gap-6 px-4 py-2.5 border-t border-slate-200 dark:border-slate-700 bg-[#FAFBFC] text-[12px]">
+            <div><span className="text-slate-400 dark:text-slate-500">Total:</span> <span className="font-mono text-xs font-semibold text-slate-900 dark:text-slate-100 ml-1">{sorted.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span></div>
             {totalLoggedHours > 0 && (
               <>
-                <span className="text-slate-300">│</span>
-                <div><span className="text-slate-400">Logged:</span> <span className={cn('font-mono text-xs font-semibold ml-1', totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-600' : 'text-blue-600')}>{totalLoggedHours}h</span>{totalHours > 0 && <span className="text-slate-400 ml-1">/ {totalHours}h ({Math.round(totalLoggedHours / totalHours * 100)}%)</span>}</div>
+                <span className="text-slate-300 dark:text-slate-600">│</span>
+                <div><span className="text-slate-400 dark:text-slate-500">Logged:</span> <span className={cn('font-mono text-xs font-semibold ml-1', totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-600' : 'text-blue-600')}>{totalLoggedHours}h</span>{totalHours > 0 && <span className="text-slate-400 dark:text-slate-500 ml-1">/ {totalHours}h ({Math.round(totalLoggedHours / totalHours * 100)}%)</span>}</div>
               </>
             )}
             {budget?.projectBudget > 0 && (
               <>
-                <span className="text-slate-300">│</span>
-                <div><span className="text-slate-400">Budget:</span> <span className="font-mono text-xs font-semibold text-slate-900 ml-1">₪{Number(budget.projectBudget).toLocaleString()}</span></div>
-                <div><span className="text-slate-400">Remaining:</span> <span className={cn('font-mono text-xs font-semibold ml-1', budget.remaining >= 0 ? 'text-emerald-600' : 'text-red-600')}>₪{Number(budget.remaining).toLocaleString()}</span></div>
-                <div className="flex-1 max-w-[200px]"><div className="w-full h-1 bg-slate-200 rounded-full overflow-hidden"><div className="h-full bg-blue-500 rounded-full transition-all duration-400" style={{ width: `${Math.min(100, 100 - (budget.remainingPct || 0))}%` }} /></div></div>
+                <span className="text-slate-300 dark:text-slate-600">│</span>
+                <div><span className="text-slate-400 dark:text-slate-500">Budget:</span> <span className="font-mono text-xs font-semibold text-slate-900 dark:text-slate-100 ml-1">₪{Number(budget.projectBudget).toLocaleString()}</span></div>
+                <div><span className="text-slate-400 dark:text-slate-500">Remaining:</span> <span className={cn('font-mono text-xs font-semibold ml-1', budget.remaining >= 0 ? 'text-emerald-600' : 'text-red-600')}>₪{Number(budget.remaining).toLocaleString()}</span></div>
+                <div className="flex-1 max-w-[200px]"><div className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden"><div className="h-full bg-blue-500 rounded-full transition-all duration-400" style={{ width: `${Math.min(100, 100 - (budget.remainingPct || 0))}%` }} /></div></div>
               </>
             )}
           </div>
         </div>
       ) : !showTemplatePicker && !showManualZone ? (
-        <div className="bg-white rounded-[14px] border border-slate-200 p-12 text-center">
-          <p className="text-[15px] font-bold text-slate-900 mb-2">No zones or tasks yet</p>
-          <p className="text-[13px] text-slate-400 mb-4">Start by adding a zone from a template or create one manually</p>
+        <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 p-12 text-center">
+          <p className="text-[15px] font-bold text-slate-900 dark:text-slate-100 mb-2">No zones or tasks yet</p>
+          <p className="text-[13px] text-slate-400 dark:text-slate-500 mb-4">Start by adding a zone from a template or create one manually</p>
         </div>
       ) : null}
 
@@ -5858,7 +5858,7 @@ export function PlanningPage() {
   // the user scrolls horizontally rather than losing column data.
   return (
     <div ref={scrollRef} className="px-4 py-5 space-y-4 overflow-x-auto">
-      <button onClick={() => navigate(`/projects/${Number(id)}`)} className="flex items-center gap-1.5 text-[13px] text-slate-400 hover:text-slate-600"><ArrowLeft className="h-4 w-4" /> Back to Project</button>
+      <button onClick={() => navigate(`/projects/${Number(id)}`)} className="flex items-center gap-1.5 text-[13px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200"><ArrowLeft className="h-4 w-4" /> Back to Project</button>
       <PlanningView projectId={Number(id)} />
     </div>
   );

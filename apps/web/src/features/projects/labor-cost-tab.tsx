@@ -101,7 +101,7 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
   });
 
   if (isLoading) {
-    return <div className="py-12 text-center text-sm text-slate-400">Loading labor cost…</div>;
+    return <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading labor cost…</div>;
   }
   if (error || !data) {
     return (
@@ -121,14 +121,14 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
       {/* Top stats row */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {/* Total logged hours */}
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+        <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
             <Clock className="h-3.5 w-3.5" /> Total logged
           </div>
-          <p className="mt-2 text-2xl font-bold text-slate-900 tabular-nums">
+          <p className="mt-2 text-2xl font-bold text-slate-900 dark:text-slate-100 tabular-nums">
             {fmtHours(totals.totalLoggedHours)}
           </p>
-          <p className="mt-0.5 text-[11px] text-slate-500">
+          <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
             {byUser.length + unrateable.length} contributor{(byUser.length + unrateable.length) === 1 ? '' : 's'}
           </p>
         </div>
@@ -137,11 +137,11 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
             currency; if multiple, the first card holds the rest in a
             stacked list. Keeps the row to 3 cards at most. */}
         {totals.byCurrency.length === 0 ? (
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 md:col-span-2">
-            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+          <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-4 md:col-span-2">
+            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               <DollarSign className="h-3.5 w-3.5" /> Resolved cost
             </div>
-            <p className="mt-2 text-sm text-slate-500 italic">
+            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 italic">
               No costs resolved yet — see the "Missing rates" section below.
             </p>
           </div>
@@ -153,13 +153,13 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
                 'rounded-lg border p-4',
                 i === 0
                   ? 'border-emerald-200 bg-emerald-50'
-                  : 'border-slate-200 bg-white',
+                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900',
               )}
             >
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 <DollarSign className="h-3.5 w-3.5" /> Resolved cost
                 {totals.byCurrency.length > 1 && (
-                  <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] tracking-normal text-slate-600">
+                  <span className="rounded bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 text-[10px] tracking-normal text-slate-600 dark:text-slate-300">
                     {c.currency}
                   </span>
                 )}
@@ -167,12 +167,12 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
               <p
                 className={cn(
                   'mt-2 text-2xl font-bold tabular-nums',
-                  i === 0 ? 'text-emerald-700' : 'text-slate-900',
+                  i === 0 ? 'text-emerald-700' : 'text-slate-900 dark:text-slate-100',
                 )}
               >
                 {fmtMoney(c.totalCost, c.currency)}
               </p>
-              <p className="mt-0.5 text-[11px] text-slate-500">
+              <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                 {fmtHours(c.totalHours)} · {c.userCount} user{c.userCount === 1 ? '' : 's'}
               </p>
             </div>
@@ -217,17 +217,17 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
       )}
 
       {/* Per-user breakdown table */}
-      <div ref={scrollRef} className="rounded-lg border border-slate-200 bg-white overflow-x-auto">
-        <div className="border-b border-slate-200 px-4 py-2.5">
-          <h3 className="text-[13px] font-semibold text-slate-700">By contributor</h3>
-          <p className="text-[11px] text-slate-500">
+      <div ref={scrollRef} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+        <div className="border-b border-slate-200 dark:border-slate-700 px-4 py-2.5">
+          <h3 className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">By contributor</h3>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
             Sorted by cost (largest first). Hourly cost comes from each user's seniority level.
           </p>
         </div>
         {hasAnyRated ? (
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
+              <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 <th className="px-4 py-2 text-left font-semibold">Person</th>
                 <th className="px-4 py-2 text-left font-semibold">Seniority</th>
                 <th className="px-4 py-2 text-right font-semibold">Hours</th>
@@ -237,32 +237,32 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
             </thead>
             <tbody>
               {byUser.map((row) => (
-                <tr key={row.user.id} className="border-t border-slate-100">
+                <tr key={row.user.id} className="border-t border-slate-100 dark:border-slate-800">
                   <td className="px-4 py-2.5">
                     <div className="flex items-center gap-2">
                       <div className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-100 text-[10px] font-semibold text-blue-700 shrink-0">
                         {initials(row.user.firstName, row.user.lastName)}
                       </div>
                       <div className="min-w-0">
-                        <p className="text-[13px] font-medium text-slate-900 truncate">
+                        <p className="text-[13px] font-medium text-slate-900 dark:text-slate-100 truncate">
                           {row.user.firstName} {row.user.lastName}
                         </p>
                         {row.user.position && (
-                          <p className="text-[10px] text-slate-500 truncate">{row.user.position}</p>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{row.user.position}</p>
                         )}
                       </div>
                     </div>
                   </td>
-                  <td className="px-4 py-2.5 text-[12px] text-slate-600">
+                  <td className="px-4 py-2.5 text-[12px] text-slate-600 dark:text-slate-300">
                     {row.seniorityLevel?.name ?? '—'}
                   </td>
-                  <td className="px-4 py-2.5 text-right text-[12px] tabular-nums text-slate-700">
+                  <td className="px-4 py-2.5 text-right text-[12px] tabular-nums text-slate-700 dark:text-slate-200">
                     {fmtHours(row.hours)}
                   </td>
-                  <td className="px-4 py-2.5 text-right text-[12px] tabular-nums text-slate-700">
+                  <td className="px-4 py-2.5 text-right text-[12px] tabular-nums text-slate-700 dark:text-slate-200">
                     {fmtMoney(row.hourlyCost, row.currency)}
                   </td>
-                  <td className="px-4 py-2.5 text-right text-[13px] tabular-nums font-semibold text-slate-900">
+                  <td className="px-4 py-2.5 text-right text-[13px] tabular-nums font-semibold text-slate-900 dark:text-slate-100">
                     {fmtMoney(row.cost, row.currency)}
                   </td>
                 </tr>
@@ -270,7 +270,7 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
             </tbody>
           </table>
         ) : (
-          <p className="px-4 py-6 text-center text-sm text-slate-400">
+          <p className="px-4 py-6 text-center text-sm text-slate-400 dark:text-slate-500">
             {hasNothingLogged
               ? 'No time has been logged on this project yet.'
               : 'No contributors with a resolved hourly cost yet.'}

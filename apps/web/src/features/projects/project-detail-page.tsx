@@ -83,7 +83,7 @@ export function ProjectDetailPage() {
   const showFinance = can('finance', 'read');
 
   if (isLoading) return <PageSkeleton />;
-  if (!project) return <p className="py-8 text-center text-slate-400">Project not found</p>;
+  if (!project) return <p className="py-8 text-center text-slate-400 dark:text-slate-500">Project not found</p>;
 
   const leader = members?.find((m) => m.role?.toLowerCase() === 'leader' || m.role?.toLowerCase() === 'project leader');
   const memberCount = members?.length ?? 0;
@@ -111,9 +111,9 @@ export function ProjectDetailPage() {
   ];
 
   return (
-    <div className="bg-slate-50">
+    <div className="bg-slate-50 dark:bg-slate-800/50">
       {/* Header */}
-      <div className="bg-white border-b border-slate-200">
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
         <div className="px-5 pt-5 pb-0">
           {/* Back link + prev/next navigation between projects the user
               can see. Client feedback 2026-08-02 — avoid returning to
@@ -122,7 +122,7 @@ export function ProjectDetailPage() {
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => navigate('/projects')}
-                className="flex items-center gap-1 text-[13px] text-slate-400 hover:text-slate-600 transition-colors"
+                className="flex items-center gap-1 text-[13px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
                 Projects
@@ -136,17 +136,17 @@ export function ProjectDetailPage() {
           {/* Title row */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <h1 className="text-xl font-bold tracking-tight text-slate-900">
+              <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
                 {project.name}
               </h1>
-              <button onClick={() => navigate(`/projects/${projectId}/edit`)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-500 hover:text-slate-700" aria-label="Edit project">
+              <button onClick={() => navigate(`/projects/${projectId}/edit`)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100" aria-label="Edit project">
                 <Pencil className="h-3.5 w-3.5" />
               </button>
               <span className="rounded-[5px] bg-blue-50 px-2.5 py-1 text-[11px] font-bold tracking-wide text-blue-600 uppercase">
                 {project.status}
               </span>
               {project.number && (
-                <span className="text-[13px] text-slate-400 font-mono">
+                <span className="text-[13px] text-slate-400 dark:text-slate-500 font-mono">
                   {project.number}
                 </span>
               )}
@@ -166,7 +166,7 @@ export function ProjectDetailPage() {
                     }).catch((err: any) => notify.apiError(err, 'Failed to delete project'));
                   }
                 }}
-                className="bg-white border border-red-200 hover:border-red-400 text-red-600 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:bg-red-50"
+                className="bg-white dark:bg-slate-900 border border-red-200 hover:border-red-400 text-red-600 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:bg-red-50"
               >
                 Delete
               </button>
@@ -185,7 +185,7 @@ export function ProjectDetailPage() {
           )}
 
           {/* Meta row */}
-          <div className="mt-3 mb-4 flex items-center gap-3 text-xs text-slate-500">
+          <div className="mt-3 mb-4 flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
             {/* Leader */}
             {leader && leader.user && (
               <>
@@ -193,12 +193,12 @@ export function ProjectDetailPage() {
                   <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-100 text-[9px] font-semibold text-indigo-600">
                     {getInitials(leader.user.firstName, leader.user.lastName)}
                   </div>
-                  <span className="text-slate-700 text-xs font-medium">
+                  <span className="text-slate-700 dark:text-slate-200 text-xs font-medium">
                     {leader.user.firstName} {leader.user.lastName}
                   </span>
-                  <span className="text-slate-400 text-xs">Leader</span>
+                  <span className="text-slate-400 dark:text-slate-500 text-xs">Leader</span>
                 </div>
-                <span className="text-slate-300">|</span>
+                <span className="text-slate-300 dark:text-slate-600">|</span>
               </>
             )}
 
@@ -208,13 +208,13 @@ export function ProjectDetailPage() {
                 {(members ?? []).slice(0, 3).map((m) => (
                   <div
                     key={m.id}
-                    className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[8px] font-semibold text-slate-600 ring-2 ring-white"
+                    className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-700 text-[8px] font-semibold text-slate-600 dark:text-slate-300 ring-2 ring-white"
                   >
                     {getInitials(m.user?.firstName ?? '', m.user?.lastName ?? '')}
                   </div>
                 ))}
               </div>
-              <span className="text-slate-500 text-xs">{memberCount} members</span>
+              <span className="text-slate-500 dark:text-slate-400 text-xs">{memberCount} members</span>
             </div>
 
             {/* Budget — gated by finance permission. Same gate used by the
@@ -222,10 +222,10 @@ export function ProjectDetailPage() {
                 see project value anywhere. */}
             {showFinance && project.budget != null && (
               <>
-                <span className="text-slate-300">|</span>
+                <span className="text-slate-300 dark:text-slate-600">|</span>
                 <div className="flex items-center gap-1">
-                  <span className="text-slate-500 text-xs">Budget:</span>
-                  <span className="font-mono text-xs font-semibold text-slate-900">
+                  <span className="text-slate-500 dark:text-slate-400 text-xs">Budget:</span>
+                  <span className="font-mono text-xs font-semibold text-slate-900 dark:text-slate-100">
                     &#8362;{formatBudget(project.budget)}
                   </span>
                 </div>
@@ -235,10 +235,10 @@ export function ProjectDetailPage() {
             {/* Timeline */}
             {timeline && (
               <>
-                <span className="text-slate-300">|</span>
+                <span className="text-slate-300 dark:text-slate-600">|</span>
                 <div className="flex items-center gap-1">
-                  <span className="text-slate-500 text-xs">Timeline:</span>
-                  <span className="text-xs text-slate-700">{timeline}</span>
+                  <span className="text-slate-500 dark:text-slate-400 text-xs">Timeline:</span>
+                  <span className="text-xs text-slate-700 dark:text-slate-200">{timeline}</span>
                 </div>
               </>
             )}
@@ -248,9 +248,9 @@ export function ProjectDetailPage() {
                 without opening Project Info. Hidden when unset. */}
             {(project as any).authoringToolVersion && (
               <>
-                <span className="text-slate-300">|</span>
+                <span className="text-slate-300 dark:text-slate-600">|</span>
                 <div className="flex items-center gap-1">
-                  <span className="text-slate-500 text-xs">Authoring Tool:</span>
+                  <span className="text-slate-500 dark:text-slate-400 text-xs">Authoring Tool:</span>
                   <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] font-semibold text-violet-700">
                     {(project as any).authoringToolVersion}
                   </span>
@@ -262,7 +262,7 @@ export function ProjectDetailPage() {
       </div>
 
       {/* Tab bar */}
-      <div className="bg-white border-b border-slate-200">
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
         {/* overflow-x-auto + flex-nowrap so the 9-tab strip stays one row
             even on narrow viewports. Without this, tabs wrapped onto a
             second line and the Kanban tab (5th of 9) ended up below the
@@ -278,7 +278,7 @@ export function ProjectDetailPage() {
                   'border-b-2 px-1 py-2.5 text-[13px] font-semibold transition-colors shrink-0 whitespace-nowrap',
                   tab === t.key
                     ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-slate-400 hover:text-slate-600',
+                    : 'border-transparent text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200',
                 )}
               >
                 {t.label}
@@ -291,11 +291,11 @@ export function ProjectDetailPage() {
       {/* Tab content */}
       <div className="px-5 py-6">
         {tab === 'info' && <ProjectInfoTab projectId={projectId} project={project} />}
-        {tab === 'planning' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading planning...</div>}><PlanningTab projectId={projectId} /></Suspense>}
-        {tab === 'schedule' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading schedule...</div>}><DeliverablePlanningTab projectId={projectId} /></Suspense>}
-        {tab === 'kanban' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading board...</div>}><KanbanBoard projectId={projectId} /></Suspense>}
-        {tab === 'execution' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading execution...</div>}><ProjectExecutionBoard projectId={projectId} /></Suspense>}
-        {tab === 'cost' && showFinance && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400">Loading labor cost...</div>}><LaborCostTab projectId={projectId} /></Suspense>}
+        {tab === 'planning' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading planning...</div>}><PlanningTab projectId={projectId} /></Suspense>}
+        {tab === 'schedule' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading schedule...</div>}><DeliverablePlanningTab projectId={projectId} /></Suspense>}
+        {tab === 'kanban' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading board...</div>}><KanbanBoard projectId={projectId} /></Suspense>}
+        {tab === 'execution' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading execution...</div>}><ProjectExecutionBoard projectId={projectId} /></Suspense>}
+        {tab === 'cost' && showFinance && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading labor cost...</div>}><LaborCostTab projectId={projectId} /></Suspense>}
         {tab === 'files' && <FilesTab projectId={projectId} />}
         {tab === 'activity' && <ActivityFeed projectId={projectId} />}
         {tab === 'discussion' && (
@@ -439,8 +439,8 @@ function ProjectCloseControl({ project, projectId }: { project: any; projectId: 
         disabled={closeMutation.isPending || reopenMutation.isPending}
         className={
           isClosed
-            ? 'bg-white border border-emerald-200 hover:border-emerald-400 text-emerald-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:bg-emerald-50 disabled:opacity-50'
-            : 'bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:bg-slate-50 disabled:opacity-50'
+            ? 'bg-white dark:bg-slate-900 border border-emerald-200 hover:border-emerald-400 text-emerald-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:bg-emerald-50 disabled:opacity-50'
+            : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 disabled:opacity-50'
         }
       >
         {isClosed ? 'Re-open' : 'Close project'}
@@ -458,31 +458,31 @@ function ProjectCloseControl({ project, projectId }: { project: any; projectId: 
           onClick={() => setShowCloseConfirm(false)}
         >
           <div
-            className="bg-white rounded-2xl shadow-2xl w-[460px] max-w-[92vw]"
+            className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[460px] max-w-[92vw]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-5 py-4 border-b border-slate-100 flex items-start gap-3">
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-start gap-3">
               <div className="w-9 h-9 rounded-full bg-amber-50 flex items-center justify-center shrink-0">
                 <Archive className="w-5 h-5 text-amber-600" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">Close this project?</h3>
-                <p className="text-[13px] text-slate-500 mt-0.5">
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Close this project?</h3>
+                <p className="text-[13px] text-slate-500 dark:text-slate-400 mt-0.5">
                   "{project.name}" will be hidden from the default project list.
                 </p>
               </div>
             </div>
-            <div className="px-5 py-4 text-[13px] text-slate-700 space-y-2">
+            <div className="px-5 py-4 text-[13px] text-slate-700 dark:text-slate-200 space-y-2">
               <p>Closing keeps all data intact — tasks, time entries, files, history all stay.</p>
-              <p className="text-slate-500">
+              <p className="text-slate-500 dark:text-slate-400">
                 You can re-open it later from this same button. Filter the project list with
-                <span className="font-semibold text-slate-700"> Status → Closed</span> to find it.
+                <span className="font-semibold text-slate-700 dark:text-slate-200"> Status → Closed</span> to find it.
               </p>
             </div>
-            <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
+            <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">
               <button
                 onClick={() => setShowCloseConfirm(false)}
-                className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
               >
                 Cancel
               </button>
@@ -608,24 +608,24 @@ function TeamTab({
   const [view, setView] = useState<'cards' | 'table'>('cards');
 
   if (isLoading || !team) {
-    return <p className="py-8 text-center text-sm text-slate-400">Loading team...</p>;
+    return <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">Loading team...</p>;
   }
 
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold text-slate-700">Project Team</h2>
-          <p className="text-[11px] text-slate-400 mt-0.5">
+          <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Project Team</h2>
+          <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
             Connections between this project and your business partners. Disconnects are <strong>soft-ended</strong> (history preserved).
           </p>
         </div>
-        <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5 shrink-0">
+        <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 shrink-0">
           <button
             onClick={() => setView('cards')}
             className={cn(
               'rounded-md px-3 py-1 text-[12px] font-semibold transition-colors',
-              view === 'cards' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+              view === 'cards' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
             )}
           >
             Cards
@@ -634,7 +634,7 @@ function TeamTab({
             onClick={() => setView('table')}
             className={cn(
               'rounded-md px-3 py-1 text-[12px] font-semibold transition-colors',
-              view === 'table' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+              view === 'table' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
             )}
           >
             Table
@@ -681,7 +681,7 @@ function TeamTab({
             action={(
               <button
                 onClick={() => setRoleAssignmentTarget(rt)}
-                className="flex items-center gap-1.5 rounded-md bg-white border border-amber-300 bg-amber-50 hover:border-amber-400 px-3 py-1.5 text-xs font-semibold text-amber-800 transition-colors"
+                className="flex items-center gap-1.5 rounded-md bg-white dark:bg-slate-900 border border-amber-300 bg-amber-50 hover:border-amber-400 px-3 py-1.5 text-xs font-semibold text-amber-800 transition-colors"
               >
                 <UserPlus className="h-3.5 w-3.5" />
                 Add {rt.name}
@@ -730,7 +730,7 @@ function TeamTab({
         )}
       >
         {team.projectTeam.length === 0 ? (
-          <p className="text-[12px] text-slate-400 italic">No internal members yet.</p>
+          <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">No internal members yet.</p>
         ) : (
           <div className="space-y-2">
             {team.projectTeam.map((row) => {
@@ -786,7 +786,7 @@ function TeamTab({
             onClick={() => setShowCustomerContactPicker(true)}
             disabled={!team.customer}
             title={!team.customer ? 'No customer on project' : undefined}
-            className="flex items-center gap-1.5 rounded-md bg-white border border-slate-200 hover:border-slate-400 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors"
+            className="flex items-center gap-1.5 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors"
           >
             <UserPlus className="h-3.5 w-3.5" />
             Add Customer Contact
@@ -794,7 +794,7 @@ function TeamTab({
         )}
       >
         {team.customerContacts.length === 0 ? (
-          <p className="text-[12px] text-slate-400 italic">No customer contacts yet.</p>
+          <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">No customer contacts yet.</p>
         ) : (
           <div className="space-y-2">
             {team.customerContacts.map((row) => (
@@ -824,7 +824,7 @@ function TeamTab({
             action={(
               <button
                 onClick={() => setRoleAssignmentTarget(rt)}
-                className="flex items-center gap-1.5 rounded-md bg-white border border-slate-200 hover:border-slate-400 px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors"
+                className="flex items-center gap-1.5 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors"
               >
                 <UserPlus className="h-3.5 w-3.5" />
                 Add {rt.name}
@@ -832,7 +832,7 @@ function TeamTab({
             )}
           >
             {assignments.length === 0 ? (
-              <p className="text-[12px] text-slate-400 italic">
+              <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">
                 No {rt.name.toLowerCase()} on this project yet.
                 {rt.allowedPartnerKind !== 'any' && ` Allowed: ${rt.allowedPartnerKind} only.`}
                 {rt.requiredPartnerRoleCode && ` Must hold role "${rt.requiredPartnerRoleCode}".`}
@@ -1016,26 +1016,26 @@ function TeamTableView({ team }: { team: ProjectTeamData }) {
     : filtered;
 
   if (rows.length === 0) {
-    return <p className="py-12 text-center text-sm text-slate-400 italic">No people on this project yet.</p>;
+    return <p className="py-12 text-center text-sm text-slate-400 dark:text-slate-500 italic">No people on this project yet.</p>;
   }
 
   const SortHeader = ({ k, label }: { k: ColKey; label: string }) => (
     <button
       type="button"
       onClick={() => toggleSort(k)}
-      className="flex items-center gap-1 hover:text-slate-700 cursor-pointer"
+      className="flex items-center gap-1 hover:text-slate-700 dark:hover:text-slate-100 cursor-pointer"
     >
       <span>{label}</span>
-      <span className="text-slate-300 text-[9px] tabular-nums">
+      <span className="text-slate-300 dark:text-slate-600 text-[9px] tabular-nums">
         {sort?.key === k ? (sort.dir === 'asc' ? '▲' : '▼') : '⇅'}
       </span>
     </button>
   );
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+    <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
       <table className="w-full text-[13px]">
-        <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 tracking-wider">
+        <thead className="bg-slate-50 dark:bg-slate-800/50 text-[10px] uppercase text-slate-500 dark:text-slate-400 tracking-wider">
           <tr>
             <th className="px-4 py-2 text-left"><SortHeader k="name" label="Name" /></th>
             <th className="px-4 py-2 text-left"><SortHeader k="role" label="Role / Position" /></th>
@@ -1045,46 +1045,46 @@ function TeamTableView({ team }: { team: ProjectTeamData }) {
           </tr>
           {/* Filter input row — substring match against the cell's
               flattened text. Empty = pass-through. */}
-          <tr className="bg-white border-t border-slate-100">
+          <tr className="bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
             {(['name', 'role', 'kind', 'email', 'phone'] as ColKey[]).map((k) => (
               <th key={k} className="px-3 py-1.5">
                 <input
                   value={filters[k]}
                   onChange={(e) => setFilters((f) => ({ ...f, [k]: e.target.value }))}
                   placeholder="Filter…"
-                  className="w-full rounded border border-slate-200 px-1.5 py-1 text-[11px] focus:border-blue-400 focus:outline-none"
+                  className="w-full rounded border border-slate-200 dark:border-slate-700 px-1.5 py-1 text-[11px] focus:border-blue-400 focus:outline-none"
                 />
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100">
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           {sorted.length === 0 ? (
-            <tr><td colSpan={5} className="px-4 py-8 text-center text-[12px] text-slate-400 italic">No rows match the active filters.</td></tr>
+            <tr><td colSpan={5} className="px-4 py-8 text-center text-[12px] text-slate-400 dark:text-slate-500 italic">No rows match the active filters.</td></tr>
           ) : sorted.map((r) => (
-            <tr key={r.bpId} className="hover:bg-slate-50/50">
-              <td className="px-4 py-2 font-medium text-slate-800 truncate max-w-[200px]" title={r.displayName}>
+            <tr key={r.bpId} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
+              <td className="px-4 py-2 font-medium text-slate-800 dark:text-slate-100 truncate max-w-[200px]" title={r.displayName}>
                 {r.displayName}
               </td>
-              <td className="px-4 py-2 text-slate-600 truncate max-w-[220px]" title={Array.from(r.roles).join(', ')}>
-                {r.roles.size > 0 ? Array.from(r.roles).join(', ') : <span className="text-slate-300">—</span>}
+              <td className="px-4 py-2 text-slate-600 dark:text-slate-300 truncate max-w-[220px]" title={Array.from(r.roles).join(', ')}>
+                {r.roles.size > 0 ? Array.from(r.roles).join(', ') : <span className="text-slate-300 dark:text-slate-600">—</span>}
               </td>
               <td className="px-4 py-2">
                 <div className="flex flex-wrap gap-1">
                   {Array.from(r.kinds).map((k) => (
-                    <span key={k} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                    <span key={k} className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
                       {k}
                     </span>
                   ))}
                 </div>
               </td>
-              <td className="px-4 py-2 text-slate-600 truncate max-w-[220px]" title={r.email ?? ''}>
+              <td className="px-4 py-2 text-slate-600 dark:text-slate-300 truncate max-w-[220px]" title={r.email ?? ''}>
                 {r.email ? (
                   <a href={`mailto:${r.email}`} className="text-blue-600 hover:underline">{r.email}</a>
-                ) : <span className="text-slate-300">—</span>}
+                ) : <span className="text-slate-300 dark:text-slate-600">—</span>}
               </td>
-              <td className="px-4 py-2 text-slate-600 whitespace-nowrap">
-                {r.phone ?? <span className="text-slate-300">—</span>}
+              <td className="px-4 py-2 text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                {r.phone ?? <span className="text-slate-300 dark:text-slate-600">—</span>}
               </td>
             </tr>
           ))}
@@ -1116,7 +1116,7 @@ function Section({
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+        <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-2">
           {label}
           <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-bold', ACCENTS[accent].badge)}>{count}</span>
         </p>
@@ -1132,7 +1132,7 @@ function OrgRow({ displayName, email, phone, bpId, onOpenProfile }: {
   onOpenProfile?: (bpId: number) => void;
 }) {
   return (
-    <div className="rounded-lg border border-indigo-200 bg-white p-3 flex items-center gap-3">
+    <div className="rounded-lg border border-indigo-200 bg-white dark:bg-slate-900 p-3 flex items-center gap-3">
       <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-indigo-700">
         <Users className="h-4 w-4" />
       </div>
@@ -1140,13 +1140,13 @@ function OrgRow({ displayName, email, phone, bpId, onOpenProfile }: {
         <button
           type="button"
           onClick={() => onOpenProfile?.(bpId)}
-          className="text-sm font-semibold text-slate-900 hover:underline truncate text-left w-full"
+          className="text-sm font-semibold text-slate-900 dark:text-slate-100 hover:underline truncate text-left w-full"
           title="Open partner profile"
         >
           {displayName}
         </button>
         {(email || phone) && (
-          <p className="text-[11px] text-slate-500">{email}{email && phone ? ' · ' : ''}{phone}</p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">{email}{email && phone ? ' · ' : ''}{phone}</p>
         )}
       </div>
     </div>
@@ -1167,7 +1167,7 @@ function PersonRow({ row, onRemove, accent, compact = false, onOpenProfile, held
 }) {
   return (
     <div className={cn(
-      'flex items-center gap-3 rounded-lg border bg-white',
+      'flex items-center gap-3 rounded-lg border bg-white dark:bg-slate-900',
       ACCENTS[accent].border,
       compact ? 'p-2' : 'p-3',
     )}>
@@ -1183,7 +1183,7 @@ function PersonRow({ row, onRemove, accent, compact = false, onOpenProfile, held
           <button
             type="button"
             onClick={() => onOpenProfile?.(row.businessPartnerId)}
-            className={cn('font-medium text-slate-900 hover:underline truncate text-left', compact ? 'text-[13px]' : 'text-sm')}
+            className={cn('font-medium text-slate-900 dark:text-slate-100 hover:underline truncate text-left', compact ? 'text-[13px]' : 'text-sm')}
             title="Open partner profile"
           >
             {row.displayName}
@@ -1202,13 +1202,13 @@ function PersonRow({ row, onRemove, accent, compact = false, onOpenProfile, held
             </div>
           )}
         </div>
-        <p className="text-[11px] text-slate-500 truncate">
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
           {[row.roleInContext, row.email].filter(Boolean).join(' · ') || row.position || '—'}
         </p>
       </div>
       <button
         onClick={onRemove}
-        className="rounded p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50"
+        className="rounded p-1.5 text-slate-400 dark:text-slate-500 hover:text-red-600 hover:bg-red-50"
         title="End relationship"
       >
         <X className="h-4 w-4" />
@@ -1218,7 +1218,7 @@ function PersonRow({ row, onRemove, accent, compact = false, onOpenProfile, held
 }
 
 // Shared input class used by the M4a pickers.
-const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
+const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
 /* ─── Role Assignment Row ─────────────────────────────────────────────────── */
 
@@ -1234,7 +1234,7 @@ function RoleAssignmentRow({
   const p = assignment.party;
   const initials = getInitials(p.firstName ?? '', p.lastName ?? '') || p.displayName.slice(0, 2).toUpperCase();
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-white p-3">
+    <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-white dark:bg-slate-900 p-3">
       <div className={cn(
         'flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-semibold shrink-0',
         p.partnerType === 'organization' ? 'bg-emerald-100 text-emerald-700' : 'bg-violet-100 text-violet-700',
@@ -1246,24 +1246,24 @@ function RoleAssignmentRow({
           <button
             type="button"
             onClick={() => onOpenProfile?.(p.id)}
-            className="text-sm font-semibold text-slate-900 hover:underline truncate text-left"
+            className="text-sm font-semibold text-slate-900 dark:text-slate-100 hover:underline truncate text-left"
             title="Open partner profile"
           >
             {p.displayName}
           </button>
-          <span className="text-[10px] text-slate-400 font-mono">({p.partnerType})</span>
+          <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">({p.partnerType})</span>
           {assignment.isPrimary && (
             <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">PRIMARY</span>
           )}
         </div>
-        {assignment.titleInProject && <p className="text-[11px] text-slate-500 truncate">{assignment.titleInProject}</p>}
+        {assignment.titleInProject && <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{assignment.titleInProject}</p>}
         {(p.email || p.phone) && (
-          <p className="text-[11px] text-slate-400 truncate">{p.email}{p.email && p.phone ? ' · ' : ''}{p.phone}</p>
+          <p className="text-[11px] text-slate-400 dark:text-slate-500 truncate">{p.email}{p.email && p.phone ? ' · ' : ''}{p.phone}</p>
         )}
       </div>
       <button
         onClick={onRemove}
-        className="rounded p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50"
+        className="rounded p-1.5 text-slate-400 dark:text-slate-500 hover:text-red-600 hover:bg-red-50"
         title="End assignment"
       >
         <X className="h-4 w-4" />
@@ -1342,10 +1342,10 @@ function CustomerContactPicker({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[440px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <h3 className="text-sm font-bold text-slate-900">Add Contact at {customerName}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[440px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Add Contact at {customerName}</h3>
+          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -1356,7 +1356,7 @@ function CustomerContactPicker({
             </p>
           )}
           <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Person</label>
+            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Person</label>
             <select
               value={selectedPersonId ?? ''}
               onChange={(e) => setSelectedPersonId(Number(e.target.value) || null)}
@@ -1368,11 +1368,11 @@ function CustomerContactPicker({
               ))}
             </select>
             {filtered.length === 0 && (
-              <p className="text-[10px] text-slate-400 mt-1">No people available. All are already contacts, or no persons exist yet.</p>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">No people available. All are already contacts, or no persons exist yet.</p>
             )}
           </div>
           <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Title at customer (optional)</label>
+            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Title at customer (optional)</label>
             <input
               value={titleAtCustomer}
               onChange={(e) => setTitleAtCustomer(e.target.value)}
@@ -1380,8 +1380,8 @@ function CustomerContactPicker({
               className={inputClass}
             />
           </div>
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-            <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <button onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
             <button
               onClick={() => create.mutate()}
               disabled={create.isPending || !selectedPersonId || !relType}
@@ -1472,15 +1472,15 @@ function RoleAssignmentPicker({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[440px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <h3 className="text-sm font-bold text-slate-900">Add {role.name}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[440px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Add {role.name}</h3>
+          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
             <X className="h-4 w-4" />
           </button>
         </div>
         <div className="p-5 space-y-3">
-          <div className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+          <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-[11px] text-slate-600 dark:text-slate-300">
             Eligible: <span className="font-mono font-semibold">{role.allowedPartnerKind}</span>
             {role.requiredPartnerRoleCode && (
               <> · must hold role <span className="font-mono font-semibold">{role.requiredPartnerRoleCode}</span></>
@@ -1491,7 +1491,7 @@ function RoleAssignmentPicker({
             {role.isPrimaryRequired && <> · one PRIMARY required</>}
           </div>
           <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">{role.name}</label>
+            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">{role.name}</label>
             <select
               value={selectedPartyId ?? ''}
               onChange={(e) => setSelectedPartyId(Number(e.target.value) || null)}
@@ -1512,7 +1512,7 @@ function RoleAssignmentPicker({
             )}
           </div>
           <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Title / role-in-context (optional)</label>
+            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Title / role-in-context (optional)</label>
             <input
               value={titleInProject}
               onChange={(e) => setTitleInProject(e.target.value)}
@@ -1521,13 +1521,13 @@ function RoleAssignmentPicker({
             />
           </div>
           {role.isPrimaryRequired && (
-            <label className="flex items-center gap-2 text-sm text-slate-700 pt-1">
-              <input type="checkbox" checked={isPrimary} onChange={(e) => setIsPrimary(e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+            <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200 pt-1">
+              <input type="checkbox" checked={isPrimary} onChange={(e) => setIsPrimary(e.target.checked)} className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-blue-600" />
               Mark as primary {role.name}
             </label>
           )}
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-            <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <button onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
             <button
               onClick={() => create.mutate()}
               disabled={create.isPending || !selectedPartyId}
@@ -1685,15 +1685,15 @@ function ProjectBpPicker({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[560px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <h2 className="text-base font-bold text-slate-900">{config.title}</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[560px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{config.title}</h2>
+          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
             <X className="h-4 w-4" />
           </button>
         </div>
         <div className="p-5 space-y-4">
-          <p className="text-[12px] text-slate-500">{config.blurb}</p>
+          <p className="text-[12px] text-slate-500 dark:text-slate-400">{config.blurb}</p>
 
           {blockedReason ? (
             <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-[12px] text-amber-700">
@@ -1703,7 +1703,7 @@ function ProjectBpPicker({
             <>
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-[11px] font-semibold text-slate-400 uppercase">Search</label>
+                  <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase">Search</label>
                   {/* Inline-create path. Only shown when the picker is scoped
                       to a specific employer org (customer-contact /
                       supplier-worker). Skips the trip to Partners → Contacts
@@ -1712,7 +1712,7 @@ function ProjectBpPicker({
                     <button
                       type="button"
                       onClick={() => setCreateForOrgId(filterEmployerOrgId)}
-                      className="flex items-center gap-1 rounded-md border border-slate-200 hover:border-blue-400 hover:text-blue-600 text-slate-600 text-[11px] font-semibold px-2 py-0.5"
+                      className="flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 hover:border-blue-400 hover:text-blue-600 text-slate-600 dark:text-slate-300 text-[11px] font-semibold px-2 py-0.5"
                     >
                       <Plus className="h-3 w-3" /> New contact
                     </button>
@@ -1723,12 +1723,12 @@ function ProjectBpPicker({
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder={config.partnerType === 'organization' ? 'Company name, email...' : 'Name, email...'}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none"
                   autoFocus
                 />
-                <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
                   {filtered.length === 0 ? (
-                    <div className="px-3 py-3 text-[12px] text-slate-400 text-center italic">
+                    <div className="px-3 py-3 text-[12px] text-slate-400 dark:text-slate-500 text-center italic">
                       {search ? 'No matches.' : (
                         config.partnerType === 'organization'
                           ? 'No suppliers available. Add one in Partners → Organizations.'
@@ -1743,12 +1743,12 @@ function ProjectBpPicker({
                       type="button"
                       onClick={() => setSelectedBpId(bp.id)}
                       className={cn(
-                        'w-full text-left px-3 py-2 text-sm border-b border-slate-100 last:border-0 hover:bg-blue-50',
+                        'w-full text-left px-3 py-2 text-sm border-b border-slate-100 dark:border-slate-800 last:border-0 hover:bg-blue-50',
                         selectedBpId === bp.id && 'bg-blue-50',
                       )}
                     >
-                      <p className="font-medium text-slate-800">{bp.displayName}</p>
-                      {bp.email && <p className="text-[11px] text-slate-400">{bp.email}</p>}
+                      <p className="font-medium text-slate-800 dark:text-slate-100">{bp.displayName}</p>
+                      {bp.email && <p className="text-[11px] text-slate-400 dark:text-slate-500">{bp.email}</p>}
                     </button>
                   ))}
                 </div>
@@ -1756,21 +1756,21 @@ function ProjectBpPicker({
 
               {config.showRoleInContext && (
                 <div>
-                  <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Role on this project (optional)</label>
+                  <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Role on this project (optional)</label>
                   <input
                     type="text"
                     value={roleInContext}
                     onChange={(e) => setRoleInContext(e.target.value)}
                     placeholder='e.g. "Client Operations Manager", "BIM Manager", "Site Lead"'
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none"
                   />
                 </div>
               )}
             </>
           )}
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-            <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <button onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
             <button
               onClick={handleSubmit}
               disabled={create.isPending || !selectedBpId || !!blockedReason}
@@ -1910,27 +1910,27 @@ function AddMemberDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-md rounded-xl bg-white shadow-2xl">
+      <div className="w-full max-w-md rounded-xl bg-white dark:bg-slate-900 shadow-2xl">
         {/* Dialog header */}
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-          <h3 className="text-sm font-bold text-slate-900">Add Team Member</h3>
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-5 py-4">
+          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Add Team Member</h3>
           <button
             onClick={onClose}
-            className="rounded p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+            className="rounded p-1 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-slate-200 px-5">
+        <div className="flex border-b border-slate-200 dark:border-slate-700 px-5">
           <button
             onClick={() => setTab('individual')}
             className={cn(
               'border-b-2 px-1 py-2 text-xs font-semibold transition-colors mr-4',
               tab === 'individual'
                 ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-slate-400 hover:text-slate-600',
+                : 'border-transparent text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200',
             )}
           >
             Individual
@@ -1941,7 +1941,7 @@ function AddMemberDialog({
               'border-b-2 px-1 py-2 text-xs font-semibold transition-colors flex items-center gap-1',
               tab === 'template'
                 ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-slate-400 hover:text-slate-600',
+                : 'border-transparent text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200',
             )}
           >
             <Users className="h-3 w-3" />
@@ -1958,7 +1958,7 @@ function AddMemberDialog({
                 placeholder="Search employees..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 autoFocus
               />
             </div>
@@ -1966,9 +1966,9 @@ function AddMemberDialog({
             {/* User list */}
             <div className="max-h-64 overflow-y-auto px-5 py-3">
               {loadingUsers ? (
-                <p className="py-4 text-center text-xs text-slate-400">Loading...</p>
+                <p className="py-4 text-center text-xs text-slate-400 dark:text-slate-500">Loading...</p>
               ) : filteredUsers.length === 0 ? (
-                <p className="py-4 text-center text-xs text-slate-400">
+                <p className="py-4 text-center text-xs text-slate-400 dark:text-slate-500">
                   {search ? 'No matching employees' : 'No available employees'}
                 </p>
               ) : (
@@ -1979,14 +1979,14 @@ function AddMemberDialog({
                     return (
                       <div
                         key={user.id}
-                        className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50"
+                        className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50"
                       >
                         <div className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-[9px] font-semibold text-indigo-600">
                           {getInitials(user.firstName ?? '', user.lastName ?? '')}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-slate-800 truncate">{fullName}</p>
-                          {email && <p className="text-xs text-slate-400 truncate">{email}</p>}
+                          <p className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">{fullName}</p>
+                          {email && <p className="text-xs text-slate-400 dark:text-slate-500 truncate">{email}</p>}
                         </div>
                         <button
                           onClick={() => handleAdd(user)}
@@ -2005,9 +2005,9 @@ function AddMemberDialog({
         ) : (
           <div className="max-h-80 overflow-y-auto px-5 py-4">
             {loadingTemplates ? (
-              <p className="py-4 text-center text-xs text-slate-400">Loading templates...</p>
+              <p className="py-4 text-center text-xs text-slate-400 dark:text-slate-500">Loading templates...</p>
             ) : teamTemplates.length === 0 ? (
-              <p className="py-4 text-center text-xs text-slate-400">
+              <p className="py-4 text-center text-xs text-slate-400 dark:text-slate-500">
                 No team templates available. Create one in Templates → Team Templates.
               </p>
             ) : (
@@ -2025,12 +2025,12 @@ function AddMemberDialog({
                       type="button"
                       onClick={() => handleApplyTemplate(t)}
                       disabled={applying || availableCount === 0}
-                      className="w-full rounded-lg border border-slate-200 bg-white p-3 text-left hover:border-blue-400 hover:bg-blue-50/40 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-left hover:border-blue-400 hover:bg-blue-50/40 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-slate-900">{t.name}</p>
-                          <p className="mt-0.5 text-xs text-slate-500">
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{t.name}</p>
+                          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                             {availableCount} of {totalCount} member{totalCount !== 1 ? 's' : ''} available
                           </p>
                           {members.length > 0 && (
@@ -2041,14 +2041,14 @@ function AddMemberDialog({
                                 return (
                                   <span
                                     key={m.id}
-                                    className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600"
+                                    className="inline-flex items-center gap-1 rounded-md bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[11px] text-slate-600 dark:text-slate-300"
                                   >
                                     {name}
                                   </span>
                                 );
                               })}
                               {members.length > 6 && (
-                                <span className="text-[11px] text-slate-400">+{members.length - 6} more</span>
+                                <span className="text-[11px] text-slate-400 dark:text-slate-500">+{members.length - 6} more</span>
                               )}
                             </div>
                           )}
@@ -2122,17 +2122,17 @@ function ProjectInfoTab({ projectId, project }: { projectId: number; project: an
     save.mutate({ [field]: next || null });
   };
 
-  const inputCls = 'w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none';
+  const inputCls = 'w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none';
 
   return (
     <div className="space-y-6">
       {/* Quick-facts block — 4 free-text fields side by side on wide
           screens, stacked on narrow. Each commits on blur. */}
-      <div className="rounded-lg border border-slate-200 bg-white p-5 space-y-4">
-        <h3 className="text-sm font-semibold text-slate-800">Project Info</h3>
+      <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Project Info</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="text-[12px] font-semibold text-slate-600 mb-1.5 block">Weekly Meeting Day</label>
+            <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1.5 block">Weekly Meeting Day</label>
             <input
               type="text"
               value={form.weeklyMeetingDay}
@@ -2143,7 +2143,7 @@ function ProjectInfoTab({ projectId, project }: { projectId: number; project: an
             />
           </div>
           <div>
-            <label className="text-[12px] font-semibold text-slate-600 mb-1.5 block">Authoring Tool Version</label>
+            <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1.5 block">Authoring Tool Version</label>
             <input
               type="text"
               value={form.authoringToolVersion}
@@ -2154,7 +2154,7 @@ function ProjectInfoTab({ projectId, project }: { projectId: number; project: an
             />
           </div>
           <div className="md:col-span-2">
-            <label className="text-[12px] font-semibold text-slate-600 mb-1.5 block">Services Per Contract</label>
+            <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1.5 block">Services Per Contract</label>
             <textarea
               value={form.servicesPerContract}
               placeholder="What we deliver to this customer per the contract — free text."
@@ -2165,20 +2165,20 @@ function ProjectInfoTab({ projectId, project }: { projectId: number; project: an
             />
           </div>
         </div>
-        <p className="text-[11px] text-slate-400">Changes save automatically when you leave a field.</p>
+        <p className="text-[11px] text-slate-400 dark:text-slate-500">Changes save automatically when you leave a field.</p>
       </div>
 
       {/* Contacts table — reuses TeamTableView for consistency with the
           Team tab's table view. */}
-      <div className="rounded-lg border border-slate-200 bg-white p-5 space-y-3">
-        <h3 className="text-sm font-semibold text-slate-800">Contacts &amp; Project Team</h3>
-        {team ? <TeamTableView team={team} /> : <p className="py-6 text-center text-[12px] text-slate-400">Loading team…</p>}
+      <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
+        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Contacts &amp; Project Team</h3>
+        {team ? <TeamTableView team={team} /> : <p className="py-6 text-center text-[12px] text-slate-400 dark:text-slate-500">Loading team…</p>}
       </div>
 
       {/* Files — reuses the existing FilesTab. Same drop-zone, same
           permission story; just a different framing on the page. */}
-      <div className="rounded-lg border border-slate-200 bg-white p-5 space-y-3">
-        <h3 className="text-sm font-semibold text-slate-800">Files</h3>
+      <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
+        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Files</h3>
         <FilesTab projectId={projectId} />
       </div>
     </div>
@@ -2236,12 +2236,12 @@ function ProjectPrevNext({ currentId }: { currentId: number }) {
     : list;
 
   return (
-    <div ref={wrapRef} className="relative ml-2 pl-2 border-l border-slate-200">
+    <div ref={wrapRef} className="relative ml-2 pl-2 border-l border-slate-200 dark:border-slate-700">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         dir="ltr"
-        className="flex items-center gap-2 rounded-lg px-2.5 py-1 text-[12px] font-medium text-slate-700 hover:bg-slate-100 border border-slate-200 min-w-[220px] max-w-[320px]"
+        className="flex items-center gap-2 rounded-lg px-2.5 py-1 text-[12px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 min-w-[220px] max-w-[320px]"
         title="Switch project"
       >
         {/* Name in its own slot so a Hebrew name doesn't collide with
@@ -2251,27 +2251,27 @@ function ProjectPrevNext({ currentId }: { currentId: number }) {
             RTL if its own characters demand it. */}
         <span className="truncate text-left flex-1">{current?.name ?? 'Select project'}</span>
         {current?.number && (
-          <span className="shrink-0 rounded bg-slate-100 text-slate-500 font-mono text-[10px] px-1.5 py-0.5">
+          <span className="shrink-0 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-mono text-[10px] px-1.5 py-0.5">
             {current.number}
           </span>
         )}
-        <ChevronDown className={cn('h-3.5 w-3.5 text-slate-400 transition-transform shrink-0', open && 'rotate-180')} />
+        <ChevronDown className={cn('h-3.5 w-3.5 text-slate-400 dark:text-slate-500 transition-transform shrink-0', open && 'rotate-180')} />
       </button>
       {open && (
-        <div className="absolute left-2 top-full mt-1 z-40 w-[320px] rounded-xl bg-white shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5">
-          <div className="p-2 border-b border-slate-100">
+        <div className="absolute left-2 top-full mt-1 z-40 w-[320px] rounded-xl bg-white dark:bg-slate-900 shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5">
+          <div className="p-2 border-b border-slate-100 dark:border-slate-800">
             <input
               ref={inputRef}
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search projects…"
-              className="w-full px-2.5 py-1.5 rounded-md border border-slate-200 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full px-2.5 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
           <div className="max-h-80 overflow-y-auto py-1">
             {filtered.length === 0 ? (
-              <div className="px-4 py-6 text-center text-[11px] text-slate-400 italic">No projects match</div>
+              <div className="px-4 py-6 text-center text-[11px] text-slate-400 dark:text-slate-500 italic">No projects match</div>
             ) : (
               filtered.map((p) => (
                 <button
@@ -2283,15 +2283,15 @@ function ProjectPrevNext({ currentId }: { currentId: number }) {
                   }}
                   dir="ltr"
                   className={cn(
-                    'w-full text-left px-3 py-1.5 text-[12px] flex items-center gap-2 hover:bg-slate-50',
+                    'w-full text-left px-3 py-1.5 text-[12px] flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800/50',
                     p.id === currentId && 'bg-blue-50/60',
                   )}
                 >
-                  <span className={cn('flex-1 min-w-0 truncate', p.id === currentId ? 'font-semibold text-blue-700' : 'text-slate-700')}>
+                  <span className={cn('flex-1 min-w-0 truncate', p.id === currentId ? 'font-semibold text-blue-700' : 'text-slate-700 dark:text-slate-200')}>
                     {p.name}
                   </span>
                   {p.number && (
-                    <span className="shrink-0 rounded bg-slate-100 text-slate-500 font-mono text-[10px] px-1.5 py-0.5">
+                    <span className="shrink-0 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-mono text-[10px] px-1.5 py-0.5">
                       {p.number}
                     </span>
                   )}

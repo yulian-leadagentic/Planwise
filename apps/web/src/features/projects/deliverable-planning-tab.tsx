@@ -336,12 +336,12 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     return rows.filter((r) => (drafts[r.key] ?? r.savedMonths ?? '') === '' || (drafts[r.key] ?? r.savedMonths ?? '') == null);
   }, [rows, drafts, filterHasDue]);
 
-  if (isLoading) return <div className="py-12 text-center text-sm text-slate-400">Loading deliverables...</div>;
+  if (isLoading) return <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading deliverables...</div>;
   if (rows.length === 0) {
     return (
       <div className="py-12 text-center">
-        <Layers className="mx-auto h-12 w-12 text-slate-300" />
-        <p className="mt-3 text-sm text-slate-500">No zone × deliverable pairs found. Add tasks with a deliverable on the Planning tab first.</p>
+        <Layers className="mx-auto h-12 w-12 text-slate-300 dark:text-slate-600" />
+        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">No zone × deliverable pairs found. Add tasks with a deliverable on the Planning tab first.</p>
       </div>
     );
   }
@@ -354,14 +354,14 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           before we allow the save. */}
       {exceedBlock && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 backdrop-blur-sm" onClick={() => setExceedBlock(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-[620px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-slate-100 flex items-start gap-3">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[620px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-start gap-3">
               <div className="w-9 h-9 rounded-full bg-red-50 flex items-center justify-center shrink-0">
                 <AlertTriangle className="w-5 h-5 text-red-600" />
               </div>
               <div className="min-w-0">
-                <h3 className="text-base font-bold text-slate-900">Tasks with due dates AFTER the new deliverable target</h3>
-                <p className="text-[13px] text-slate-500 mt-0.5">
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Tasks with due dates AFTER the new deliverable target</h3>
+                <p className="text-[13px] text-slate-500 dark:text-slate-400 mt-0.5">
                   These tasks would end after their deliverable's promised date. Fix the task due dates (open the task) or extend the deliverable target, then save.
                 </p>
               </div>
@@ -370,20 +370,20 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
               {exceedBlock.map((t) => (
                 <div key={t.taskId} className="border border-red-200 bg-red-50/40 rounded-lg p-3 text-[12px]">
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-slate-500 shrink-0">{t.code ?? '—'}</span>
-                    <span className="font-semibold text-slate-800 truncate">{t.taskName}</span>
+                    <span className="font-mono text-slate-500 dark:text-slate-400 shrink-0">{t.code ?? '—'}</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-100 truncate">{t.taskName}</span>
                   </div>
-                  <div className="mt-1 text-[11px] text-slate-500 flex items-center gap-2 flex-wrap">
+                  <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
                     <span>{t.zoneName} · {t.deliverableName}</span>
-                    <span className="text-slate-300">·</span>
+                    <span className="text-slate-300 dark:text-slate-600">·</span>
                     <span>due <span className="tabular-nums font-semibold text-red-700">{t.endDate}</span></span>
-                    <span className="text-slate-300">→ deliv. target</span>
-                    <span className="tabular-nums font-semibold text-slate-700">{t.targetDate}</span>
+                    <span className="text-slate-300 dark:text-slate-600">→ deliv. target</span>
+                    <span className="tabular-nums font-semibold text-slate-700 dark:text-slate-200">{t.targetDate}</span>
                   </div>
                 </div>
               ))}
             </div>
-            <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
+            <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">
               <button
                 onClick={() => setExceedBlock(null)}
                 className="bg-red-600 hover:bg-red-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg"
@@ -401,29 +401,29 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           affected rows have tasks with existing dates. */}
       {postSaveReminder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={() => setPostSaveReminder(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-[460px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-slate-100 flex items-start gap-3">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[460px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-start gap-3">
               <div className="w-9 h-9 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
                 <AlertTriangle className="w-5 h-5 text-blue-600" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">Remember to maintain task due dates</h3>
-                <p className="text-[13px] text-slate-500 mt-0.5">
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Remember to maintain task due dates</h3>
+                <p className="text-[13px] text-slate-500 dark:text-slate-400 mt-0.5">
                   The deliverable target changed. Task-level due dates were NOT overwritten — please review them manually on the Planning tab.
                 </p>
               </div>
             </div>
             <div className="p-5 max-h-[240px] overflow-auto">
-              <ul className="space-y-1 text-[12px] text-slate-600">
+              <ul className="space-y-1 text-[12px] text-slate-600 dark:text-slate-300">
                 {postSaveReminder.map((label, i) => (
                   <li key={i} className="flex items-center gap-2">
-                    <span className="w-1 h-1 rounded-full bg-slate-400" />
+                    <span className="w-1 h-1 rounded-full bg-slate-400 dark:bg-slate-500" />
                     <span className="truncate">{label}</span>
                   </li>
                 ))}
               </ul>
             </div>
-            <div className="px-5 py-3 border-t border-slate-100 flex justify-end">
+            <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end">
               <button
                 onClick={() => setPostSaveReminder(null)}
                 className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg"
@@ -438,24 +438,24 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       {/* Overridden-tasks confirm modal (Tier E #10) */}
       {overrideConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={() => setOverrideConfirm(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-[540px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-slate-100 flex items-start gap-3">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[540px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-start gap-3">
               <div className="w-9 h-9 rounded-full bg-amber-50 flex items-center justify-center shrink-0">
                 <AlertTriangle className="w-5 h-5 text-amber-600" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">Some tasks have manual due dates</h3>
-                <p className="text-[13px] text-slate-500 mt-0.5">
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Some tasks have manual due dates</h3>
+                <p className="text-[13px] text-slate-500 dark:text-slate-400 mt-0.5">
                   These tasks were previously set by their assignee or a manager. Keep the manual date, or overwrite with the new target?
                 </p>
               </div>
             </div>
             <div className="p-5 space-y-2">
               {overrideConfirm.map((t) => (
-                <div key={t.taskId} className="flex items-center gap-2 text-[13px] border border-slate-200 rounded-lg p-3">
-                  <span className="flex-1 font-medium text-slate-800 truncate">{t.taskName}</span>
-                  <span className="text-slate-400 tabular-nums">{t.currentDue ?? '—'}</span>
-                  <span className="text-slate-300">→</span>
+                <div key={t.taskId} className="flex items-center gap-2 text-[13px] border border-slate-200 dark:border-slate-700 rounded-lg p-3">
+                  <span className="flex-1 font-medium text-slate-800 dark:text-slate-100 truncate">{t.taskName}</span>
+                  <span className="text-slate-400 dark:text-slate-500 tabular-nums">{t.currentDue ?? '—'}</span>
+                  <span className="text-slate-300 dark:text-slate-600">→</span>
                   <span className="text-emerald-600 tabular-nums">{t.targetDate ?? '—'}</span>
                   <button
                     type="button"
@@ -467,10 +467,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                 </div>
               ))}
             </div>
-            <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
+            <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">
               <button
                 onClick={() => setOverrideConfirm(null)}
-                className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
               >
                 Keep all manual dates
               </button>
@@ -482,18 +482,18 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       {/* Header controls */}
       <div className="flex items-end gap-3 flex-wrap">
         <div>
-          <h2 className="text-[15px] font-bold text-slate-900">Deliverable Planning</h2>
-          <p className="text-[12px] text-slate-500 mt-0.5">
+          <h2 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Deliverable Planning</h2>
+          <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">
             Set a target date per (zone × deliverable) as "N months from the base date". Dates snap forward to the next Sunday.
           </p>
         </div>
         <div className="ml-auto flex items-end gap-2">
           <div>
-            <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Due date</label>
+            <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Due date</label>
             <select
               value={filterHasDue}
               onChange={(e) => setFilterHasDue(e.target.value as any)}
-              className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+              className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
             >
               <option value="">All</option>
               <option value="yes">With target</option>
@@ -501,19 +501,19 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
             </select>
           </div>
           <div>
-            <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Base date</label>
+            <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Base date</label>
             <input
               type="date"
               value={baseDate}
               onChange={(e) => setBaseDate(e.target.value)}
-              className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+              className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
             />
           </div>
-          <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5">
+          <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
             <button
               type="button"
               onClick={() => setViewMode('table')}
-              className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-semibold', viewMode === 'table' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
+              className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-semibold', viewMode === 'table' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100')}
               title="Table view"
             >
               <LayoutGrid className="h-3.5 w-3.5" /> Table
@@ -521,7 +521,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
             <button
               type="button"
               onClick={() => setViewMode('gantt')}
-              className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-semibold', viewMode === 'gantt' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
+              className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-semibold', viewMode === 'gantt' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100')}
               title="Gantt view"
             >
               <GanttChart className="h-3.5 w-3.5" /> Gantt
@@ -531,7 +531,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
             <button
               type="button"
               onClick={resetDrafts}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 text-[13px] font-semibold"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 text-[13px] font-semibold"
               title="Discard unsaved changes"
             >
               <RefreshCcw className="h-3.5 w-3.5" /> Reset
@@ -730,10 +730,10 @@ function TableView({
   };
 
   return (
-    <div className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
+    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
       <table className="w-full text-sm">
-        <thead className="bg-[#FAFBFC] border-b border-slate-100">
-          <tr className="text-[11px] uppercase tracking-wider text-slate-400">
+        <thead className="bg-[#FAFBFC] border-b border-slate-100 dark:border-slate-800">
+          <tr className="text-[11px] uppercase tracking-wider text-slate-400 dark:text-slate-500">
             <SortableFilterableHeader
               label="Deliverable" width="w-[240px]"
               sort={sort} col="deliverable" onToggleSort={() => toggleSort('deliverable')}
@@ -784,7 +784,7 @@ function TableView({
             />
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100">
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           {sortedGroups.map((g) => (
             <FragmentGroup key={g.deliverableId}>
               {/* Deliverable header row — deliverable name only. Service
@@ -792,8 +792,8 @@ function TableView({
                   the Service column per row), otherwise the same value
                   reads twice on every group and looked like a data
                   leak. (Client feedback 2026-08-02.) */}
-              <tr className="bg-slate-50/70">
-                <td colSpan={6} className="px-4 py-2 text-[12px] font-bold text-slate-700">
+              <tr className="bg-slate-50/70 dark:bg-slate-800/70">
+                <td colSpan={6} className="px-4 py-2 text-[12px] font-bold text-slate-700 dark:text-slate-200">
                   {g.deliverableName}
                 </td>
               </tr>
@@ -805,10 +805,10 @@ function TableView({
                 const serverDur = r.savedDurationWeeks == null ? '' : String(r.savedDurationWeeks);
                 const isDirty = draft !== serverMonths || durDraft !== serverDur;
                 return (
-                  <tr key={r.key} className={cn('hover:bg-slate-50/40', isDirty && 'bg-blue-50/30')}>
-                    <td className="px-4 py-2 text-slate-400">—</td>
-                    <td className="px-4 py-2 text-slate-700">{r.zoneName}</td>
-                    <td className="px-4 py-2 text-slate-600 text-[13px]">{r.serviceName ?? '—'}</td>
+                  <tr key={r.key} className={cn('hover:bg-slate-50/40 dark:hover:bg-slate-800/40', isDirty && 'bg-blue-50/30')}>
+                    <td className="px-4 py-2 text-slate-400 dark:text-slate-500">—</td>
+                    <td className="px-4 py-2 text-slate-700 dark:text-slate-200">{r.zoneName}</td>
+                    <td className="px-4 py-2 text-slate-600 dark:text-slate-300 text-[13px]">{r.serviceName ?? '—'}</td>
                     <td className="px-4 py-2 text-right">
                       <input
                         type="number"
@@ -817,7 +817,7 @@ function TableView({
                         value={draft}
                         onChange={(e) => setDrafts((s) => ({ ...s, [r.key]: e.target.value }))}
                         placeholder="—"
-                        className="w-[86px] px-2 py-1.5 rounded border border-slate-200 text-sm text-slate-700 tabular-nums text-right focus:border-blue-500 focus:outline-none"
+                        className="w-[86px] px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 tabular-nums text-right focus:border-blue-500 focus:outline-none"
                       />
                     </td>
                     <td className="px-4 py-2 text-right">
@@ -828,15 +828,15 @@ function TableView({
                         value={durDraft}
                         onChange={(e) => setDurationDrafts((s) => ({ ...s, [r.key]: e.target.value }))}
                         placeholder="—"
-                        className="w-[86px] px-2 py-1.5 rounded border border-slate-200 text-sm text-slate-700 tabular-nums text-right focus:border-blue-500 focus:outline-none"
+                        className="w-[86px] px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 tabular-nums text-right focus:border-blue-500 focus:outline-none"
                       />
                     </td>
-                    <td className="px-4 py-2 text-slate-700 tabular-nums">
+                    <td className="px-4 py-2 text-slate-700 dark:text-slate-200 tabular-nums">
                       {preview
                         ? preview
                         : r.savedDate
-                          ? <span className="text-slate-500">{r.savedDate}</span>
-                          : <span className="text-slate-300">no target</span>}
+                          ? <span className="text-slate-500 dark:text-slate-400">{r.savedDate}</span>
+                          : <span className="text-slate-300 dark:text-slate-600">no target</span>}
                     </td>
                   </tr>
                 );
@@ -848,7 +848,7 @@ function TableView({
       {/* Footnote — the Duration column is in CALENDAR days, not
           working hours. Set by the client on 2026-08-02 so the PM
           can draw the Gantt independent of team availability. */}
-      <div className="px-4 py-2 border-t border-slate-100 text-[11px] text-slate-500 italic">
+      <div className="px-4 py-2 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 italic">
         * Duration is in <span className="font-semibold">calendar weeks</span>, not actual working time.
       </div>
     </div>
@@ -912,7 +912,7 @@ function SortableFilterableHeader({
         <button
           type="button"
           onClick={onToggleSort}
-          className={cn('inline-flex items-center gap-0.5 hover:text-slate-600 transition-colors', isSorted && 'text-slate-700')}
+          className={cn('inline-flex items-center gap-0.5 hover:text-slate-600 dark:hover:text-slate-200 transition-colors', isSorted && 'text-slate-700 dark:text-slate-200')}
           title={`Sort by ${label}`}
         >
           <span>{label}</span>
@@ -922,7 +922,7 @@ function SortableFilterableHeader({
         <button
           type="button"
           onClick={onToggleOpen}
-          className={cn('relative flex items-center justify-center w-4 h-4 rounded transition-colors', hasActive ? 'text-blue-600' : 'text-slate-400 hover:text-slate-700')}
+          className={cn('relative flex items-center justify-center w-4 h-4 rounded transition-colors', hasActive ? 'text-blue-600' : 'text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100')}
           title={hasActive ? `${label} is filtered (${activeCount})` : `Filter ${label}`}
         >
           <Filter className="h-3 w-3" />
@@ -933,16 +933,16 @@ function SortableFilterableHeader({
           )}
         </button>
         {open && (
-          <div className="absolute left-0 top-full z-40 mt-1 w-[260px] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white">
+          <div className="absolute left-0 top-full z-40 mt-1 w-[260px] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white dark:bg-slate-900">
             {/* Header: search + Select all / Clear */}
-            <div className="p-2 border-b border-slate-100">
+            <div className="p-2 border-b border-slate-100 dark:border-slate-800">
               <input
                 type="text"
                 autoFocus
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={`Search…`}
-                className="w-full px-2 py-1.5 rounded border border-slate-200 text-[12px] focus:border-blue-500 focus:outline-none"
+                className="w-full px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-[12px] focus:border-blue-500 focus:outline-none"
               />
               <div className="flex items-center justify-between mt-2 text-[11px]">
                 <button
@@ -955,7 +955,7 @@ function SortableFilterableHeader({
                 <button
                   type="button"
                   onClick={onClear}
-                  className="text-slate-500 hover:text-slate-700 font-semibold"
+                  className="text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 font-semibold"
                 >
                   Clear
                 </button>
@@ -966,25 +966,25 @@ function SortableFilterableHeader({
                 so users can see how many rows a pick will yield. */}
             <div className="max-h-64 overflow-y-auto py-1">
               {filteredOptions.length === 0 ? (
-                <p className="px-3 py-4 text-[11px] text-slate-400 italic text-center">
+                <p className="px-3 py-4 text-[11px] text-slate-400 dark:text-slate-500 italic text-center">
                   {search ? 'No matches' : 'No values available'}
                 </p>
               ) : (
                 filteredOptions.map((o) => (
                   <label
                     key={o.value}
-                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer text-[12px]"
+                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer text-[12px]"
                   >
                     <input
                       type="checkbox"
                       checked={o.selected}
                       onChange={() => onToggleValue(o.value)}
-                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      className="rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
                     />
-                    <span className="flex-1 truncate text-slate-700" title={o.value}>
-                      {o.value === '(empty)' ? <span className="text-slate-400 italic">(empty)</span> : o.value}
+                    <span className="flex-1 truncate text-slate-700 dark:text-slate-200" title={o.value}>
+                      {o.value === '(empty)' ? <span className="text-slate-400 dark:text-slate-500 italic">(empty)</span> : o.value}
                     </span>
-                    <span className="text-[10px] text-slate-400 tabular-nums">{o.count}</span>
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500 tabular-nums">{o.count}</span>
                   </label>
                 ))
               )}
@@ -1200,14 +1200,14 @@ function GanttView({
   // constant across renders (see note above).
   if (orderedRows.length === 0) {
     return (
-      <div className="rounded-[14px] border border-slate-200 bg-white p-8 text-center text-sm text-slate-400">
+      <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-8 text-center text-sm text-slate-400 dark:text-slate-500">
         No (zone × deliverable) rows yet — add tasks on the Planning tab first.
       </div>
     );
   }
 
   return (
-    <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
       {pastDateConfirm && (
         <PastDateConfirmModal
           onCancel={() => setPastDateConfirm(null)}
@@ -1226,14 +1226,14 @@ function GanttView({
       )}
 
       {/* Toolbar — scroll navigation + Today jump. */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-[#FAFBFC] text-[12px]">
-        <span className="text-slate-500 font-medium">Timeline</span>
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 dark:border-slate-800 bg-[#FAFBFC] text-[12px]">
+        <span className="text-slate-500 dark:text-slate-400 font-medium">Timeline</span>
         <div className="flex items-center gap-1 ml-2">
-          <button type="button" onClick={() => scrollByDays(-365)} className="flex items-center gap-1 px-2 py-1 rounded border border-slate-200 hover:bg-slate-50 text-slate-600" title="Scroll back one year">◀ Year</button>
-          <button type="button" onClick={() => scrollByDays(-30)} className="flex items-center gap-1 px-2 py-1 rounded border border-slate-200 hover:bg-slate-50 text-slate-600" title="Scroll back one month">◀ Month</button>
+          <button type="button" onClick={() => scrollByDays(-365)} className="flex items-center gap-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300" title="Scroll back one year">◀ Year</button>
+          <button type="button" onClick={() => scrollByDays(-30)} className="flex items-center gap-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300" title="Scroll back one month">◀ Month</button>
           <button type="button" onClick={() => scrollToToday(true)} className="flex items-center gap-1 px-2.5 py-1 rounded border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 font-semibold" title="Jump to today">Today</button>
-          <button type="button" onClick={() => scrollByDays(30)} className="flex items-center gap-1 px-2 py-1 rounded border border-slate-200 hover:bg-slate-50 text-slate-600" title="Scroll forward one month">Month ▶</button>
-          <button type="button" onClick={() => scrollByDays(365)} className="flex items-center gap-1 px-2 py-1 rounded border border-slate-200 hover:bg-slate-50 text-slate-600" title="Scroll forward one year">Year ▶</button>
+          <button type="button" onClick={() => scrollByDays(30)} className="flex items-center gap-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300" title="Scroll forward one month">Month ▶</button>
+          <button type="button" onClick={() => scrollByDays(365)} className="flex items-center gap-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300" title="Scroll forward one year">Year ▶</button>
         </div>
         {/* Progress legend — client meeting 2026-08-04. Bars are
             colored by aggregate task status: blue = nothing started,
@@ -1241,14 +1241,14 @@ function GanttView({
             No percentages (misleading on small totals). Past-target
             bars additionally get a red ring — kept subtle so status
             stays the primary signal. */}
-        <div className="ml-4 flex items-center gap-2 text-[11px] text-slate-500">
-          <span className="font-semibold uppercase tracking-wider text-slate-400">Bar:</span>
+        <div className="ml-4 flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+          <span className="font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Bar:</span>
           <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500" />Not started</span>
           <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-500" />In progress</span>
           <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />Done</span>
-          <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm ring-2 ring-red-300 ring-inset bg-white" />Past target</span>
+          <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm ring-2 ring-red-300 ring-inset bg-white dark:bg-slate-900" />Past target</span>
         </div>
-        <span className="ml-auto text-[11px] text-slate-400">
+        <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">
           Showing ~{VISIBLE_YEARS} years at a time · drag rows to reorder
         </span>
       </div>
@@ -1256,20 +1256,20 @@ function GanttView({
       {/* 2-column grid — LEFT: labels (fixed), RIGHT: scrollable timeline. */}
       <div className="grid grid-cols-[260px_1fr]">
         {/* Header row spanning both columns */}
-        <div className="px-4 py-2 text-[11px] uppercase tracking-wider font-semibold text-slate-500 border-r border-b border-slate-200 bg-[#FAFBFC] flex items-end">
+        <div className="px-4 py-2 text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 border-r border-b border-slate-200 dark:border-slate-700 bg-[#FAFBFC] flex items-end">
           Zone · Deliverable
         </div>
         <div
-          className="overflow-hidden border-b border-slate-200 bg-[#FAFBFC]"
+          className="overflow-hidden border-b border-slate-200 dark:border-slate-700 bg-[#FAFBFC]"
         >
           <div
             style={{ width: totalTimelineWidth, position: 'relative', transform: `translateX(${-scrollLeftPx}px)` }}
           >
-            <div className="relative h-6 border-b border-slate-100">
+            <div className="relative h-6 border-b border-slate-100 dark:border-slate-800">
               {yearBands.map((b, i) => (
                 <div
                   key={i}
-                  className="absolute top-0 h-full flex items-center border-l border-slate-200 pl-1.5 text-[11px] font-bold text-slate-700"
+                  className="absolute top-0 h-full flex items-center border-l border-slate-200 dark:border-slate-700 pl-1.5 text-[11px] font-bold text-slate-700 dark:text-slate-200"
                   style={{ left: b.startPx, width: Math.max(0, b.endPx - b.startPx) }}
                 >
                   {b.year}
@@ -1280,7 +1280,7 @@ function GanttView({
               {monthTicks.map((t, i) => (
                 <div
                   key={i}
-                  className="absolute top-0 h-full flex items-center border-l border-slate-100 pl-1 text-[10px] font-semibold text-slate-500"
+                  className="absolute top-0 h-full flex items-center border-l border-slate-100 dark:border-slate-800 pl-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400"
                   style={{ left: t.px }}
                 >
                   {MONTH_NAMES[t.month - 1]}
@@ -1297,7 +1297,7 @@ function GanttView({
           column scrolls HORIZONTALLY on its own. */}
       <div className="grid grid-cols-[260px_1fr]">
         {/* Labels column */}
-        <div className="divide-y divide-slate-100 border-r border-slate-200">
+        <div className="divide-y divide-slate-100 dark:divide-slate-800 border-r border-slate-200 dark:border-slate-700">
           {orderedRows.map((r, idx) => (
             <div
               key={r.key}
@@ -1312,15 +1312,15 @@ function GanttView({
                 setDropIndicatorIdx(null);
               }}
               className={cn(
-                'group h-8 px-4 text-[12px] flex items-center gap-2 cursor-grab active:cursor-grabbing hover:bg-slate-50/60',
+                'group h-8 px-4 text-[12px] flex items-center gap-2 cursor-grab active:cursor-grabbing hover:bg-slate-50/60 dark:hover:bg-slate-800/60',
                 dragKey === r.key && 'opacity-40',
                 dropIndicatorIdx === idx && dragKey && dragKey !== r.key && 'border-t-2 border-blue-500',
               )}
               title="Drag to reorder"
             >
-              <span className="text-slate-300 group-hover:text-slate-500 leading-none">⋮⋮</span>
-              <span className="font-medium text-slate-800 truncate">{r.zoneName}</span>
-              <span className="text-slate-500 truncate">· {r.deliverableName}</span>
+              <span className="text-slate-300 dark:text-slate-600 group-hover:text-slate-500 leading-none">⋮⋮</span>
+              <span className="font-medium text-slate-800 dark:text-slate-100 truncate">{r.zoneName}</span>
+              <span className="text-slate-500 dark:text-slate-400 truncate">· {r.deliverableName}</span>
             </div>
           ))}
         </div>
@@ -1333,7 +1333,7 @@ function GanttView({
           className="overflow-x-auto"
           onScroll={(e) => setScrollLeftPx((e.target as HTMLDivElement).scrollLeft)}
         >
-          <div style={{ width: totalTimelineWidth, position: 'relative' }} className="divide-y divide-slate-100">
+          <div style={{ width: totalTimelineWidth, position: 'relative' }} className="divide-y divide-slate-100 dark:divide-slate-800">
             {/* Today vertical line (only if in range). */}
             {todayInRange && (
               <div
@@ -1368,7 +1368,7 @@ function GanttView({
         </div>
       </div>
 
-      <div className="px-4 py-2 border-t border-slate-100 text-[11px] text-slate-500 italic">
+      <div className="px-4 py-2 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 italic">
         * Bar length reflects <span className="font-semibold">calendar weeks</span> (not working time). Drag the left edge to change duration, the right edge (or middle) to change the target date. Scrolling backwards past today triggers a confirmation.
       </div>
     </div>
@@ -1432,7 +1432,7 @@ function GanttRow({
 
   if (!targetDate) {
     return (
-      <div className="relative h-8 flex items-center text-[11px] text-slate-300 italic pl-2">
+      <div className="relative h-8 flex items-center text-[11px] text-slate-300 dark:text-slate-600 italic pl-2">
         no target
       </div>
     );
@@ -1542,7 +1542,7 @@ function GanttRow({
     barStatus === 'done'         ? 'bg-emerald-500/85 hover:bg-emerald-600'
     : barStatus === 'in_progress'? 'bg-amber-500/85 hover:bg-amber-600'
     : barStatus === 'not_started'? 'bg-blue-500/85 hover:bg-blue-600'
-    :                              'bg-slate-300 hover:bg-slate-400';
+    :                              'bg-slate-300 dark:bg-slate-600 hover:bg-slate-400';
   const handleColor =
     barStatus === 'done'         ? 'bg-emerald-700/40 hover:bg-emerald-800'
     : barStatus === 'in_progress'? 'bg-amber-700/40 hover:bg-amber-800'
@@ -1582,14 +1582,14 @@ function GanttRow({
       </div>
       {total > 0 && (
         <div
-          className="absolute top-1 flex items-center gap-1 text-[10px] font-bold tabular-nums text-slate-600 bg-white/90 rounded px-1 pointer-events-none"
+          className="absolute top-1 flex items-center gap-1 text-[10px] font-bold tabular-nums text-slate-600 dark:text-slate-300 bg-white/90 rounded px-1 pointer-events-none"
           style={{ left: rightPx + 6 }}
           title={`${total} tasks · ${started} started · ${done} done`}
         >
-          <span className="text-slate-700">{total}</span>
-          <span className="text-slate-300">·</span>
+          <span className="text-slate-700 dark:text-slate-200">{total}</span>
+          <span className="text-slate-300 dark:text-slate-600">·</span>
           <span className="text-blue-600">{started}</span>
-          <span className="text-slate-300">·</span>
+          <span className="text-slate-300 dark:text-slate-600">·</span>
           <span className="text-emerald-600">{done}</span>
         </div>
       )}
@@ -1614,28 +1614,28 @@ function PastDateConfirmModal({
   const today = new Date().toISOString().slice(0, 10);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onCancel}>
-      <div className="w-[420px] rounded-[14px] bg-white shadow-2xl border border-slate-200 p-6" onClick={(e) => e.stopPropagation()}>
+      <div className="w-[420px] rounded-[14px] bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700 p-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start gap-3 mb-4">
           <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
             <AlertTriangle className="w-5 h-5 text-amber-600" />
           </div>
           <div className="min-w-0">
-            <h3 className="text-[15px] font-bold text-slate-800">Backdated target</h3>
-            <p className="text-[12px] text-slate-500 mt-0.5">You're setting the target to a date in the past.</p>
+            <h3 className="text-[15px] font-bold text-slate-800 dark:text-slate-100">Backdated target</h3>
+            <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">You're setting the target to a date in the past.</p>
           </div>
         </div>
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12px] mb-4 space-y-1">
-          <div><span className="text-slate-500">New target:</span> <span className="font-semibold text-amber-800">{newDate}</span></div>
-          <div><span className="text-slate-500">Today:</span> <span className="font-semibold text-slate-700">{today}</span></div>
+          <div><span className="text-slate-500 dark:text-slate-400">New target:</span> <span className="font-semibold text-amber-800">{newDate}</span></div>
+          <div><span className="text-slate-500 dark:text-slate-400">Today:</span> <span className="font-semibold text-slate-700 dark:text-slate-200">{today}</span></div>
         </div>
-        <p className="text-[12px] text-slate-600 mb-5">
+        <p className="text-[12px] text-slate-600 dark:text-slate-300 mb-5">
           This change will be recorded in the project's activity log with your name and the previous target date. Continue?
         </p>
         <div className="flex items-center justify-end gap-2">
           <button
             type="button"
             onClick={onCancel}
-            className="px-3.5 py-1.5 rounded-lg border border-slate-200 text-[12px] font-semibold text-slate-600 hover:bg-slate-50"
+            className="px-3.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50"
           >
             Cancel
           </button>
@@ -1694,39 +1694,39 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div
-        className="w-[720px] max-w-[92vw] max-h-[80vh] flex flex-col rounded-[14px] bg-white shadow-2xl border border-slate-200"
+        className="w-[720px] max-w-[92vw] max-h-[80vh] flex flex-col rounded-[14px] bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between border-b border-slate-100 p-5">
+        <div className="flex items-start justify-between border-b border-slate-100 dark:border-slate-800 p-5">
           <div className="min-w-0">
-            <h3 className="text-[15px] font-bold text-slate-800 truncate">{row.deliverableName}</h3>
-            <p className="text-[12px] text-slate-500 mt-0.5 truncate">
+            <h3 className="text-[15px] font-bold text-slate-800 dark:text-slate-100 truncate">{row.deliverableName}</h3>
+            <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
               {row.zoneName}
               {row.serviceName ? <span> · {row.serviceName}</span> : null}
               {row.savedDate ? <span> · target {row.savedDate}</span> : null}
             </p>
           </div>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600 text-[18px] leading-none px-1">×</button>
+          <button type="button" onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 text-[18px] leading-none px-1">×</button>
         </div>
 
         <div className="flex-1 overflow-y-auto">
           {(row.taskList ?? []).length === 0 ? (
-            <div className="p-8 text-center text-sm text-slate-400 italic">No tasks under this deliverable.</div>
+            <div className="p-8 text-center text-sm text-slate-400 dark:text-slate-500 italic">No tasks under this deliverable.</div>
           ) : (
             <table className="w-full text-[12px]">
               <thead className="bg-[#FAFBFC] sticky top-0 z-10">
-                <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+                <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   <th className="px-4 py-2 w-[110px]">Code</th>
                   <th className="px-4 py-2">Name</th>
                   <th className="px-4 py-2 w-[110px]">Status</th>
                   <th className="px-4 py-2 w-[160px]">Due date</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {(row.taskList ?? []).map((t: any) => (
-                  <tr key={t.id} className="hover:bg-slate-50/50">
-                    <td className="px-4 py-2 text-slate-500 tabular-nums">{t.code ?? '—'}</td>
-                    <td className="px-4 py-2 text-slate-800 truncate">{t.name}</td>
+                  <tr key={t.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
+                    <td className="px-4 py-2 text-slate-500 dark:text-slate-400 tabular-nums">{t.code ?? '—'}</td>
+                    <td className="px-4 py-2 text-slate-800 dark:text-slate-100 truncate">{t.name}</td>
                     <td className="px-4 py-2">
                       <span className={cn(
                         'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold',
@@ -1734,7 +1734,7 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
                         t.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
                         t.status === 'in_review' ? 'bg-amber-100 text-amber-700' :
                         t.status === 'blocked' ? 'bg-red-100 text-red-700' :
-                        'bg-slate-100 text-slate-600',
+                        'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300',
                       )}>{t.status}</span>
                     </td>
                     <td className="px-4 py-2">
@@ -1742,7 +1742,7 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
                         type="date"
                         value={drafts[t.id] ?? ''}
                         onChange={(e) => setDrafts((s) => ({ ...s, [t.id]: e.target.value }))}
-                        className="rounded border border-slate-200 px-2 py-1 text-[12px] tabular-nums w-full focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="rounded border border-slate-200 dark:border-slate-700 px-2 py-1 text-[12px] tabular-nums w-full focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </td>
                   </tr>
@@ -1752,15 +1752,15 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-slate-100 px-5 py-3 bg-[#FAFBFC]">
-          <div className="text-[11px] text-slate-500">
+        <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 px-5 py-3 bg-[#FAFBFC]">
+          <div className="text-[11px] text-slate-500 dark:text-slate-400">
             {row.taskList?.length ?? 0} tasks · {dirty ? 'unsaved changes' : 'up to date'}
           </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-3.5 py-1.5 rounded-lg border border-slate-200 text-[12px] font-semibold text-slate-600 hover:bg-white"
+              className="px-3.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-900"
             >
               Cancel
             </button>
