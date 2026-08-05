@@ -69,7 +69,7 @@ const MyTasksKanbanPage = lazy(() => import('@/features/tasks/my-tasks-kanban').
 const PlanningPage = lazy(() => import('@/features/projects/planning-modal').then(m => ({ default: m.PlanningPage })));
 
 function LazyFallback() {
-  return <div className="flex items-center justify-center py-20 text-sm text-slate-400">Loading...</div>;
+  return <div className="flex items-center justify-center py-20 text-sm text-slate-400 dark:text-slate-500">Loading...</div>;
 }
 
 function L({ children }: { children: React.ReactNode }) {
