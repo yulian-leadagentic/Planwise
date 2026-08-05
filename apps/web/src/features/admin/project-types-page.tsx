@@ -1,17 +1,18 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft } from 'lucide-react';
-import { useState } from 'react';
+import { Plus, ArrowLeft, FolderKanban } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import type { ColumnDef } from '@tanstack/react-table';
 import { PageHeader } from '@/components/shared/page-header';
-import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { DataTable } from '@/components/shared/data-table';
+import { EmptyState } from '@/components/shared/empty-state';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 
 export function ProjectTypesPage() {
   const confirm = useConfirm();
-  const scrollRef = useStickyHScroll();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
@@ -54,11 +55,33 @@ export function ProjectTypesPage() {
 
   const types = data ?? [];
 
+  const columns = useMemo<ColumnDef<any, unknown>[]>(() => [
+    { accessorKey: 'name', header: 'Type Name', enableSorting: false,
+      cell: ({ row }) => <span className="font-medium">{row.original.name}</span> },
+    { accessorKey: 'code', header: 'Code', enableSorting: false,
+      cell: ({ row }) => (
+        row.original.code
+          ? <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs text-orange-700">{row.original.code}</span>
+          : <span className="text-muted-foreground">-</span>
+      ) },
+    { id: 'actions', header: 'Actions', enableSorting: false, size: 96,
+      cell: ({ row }) => (
+        <button
+          onClick={async () => { if (await confirm(`Delete "${row.original.name}"?`)) deleteMutation.mutate(row.original.id); }}
+          aria-label={`Delete project type ${row.original.name}`}
+          className="text-xs text-red-600 hover:underline"
+        >
+          Delete
+        </button>
+      ) },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], []);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <button onClick={() => navigate('/templates')} className="rounded-md p-1.5 hover:bg-accent">
-          <ArrowLeft className="h-5 w-5" />
+        <button onClick={() => navigate('/templates')} aria-label="Back to templates" className="rounded-md p-1.5 hover:bg-accent">
+          <ArrowLeft className="h-5 w-5" aria-hidden="true" />
         </button>
         <PageHeader
           title="Project Types"
@@ -117,38 +140,13 @@ export function ProjectTypesPage() {
       {isLoading ? (
         <TableSkeleton rows={5} cols={1} />
       ) : types.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">No project types configured yet. Click "Add Type" to create one.</p>
+        <EmptyState
+          icon={FolderKanban}
+          title="No project types configured yet"
+          description={'Click "Add Type" to create one.'}
+        />
       ) : (
-        <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/50">
-                <th className="px-4 py-2.5 text-left font-medium">Type Name</th>
-                <th className="px-4 py-2.5 text-left font-medium">Code</th>
-                <th className="px-4 py-2.5 text-right font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-          {types.map((t: any) => (
-            <tr
-              key={t.id}
-              className="border-b border-border last:border-0 hover:bg-muted/30"
-            >
-              <td className="px-4 py-3 font-medium">{t.name}</td>
-              <td className="px-4 py-3">{t.code ? <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs text-orange-700">{t.code}</span> : <span className="text-muted-foreground">-</span>}</td>
-              <td className="px-4 py-3 text-right">
-              <button
-                onClick={async () => { if (await confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id); }}
-                className="text-xs text-red-600 hover:underline"
-              >
-                Delete
-              </button>
-              </td>
-            </tr>
-          ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable columns={columns} data={types} pageSize={1000} />
       )}
     </div>
   );
