@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2, Pencil, Save, X, Briefcase, Lock } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { EmptyState } from '@/components/shared/empty-state';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
@@ -109,6 +110,17 @@ export function ProjectRoleTypesPage() {
 
       {isLoading ? (
         <TableSkeleton rows={4} cols={5} />
+      // Empty-state hoisted out of the table (was `<tr><td colSpan={5}>`
+      // inside tbody). Same message, same icon, now via EmptyState.
+      // The "creating new" state (editingId === 'new') still needs the
+      // table to be rendered so EditRow's `<tr>` mounts inside a tbody,
+      // so we only show the empty state when NOT creating.
+      ) : (types.length === 0 && editingId !== 'new') ? (
+        <EmptyState
+          icon={Briefcase}
+          title="No project role types yet"
+          description="Add one to get started."
+        />
       ) : (
         <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
           <table className="w-full text-sm">
@@ -188,12 +200,9 @@ export function ProjectRoleTypesPage() {
                     </tr>
                   ),
               )}
-              {!isLoading && types.length === 0 && editingId !== 'new' && (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400 dark:text-slate-500 text-sm">
-                  <Briefcase className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  No project role types yet. Add one to get started.
-                </td></tr>
-              )}
+              {/* Empty-state moved above via <EmptyState /> — the inline
+                  <tr> version was hidden by the same guard now applied
+                  at the outer level. */}
             </tbody>
           </table>
         </div>
