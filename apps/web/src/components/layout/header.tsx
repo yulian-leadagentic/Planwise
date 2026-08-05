@@ -45,10 +45,13 @@ export function Header() {
       {/* Theme toggle */}
       <button
         onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
         className="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
         title="Toggle theme"
       >
-        {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+        {theme === 'dark'
+          ? <Sun className="h-5 w-5" aria-hidden="true" />
+          : <Moon className="h-5 w-5" aria-hidden="true" />}
       </button>
 
       {/* Notification Center */}
@@ -58,6 +61,9 @@ export function Header() {
       <div className="relative" ref={menuRef}>
         <button
           onClick={() => setMenuOpen(!menuOpen)}
+          aria-label={user ? `Account menu — ${user.firstName} ${user.lastName}` : 'Account menu'}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
           className="flex items-center gap-2 rounded-md p-1 hover:bg-accent"
         >
           {user && (
@@ -74,25 +80,27 @@ export function Header() {
         </button>
 
         {menuOpen && (
-          <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-md border border-border bg-popover py-1 shadow-lg">
+          <div role="menu" className="absolute right-0 top-full z-50 mt-1 w-48 rounded-md border border-border bg-popover py-1 shadow-lg">
             <button
+              role="menuitem"
               onClick={() => {
                 setMenuOpen(false);
                 navigate('/profile');
               }}
               className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
             >
-              <UserIcon className="h-4 w-4" />
+              <UserIcon className="h-4 w-4" aria-hidden="true" />
               Profile
             </button>
             <button
+              role="menuitem"
               onClick={() => {
                 setMenuOpen(false);
                 logout.mutate();
               }}
               className="flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive hover:bg-accent"
             >
-              <LogOut className="h-4 w-4" />
+              <LogOut className="h-4 w-4" aria-hidden="true" />
               Logout
             </button>
           </div>

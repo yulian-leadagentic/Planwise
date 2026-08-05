@@ -40,12 +40,13 @@ export function ClockWidget() {
         <button
           onClick={() => clockOut.mutate(undefined)}
           disabled={clockOut.isPending}
+          aria-label="Clock out"
           className={cn(
             'flex items-center gap-1 rounded-md bg-red-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-600',
             clockOut.isPending && 'opacity-50',
           )}
         >
-          <Square className="h-3.5 w-3.5" />
+          <Square className="h-3.5 w-3.5" aria-hidden="true" />
           <span className="hidden sm:inline">Out</span>
         </button>
       </div>
@@ -56,12 +57,13 @@ export function ClockWidget() {
     <button
       onClick={() => clockIn.mutate(undefined)}
       disabled={clockIn.isPending}
+      aria-label="Clock in"
       className={cn(
         'flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700',
         clockIn.isPending && 'opacity-50',
       )}
     >
-      <Play className="h-3.5 w-3.5" />
+      <Play className="h-3.5 w-3.5" aria-hidden="true" />
       <span className="hidden sm:inline">Clock In</span>
     </button>
   );

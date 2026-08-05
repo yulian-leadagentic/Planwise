@@ -36,7 +36,7 @@ export function MobileNav() {
                 aria-label="Close menu"
                 className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
               >
-                <X className="h-5 w-5" />
+                <X className="h-5 w-5" aria-hidden="true" />
               </button>
             </div>
             <div className="grid grid-cols-3 gap-2">
@@ -54,7 +54,7 @@ export function MobileNav() {
                     )
                   }
                 >
-                  <item.icon className="h-5 w-5" />
+                  <item.icon className="h-5 w-5" aria-hidden="true" />
                   <span className="text-center leading-tight">{item.label}</span>
                 </NavLink>
               ))}
@@ -81,7 +81,7 @@ export function MobileNav() {
             aria-expanded={moreOpen}
             className="flex flex-col items-center gap-0.5 px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
           >
-            <MoreHorizontal className="h-5 w-5" />
+            <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
             <span>More</span>
           </button>
         </div>
