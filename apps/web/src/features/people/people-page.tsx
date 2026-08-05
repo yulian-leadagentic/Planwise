@@ -15,6 +15,7 @@ import { notify } from '@/lib/notify';
 import client from '@/api/client';
 import type { UserListItem } from '@/types';
 import type { ColumnDef } from '@tanstack/react-table';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 function getColumns(
   isPartners: boolean,
@@ -1353,6 +1354,7 @@ function SeniorityHistorySection({
   userId: number;
   seniorityLevels: any[];
 }) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const { can } = usePermissions();
   // Cost (hourly rate) visibility gate. NO admin short-circuit —
@@ -1646,8 +1648,8 @@ function SeniorityHistorySection({
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      if (confirm(`Remove this seniority entry?`)) removeEntry.mutate(row.id);
+                    onClick={async () => {
+                      if (await confirm(`Remove this seniority entry?`)) removeEntry.mutate(row.id);
                     }}
                     className="text-slate-400 dark:text-slate-500 hover:text-red-600 p-1 rounded"
                     title="Remove"

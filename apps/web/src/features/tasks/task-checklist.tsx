@@ -6,6 +6,7 @@ import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
 import { formatRelative } from '@/lib/date-utils';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 /**
  * Per the 2026-06-14 BM mapping meeting: the customer wanted "personal
@@ -25,6 +26,7 @@ interface ChecklistItem {
 }
 
 export function TaskChecklist({ taskId }: { taskId: number }) {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const { can, isAdmin } = usePermissions();
   const canWrite = isAdmin || can('tasks', 'write');
@@ -101,8 +103,8 @@ export function TaskChecklist({ taskId }: { taskId: number }) {
               canWrite={canWrite}
               onToggle={(isDone) => updateItem.mutate({ id: item.id, patch: { isDone } })}
               onEdit={(text) => updateItem.mutate({ id: item.id, patch: { text } })}
-              onRemove={() => {
-                if (confirm(`Remove "${item.text}"?`)) removeItem.mutate(item.id);
+              onRemove={async () => {
+                if (await confirm(`Remove "${item.text}"?`)) removeItem.mutate(item.id);
               }}
             />
           ))

@@ -7,8 +7,10 @@ import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 export function ProjectTypesPage() {
+  const confirm = useConfirm();
   const scrollRef = useStickyHScroll();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -136,7 +138,7 @@ export function ProjectTypesPage() {
               <td className="px-4 py-3">{t.code ? <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs text-orange-700">{t.code}</span> : <span className="text-muted-foreground">-</span>}</td>
               <td className="px-4 py-3 text-right">
               <button
-                onClick={() => { if (confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id); }}
+                onClick={async () => { if (await confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id); }}
                 className="text-xs text-red-600 hover:underline"
               >
                 Delete

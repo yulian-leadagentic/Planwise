@@ -6,6 +6,7 @@ import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 type CurrencyRow = {
   code: string;
@@ -35,6 +36,7 @@ const emptyForm: FormState = {
 };
 
 export function CurrenciesPage() {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const scrollRef = useStickyHScroll();
   const [editingCode, setEditingCode] = useState<string | null>(null);
@@ -208,8 +210,8 @@ export function CurrenciesPage() {
                           <Pencil className="h-3 w-3" /> Edit
                         </button>
                         <button
-                          onClick={() => {
-                            if (confirm(`Delete currency ${row.code}?`)) {
+                          onClick={async () => {
+                            if (await confirm(`Delete currency ${row.code}?`)) {
                               deleteMutation.mutate(row.code);
                             }
                           }}

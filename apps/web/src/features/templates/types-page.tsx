@@ -6,6 +6,7 @@ import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { ColorPalettePicker } from '@/components/shared/color-palette-picker';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 // ---------------------------------------------------------------------------
 // Zone types are now persisted via /admin/config/zone-types (ZoneTypeMeta).
@@ -65,6 +66,7 @@ interface EditState {
 // Main component
 // ---------------------------------------------------------------------------
 export function TypesPage() {
+  const confirm = useConfirm();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -357,9 +359,9 @@ export function TypesPage() {
     }
   }
 
-  function handleDelete(row: (typeof rows)[number]) {
+  async function handleDelete(row: (typeof rows)[number]) {
     if (row.static) return;
-    if (!confirm(`Delete "${row.name}"? This action cannot be undone.`)) return;
+    if (!(await confirm(`Delete "${row.name}"? This action cannot be undone.`))) return;
 
     if (activeTab === 'zone') deleteZoneType.mutate(row.id as number);
     else if (activeTab === 'service') deleteServiceType.mutate(row.id as number);

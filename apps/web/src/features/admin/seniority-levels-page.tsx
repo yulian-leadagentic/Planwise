@@ -6,6 +6,7 @@ import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 // Seniority Levels — user-managed ladder (Junior, Mid, Senior, …). Each org
 // defines their own. Used by EmployeeRole + RoleCostRate (M5).
@@ -39,6 +40,7 @@ const emptyForm: FormState = {
 };
 
 export function SeniorityLevelsPage() {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const scrollRef = useStickyHScroll();
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -245,8 +247,8 @@ export function SeniorityLevelsPage() {
                           <Pencil className="h-3 w-3" /> Edit
                         </button>
                         <button
-                          onClick={() => {
-                            if (confirm(`Delete seniority level "${row.name}"?`)) {
+                          onClick={async () => {
+                            if (await confirm(`Delete seniority level "${row.name}"?`)) {
                               deleteMutation.mutate(row.id);
                             }
                           }}

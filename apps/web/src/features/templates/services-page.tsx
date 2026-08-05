@@ -6,6 +6,7 @@ import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 interface EditState {
   id: number;
@@ -22,6 +23,7 @@ function resolveColor(c?: string | null): string | undefined {
 }
 
 export function PhasesPage() {
+  const confirm = useConfirm();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -266,7 +268,7 @@ export function PhasesPage() {
                     </td>
                     <td className="px-5 py-3 font-medium text-slate-700 dark:text-slate-200">{row.name}</td>
                     <td className="px-5 py-3 text-right">
-                      <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete "${row.name}"?`)) deleteMutation.mutate(row.id); }}
+                      <button onClick={async (e) => { e.stopPropagation(); if (await confirm(`Delete "${row.name}"?`)) deleteMutation.mutate(row.id); }}
                         className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] hover:bg-red-50 text-slate-300 dark:text-slate-600 hover:text-red-600 transition-colors" title={`Delete ${row.name}`}>
                         <Trash2 className="h-4 w-4" />
                       </button>

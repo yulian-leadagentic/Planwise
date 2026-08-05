@@ -6,6 +6,7 @@ import { MinutesInput } from '@/components/shared/minutes-input';
 import { useUpdateTimeEntry, useDeleteTimeEntry } from '@/hooks/use-time';
 import { cn } from '@/lib/utils';
 import type { DailyBreakdown } from '@/types';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 interface DailyBreakdownComponentProps {
   day: DailyBreakdown;
@@ -13,6 +14,7 @@ interface DailyBreakdownComponentProps {
 }
 
 export function DailyBreakdownComponent({ day, onLogTime }: DailyBreakdownComponentProps) {
+  const confirm = useConfirm();
   const [expanded, setExpanded] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editMinutes, setEditMinutes] = useState(0);
@@ -37,8 +39,8 @@ export function DailyBreakdownComponent({ day, onLogTime }: DailyBreakdownCompon
     );
   };
 
-  const handleDelete = (id: number, name: string) => {
-    if (confirm(`Delete time entry "${name}"?`)) {
+  const handleDelete = async (id: number, name: string) => {
+    if (await confirm(`Delete time entry "${name}"?`)) {
       deleteEntry.mutate(id);
     }
   };

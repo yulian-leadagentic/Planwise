@@ -7,6 +7,7 @@ import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 // M1.1 — Pure sequence library. Each row is a named sequence with a
 // stable `code`. EntityKind rows reference these codes to decide which
@@ -65,6 +66,7 @@ const emptyForm: FormState = {
 };
 
 export function NumberRangesPage() {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const scrollRef = useStickyHScroll();
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -280,8 +282,8 @@ export function NumberRangesPage() {
                           <Pencil className="h-3 w-3" /> Edit
                         </button>
                         <button
-                          onClick={() => {
-                            if (confirm(`Delete range "${row.code}"? Any entity kind referencing it will become unassigned.`)) {
+                          onClick={async () => {
+                            if (await confirm(`Delete range "${row.code}"? Any entity kind referencing it will become unassigned.`)) {
                               deleteMutation.mutate(row.id);
                             }
                           }}

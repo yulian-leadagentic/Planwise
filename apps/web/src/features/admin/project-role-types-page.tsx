@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
 import client from '@/api/client';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 // Project Role Types — catalog of roles a party can hold on a project
 // (Customer, Supplier, Participant, Architect, …). Mirrors the existing
@@ -48,6 +49,7 @@ const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:bor
 const KIND_OPTIONS: Array<'person' | 'organization'> = ['person', 'organization'];
 
 export function ProjectRoleTypesPage() {
+  const confirm = useConfirm();
   const { can, isAdmin } = usePermissions();
   const canWrite = isAdmin || can('admin/project-role-types', 'write');
   const canDelete = isAdmin || can('admin/project-role-types', 'delete');
@@ -173,8 +175,8 @@ export function ProjectRoleTypesPage() {
                         )}
                         {canDelete && !t.isSystem && (
                           <button
-                            onClick={() => {
-                              if (confirm(`Delete project role "${t.name}"?`)) remove.mutate(t.id);
+                            onClick={async () => {
+                              if (await confirm(`Delete project role "${t.name}"?`)) remove.mutate(t.id);
                             }}
                             className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
                             title="Delete"

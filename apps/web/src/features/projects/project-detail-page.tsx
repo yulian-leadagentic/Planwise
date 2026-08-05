@@ -9,6 +9,7 @@ import { FilesTab } from './files-tab';
 import { CreateContactModal } from '@/features/partners/create-contact-modal';
 import { PartnerDrawer } from '@/features/partners/partner-drawer';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 // Lazy-load DnD-heavy components
 const PlanningTab = lazy(() => import('./planning-modal').then(m => ({ default: m.PlanningTab })));
@@ -64,6 +65,7 @@ function formatBudget(amount: number) {
 }
 
 export function ProjectDetailPage() {
+  const confirm = useConfirm();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -157,8 +159,8 @@ export function ProjectDetailPage() {
                   default list); Delete soft-removes it. T3.6+7. */}
               <ProjectCloseControl project={project} projectId={projectId} />
               <button
-                onClick={() => {
-                  if (confirm(`Delete project "${project.name}"? This cannot be undone.`)) {
+                onClick={async () => {
+                  if (await confirm(`Delete project "${project.name}"? This cannot be undone.`)) {
                     client.delete(`/projects/${projectId}`).then(() => {
                       queryClient.invalidateQueries({ queryKey: ['projects'] });
                       notify.success('Project deleted', { code: 'PROJECT-DELETE-200' });
@@ -421,6 +423,7 @@ interface ProjectTeamData {
  * surprising; reopen is one-click since nothing is destructive.
  */
 function ProjectCloseControl({ project, projectId }: { project: any; projectId: number }) {
+  const confirm = useConfirm();
   const closeMutation = useCloseProject();
   const reopenMutation = useReopenProject();
   const isClosed = !!project.closedAt;
@@ -700,8 +703,8 @@ function TeamTab({
                   <RoleAssignmentRow
                     key={a.id}
                     assignment={a}
-                    onRemove={() => {
-                      if (confirm(`Remove ${a.party.displayName} as ${rt.name}?`)) {
+                    onRemove={async () => {
+                      if (await confirm(`Remove ${a.party.displayName} as ${rt.name}?`)) {
                         removeRoleAssignment.mutate(a.id);
                       }
                     }}
@@ -843,8 +846,8 @@ function TeamTab({
                   <RoleAssignmentRow
                     key={a.id}
                     assignment={a}
-                    onRemove={() => {
-                      if (confirm(`Remove ${a.party.displayName} as ${rt.name}?`)) {
+                    onRemove={async () => {
+                      if (await confirm(`Remove ${a.party.displayName} as ${rt.name}?`)) {
                         removeRoleAssignment.mutate(a.id);
                       }
                     }}

@@ -15,6 +15,7 @@ import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 interface Milestone {
   id: number;
@@ -28,6 +29,7 @@ interface Milestone {
 const inputCls = 'w-full px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none';
 
 export function StageMilestonesPage() {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const scrollRef = useStickyHScroll();
   const { data: milestones = [], isLoading } = useQuery<Milestone[]>({
@@ -112,8 +114,8 @@ export function StageMilestonesPage() {
                   key={m.id}
                   m={m}
                   onPatch={(patch) => update.mutate({ id: m.id, ...patch })}
-                  onDelete={() => {
-                    if (confirm(`Delete "${m.name}"? Per-project statuses for this milestone will be lost.`)) {
+                  onDelete={async () => {
+                    if (await confirm(`Delete "${m.name}"? Per-project statuses for this milestone will be lost.`)) {
                       remove.mutate(m.id);
                     }
                   }}

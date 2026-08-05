@@ -6,6 +6,7 @@ import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 const TYPE_STYLES: Record<string, { bg: string; text: string; dot: string }> = {
   holiday: { bg: 'bg-red-100', text: 'text-red-700', dot: 'bg-red-500' },
@@ -119,6 +120,7 @@ function formatDateKey(d: Date): string {
 type CalendarViewMode = 'month' | 'year';
 
 export function CalendarDaysPage() {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const scrollRef = useStickyHScroll();
   const today = new Date();
@@ -428,7 +430,7 @@ export function CalendarDaysPage() {
                                 </button>
                               )
                             ) : (
-                              <button onClick={() => { if (confirm(`Remove "${entry.name}"?`)) deleteMutation.mutate(entry.id); }}
+                              <button onClick={async () => { if (await confirm(`Remove "${entry.name}"?`)) deleteMutation.mutate(entry.id); }}
                                 className="h-4 w-4 flex items-center justify-center rounded hover:bg-white dark:hover:bg-slate-900/50">
                                 <X className="h-2.5 w-2.5" />
                               </button>
@@ -658,7 +660,7 @@ export function CalendarDaysPage() {
                       <Clock className="h-3.5 w-3.5 inline mr-1" />{hasWorkingHours ? 'Edit hours' : 'Set working'}
                     </button>
                   ) : (
-                    <button onClick={() => { if (confirm(`Remove "${d.name}"?`)) deleteMutation.mutate(d.id); }}
+                    <button onClick={async () => { if (await confirm(`Remove "${d.name}"?`)) deleteMutation.mutate(d.id); }}
                       className="rounded p-1 text-slate-300 dark:text-slate-600 hover:text-red-600 hover:bg-red-50">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>

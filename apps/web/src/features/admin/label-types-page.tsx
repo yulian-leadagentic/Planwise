@@ -6,8 +6,10 @@ import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { ColorPalettePicker } from '@/components/shared/color-palette-picker';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 export function LabelTypesPage() {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
@@ -138,7 +140,7 @@ export function LabelTypesPage() {
                   <td className="px-4 py-3 text-muted-foreground">{lt.sortOrder}</td>
                   <td className="px-4 py-3">
                     <button
-                      onClick={() => { if (confirm(`Delete "${lt.name}"?`)) deleteMutation.mutate(lt.id); }}
+                      onClick={async () => { if (await confirm(`Delete "${lt.name}"?`)) deleteMutation.mutate(lt.id); }}
                       className="text-xs text-red-600 hover:underline"
                     >
                       Delete

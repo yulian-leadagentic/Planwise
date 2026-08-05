@@ -7,6 +7,7 @@ import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 const btnPrimary = 'flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
@@ -600,6 +601,7 @@ function ZoneTasksTable({
   tasks: any[];
   templateId: number;
 }) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
 
   const deleteMutation = useMutation({
@@ -639,7 +641,7 @@ function ZoneTasksTable({
               </td>
               <td className="px-2 py-1 text-center">
                 <button
-                  onClick={() => { if (confirm(`Remove task "${task.name}"?`)) deleteMutation.mutate(task.id); }}
+                  onClick={async () => { if (await confirm(`Remove task "${task.name}"?`)) deleteMutation.mutate(task.id); }}
                   className="rounded p-0.5 text-muted-foreground hover:bg-red-100 hover:text-red-600"
                   title="Remove task"
                 >
@@ -1006,6 +1008,7 @@ function ZoneTreeNode({
   depth: number;
   servicePhaseMap?: Map<string, { name: string; code?: string | null }>;
 }) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(true);
   const [showAddChild, setShowAddChild] = useState(false);
@@ -1702,8 +1705,8 @@ function EditorView({
             <>
               {/* Root-level service groups */}
               {Array.from(rootServiceGroups.entries()).map(([svcName, svcTasks]) => (
-                <ServiceGroupItem key={`svc-${svcName}`} serviceName={svcName} tasks={svcTasks} templateId={templateId} servicePhase={servicePhaseMap.get(svcName) || null} onDeleteAll={() => {
-                  if (confirm(`Remove service "${svcName}" and all its ${svcTasks.length} tasks?`)) {
+                <ServiceGroupItem key={`svc-${svcName}`} serviceName={svcName} tasks={svcTasks} templateId={templateId} servicePhase={servicePhaseMap.get(svcName) || null} onDeleteAll={async () => {
+                  if (await confirm(`Remove service "${svcName}" and all its ${svcTasks.length} tasks?`)) {
                     Promise.all(svcTasks.map((t: any) => client.delete(`/templates/tasks/${t.id}`))).then(() => {
                       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
                       notify.success(`Removed deliverable: ${svcName}`, { code: 'SVC-DELETE-200' });
@@ -1721,7 +1724,7 @@ function EditorView({
                   {task.defaultBudgetHours != null && <span className="text-xs text-muted-foreground">{Number(task.defaultBudgetHours)}h</span>}
                   {task.defaultBudgetAmount != null && <span className="text-xs text-muted-foreground">{'\u20AA'}{Number(task.defaultBudgetAmount).toLocaleString()}</span>}
                   <button
-                    onClick={() => { if (confirm(`Remove task "${task.name}"?`)) deleteRootTaskMutation.mutate(task.id); }}
+                    onClick={async () => { if (await confirm(`Remove task "${task.name}"?`)) deleteRootTaskMutation.mutate(task.id); }}
                     className="ml-auto rounded p-0.5 text-muted-foreground hover:bg-red-100 hover:text-red-600"
                   >
                     <X className="h-3 w-3" />
@@ -1779,6 +1782,7 @@ function EditorView({
 // ---------------------------------------------------------------------------
 
 export function ZoneTemplatesPage() {
+  const confirm = useConfirm();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -1913,9 +1917,9 @@ export function ZoneTemplatesPage() {
                 </div>
               </div>
               <button
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.stopPropagation();
-                  if (confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id);
+                  if (await confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id);
                 }}
                 className="rounded-md p-1.5 text-muted-foreground hover:bg-red-100 hover:text-red-600"
               >

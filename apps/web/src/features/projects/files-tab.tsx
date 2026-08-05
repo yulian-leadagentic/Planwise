@@ -32,6 +32,7 @@ import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
 import { UserAvatar } from '@/components/shared/user-avatar';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 interface ProjectFile {
   /** Namespaced id from the API: `p-<n>` for ProjectFile, `t-<n>` for TaskAttachment. */
@@ -75,6 +76,7 @@ function formatUploadDate(iso: string): string {
 
 
 export function FilesTab({ projectId }: { projectId: number }) {
+  const confirm = useConfirm();
   const { can, isAdmin } = usePermissions();
   const canWrite = isAdmin || can('projects/files', 'write');
   const canDelete = isAdmin || can('projects/files', 'delete');
@@ -227,7 +229,7 @@ export function FilesTab({ projectId }: { projectId: number }) {
           handleCopy={handleCopy}
           copiedId={copiedId}
           canDelete={canDelete}
-          onRemove={(f) => { if (confirm(`Remove "${f.name}"?`)) remove.mutate(f); }}
+          onRemove={async (f) => { if (await confirm(`Remove "${f.name}"?`)) remove.mutate(f); }}
         />
       )}
 

@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
 import client from '@/api/client';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
@@ -131,6 +132,7 @@ export function PartnerTypesPage() {
 // ─── Role Types ──────────────────────────────────────────────────────────────
 
 function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: boolean }) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const scrollRef = useStickyHScroll();
   const [editingId, setEditingId] = useState<number | 'new' | null>(null);
@@ -247,7 +249,7 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
                         )}
                         {canDelete && !t.isSystem && (
                           <button
-                            onClick={() => { if (confirm(`Delete role type "${t.name}"?`)) remove.mutate(t.id); }}
+                            onClick={async () => { if (await confirm(`Delete role type "${t.name}"?`)) remove.mutate(t.id); }}
                             className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
                             title="Delete"
                           >
@@ -405,6 +407,7 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
 // ─── Relationship Types ──────────────────────────────────────────────────────
 
 function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: boolean }) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [editingId, setEditingId] = useState<number | 'new' | null>(null);
 
@@ -525,7 +528,7 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
                         )}
                         {canDelete && !t.isSystem && (
                           <button
-                            onClick={() => { if (confirm(`Delete relationship type "${t.name}"?`)) remove.mutate(t.id); }}
+                            onClick={async () => { if (await confirm(`Delete relationship type "${t.name}"?`)) remove.mutate(t.id); }}
                             className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
                             title="Delete"
                           >
@@ -731,6 +734,7 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
 // them (server enforces).
 
 function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: boolean }) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [editingId, setEditingId] = useState<number | 'new' | null>(null);
 
@@ -830,8 +834,8 @@ function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: 
                       )}
                       {canDelete && !c.isSystem && (
                         <button
-                          onClick={() => {
-                            if (confirm(`Delete category "${c.name}"?`)) remove.mutate(c.id);
+                          onClick={async () => {
+                            if (await confirm(`Delete category "${c.name}"?`)) remove.mutate(c.id);
                           }}
                           className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
                           title="Delete"

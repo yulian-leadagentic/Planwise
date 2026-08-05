@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 const btnPrimary = 'flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
@@ -335,8 +336,8 @@ function EditorView({
     setNewZone({ name: '', zoneType: 'zone', linkedTaskTemplateId: '' });
   }, []);
 
-  const handleDeleteZone = useCallback((zoneId: number, zoneName: string) => {
-    if (confirm(`Delete zone "${zoneName}" and all its children?`)) {
+  const handleDeleteZone = useCallback(async (zoneId: number, zoneName: string) => {
+    if (await confirm(`Delete zone "${zoneName}" and all its children?`)) {
       deleteZoneMutation.mutate(zoneId);
     }
   }, [deleteZoneMutation]);
@@ -518,6 +519,7 @@ function EditorView({
 // ---------------------------------------------------------------------------
 
 export function CombinedTemplatesPage() {
+  const confirm = useConfirm();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -652,9 +654,9 @@ export function CombinedTemplatesPage() {
                 </div>
               </div>
               <button
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.stopPropagation();
-                  if (confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id);
+                  if (await confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id);
                 }}
                 className="rounded-md p-1.5 text-muted-foreground hover:bg-red-100 hover:text-red-600"
               >

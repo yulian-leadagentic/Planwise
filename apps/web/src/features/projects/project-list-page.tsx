@@ -12,6 +12,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import client from '@/api/client';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 // localStorage key for the per-user "which Project Role Type columns
 // are visible on the projects list" preference. Stored as a JSON
@@ -70,6 +71,7 @@ const statusColors: Record<string, { bg: string; text: string; label: string }> 
 };
 
 export function ProjectListPage() {
+  const confirm = useConfirm();
   const tableScrollRef = useStickyHScroll();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -751,7 +753,7 @@ export function ProjectListPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => { if (confirm(`Delete "${p.name}"?`)) deleteProject.mutate(p.id); }}
+                        <button onClick={async () => { if (await confirm(`Delete "${p.name}"?`)) deleteProject.mutate(p.id); }}
                           className="w-7 h-7 rounded-md flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-red-600 hover:bg-red-50 transition-colors">
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>

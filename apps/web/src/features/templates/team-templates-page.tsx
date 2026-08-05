@@ -5,6 +5,7 @@ import { Plus, ArrowLeft, Trash2, Users, Search } from 'lucide-react';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,7 @@ function TypeBadge({ type }: { type?: string | null }) {
 // ── Main Component ─────────────────────────────────────────────────────────────
 
 export function TeamTemplatesPage() {
+  const confirm = useConfirm();
   const scrollRef = useStickyHScroll();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -270,9 +272,9 @@ export function TeamTemplatesPage() {
                   </span>
                 </div>
                 <button
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
-                    if (confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id);
+                    if (await confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id);
                   }}
                   className="hover:bg-red-50 text-slate-300 dark:text-slate-600 hover:text-red-600 rounded-md p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                 >
@@ -320,6 +322,7 @@ function EditorView({
   onRemoveMember: (memberId: number) => void;
   addingMember: boolean;
 }) {
+  const confirm = useConfirm();
   const [showAddSection, setShowAddSection] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleInput, setRoleInput] = useState('');
@@ -510,7 +513,7 @@ function EditorView({
                     <td className="px-5 py-3 text-sm text-slate-500 dark:text-slate-400">{m.role || '--'}</td>
                     <td className="px-5 py-3">
                       <button
-                        onClick={() => removeMemberMutation_confirm(m, onRemoveMember)}
+                        onClick={() => removeMemberMutation_confirm(m, onRemoveMember, confirm)}
                         className="hover:bg-red-50 text-slate-300 dark:text-slate-600 hover:text-red-600 rounded-md p-1.5 transition-colors"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -527,8 +530,16 @@ function EditorView({
   );
 }
 
-function removeMemberMutation_confirm(member: TemplateMember, onRemove: (id: number) => void) {
-  if (confirm(`Remove ${member.user.firstName} ${member.user.lastName} from this template?`)) {
+async function removeMemberMutation_confirm(
+  member: TemplateMember,
+  onRemove: (id: number) => void,
+  // useConfirm() is a hook — must be called INSIDE the component that
+  // OWNS the trigger. Pass the returned confirm fn through so this
+  // helper stays a plain module-level function without breaking the
+  // rules of hooks.
+  confirm: (msg: string) => Promise<boolean>,
+) {
+  if (await confirm(`Remove ${member.user.firstName} ${member.user.lastName} from this template?`)) {
     onRemove(member.id);
   }
 }

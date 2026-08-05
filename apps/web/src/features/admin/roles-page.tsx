@@ -8,10 +8,12 @@ import { UserAvatar } from '@/components/shared/user-avatar';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
 export function RolesPage() {
+  const confirm = useConfirm();
   const scrollRef = useStickyHScroll();
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
@@ -96,8 +98,8 @@ export function RolesPage() {
             <RoleCard
               key={role.id}
               role={role}
-              onDelete={() => {
-                if (confirm(`Delete role "${role.name}"? Users with this role will lose their permissions.`)) {
+              onDelete={async () => {
+                if (await confirm(`Delete role "${role.name}"? Users with this role will lose their permissions.`)) {
                   deleteRole.mutate(role.id);
                 }
               }}
@@ -327,6 +329,7 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
 }
 
 function RoleUsersSection({ roleId, roleName }: { roleId: number; roleName: string }) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
 
   const { data: users = [], isLoading } = useQuery({
@@ -386,10 +389,10 @@ function RoleUsersSection({ roleId, roleName }: { roleId: number; roleName: stri
                   aria-label={`Reassign ${u.firstName} to another role`}
                   value={roleId}
                   disabled={isSaving}
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const newId = Number(e.target.value);
                     if (newId && newId !== roleId) {
-                      if (confirm(`Move ${u.firstName} ${u.lastName} from "${roleName}" to this new role?`)) {
+                      if (await confirm(`Move ${u.firstName} ${u.lastName} from "${roleName}" to this new role?`)) {
                         reassign.mutate({ userId: u.id, newRoleId: newId });
                       } else {
                         e.target.value = String(roleId);

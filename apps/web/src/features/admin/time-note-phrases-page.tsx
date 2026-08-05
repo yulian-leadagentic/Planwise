@@ -6,6 +6,7 @@ import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 /**
  * Admin CRUD for the time-log preset phrase pool.
@@ -20,6 +21,7 @@ interface Phrase {
 }
 
 export function TimeNotePhrasesPage() {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const scrollRef = useStickyHScroll();
   const [newText, setNewText] = useState('');
@@ -179,7 +181,7 @@ export function TimeNotePhrasesPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => { if (confirm(`Remove "${p.text}"?`)) remove.mutate(p.id); }}
+                          onClick={async () => { if (await confirm(`Remove "${p.text}"?`)) remove.mutate(p.id); }}
                           className="p-1.5 rounded text-slate-400 dark:text-slate-500 hover:text-red-600 hover:bg-red-50"
                           title="Delete"
                         >

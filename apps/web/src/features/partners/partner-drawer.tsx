@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
 import { formatDate } from '@/lib/date-utils';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
@@ -220,6 +221,7 @@ export function PartnerDrawer({
 // That way "Employee" doesn't show up on an org, and "Supplier" doesn't
 // show up on a person.
 function MainRoleHeaderField({ bp, canWrite }: { bp: BusinessPartnerFull; canWrite: boolean }) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [picking, setPicking] = useState(false);
 
@@ -458,7 +460,7 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
           )}
           {canDelete && !bp.user && (
             <button
-              onClick={() => { if (confirm(`Remove "${bp.displayName}"?`)) remove.mutate(); }}
+              onClick={async () => { if (await confirm(`Remove "${bp.displayName}"?`)) remove.mutate(); }}
               className="bg-white dark:bg-slate-900 border border-red-200 hover:border-red-400 text-red-600 text-[12px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
             >
               <Trash2 className="h-3 w-3" /> Remove
@@ -789,6 +791,7 @@ function JobTitlesSection({ bpId, canWrite }: { bpId: number; canWrite: boolean 
 // ─── Relationships ───────────────────────────────────────────────────────────
 
 function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull; canWrite: boolean; canDelete: boolean }) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
 
@@ -839,7 +842,7 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
               </div>
               {canDelete && (
                 <button
-                  onClick={() => { if (confirm('Remove this relationship?')) remove.mutate(r.id); }}
+                  onClick={async () => { if (await confirm('Remove this relationship?')) remove.mutate(r.id); }}
                   className="p-1 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600 shrink-0"
                   title="Remove"
                 >
@@ -905,7 +908,7 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
                 </div>
                 {canDelete && (
                   <button
-                    onClick={() => { if (confirm('Remove this relationship?')) removeIncoming.mutate(r.id); }}
+                    onClick={async () => { if (await confirm('Remove this relationship?')) removeIncoming.mutate(r.id); }}
                     className="p-1 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600 shrink-0"
                     title="Remove"
                   >

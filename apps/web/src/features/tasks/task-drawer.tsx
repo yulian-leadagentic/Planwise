@@ -17,6 +17,7 @@ import { useAllowedTransitions } from '@/hooks/use-allowed-transitions';
 import { STATUS_LABEL } from '@/lib/task-constants';
 import { usePermissions } from '@/hooks/use-permissions';
 import { TaskChecklist } from '@/features/tasks/task-checklist';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 interface TaskDrawerProps {
   taskId: number | null;
@@ -316,8 +317,8 @@ function DueDateChip({ task, onUpdate }: { task: any; onUpdate: (value: string |
       {canEdit && task.endDate && (
         <button
           type="button"
-          onClick={() => {
-            if (confirm('Clear due date?')) onUpdate(null);
+          onClick={async () => {
+            if (await confirm('Clear due date?')) onUpdate(null);
           }}
           className="p-0.5 rounded text-slate-300 dark:text-slate-600 hover:text-red-500 hover:bg-red-50"
           title="Clear due date"

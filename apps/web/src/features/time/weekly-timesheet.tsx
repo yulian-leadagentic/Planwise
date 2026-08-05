@@ -13,6 +13,7 @@ import { format, addDays, startOfWeek } from '@/lib/date-utils';
 import { minutesToDisplay } from '@/types';
 import client from '@/api/client';
 import { useAuthStore } from '@/stores/auth.store';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 const HOURS = Array.from({ length: 13 }, (_, i) => i + 7); // 7:00 - 19:00
 const HOUR_HEIGHT = 48; // px per hour row
@@ -483,6 +484,7 @@ const ISRAELI_HOLIDAYS_2026 = [
 // ─── Weekly Timesheet Calendar ──────────────────────────────────────────────
 
 function WeekView() {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [weekOffset, setWeekOffset] = useState(0);
   const [showEntryForm, setShowEntryForm] = useState<{ date: string; startTime: string; endTime: string } | null>(null);
@@ -491,10 +493,10 @@ function WeekView() {
   // Delete-entry mutation: toasts + 'time' query invalidation are wired
   // inside the hook (see useDeleteTimeEntry in @/hooks/use-time).
   const deleteEntry = useDeleteTimeEntry();
-  const handleDeleteEntry = (e: React.MouseEvent, entry: { id: number; startTime?: string; endTime?: string; minutes?: number; project?: { name?: string }; task?: { name?: string } }) => {
+  const handleDeleteEntry = async (e: React.MouseEvent, entry: { id: number; startTime?: string; endTime?: string; minutes?: number; project?: { name?: string }; task?: { name?: string } }) => {
     e.stopPropagation();
     const label = `${entry.startTime ?? ''}–${entry.endTime ?? ''} · ${entry.project?.name ?? 'no project'}${entry.task?.name ? ' / ' + entry.task.name : ''}`;
-    if (confirm(`Delete this time entry?\n\n${label}`)) {
+    if (await confirm(`Delete this time entry?\n\n${label}`)) {
       deleteEntry.mutate(entry.id);
     }
   };

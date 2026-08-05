@@ -32,6 +32,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 // ─── Feasibility Badge ───────────────────────────────────────────────────────
 
@@ -1645,7 +1646,7 @@ function BulkActionBar({
   // and not undoable from the planning view.
   const handleBulkDelete = async () => {
     if (busy || selectedTaskIds.size === 0) return;
-    if (!confirm(`Delete ${selectedTaskIds.size} task${selectedTaskIds.size !== 1 ? 's' : ''}? This cannot be undone.`)) {
+    if (!(await confirm(`Delete ${selectedTaskIds.size} task${selectedTaskIds.size !== 1 ? 's' : ''}? This cannot be undone.`))) {
       return;
     }
     setBusy(true);
@@ -3121,6 +3122,7 @@ function ZoneNameWithRename({
 // ─── Zone Group (collapsible) with task table ────────────────────────────────
 
 function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, thClass, handleSort, sortIcon, selectedTaskIds, onToggleTask, onToggleMany }: any) {
+  const confirm = useConfirm();
   const [collapsed, setCollapsed] = useState(false);
   useBulkCollapseSync(setCollapsed);
   // Finance permission — controls visibility of the Amount + Actual ₪
@@ -3169,7 +3171,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
             </div>
           )}
         </div>
-        <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete zone "${zone.name}" and all its tasks?`)) onDeleteZone(zone.id); }}
+        <button onClick={async (e) => { e.stopPropagation(); if (await confirm(`Delete zone "${zone.name}" and all its tasks?`)) onDeleteZone(zone.id); }}
           className="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-red-600">
           <Trash2 className="w-3 h-3" />
         </button>
@@ -3362,6 +3364,7 @@ function SortableZone(props: any) {
 // ─── Hierarchical Zone Group — flat tree style with colored borders ──────────
 
 function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth, selectedTaskIds, onToggleTask, onToggleMany, zoneDragHandleProps }: any) {
+  const confirm = useConfirm();
   const [collapsed, setCollapsed] = useState(false);
   useBulkCollapseSync(setCollapsed);
   const cols = usePlanningColumns();
@@ -3514,7 +3517,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <Copy className="w-3 h-3" /> Dup
             </button>
           )}
-          <button onClick={() => { if (confirm(`Delete "${zone.name}"?`)) onDeleteZone(zone.id); }}
+          <button onClick={async () => { if (await confirm(`Delete "${zone.name}"?`)) onDeleteZone(zone.id); }}
             className="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-red-600">
             <Trash2 className="w-3 h-3" />
           </button>

@@ -9,6 +9,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { useProjectFileFavorites } from '@/features/projects/use-project-file-favorites';
 import { cn } from '@/lib/utils';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 /**
  * Task-scoped files view inside the task drawer. Two panels:
@@ -72,6 +73,7 @@ export function TaskFilesTab({
   /** Label for the destination's "← Back to {x}" pill. */
   backLabel?: string;
 }) {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const { can, isAdmin } = usePermissions();
   const canWrite = isAdmin || can('tasks', 'write');
@@ -331,8 +333,8 @@ export function TaskFilesTab({
               {canWrite && (
                 <button
                   type="button"
-                  onClick={() => {
-                    if (confirm(`Remove "${att.fileName}"?`)) remove.mutate(att.id);
+                  onClick={async () => {
+                    if (await confirm(`Remove "${att.fileName}"?`)) remove.mutate(att.id);
                   }}
                   className="shrink-0 p-1.5 rounded text-slate-400 dark:text-slate-500 hover:bg-red-50 hover:text-red-600"
                   title="Remove"
