@@ -10,8 +10,8 @@ const typeIcons: Record<string, any> = {
   reply: { icon: MessageSquare, color: 'text-indigo-600 bg-indigo-100' },
   assignment: { icon: UserPlus, color: 'text-green-600 bg-green-100' },
   status_change: { icon: AlertCircle, color: 'text-amber-600 bg-amber-100' },
-  message: { icon: MessageSquare, color: 'text-slate-600 bg-slate-100' },
-  system: { icon: AlertCircle, color: 'text-slate-500 bg-slate-100' },
+  message: { icon: MessageSquare, color: 'text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800' },
+  system: { icon: AlertCircle, color: 'text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800' },
 };
 
 export function NotificationCenter() {
@@ -53,10 +53,10 @@ export function NotificationCenter() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-96 rounded-[14px] border border-slate-200 bg-white shadow-2xl">
+        <div className="absolute right-0 top-full z-50 mt-2 w-96 rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl">
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <h3 className="text-sm font-bold text-slate-900">Notifications</h3>
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 px-4 py-3">
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Notifications</h3>
             {unreadCount > 0 && (
               <button
                 onClick={markAllRead}
@@ -71,11 +71,11 @@ export function NotificationCenter() {
           <div className="max-h-80 overflow-y-auto">
             {notifications.length === 0 ? (
               <div className="py-8 text-center">
-                <Bell className="mx-auto h-8 w-8 text-slate-300" />
-                <p className="mt-2 text-sm text-slate-400">No notifications</p>
+                <Bell className="mx-auto h-8 w-8 text-slate-300 dark:text-slate-600" />
+                <p className="mt-2 text-sm text-slate-400 dark:text-slate-500">No notifications</p>
               </div>
             ) : (
-              <div className="divide-y divide-slate-50">
+              <div className="divide-y divide-slate-50 dark:divide-slate-800">
                 {notifications.slice(0, 15).map((n) => {
                   const typeInfo = typeIcons[n.type] || typeIcons.system;
                   const Icon = typeInfo.icon;
@@ -84,7 +84,7 @@ export function NotificationCenter() {
                       key={n.id}
                       onClick={() => handleNotificationClick(n)}
                       className={cn(
-                        'flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-slate-50 transition-colors',
+                        'flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors',
                         !n.isRead && 'bg-blue-50/30',
                       )}
                     >
@@ -92,13 +92,13 @@ export function NotificationCenter() {
                         <Icon className="h-4 w-4" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className={cn('text-[13px] leading-snug', n.isRead ? 'text-slate-600' : 'text-slate-900 font-medium')}>
+                        <p className={cn('text-[13px] leading-snug', n.isRead ? 'text-slate-600 dark:text-slate-300' : 'text-slate-900 dark:text-slate-100 font-medium')}>
                           {n.title}
                         </p>
                         {n.body && (
-                          <p className="mt-0.5 text-[12px] text-slate-400 line-clamp-2">{n.body}</p>
+                          <p className="mt-0.5 text-[12px] text-slate-400 dark:text-slate-500 line-clamp-2">{n.body}</p>
                         )}
-                        <p className="mt-1 text-[11px] text-slate-400">{formatRelative(n.createdAt)}</p>
+                        <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">{formatRelative(n.createdAt)}</p>
                       </div>
                       {!n.isRead && (
                         <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-blue-500" />
@@ -111,7 +111,7 @@ export function NotificationCenter() {
           </div>
 
           {/* Footer */}
-          <div className="border-t border-slate-100 px-4 py-2.5">
+          <div className="border-t border-slate-100 dark:border-slate-800 px-4 py-2.5">
             <button
               onClick={() => { setOpen(false); navigate('/inbox'); }}
               className="flex w-full items-center justify-center gap-1 text-[12px] font-semibold text-blue-600 hover:text-blue-700"
