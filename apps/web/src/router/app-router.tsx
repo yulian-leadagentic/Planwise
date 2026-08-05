@@ -42,6 +42,8 @@ const TeamTemplatesPage = lazy(() => import('@/features/templates/team-templates
 const PhasesPage = lazy(() => import('@/features/templates/services-page').then(m => ({ default: m.PhasesPage })));
 const TypesPage = lazy(() => import('@/features/templates/types-page').then(m => ({ default: m.TypesPage })));
 const AdminPage = lazy(() => import('@/features/admin/admin-page').then(m => ({ default: m.AdminPage })));
+const AdminLayout = lazy(() => import('@/features/admin/admin-layout').then(m => ({ default: m.AdminLayout })));
+const TemplatesLayout = lazy(() => import('@/features/templates/templates-layout').then(m => ({ default: m.TemplatesLayout })));
 const RolesPage = lazy(() => import('@/features/admin/roles-page').then(m => ({ default: m.RolesPage })));
 const InboxPage = lazy(() => import('@/features/messaging/inbox-page').then(m => ({ default: m.InboxPage })));
 const MessagingDashboardPage = lazy(() => import('@/features/messaging/messaging-dashboard-page').then(m => ({ default: m.MessagingDashboardPage })));
@@ -124,9 +126,10 @@ export function AppRouter() {
         {/* Contracts */}
         <Route path="contracts" element={<L><ContractsPage /></L>} />
 
-        {/* Employees (internal staff with login accounts) — lives under /admin
-            now. /people is kept as an alias for backwards-compat / bookmarks. */}
-        <Route path="admin/employees" element={<L><PeoplePage /></L>} />
+        {/* Employees (internal staff with login accounts) — the primary
+            route lives inside the nested admin block below as
+            /admin/employees. /people stays as an alias for
+            backwards-compat / bookmarks. */}
         <Route path="people" element={<L><PeoplePage /></L>} />
         <Route path="partners" element={<L><PartnersPage /></L>} />
         <Route path="contacts" element={<L><ContactsPage /></L>} />
@@ -141,34 +144,43 @@ export function AppRouter() {
         <Route path="reports/milestones" element={<L><MilestonesPage /></L>} />
         <Route path="reports/billing-forecast" element={<L><BillingForecastPage /></L>} />
 
-        {/* Templates */}
-        <Route path="templates" element={<L><TemplatesPage /></L>} />
-        <Route path="templates/task-catalog" element={<L><TaskCatalogPage /></L>} />
-        <Route path="templates/deliverables" element={<L><DeliverableTemplatesPage /></L>} />
-        <Route path="templates/zone" element={<L><ZoneTemplatesPage /></L>} />
-        <Route path="templates/team" element={<L><TeamTemplatesPage /></L>} />
-        <Route path="templates/services" element={<L><PhasesPage /></L>} />
-        <Route path="templates/types" element={<L><TypesPage /></L>} />
-        <Route path="templates/project-types" element={<L><ProjectTypesPage /></L>} />
+        {/* Templates — nested under TemplatesLayout so every sub-page
+            renders alongside a persistent sub-nav (Fix 2). URLs
+            unchanged: the layout owns `/templates/*` and each child
+            uses a relative path. `index` handles the hub page. */}
+        <Route path="templates" element={<L><TemplatesLayout /></L>}>
+          <Route index element={<L><TemplatesPage /></L>} />
+          <Route path="task-catalog" element={<L><TaskCatalogPage /></L>} />
+          <Route path="deliverables" element={<L><DeliverableTemplatesPage /></L>} />
+          <Route path="zone" element={<L><ZoneTemplatesPage /></L>} />
+          <Route path="team" element={<L><TeamTemplatesPage /></L>} />
+          <Route path="services" element={<L><PhasesPage /></L>} />
+          <Route path="types" element={<L><TypesPage /></L>} />
+          <Route path="project-types" element={<L><ProjectTypesPage /></L>} />
+        </Route>
 
-        {/* Admin */}
-        <Route path="admin" element={<L><AdminPage /></L>} />
-        <Route path="admin/roles" element={<L><RolesPage /></L>} />
-        <Route path="admin/activity-log" element={<L><ActivityLogPage /></L>} />
-        <Route path="admin/work-schedules" element={<L><WorkSchedulesPage /></L>} />
-        <Route path="admin/calendar" element={<L><CalendarDaysPage /></L>} />
-        <Route path="admin/notification-settings" element={<L><NotificationSettingsPage /></L>} />
-        <Route path="admin/time-note-phrases" element={<L><TimeNotePhrasesPage /></L>} />
-        <Route path="admin/clock-dashboard" element={<L><ClockDashboardPage /></L>} />
-        <Route path="admin/partner-types" element={<L><PartnerTypesPage /></L>} />
-        <Route path="admin/number-ranges" element={<L><NumberRangesPage /></L>} />
-        <Route path="admin/object-numbering" element={<L><ObjectNumberingPage /></L>} />
-        <Route path="admin/currencies" element={<L><CurrenciesPage /></L>} />
-        <Route path="admin/seniority-levels" element={<L><SeniorityLevelsPage /></L>} />
-        <Route path="admin/project-role-types" element={<L><ProjectRoleTypesPage /></L>} />
-        <Route path="admin/data-import" element={<L><DataImportPage /></L>} />
-        <Route path="admin/data-import/history" element={<L><ImportHistoryPage /></L>} />
-        <Route path="admin/project-stage-milestones" element={<L><StageMilestonesPage /></L>} />
+        {/* Admin — same nested pattern as Templates, hub stays as the
+            index so /admin still renders the overview cards. */}
+        <Route path="admin" element={<L><AdminLayout /></L>}>
+          <Route index element={<L><AdminPage /></L>} />
+          <Route path="roles" element={<L><RolesPage /></L>} />
+          <Route path="activity-log" element={<L><ActivityLogPage /></L>} />
+          <Route path="work-schedules" element={<L><WorkSchedulesPage /></L>} />
+          <Route path="calendar" element={<L><CalendarDaysPage /></L>} />
+          <Route path="notification-settings" element={<L><NotificationSettingsPage /></L>} />
+          <Route path="time-note-phrases" element={<L><TimeNotePhrasesPage /></L>} />
+          <Route path="clock-dashboard" element={<L><ClockDashboardPage /></L>} />
+          <Route path="partner-types" element={<L><PartnerTypesPage /></L>} />
+          <Route path="number-ranges" element={<L><NumberRangesPage /></L>} />
+          <Route path="object-numbering" element={<L><ObjectNumberingPage /></L>} />
+          <Route path="currencies" element={<L><CurrenciesPage /></L>} />
+          <Route path="seniority-levels" element={<L><SeniorityLevelsPage /></L>} />
+          <Route path="project-role-types" element={<L><ProjectRoleTypesPage /></L>} />
+          <Route path="data-import" element={<L><DataImportPage /></L>} />
+          <Route path="data-import/history" element={<L><ImportHistoryPage /></L>} />
+          <Route path="project-stage-milestones" element={<L><StageMilestonesPage /></L>} />
+          <Route path="employees" element={<L><PeoplePage /></L>} />
+        </Route>
 
         {/* Account */}
         <Route path="profile" element={<L><ProfilePage /></L>} />

@@ -1,7 +1,7 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { useMemo } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { NAV_ITEMS, type NavItem } from '@/lib/constants';
+import { NAV_SECTIONS, type NavItem } from '@/lib/constants';
 import { useUIStore } from '@/stores/ui.store';
 import { useIsDesktop } from '@/hooks/use-media-query';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -31,13 +31,20 @@ export function Sidebar() {
 
   const { can, isAdmin } = usePermissions();
 
-  const visibleNavItems = useMemo(() => {
-    if (isAdmin) return NAV_ITEMS;
-    return NAV_ITEMS.filter((item) => {
+  // Apply the SAME permission filter that was in place before the
+  // grouping refactor — nothing about "who sees what" has changed.
+  // A section whose items all get filtered out is dropped entirely
+  // (header + separator) so the user never sees a phantom label.
+  const visibleSections = useMemo(() => {
+    const filterItem = (item: NavItem) => {
+      if (isAdmin) return true;
       const mod = NAV_MODULE_MAP[item.href];
       if (!mod) return true;
       return can(mod, 'read');
-    });
+    };
+    return NAV_SECTIONS
+      .map((s) => ({ title: s.title, items: s.items.filter(filterItem) }))
+      .filter((s) => s.items.length > 0);
   }, [can, isAdmin]);
 
   // On tablet, always collapsed unless toggled
@@ -61,10 +68,24 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3">
-        {visibleNavItems.map((item) => (
-          <SidebarNavLink key={item.href} item={item} isCollapsed={isCollapsed} />
+      {/* Navigation — sections rendered as labelled groups when the
+          sidebar is expanded; the labels drop away when collapsed
+          because a category name is useless next to icon-only items
+          (and the icons themselves already convey the destination). */}
+      <nav className="flex-1 overflow-y-auto px-2 py-3">
+        {visibleSections.map((section, i) => (
+          <div key={section.title} className={cn(i > 0 && (isCollapsed ? 'mt-2' : 'mt-4'))}>
+            {!isCollapsed && (
+              <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/60">
+                {section.title}
+              </p>
+            )}
+            <div className="space-y-1">
+              {section.items.map((item) => (
+                <SidebarNavLink key={item.href} item={item} isCollapsed={isCollapsed} />
+              ))}
+            </div>
+          </div>
         ))}
       </nav>
 
