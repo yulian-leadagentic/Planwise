@@ -914,7 +914,11 @@ function usePlanningColumns(): PlanningColumnsCtx {
  *  Total min-width = 16+16+84 + sum of visible widths (used to
  *  preserve horizontal-scroll behavior). */
 function computePlanningGridStyle(isVisible: (k: string) => boolean): React.CSSProperties {
-  const visible = PLANNING_COLUMNS.filter((c) => c.required || isVisible(c.key));
+  // PLANNING_COLUMNS is `as const`, so each entry is its own literal
+  // type — only the `name` entry declares `required: true`, so a bare
+  // `c.required` read fails for the other members. Use an `in` guard
+  // so TS narrows correctly without an `as` cast.
+  const visible = PLANNING_COLUMNS.filter((c) => ('required' in c && c.required) || isVisible(c.key));
   const widths = visible.map((c) => c.width).join(' ');
   // Rough min-width: sum numeric px widths + 2 leading 16px + 84px trailing.
   // minmax(180px,2fr) contributes 180 minimum.
@@ -4658,16 +4662,24 @@ function PlanningView({ projectId }: { projectId: number }) {
 
       // Walk the planning tree once to (a) locate both zones and (b) find
       // the sibling list each lives in (top-level vs some parent's children).
-      let fromSiblings: any[] | null = null;
-      let toSiblings: any[] | null = null;
-      const visit = (siblings: any[]) => {
+      // Return-based lookup so TS can narrow properly. The previous
+      // closure-mutated `let fromSiblings: any[] | null = null; …
+      // visit()` pattern defeated control-flow analysis: after the
+      // null-check TS thought the vars were `never` because it
+      // couldn't prove the closure assigned. Same behavior, cleaner
+      // typing.
+      const findSiblingListContaining = (id: number, siblings: any[]): any[] | null => {
         for (const z of siblings) {
-          if (z.id === fromZoneId) fromSiblings = siblings;
-          if (z.id === toZoneId) toSiblings = siblings;
-          if (z.children?.length) visit(z.children);
+          if (z.id === id) return siblings;
+          if (z.children?.length) {
+            const nested = findSiblingListContaining(id, z.children);
+            if (nested) return nested;
+          }
         }
+        return null;
       };
-      visit(zones);
+      const fromSiblings = findSiblingListContaining(fromZoneId, zones);
+      const toSiblings = findSiblingListContaining(toZoneId, zones);
 
       if (!fromSiblings || !toSiblings || fromSiblings !== toSiblings) {
         // Different sibling lists → user is trying to move across parents.

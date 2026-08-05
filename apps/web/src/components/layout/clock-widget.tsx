@@ -38,7 +38,7 @@ export function ClockWidget() {
           <span className="text-sm font-medium">{minutesToDisplay(elapsed)}</span>
         </div>
         <button
-          onClick={() => clockOut.mutate()}
+          onClick={() => clockOut.mutate(undefined)}
           disabled={clockOut.isPending}
           className={cn(
             'flex items-center gap-1 rounded-md bg-red-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-600',
@@ -54,7 +54,7 @@ export function ClockWidget() {
 
   return (
     <button
-      onClick={() => clockIn.mutate()}
+      onClick={() => clockIn.mutate(undefined)}
       disabled={clockIn.isPending}
       className={cn(
         'flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700',

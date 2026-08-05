@@ -269,7 +269,9 @@ function FilesSections({
   canDelete: boolean;
   onRemove: (file: ProjectFile) => void;
 }) {
-  const scrollRef = useStickyHScroll();
+  // (Removed dead `const scrollRef = useStickyHScroll()` — the ref
+  // was never attached to any element in this component; the actual
+  // consumer was SectionPanel below, which now owns its own hook.)
   return (
     <div className="space-y-6">
       <SectionPanel
@@ -338,6 +340,10 @@ function SectionPanel({
   canDelete: boolean;
   onRemove: (file: ProjectFile) => void;
 }) {
+  // Sticky h-scrollbar for the wide file table. Was referring to
+  // parent FilesSections' scrollRef (out of scope). Own the hook
+  // here — same pattern as the templates + roles pages.
+  const scrollRef = useStickyHScroll();
   // When the Task section is grouped, build a [taskName, taskFiles[]] list,
   // ordered by the first appearance of each task (which is already
   // newest-first because the parent sort is createdAt desc). Within each

@@ -153,8 +153,15 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
   });
 
   const togglePermission = useMutation({
-    mutationFn: ({ moduleId, canRead, canWrite, canDelete }: { moduleId: number; canRead: boolean; canWrite: boolean; canDelete: boolean }) =>
-      client.post(`/admin/roles/${role.id}/modules`, { moduleId, canRead, canWrite, canDelete }).then((r) => r.data),
+    // canApprove + canExport were missing from both the payload type
+    // AND the POST body — silently stripped before sending. The
+    // handleToggle above already tries to set them, and the backend
+    // controller accepts them (roles.controller.ts:103). Without
+    // this fix, toggling either checkbox in the UI POSTed without
+    // the field, so the backend fell back to `?? false` and the
+    // change never stuck.
+    mutationFn: ({ moduleId, canRead, canWrite, canDelete, canApprove, canExport }: { moduleId: number; canRead: boolean; canWrite: boolean; canDelete: boolean; canApprove?: boolean; canExport?: boolean }) =>
+      client.post(`/admin/roles/${role.id}/modules`, { moduleId, canRead, canWrite, canDelete, canApprove, canExport }).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'roles'] });
     },
@@ -415,6 +422,10 @@ const STATUS_NAMES: Record<string, string> = {
 
 function StageTransitionEditor({ roleId }: { roleId: number }) {
   const queryClient = useQueryClient();
+  // Sticky h-scrollbar for the wide transitions matrix. Was referring
+  // to the parent RolesPage's scrollRef (out of scope). Own the hook
+  // here — same pattern as the templates pages.
+  const scrollRef = useStickyHScroll();
 
   const { data: matrix = {}, isLoading } = useQuery({
     queryKey: ['admin', 'roles', roleId, 'stage-transitions'],

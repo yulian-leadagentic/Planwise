@@ -6,6 +6,7 @@ import {
   flexRender,
   type ColumnDef,
   type SortingState,
+  type Table,
 } from '@tanstack/react-table';
 import { useState } from 'react';
 import { ChevronDown, ChevronUp, ChevronsUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -158,7 +159,12 @@ export function DataTable<TData>({
   );
 }
 
-function Pagination({ table }: { table: ReturnType<typeof useReactTable> }) {
+// Generic over TData so callers passing a strongly-typed Table<Row>
+// don't collide with the default Table<unknown>. Without the generic
+// `ReturnType<typeof useReactTable>` resolved to Table<unknown>, and
+// TanStack's Table<T> is invariant on T so Table<TData> wasn't
+// assignable — that's the TS2322 pair on lines 82 + 156 above.
+function Pagination<TData>({ table }: { table: Table<TData> }) {
   if (table.getPageCount() <= 1) return null;
 
   return (
