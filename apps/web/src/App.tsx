@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AppRouter } from './router/app-router';
 import { AuthBootstrap } from './router/auth-bootstrap';
+import { ConfirmMount } from './components/shared/confirm-dialog';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -19,9 +20,15 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <AuthBootstrap>
-          <AppRouter />
-        </AuthBootstrap>
+        {/* ConfirmMount hosts the shared confirm-modal so any
+            descendant can call useConfirm() and await a boolean
+            (replacement for native window.confirm — see
+            components/shared/confirm-dialog.tsx). */}
+        <ConfirmMount>
+          <AuthBootstrap>
+            <AppRouter />
+          </AuthBootstrap>
+        </ConfirmMount>
         {/*
          * All notifications render through notify.tsx as toast.custom
          * cards, so we drop `richColors` (it adds Sonner's default
