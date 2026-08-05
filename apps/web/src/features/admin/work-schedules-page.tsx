@@ -1,16 +1,18 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
-import { useState } from 'react';
+import { Plus, CalendarClock } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import type { ColumnDef } from '@tanstack/react-table';
 import { PageHeader } from '@/components/shared/page-header';
-import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { DataTable } from '@/components/shared/data-table';
+import { EmptyState } from '@/components/shared/empty-state';
+import { StatusBadge } from '@/components/shared/status-badge';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 export function WorkSchedulesPage() {
-  const scrollRef = useStickyHScroll();
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('Regular Shift');
@@ -51,6 +53,21 @@ export function WorkSchedulesPage() {
 
   const schedules = data ?? [];
 
+  const columns = useMemo<ColumnDef<any, unknown>[]>(() => [
+    { accessorKey: 'name', header: 'Name', enableSorting: false,
+      cell: ({ row }) => <span className="font-medium">{row.original.name}</span> },
+    { accessorKey: 'dayOfWeek', header: 'Day', enableSorting: false,
+      cell: ({ row }) => DAYS[row.original.dayOfWeek] ?? row.original.dayOfWeek },
+    { accessorKey: 'shiftStart', header: 'Shift Start', enableSorting: false,
+      cell: ({ row }) => <span className="font-mono tabular-nums">{row.original.shiftStart}</span> },
+    { accessorKey: 'shiftEnd', header: 'Shift End', enableSorting: false,
+      cell: ({ row }) => <span className="font-mono tabular-nums">{row.original.shiftEnd}</span> },
+    { accessorKey: 'breakMinutes', header: 'Break', enableSorting: false,
+      cell: ({ row }) => `${row.original.breakMinutes}min` },
+    { accessorKey: 'isActive', header: 'Active', enableSorting: false, size: 96,
+      cell: ({ row }) => <StatusBadge status={row.original.isActive ? 'active' : 'inactive'} /> },
+  ], []);
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -61,7 +78,7 @@ export function WorkSchedulesPage() {
             onClick={() => setShowForm(!showForm)}
             className="flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
           >
-            <Plus className="h-4 w-4" /> Add Schedule
+            <Plus className="h-4 w-4" aria-hidden="true" /> Add Schedule
           </button>
         }
       />
@@ -108,38 +125,13 @@ export function WorkSchedulesPage() {
       {isLoading ? (
         <TableSkeleton rows={5} cols={6} />
       ) : schedules.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">No work schedules configured yet. Click "Add Schedule" to create one.</p>
+        <EmptyState
+          icon={CalendarClock}
+          title="No work schedules yet"
+          description={'Click "Add Schedule" to create one.'}
+        />
       ) : (
-        <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium">Day</th>
-                <th className="px-4 py-3 font-medium">Shift Start</th>
-                <th className="px-4 py-3 font-medium">Shift End</th>
-                <th className="px-4 py-3 font-medium">Break</th>
-                <th className="px-4 py-3 font-medium">Active</th>
-              </tr>
-            </thead>
-            <tbody>
-              {schedules.map((s: any) => (
-                <tr key={s.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                  <td className="px-4 py-3 font-medium">{s.name}</td>
-                  <td className="px-4 py-3">{DAYS[s.dayOfWeek] ?? s.dayOfWeek}</td>
-                  <td className="px-4 py-3">{s.shiftStart}</td>
-                  <td className="px-4 py-3">{s.shiftEnd}</td>
-                  <td className="px-4 py-3">{s.breakMinutes}min</td>
-                  <td className="px-4 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${s.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400'}`}>
-                      {s.isActive ? 'Active' : 'Inactive'}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable columns={columns} data={schedules} pageSize={1000} />
       )}
     </div>
   );
