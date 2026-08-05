@@ -31,7 +31,7 @@ function minutesToTime(mins: number): string {
 // ─── Time Entry Form Popup ──────────────────────────────────────────────────
 
 const KANBAN_STATUSES = [
-  { value: 'not_started', label: 'To Do', bg: 'bg-slate-100', text: 'text-slate-600' },
+  { value: 'not_started', label: 'To Do', bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-600 dark:text-slate-300' },
   { value: 'in_progress', label: 'In Progress', bg: 'bg-blue-100', text: 'text-blue-700' },
   { value: 'in_review', label: 'In Review', bg: 'bg-violet-100', text: 'text-violet-700' },
   { value: 'completed', label: 'Done', bg: 'bg-emerald-100', text: 'text-emerald-700' },
@@ -218,18 +218,18 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-[14px] bg-white shadow-2xl border border-slate-200" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+      <div className="w-full max-w-lg rounded-[14px] bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-5 py-4">
           <div>
-            <h3 className="text-sm font-bold text-slate-900">Add Timesheet Entry</h3>
-            <p className="text-[11px] text-slate-400">{new Date(date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Add Timesheet Entry</h3>
+            <p className="text-[11px] text-slate-400 dark:text-slate-500">{new Date(date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
           </div>
           <div className="flex items-center gap-1">
             {/* Location toggle */}
-            <button onClick={() => setLocation('home')} className={cn('flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-semibold', location === 'home' ? 'bg-blue-100 text-blue-700' : 'text-slate-400 hover:bg-slate-50')}>
+            <button onClick={() => setLocation('home')} className={cn('flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-semibold', location === 'home' ? 'bg-blue-100 text-blue-700' : 'text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50')}>
               <Home className="h-3.5 w-3.5" /> Home
             </button>
-            <button onClick={() => setLocation('office')} className={cn('flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-semibold', location === 'office' ? 'bg-blue-100 text-blue-700' : 'text-slate-400 hover:bg-slate-50')}>
+            <button onClick={() => setLocation('office')} className={cn('flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-semibold', location === 'office' ? 'bg-blue-100 text-blue-700' : 'text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50')}>
               <Building2 className="h-3.5 w-3.5" /> Office
             </button>
           </div>
@@ -238,9 +238,9 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
         <div className="p-5 space-y-4">
           {/* Project selector */}
           <div>
-            <label className="text-[12px] font-semibold text-slate-600 mb-1 block">Project</label>
+            <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">Project</label>
             <select value={projectId} onChange={(e) => { setProjectId(e.target.value); setTaskId(''); }}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+              className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
               <option value="">— Select project —</option>
               {projects.map((p: any) => <option key={p.id} value={p.id}>{p.number ? `${p.number} - ` : ''}{p.name}</option>)}
             </select>
@@ -249,7 +249,7 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
           {/* Task selector + Quick Task */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-[12px] font-semibold text-slate-600">Task</label>
+              <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">Task</label>
               <div className="flex items-center gap-2">
                 {/* Edit the currently selected task — opens the task drawer
                     so users can rename / set due date / assignees on a Quick
@@ -258,7 +258,7 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
                   <button
                     type="button"
                     onClick={() => setEditingTaskId(Number(taskId))}
-                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-blue-700"
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-blue-700"
                     title="Edit selected task"
                   >
                     <Pencil className="h-3 w-3" />
@@ -277,7 +277,7 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
               <div className="flex gap-2">
                 <input type="text" value={quickTaskName} onChange={(e) => setQuickTaskName(e.target.value)}
                   placeholder="New task name..." autoFocus
-                  className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
+                  className="flex-1 rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
                 {/* One-click flow: creates the task, assigns it to the
                     current user, sets it as the selected task, and saves
                     the time entry — all in one go. Replaces the previous
@@ -289,11 +289,11 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
                   {submitting ? 'Saving…' : 'Create task & log time'}
                 </button>
                 <button type="button" onClick={() => setShowQuickTask(false)}
-                  className="text-sm text-slate-400 px-2">Cancel</button>
+                  className="text-sm text-slate-400 dark:text-slate-500 px-2">Cancel</button>
               </div>
             ) : (
               <select value={taskId} onChange={(e) => { setTaskId(e.target.value); const t = filteredTasks.find((tk: any) => String(tk.id) === e.target.value); if (t) setTaskStatus(t.status || 'in_progress'); }}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
                 <option value="">— Select task —</option>
                 {filteredTasks.map((t: any) => {
                   // Suffix the option label with a context hint so the user
@@ -323,9 +323,9 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
           {/* Time range */}
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-[12px] font-semibold text-slate-600 mb-1 block">Start Time</label>
+              <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">Start Time</label>
               <select value={start} onChange={(e) => setStart(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
                 {Array.from({ length: 48 }, (_, i) => {
                   const h = Math.floor(i / 4) + 7;
                   const m = (i % 4) * 15;
@@ -336,9 +336,9 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
               </select>
             </div>
             <div>
-              <label className="text-[12px] font-semibold text-slate-600 mb-1 block">End Time</label>
+              <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">End Time</label>
               <select value={end} onChange={(e) => setEnd(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
                 {Array.from({ length: 48 }, (_, i) => {
                   const h = Math.floor(i / 4) + 7;
                   const m = (i % 4) * 15;
@@ -349,8 +349,8 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
               </select>
             </div>
             <div>
-              <label className="text-[12px] font-semibold text-slate-600 mb-1 block">Total Hours</label>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
+              <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">Total Hours</label>
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
                 {totalHours}h
               </div>
             </div>
@@ -359,12 +359,12 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
           {/* Task Status (Kanban stages) */}
           {taskId && (
             <div>
-              <label className="text-[12px] font-semibold text-slate-600 mb-1 block">Task Status</label>
+              <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">Task Status</label>
               <div className="flex items-center gap-1">
                 {KANBAN_STATUSES.map((s) => (
                   <button key={s.value} type="button" onClick={() => setTaskStatus(s.value)}
                     className={cn('rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors',
-                      taskStatus === s.value ? `${s.bg} ${s.text} ring-2 ring-offset-1 ring-blue-400` : 'bg-slate-50 text-slate-500 hover:bg-slate-100')}>
+                      taskStatus === s.value ? `${s.bg} ${s.text} ring-2 ring-offset-1 ring-blue-400` : 'bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800')}>
                     {s.label}
                   </button>
                 ))}
@@ -376,15 +376,15 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
               stays wired so the API call keeps defaulting to true. */}
 
           <div>
-            <label className="text-[12px] font-semibold text-slate-600 mb-1 block">Description</label>
+            <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">Description</label>
             <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
               placeholder="What did you work on?"
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none resize-none" />
+              className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none resize-none" />
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
-          <button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2 text-[13px] font-semibold text-slate-700 hover:bg-slate-50">
+        <div className="flex items-center justify-end gap-2 border-t border-slate-200 dark:border-slate-700 px-5 py-4">
+          <button onClick={onClose} className="rounded-lg border border-slate-200 dark:border-slate-700 px-4 py-2 text-[13px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">
             Cancel
           </button>
           <button onClick={handleSubmit} disabled={submitting || totalMinutes <= 0}
@@ -421,7 +421,7 @@ function TimeBlock({ entry }: { entry: any }) {
 
   const colors = entry.isBillable
     ? 'bg-blue-100 border-blue-300 text-blue-800'
-    : 'bg-slate-100 border-slate-300 text-slate-700';
+    : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200';
 
   return (
     <div
@@ -637,17 +637,17 @@ function WeekView() {
       </div>
 
       {/* Week navigation + summary */}
-      <div className="flex items-center justify-between rounded-[14px] border border-slate-200 bg-white px-5 py-3">
-        <button onClick={() => setWeekOffset((o) => o - 1)} className="rounded-md p-1.5 hover:bg-slate-100"><ChevronLeft className="h-5 w-5" /></button>
+      <div className="flex items-center justify-between rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-5 py-3">
+        <button onClick={() => setWeekOffset((o) => o - 1)} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronLeft className="h-5 w-5" /></button>
         <div className="text-center">
-          <p className="text-sm font-semibold text-slate-700">{format(weekDays[0], 'MMM d')} — {format(weekDays[6], 'MMM d, yyyy')}</p>
-          <p className="text-[11px] text-slate-400">
-            Week total: <span className="font-semibold text-slate-700">{minutesToDisplay(weekTotal)}</span>
-            {' · '}<span className="font-semibold text-slate-600">{weekWorkingDays}</span> working days
+          <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{format(weekDays[0], 'MMM d')} — {format(weekDays[6], 'MMM d, yyyy')}</p>
+          <p className="text-[11px] text-slate-400 dark:text-slate-500">
+            Week total: <span className="font-semibold text-slate-700 dark:text-slate-200">{minutesToDisplay(weekTotal)}</span>
+            {' · '}<span className="font-semibold text-slate-600 dark:text-slate-300">{weekWorkingDays}</span> working days
             {weekOffset === 0 && ' · This week'}
           </p>
         </div>
-        <button onClick={() => setWeekOffset((o) => o + 1)} disabled={weekOffset >= 0} className="rounded-md p-1.5 hover:bg-slate-100 disabled:opacity-50"><ChevronRight className="h-5 w-5" /></button>
+        <button onClick={() => setWeekOffset((o) => o + 1)} disabled={weekOffset >= 0} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"><ChevronRight className="h-5 w-5" /></button>
       </div>
 
       {/* API error indicator */}
@@ -658,10 +658,10 @@ function WeekView() {
       )}
 
       {/* Calendar Grid */}
-      <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+      <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
         {/* Day headers */}
-        <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-slate-200 bg-slate-50">
-          <div className="px-2 py-3 text-[10px] font-semibold text-slate-400" />
+        <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+          <div className="px-2 py-3 text-[10px] font-semibold text-slate-400 dark:text-slate-500" />
           {weekDays.map((day, i) => {
             const dateKey = format(day, 'yyyy-MM-dd');
             const isToday = dateKey === todayKey;
@@ -670,17 +670,17 @@ function WeekView() {
             const holidayName = isHoliday ? calendarDays.find((h: any) => (typeof h.date === 'string' ? h.date.split('T')[0] : new Date(h.date).toISOString().split('T')[0]) === dateKey)?.name : null;
             const total = dailyTotals[dateKey] ?? 0;
             return (
-              <div key={i} className={cn('px-2 py-3 text-center border-l border-slate-200', isWeekend && 'bg-slate-100/50', isHoliday && 'bg-red-50/50')}>
-                <p className={cn('text-[11px] font-semibold', isToday ? 'text-blue-600' : 'text-slate-500')}>
+              <div key={i} className={cn('px-2 py-3 text-center border-l border-slate-200 dark:border-slate-700', isWeekend && 'bg-slate-100/50 dark:bg-slate-800/50', isHoliday && 'bg-red-50/50')}>
+                <p className={cn('text-[11px] font-semibold', isToday ? 'text-blue-600' : 'text-slate-500 dark:text-slate-400')}>
                   {format(day, 'EEE')}
                 </p>
-                <p className={cn('text-[13px] font-bold', isToday ? 'text-blue-600' : 'text-slate-700')}>
+                <p className={cn('text-[13px] font-bold', isToday ? 'text-blue-600' : 'text-slate-700 dark:text-slate-200')}>
                   {isToday ? (
                     <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white">{day.getDate()}</span>
                   ) : day.getDate()}
                 </p>
                 {total > 0 && (
-                  <p className="text-[10px] font-medium text-slate-400 mt-0.5">{minutesToDisplay(total)}</p>
+                  <p className="text-[10px] font-medium text-slate-400 dark:text-slate-500 mt-0.5">{minutesToDisplay(total)}</p>
                 )}
                 {isHoliday && holidayName && (
                   <p className="text-[8px] font-medium text-red-500 mt-0.5 truncate" title={holidayName}>{holidayName}</p>
@@ -707,7 +707,7 @@ function WeekView() {
             <tbody>
               {HOURS.map((hour) => (
                 <tr key={hour}>
-                  <td className="border-b border-r border-slate-100 text-[10px] text-slate-400 text-right pr-2 pt-1 align-top"
+                  <td className="border-b border-r border-slate-100 dark:border-slate-800 text-[10px] text-slate-400 dark:text-slate-500 text-right pr-2 pt-1 align-top"
                     style={{ height: `${HOUR_HEIGHT}px` }}>
                     {String(hour).padStart(2, '0')}:00
                   </td>
@@ -728,8 +728,8 @@ function WeekView() {
 
                     return (
                       <td key={dayIdx}
-                        className={cn('border-b border-l border-slate-100 cursor-crosshair hover:bg-blue-50/20 relative p-0',
-                          isNonWorking && 'bg-slate-200/40',
+                        className={cn('border-b border-l border-slate-100 dark:border-slate-800 cursor-crosshair hover:bg-blue-50/20 relative p-0',
+                          isNonWorking && 'bg-slate-200/40 dark:bg-slate-700/40',
                           isSelecting && 'bg-blue-100/50')}
                         style={{ height: `${HOUR_HEIGHT}px` }}
                         onMouseDown={() => handleMouseDown(dayIdx, hour)}
@@ -797,16 +797,16 @@ function WeekView() {
         }
         if (allEntries.length === 0) return null;
         return (
-          <div className="rounded-[14px] border border-slate-200 bg-white p-4">
-            <h3 className="text-[13px] font-semibold text-slate-700 mb-2">Entries this week ({allEntries.length})</h3>
+          <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <h3 className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-2">Entries this week ({allEntries.length})</h3>
             <div className="space-y-1">
               {allEntries.map((e: any) => (
-                <div key={e.id} className="group flex items-center gap-3 rounded-md bg-slate-50 px-3 py-2 text-[12px]">
-                  <span className="text-slate-500 w-20">{e._date}</span>
-                  <span className="text-slate-500 w-16">{e.startTime ?? '-'} - {e.endTime ?? '-'}</span>
-                  <span className="font-medium text-slate-700">{minutesToDisplay(e.minutes)}</span>
-                  <span className="text-slate-600 flex-1 truncate">{e.project?.name ?? ''} {e.task?.name ? `/ ${e.task.name}` : ''}</span>
-                  {e.location && <span className="text-[10px] text-slate-400">{e.location === 'home' ? '🏠' : '🏢'}</span>}
+                <div key={e.id} className="group flex items-center gap-3 rounded-md bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-[12px]">
+                  <span className="text-slate-500 dark:text-slate-400 w-20">{e._date}</span>
+                  <span className="text-slate-500 dark:text-slate-400 w-16">{e.startTime ?? '-'} - {e.endTime ?? '-'}</span>
+                  <span className="font-medium text-slate-700 dark:text-slate-200">{minutesToDisplay(e.minutes)}</span>
+                  <span className="text-slate-600 dark:text-slate-300 flex-1 truncate">{e.project?.name ?? ''} {e.task?.name ? `/ ${e.task.name}` : ''}</span>
+                  {e.location && <span className="text-[10px] text-slate-400 dark:text-slate-500">{e.location === 'home' ? '🏠' : '🏢'}</span>}
                   {/* Same delete affordance on the list view — hover-revealed
                       so the row stays clean unless the user actively wants
                       to act on it. */}
@@ -814,7 +814,7 @@ function WeekView() {
                     type="button"
                     onClick={(ev) => handleDeleteEntry(ev, e)}
                     disabled={deleteEntry.isPending}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity rounded p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-30"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity rounded p-1 text-slate-400 dark:text-slate-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-30"
                     title="Delete this time entry"
                     aria-label="Delete time entry"
                   >
@@ -869,20 +869,20 @@ function MonthView() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between rounded-[14px] border border-slate-200 bg-white px-5 py-3">
-        <button onClick={() => setMonthOffset((o) => o - 1)} className="rounded-md p-1.5 hover:bg-slate-100"><ChevronLeft className="h-5 w-5" /></button>
+      <div className="flex items-center justify-between rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-5 py-3">
+        <button onClick={() => setMonthOffset((o) => o - 1)} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronLeft className="h-5 w-5" /></button>
         <div className="text-center">
-          <p className="text-sm font-semibold text-slate-700">{monthName}</p>
-          <p className="text-[11px] text-slate-400"><span className="font-semibold text-slate-700">{workingDays.working}</span> working days{workingDays.holidays > 0 && <span> · <span className="text-red-500">{workingDays.holidays} holidays</span></span>}</p>
+          <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{monthName}</p>
+          <p className="text-[11px] text-slate-400 dark:text-slate-500"><span className="font-semibold text-slate-700 dark:text-slate-200">{workingDays.working}</span> working days{workingDays.holidays > 0 && <span> · <span className="text-red-500">{workingDays.holidays} holidays</span></span>}</p>
         </div>
-        <button onClick={() => setMonthOffset((o) => o + 1)} className="rounded-md p-1.5 hover:bg-slate-100"><ChevronRight className="h-5 w-5" /></button>
+        <button onClick={() => setMonthOffset((o) => o + 1)} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronRight className="h-5 w-5" /></button>
       </div>
-      <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
-        <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
-          {DAY_NAMES.map((d) => (<div key={d} className="px-2 py-2.5 text-center text-[11px] font-semibold text-slate-500 uppercase">{d}</div>))}
+      <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+        <div className="grid grid-cols-7 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+          {DAY_NAMES.map((d) => (<div key={d} className="px-2 py-2.5 text-center text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase">{d}</div>))}
         </div>
         <div className="grid grid-cols-7">
-          {Array.from({ length: firstDow }).map((_, i) => (<div key={`pad-${i}`} className="min-h-[80px] border-b border-r border-slate-100 bg-slate-50/30" />))}
+          {Array.from({ length: firstDow }).map((_, i) => (<div key={`pad-${i}`} className="min-h-[80px] border-b border-r border-slate-100 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-800/30" />))}
           {Array.from({ length: daysInMonth }).map((_, i) => {
             const d = i + 1;
             const dateStr = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -892,8 +892,8 @@ function MonthView() {
             const isToday = dateStr === format(today, 'yyyy-MM-dd');
             const holiday = calendarDays.find((h: any) => (typeof h.date === 'string' ? h.date.split('T')[0] : new Date(h.date).toISOString().split('T')[0]) === dateStr);
             return (
-              <div key={d} className={cn('min-h-[80px] border-b border-r border-slate-100 p-1.5', isWeekend && 'bg-slate-50/50', isHoliday && 'bg-red-50/30')}>
-                <span className={cn('text-[13px] font-medium', isToday ? 'text-white bg-blue-600 rounded-full w-7 h-7 inline-flex items-center justify-center' : 'text-slate-700', isWeekend && !isToday && 'text-slate-400')}>{d}</span>
+              <div key={d} className={cn('min-h-[80px] border-b border-r border-slate-100 dark:border-slate-800 p-1.5', isWeekend && 'bg-slate-50/50 dark:bg-slate-800/50', isHoliday && 'bg-red-50/30')}>
+                <span className={cn('text-[13px] font-medium', isToday ? 'text-white bg-blue-600 rounded-full w-7 h-7 inline-flex items-center justify-center' : 'text-slate-700 dark:text-slate-200', isWeekend && !isToday && 'text-slate-400 dark:text-slate-500')}>{d}</span>
                 {isHoliday && holiday && <div className="mt-1 rounded px-1 py-0.5 bg-red-100 text-[9px] font-medium text-red-700 truncate">{holiday.name}</div>}
               </div>
             );
@@ -934,26 +934,26 @@ function YearView() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between rounded-[14px] border border-slate-200 bg-white px-5 py-3">
-        <button onClick={() => setYearOffset((o) => o - 1)} className="rounded-md p-1.5 hover:bg-slate-100"><ChevronLeft className="h-5 w-5" /></button>
+      <div className="flex items-center justify-between rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-5 py-3">
+        <button onClick={() => setYearOffset((o) => o - 1)} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronLeft className="h-5 w-5" /></button>
         <div className="text-center">
-          <p className="text-lg font-bold text-slate-900">{viewYear}</p>
-          <p className="text-[11px] text-slate-400"><span className="font-semibold text-slate-700">{totalWorking}</span> working days · <span className="text-red-500">{totalHolidays} holidays</span></p>
+          <p className="text-lg font-bold text-slate-900 dark:text-slate-100">{viewYear}</p>
+          <p className="text-[11px] text-slate-400 dark:text-slate-500"><span className="font-semibold text-slate-700 dark:text-slate-200">{totalWorking}</span> working days · <span className="text-red-500">{totalHolidays} holidays</span></p>
         </div>
-        <button onClick={() => setYearOffset((o) => o + 1)} className="rounded-md p-1.5 hover:bg-slate-100"><ChevronRight className="h-5 w-5" /></button>
+        <button onClick={() => setYearOffset((o) => o + 1)} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronRight className="h-5 w-5" /></button>
       </div>
       <div className="grid grid-cols-3 lg:grid-cols-4 gap-3">
         {MONTHS.map((m) => {
           const isCurrent = viewYear === today.getFullYear() && m.index === today.getMonth();
           return (
-            <div key={m.index} className={cn('rounded-[14px] border bg-white p-4', isCurrent ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200')}>
-              <h3 className={cn('text-sm font-semibold', isCurrent ? 'text-blue-600' : 'text-slate-900')}>{m.name}</h3>
+            <div key={m.index} className={cn('rounded-[14px] border bg-white dark:bg-slate-900 p-4', isCurrent ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200 dark:border-slate-700')}>
+              <h3 className={cn('text-sm font-semibold', isCurrent ? 'text-blue-600' : 'text-slate-900 dark:text-slate-100')}>{m.name}</h3>
               <div className="mt-2 grid grid-cols-3 gap-2 text-center">
-                <div><p className="text-lg font-bold text-slate-700">{m.working}</p><p className="text-[9px] text-slate-400">Working</p></div>
-                <div><p className={cn('text-lg font-bold', m.holidays > 0 ? 'text-red-600' : 'text-slate-300')}>{m.holidays}</p><p className="text-[9px] text-slate-400">Holidays</p></div>
-                <div><p className="text-lg font-bold text-slate-400">{m.total}</p><p className="text-[9px] text-slate-400">Total</p></div>
+                <div><p className="text-lg font-bold text-slate-700 dark:text-slate-200">{m.working}</p><p className="text-[9px] text-slate-400 dark:text-slate-500">Working</p></div>
+                <div><p className={cn('text-lg font-bold', m.holidays > 0 ? 'text-red-600' : 'text-slate-300 dark:text-slate-600')}>{m.holidays}</p><p className="text-[9px] text-slate-400 dark:text-slate-500">Holidays</p></div>
+                <div><p className="text-lg font-bold text-slate-400 dark:text-slate-500">{m.total}</p><p className="text-[9px] text-slate-400 dark:text-slate-500">Total</p></div>
               </div>
-              <div className="mt-2 w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              <div className="mt-2 w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
                 <div className="h-full bg-blue-500 rounded-full" style={{ width: `${(m.working / m.total) * 100}%` }} />
               </div>
             </div>
@@ -972,11 +972,11 @@ export function WeeklyTimesheetPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <PageHeader title="Timesheet" description="Time reporting and calendar" />
-        <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5">
+        <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
           {(['day', 'week', 'month', 'year'] as ViewMode[]).map((v) => (
             <button key={v} onClick={() => setViewMode(v)}
               className={cn('px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors capitalize',
-                viewMode === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+                viewMode === v ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100')}>
               {v}
             </button>
           ))}

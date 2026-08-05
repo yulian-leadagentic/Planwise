@@ -120,7 +120,7 @@ export function useOverlapConfirm() {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md rounded-lg bg-white shadow-2xl overflow-hidden"
+        className="w-full max-w-md rounded-lg bg-white dark:bg-slate-900 shadow-2xl overflow-hidden"
       >
         <div className="flex items-start gap-3 px-5 py-4 bg-amber-50 border-b border-amber-200">
           <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
@@ -138,23 +138,23 @@ export function useOverlapConfirm() {
           {state.conflicts.map((c) => (
             <div
               key={c.id}
-              className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[12px]"
+              className="flex items-center justify-between gap-3 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-[12px]"
             >
               <div className="min-w-0">
-                {c.taskCode && <span className="font-mono text-[10px] text-slate-400 mr-1.5">{c.taskCode}</span>}
-                <span className="font-medium text-slate-700 truncate">{c.taskName ?? `Task #${c.id}`}</span>
+                {c.taskCode && <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500 mr-1.5">{c.taskCode}</span>}
+                <span className="font-medium text-slate-700 dark:text-slate-200 truncate">{c.taskName ?? `Task #${c.id}`}</span>
               </div>
-              <span className="text-slate-600 tabular-nums shrink-0">
+              <span className="text-slate-600 dark:text-slate-300 tabular-nums shrink-0">
                 {c.startTime}–{c.endTime}
               </span>
             </div>
           ))}
         </div>
-        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+        <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-end gap-2">
           <button
             onClick={() => setState(null)}
             disabled={submitting}
-            className="rounded-md px-3 py-1.5 text-[12px] font-semibold text-slate-600 hover:bg-slate-200 disabled:opacity-50"
+            className="rounded-md px-3 py-1.5 text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50"
           >
             Cancel
           </button>

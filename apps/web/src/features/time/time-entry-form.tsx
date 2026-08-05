@@ -87,8 +87,8 @@ export function TimeEntryForm({
 
   const compact = variant === 'compact';
   const inputCls = compact
-    ? 'rounded-md border border-slate-200 px-2 py-1 text-[11px] focus:border-blue-400 focus:outline-none bg-white'
-    : 'rounded-md border border-slate-200 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none bg-white';
+    ? 'rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-[11px] focus:border-blue-400 focus:outline-none bg-white dark:bg-slate-900'
+    : 'rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none bg-white dark:bg-slate-900';
 
   const canSubmit = totalMinutes > 0 && !submitting;
 
@@ -120,29 +120,29 @@ export function TimeEntryForm({
   // + grey total readout. Same visual treatment everywhere.
   return (
     <div
-      className={cn(compact ? 'space-y-1.5' : 'space-y-3', 'rounded-md border border-slate-200 bg-blue-50/30 p-3')}
+      className={cn(compact ? 'space-y-1.5' : 'space-y-3', 'rounded-md border border-slate-200 dark:border-slate-700 bg-blue-50/30 p-3')}
       onClick={(e) => e.stopPropagation()}
     >
       {overlap.dialog}
 
       <div>
-        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">Date</label>
+        <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block mb-1">Date</label>
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date"
           className={cn(inputCls, 'w-full')} />
       </div>
 
       <div className="grid grid-cols-3 gap-2">
         <div>
-          <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">Start Time</label>
+          <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block mb-1">Start Time</label>
           {renderTimeSelect(start, setStart, 'Start time')}
         </div>
         <div>
-          <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">End Time</label>
+          <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block mb-1">End Time</label>
           {renderTimeSelect(end, setEnd, 'End time')}
         </div>
         <div>
-          <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">Total Hours</label>
-          <div className={cn(inputCls, 'w-full text-center tabular-nums bg-slate-50 text-blue-600 font-semibold')}>
+          <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block mb-1">Total Hours</label>
+          <div className={cn(inputCls, 'w-full text-center tabular-nums bg-slate-50 dark:bg-slate-800/50 text-blue-600 font-semibold')}>
             {totalHours}h
           </div>
         </div>

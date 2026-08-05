@@ -96,8 +96,8 @@ export function ClockDashboardPage() {
         {/* Not Yet Clocked In */}
         <div className="rounded-lg border border-border bg-background p-4">
           <div className="mb-3 flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100">
-              <LogOut className="h-4 w-4 text-gray-600" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 dark:bg-slate-800">
+              <LogOut className="h-4 w-4 text-gray-600 dark:text-slate-300" />
             </div>
             <h3 className="font-medium">
               Not Yet ({notYet.length})
