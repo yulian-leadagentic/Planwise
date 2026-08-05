@@ -130,7 +130,7 @@ export function DataImportPage() {
         />
         <Link
           to="/admin/data-import/history"
-          className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-slate-600 hover:bg-slate-50"
+          className="flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50"
         >
           <HistoryIcon className="h-3.5 w-3.5" />
           Import History
@@ -207,13 +207,13 @@ function Stepper({ step }: { step: WizardStep }) {
                 'inline-flex items-center justify-center w-6 h-6 rounded-full font-semibold text-[11px]',
                 done && 'bg-emerald-500 text-white',
                 active && 'bg-blue-600 text-white',
-                !done && !active && 'bg-slate-200 text-slate-500',
+                !done && !active && 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400',
               )}
             >
               {done ? '✓' : i + 1}
             </span>
-            <span className={cn(active ? 'font-semibold text-slate-800' : 'text-slate-500')}>{lbl}</span>
-            {i < labels.length - 1 && <span className="text-slate-300">›</span>}
+            <span className={cn(active ? 'font-semibold text-slate-800 dark:text-slate-100' : 'text-slate-500 dark:text-slate-400')}>{lbl}</span>
+            {i < labels.length - 1 && <span className="text-slate-300 dark:text-slate-600">›</span>}
           </li>
         );
       })}
@@ -242,8 +242,8 @@ function PickTargetStep({
             className={cn(
               'rounded-lg border p-5 text-left transition-shadow',
               allowed
-                ? 'bg-white border-slate-200 hover:shadow-md cursor-pointer'
-                : 'bg-slate-50 border-slate-200 opacity-60 cursor-not-allowed',
+                ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:shadow-md cursor-pointer'
+                : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 opacity-60 cursor-not-allowed',
             )}
           >
             <div className="inline-flex p-2 rounded-lg bg-blue-100 text-blue-700 mb-3">
@@ -302,17 +302,17 @@ function UploadStep({
   };
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-6 space-y-4">
+    <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-sm font-semibold text-slate-800">Upload {targetLabel} spreadsheet</h2>
-          <p className="text-[12px] text-slate-500 mt-1">
+          <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Upload {targetLabel} spreadsheet</h2>
+          <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-1">
             Need the format? Download the template, fill in your data, and upload it back.
           </p>
         </div>
         <button
           onClick={downloadTemplate}
-          className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-blue-600 hover:bg-blue-50"
+          className="flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] font-semibold text-blue-600 hover:bg-blue-50"
         >
           <Download className="h-3.5 w-3.5" />
           Download template
@@ -324,7 +324,7 @@ function UploadStep({
       <div className="flex items-center justify-between pt-2">
         <button
           onClick={onBack}
-          className="flex items-center gap-1 text-[12px] text-slate-500 hover:text-slate-700"
+          className="flex items-center gap-1 text-[12px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Back
@@ -348,7 +348,7 @@ function DropZone({ file, onFile }: { file: File | null; onFile: (f: File | null
     <label
       className={cn(
         'block rounded-lg border-2 border-dashed p-8 text-center cursor-pointer transition-colors',
-        drag ? 'border-blue-400 bg-blue-50' : 'border-slate-300 bg-slate-50/40 hover:border-slate-400',
+        drag ? 'border-blue-400 bg-blue-50' : 'border-slate-300 dark:border-slate-600 bg-slate-50/40 dark:bg-slate-800/40 hover:border-slate-400 dark:hover:border-slate-500',
       )}
       onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
       onDragLeave={() => setDrag(false)}
@@ -369,25 +369,25 @@ function DropZone({ file, onFile }: { file: File | null; onFile: (f: File | null
         <div className="flex items-center justify-center gap-3">
           <FileSpreadsheet className="h-8 w-8 text-emerald-600" />
           <div className="text-left">
-            <div className="text-sm font-semibold text-slate-800">{file.name}</div>
-            <div className="text-[11px] text-slate-500">
+            <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{file.name}</div>
+            <div className="text-[11px] text-slate-500 dark:text-slate-400">
               {(file.size / 1024).toFixed(1)} KB
             </div>
           </div>
           <button
             onClick={(e) => { e.preventDefault(); onFile(null); }}
-            className="ml-2 text-[11px] text-slate-500 underline hover:text-red-600"
+            className="ml-2 text-[11px] text-slate-500 dark:text-slate-400 underline hover:text-red-600"
           >
             Remove
           </button>
         </div>
       ) : (
         <div>
-          <Upload className="mx-auto h-10 w-10 text-slate-400" />
-          <p className="mt-2 text-sm font-medium text-slate-700">
+          <Upload className="mx-auto h-10 w-10 text-slate-400 dark:text-slate-500" />
+          <p className="mt-2 text-sm font-medium text-slate-700 dark:text-slate-200">
             Drop your .xlsx file here, or click to browse
           </p>
-          <p className="text-[11px] text-slate-500 mt-1">Max 5 MB · up to 10,000 rows</p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Max 5 MB · up to 10,000 rows</p>
         </div>
       )}
     </label>
@@ -426,7 +426,7 @@ function ReviewStep({
   return (
     <div className="space-y-4">
       {/* Summary banner */}
-      <div className="rounded-lg border border-slate-200 bg-white p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
+      <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
         <Stat label="Total rows" value={summary.total} tone="neutral" />
         <Stat label="Will create" value={summary.validForInsert} tone="ok" />
         <Stat label="Will skip (exists)" value={summary.conflictsExisting} tone="warn" />
@@ -444,30 +444,30 @@ function ReviewStep({
       )}
 
       {/* Mode selector */}
-      <div className="rounded-md border border-slate-200 bg-white p-3 flex items-center gap-3">
-        <label className="text-[12px] font-semibold text-slate-700">Conflict mode:</label>
+      <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 flex items-center gap-3">
+        <label className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">Conflict mode:</label>
         <select
           value={mode}
           onChange={(e) => onModeChange(e.target.value as ImportMode)}
-          className="rounded border border-slate-200 px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none"
+          className="rounded border border-slate-200 dark:border-slate-700 px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none"
         >
           <option value="insert">Insert-only — skip existing</option>
           <option value="upsert" disabled>Upsert — update existing + create new (M2)</option>
           <option value="update" disabled>Update-only (M2)</option>
         </select>
-        <span className="text-[11px] text-slate-500 ml-2">
+        <span className="text-[11px] text-slate-500 dark:text-slate-400 ml-2">
           M1 supports insert-only. Upsert ships in M2.
         </span>
       </div>
 
       {/* Per-row table */}
-      <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
-        <div className="px-3 py-2 bg-slate-50 border-b border-slate-100 text-[12px] font-semibold text-slate-700">
+      <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+        <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800 text-[12px] font-semibold text-slate-700 dark:text-slate-200">
           Row-by-row preview {validation.truncated && '(first 500 shown)'}
         </div>
         <div className="max-h-[480px] overflow-y-auto">
           <table className="w-full text-[12px]">
-            <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 sticky top-0">
+            <thead className="bg-slate-50 dark:bg-slate-800/50 text-[10px] uppercase text-slate-500 dark:text-slate-400 sticky top-0">
               <tr>
                 <th className="px-3 py-2 text-left w-12">#</th>
                 <th className="px-3 py-2 text-left">Identifier</th>
@@ -475,7 +475,7 @@ function ReviewStep({
                 <th className="px-3 py-2 text-left">Issues</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {rows.map((r) => {
                 const ok = r.errors.length === 0 && !r.conflictsWithExisting;
                 const isSkip = r.errors.length === 0 && r.conflictsWithExisting;
@@ -484,7 +484,7 @@ function ReviewStep({
                   r.data?.email ?? r.data?.companyName ?? r.data?.taxId ?? '—';
                 return (
                   <tr key={r.rowIndex} className={cn(isErr && 'bg-red-50/30')}>
-                    <td className="px-3 py-2 tabular-nums text-slate-500">{r.rowIndex}</td>
+                    <td className="px-3 py-2 tabular-nums text-slate-500 dark:text-slate-400">{r.rowIndex}</td>
                     <td className="px-3 py-2 truncate max-w-[260px]">{identifier}</td>
                     <td className="px-3 py-2">
                       {ok && <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 className="h-3 w-3" />Create</span>}
@@ -502,7 +502,7 @@ function ReviewStep({
                           ))}
                         </ul>
                       ) : (
-                        <span className="text-slate-400">—</span>
+                        <span className="text-slate-400 dark:text-slate-500">—</span>
                       )}
                     </td>
                   </tr>
@@ -517,7 +517,7 @@ function ReviewStep({
       <div className="flex items-center justify-between pt-2">
         <button
           onClick={onBack}
-          className="flex items-center gap-1 text-[12px] text-slate-500 hover:text-slate-700"
+          className="flex items-center gap-1 text-[12px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Back
@@ -546,11 +546,11 @@ function Stat({ label, value, tone }: { label: string; value: number; tone: 'neu
   const toneCls =
     tone === 'ok' ? 'text-emerald-600' :
     tone === 'warn' ? 'text-amber-600' :
-    tone === 'error' ? 'text-red-600' : 'text-slate-700';
+    tone === 'error' ? 'text-red-600' : 'text-slate-700 dark:text-slate-200';
   return (
     <div>
       <div className={cn('text-2xl font-bold tabular-nums', toneCls)}>{value}</div>
-      <div className="text-[11px] uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">{label}</div>
     </div>
   );
 }
@@ -586,7 +586,7 @@ function DoneStep({
           <div className="mt-3 flex items-center gap-2">
             <Link
               to={`/admin/data-import/history`}
-              className="rounded-md bg-white border border-slate-200 px-3 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
+              className="rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50"
             >
               View import details
             </Link>

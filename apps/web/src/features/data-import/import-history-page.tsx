@@ -15,7 +15,7 @@ import { formatDate } from '@/lib/date-utils';
 import { dataImportApi, type ImportRecord, type ImportStatus } from '@/api/data-import.api';
 
 const STATUS_PILL: Record<ImportStatus, string> = {
-  parsed: 'bg-slate-100 text-slate-700',
+  parsed: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200',
   committed: 'bg-emerald-100 text-emerald-700',
   partial: 'bg-amber-100 text-amber-700',
   failed: 'bg-red-100 text-red-700',
@@ -56,7 +56,7 @@ export function ImportHistoryPage() {
       <div className="flex items-center gap-3">
         <Link
           to="/admin/data-import"
-          className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100"
+          className="rounded-md p-1.5 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
           aria-label="Back to import wizard"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -67,9 +67,9 @@ export function ImportHistoryPage() {
         />
       </div>
 
-      <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+      <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
         <table className="w-full text-[12px]">
-          <thead className="bg-slate-50 text-[10px] uppercase text-slate-500">
+          <thead className="bg-slate-50 dark:bg-slate-800/50 text-[10px] uppercase text-slate-500 dark:text-slate-400">
             <tr>
               <th className="px-4 py-2 text-left">When</th>
               <th className="px-4 py-2 text-left">Target</th>
@@ -82,15 +82,15 @@ export function ImportHistoryPage() {
               <th className="px-4 py-2"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {isLoading && (
               <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-slate-400">Loading…</td>
+                <td colSpan={9} className="px-4 py-8 text-center text-slate-400 dark:text-slate-500">Loading…</td>
               </tr>
             )}
             {!isLoading && history.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-slate-400 italic">
+                <td colSpan={9} className="px-4 py-8 text-center text-slate-400 dark:text-slate-500 italic">
                   No imports yet. Run one from the wizard.
                 </td>
               </tr>
@@ -100,15 +100,15 @@ export function ImportHistoryPage() {
               const canRollback =
                 h.status !== 'rolled_back' && h.status !== 'failed' && !expired && h.createdCount > 0;
               return (
-                <tr key={h.id} className="hover:bg-slate-50/50">
-                  <td className="px-4 py-2 tabular-nums text-slate-600">
+                <tr key={h.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
+                  <td className="px-4 py-2 tabular-nums text-slate-600 dark:text-slate-300">
                     {formatDate(h.startedAt.split('T')[0])}
                   </td>
                   <td className="px-4 py-2 capitalize">{h.target}</td>
-                  <td className="px-4 py-2 text-slate-600">
+                  <td className="px-4 py-2 text-slate-600 dark:text-slate-300">
                     {h.user ? `${h.user.firstName} ${h.user.lastName}` : `User #${h.userId}`}
                   </td>
-                  <td className="px-4 py-2 text-slate-600 truncate max-w-[180px]" title={h.filename}>
+                  <td className="px-4 py-2 text-slate-600 dark:text-slate-300 truncate max-w-[180px]" title={h.filename}>
                     {h.filename}
                   </td>
                   <td className="px-4 py-2 text-right tabular-nums font-semibold text-emerald-700">
@@ -205,27 +205,27 @@ function DetailDrawer({ importId, onClose }: { importId: number; onClose: () => 
   return (
     <>
       <div className="fixed inset-0 z-40 bg-black/20" onClick={onClose} />
-      <div className="fixed inset-y-0 right-0 z-50 w-[640px] max-w-[90vw] bg-white border-l border-slate-200 shadow-2xl flex flex-col">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+      <div className="fixed inset-y-0 right-0 z-50 w-[640px] max-w-[90vw] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700 shadow-2xl flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700">
           <h2 className="text-sm font-bold">Import #{importId} — per-row outcomes</h2>
           <div className="flex items-center gap-2">
             <button
               onClick={exportCsv}
               disabled={rows.length === 0}
-              className="flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              className="flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 disabled:opacity-50"
             >
               <Download className="h-3 w-3" />
               CSV
             </button>
-            <button onClick={onClose} className="rounded p-1 text-slate-400 hover:bg-slate-100">×</button>
+            <button onClick={onClose} className="rounded p-1 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">×</button>
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">
           {isLoading ? (
-            <div className="px-5 py-8 text-center text-[12px] text-slate-400">Loading…</div>
+            <div className="px-5 py-8 text-center text-[12px] text-slate-400 dark:text-slate-500">Loading…</div>
           ) : (
             <table className="w-full text-[12px]">
-              <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 sticky top-0">
+              <thead className="bg-slate-50 dark:bg-slate-800/50 text-[10px] uppercase text-slate-500 dark:text-slate-400 sticky top-0">
                 <tr>
                   <th className="px-3 py-2 text-left w-10">#</th>
                   <th className="px-3 py-2 text-left">Outcome</th>
@@ -233,10 +233,10 @@ function DetailDrawer({ importId, onClose }: { importId: number; onClose: () => 
                   <th className="px-3 py-2 text-left">Details</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {rows.map((r) => (
                   <tr key={r.id}>
-                    <td className="px-3 py-2 tabular-nums text-slate-500">{r.rowIndex}</td>
+                    <td className="px-3 py-2 tabular-nums text-slate-500 dark:text-slate-400">{r.rowIndex}</td>
                     <td className="px-3 py-2">
                       <span className={cn(
                         'rounded px-1.5 py-0.5 text-[10px] font-bold uppercase',
@@ -246,12 +246,12 @@ function DetailDrawer({ importId, onClose }: { importId: number; onClose: () => 
                         r.outcome === 'failed' && 'bg-red-100 text-red-700',
                       )}>{r.outcome}</span>
                     </td>
-                    <td className="px-3 py-2 tabular-nums text-slate-600">{r.entityId ?? '—'}</td>
+                    <td className="px-3 py-2 tabular-nums text-slate-600 dark:text-slate-300">{r.entityId ?? '—'}</td>
                     <td className="px-3 py-2">
                       {r.errorMessage ? (
                         <span className="text-red-700">{r.errorMessage}</span>
                       ) : r.afterJson?.email ? (
-                        <span className="text-slate-700">
+                        <span className="text-slate-700 dark:text-slate-200">
                           {r.afterJson.email}
                           {r.afterJson.generatedPassword && r.outcome === 'created' && (
                             <span className="ml-2 text-amber-700 font-mono text-[10px]">
@@ -260,14 +260,14 @@ function DetailDrawer({ importId, onClose }: { importId: number; onClose: () => 
                           )}
                         </span>
                       ) : (
-                        <span className="text-slate-400">—</span>
+                        <span className="text-slate-400 dark:text-slate-500">—</span>
                       )}
                     </td>
                   </tr>
                 ))}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="px-3 py-8 text-center text-slate-400 italic">
+                    <td colSpan={4} className="px-3 py-8 text-center text-slate-400 dark:text-slate-500 italic">
                       No row records.
                     </td>
                   </tr>
@@ -276,7 +276,7 @@ function DetailDrawer({ importId, onClose }: { importId: number; onClose: () => 
             </table>
           )}
         </div>
-        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 text-[11px] text-slate-500">
+        <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-[11px] text-slate-500 dark:text-slate-400">
           Generated passwords are visible here so you can distribute them to the new employees. Recipients should
           change their password on first login.
         </div>
@@ -303,7 +303,7 @@ function RollbackDialog({
       role="dialog"
       aria-modal="true"
     >
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-lg bg-white shadow-2xl overflow-hidden">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-lg bg-white dark:bg-slate-900 shadow-2xl overflow-hidden">
         <div className="flex items-start gap-3 px-5 py-4 bg-red-50 border-b border-red-200">
           <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
           <div>
@@ -314,14 +314,14 @@ function RollbackDialog({
             </p>
           </div>
         </div>
-        <div className="px-5 py-3 text-[12px] text-slate-700 space-y-2">
+        <div className="px-5 py-3 text-[12px] text-slate-700 dark:text-slate-200 space-y-2">
           <p>
             <strong>Note:</strong> any work done on the deleted records since the import (time entries, project
             memberships, etc.) will also be removed via cascade. Make sure no one is depending on this data.
           </p>
         </div>
-        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
-          <button onClick={onCancel} disabled={submitting} className="rounded-md px-3 py-1.5 text-[12px] font-semibold text-slate-600 hover:bg-slate-200 disabled:opacity-50">
+        <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-end gap-2">
+          <button onClick={onCancel} disabled={submitting} className="rounded-md px-3 py-1.5 text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50">
             Cancel
           </button>
           <button onClick={onConfirm} disabled={submitting} className="rounded-md bg-red-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-red-700 disabled:opacity-50">
