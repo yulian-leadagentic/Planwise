@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, Pencil, Check, X } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, MessageSquare } from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
 import { PageHeader } from '@/components/shared/page-header';
-import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
+import { DataTable } from '@/components/shared/data-table';
+import { EmptyState } from '@/components/shared/empty-state';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
@@ -23,7 +25,6 @@ interface Phrase {
 export function TimeNotePhrasesPage() {
   const confirm = useConfirm();
   const queryClient = useQueryClient();
-  const scrollRef = useStickyHScroll();
   const [newText, setNewText] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingText, setEditingText] = useState('');
@@ -57,6 +58,7 @@ export function TimeNotePhrasesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'time-note-phrases'] });
       queryClient.invalidateQueries({ queryKey: ['admin', 'time-note-phrases', 'active'] });
+      notify.success('Phrase updated');
       setEditingId(null);
     },
     onError: (err: any) => notify.apiError(err, 'Failed to update phrase'),
@@ -71,6 +73,106 @@ export function TimeNotePhrasesPage() {
     },
     onError: (err: any) => notify.apiError(err, 'Failed to remove phrase'),
   });
+
+  // Actions column always shows its buttons (DataTable rows don't
+  // carry the `group` class the old layout relied on). Small
+  // low-contrast icons keep the row visually calm.
+  const columns = useMemo<ColumnDef<Phrase, unknown>[]>(() => [
+    { accessorKey: 'text', header: 'Phrase', enableSorting: false,
+      cell: ({ row }) => {
+        const p = row.original;
+        if (editingId === p.id) {
+          return (
+            <input
+              autoFocus
+              value={editingText}
+              onChange={(e) => setEditingText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && editingText.trim()) update.mutate({ id: p.id, patch: { text: editingText.trim() } });
+                if (e.key === 'Escape') setEditingId(null);
+              }}
+              className="w-full px-2 py-1 rounded border border-blue-300 dark:border-blue-500 bg-background text-sm focus:border-blue-500 focus:outline-none"
+            />
+          );
+        }
+        return <span className={cn('text-slate-700 dark:text-slate-200', !p.isActive && 'opacity-60')}>{p.text}</span>;
+      } },
+    { accessorKey: 'sortOrder', header: 'Order', enableSorting: false, size: 100,
+      cell: ({ row }) => (
+        <span className="text-right text-slate-500 dark:text-slate-400 font-mono tabular-nums">{row.original.sortOrder}</span>
+      ) },
+    { accessorKey: 'isActive', header: 'Status', enableSorting: false, size: 110,
+      cell: ({ row }) => {
+        const p = row.original;
+        return (
+          <button
+            type="button"
+            onClick={() => update.mutate({ id: p.id, patch: { isActive: !p.isActive } })}
+            className={cn(
+              'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border',
+              p.isActive
+                ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-700'
+                : 'bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-300 border-slate-200 dark:border-slate-700',
+            )}
+            title={p.isActive ? 'Click to disable' : 'Click to enable'}
+            aria-label={p.isActive ? `Disable phrase ${p.text}` : `Enable phrase ${p.text}`}
+          >
+            {p.isActive ? 'Active' : 'Disabled'}
+          </button>
+        );
+      } },
+    { id: 'actions', header: 'Actions', enableSorting: false, size: 110,
+      cell: ({ row }) => {
+        const p = row.original;
+        if (editingId === p.id) {
+          return (
+            <div className="inline-flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => update.mutate({ id: p.id, patch: { text: editingText.trim() } })}
+                className="p-1.5 rounded text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30"
+                aria-label={`Save phrase ${p.text}`}
+                title="Save"
+              >
+                <Check className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingId(null)}
+                className="p-1.5 rounded text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                aria-label="Cancel edit"
+                title="Cancel"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </div>
+          );
+        }
+        return (
+          <div className="inline-flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => { setEditingId(p.id); setEditingText(p.text); }}
+              className="p-1.5 rounded text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
+              aria-label={`Edit phrase ${p.text}`}
+              title="Edit"
+            >
+              <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={async () => { if (await confirm(`Remove "${p.text}"?`)) remove.mutate(p.id); }}
+              className="p-1.5 rounded text-slate-400 dark:text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
+              aria-label={`Delete phrase ${p.text}`}
+              title="Delete"
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        );
+      } },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [editingId, editingText, update, remove, confirm]);
 
   return (
     <div className="space-y-6">
@@ -87,7 +189,7 @@ export function TimeNotePhrasesPage() {
             if (e.key === 'Enter' && newText.trim()) create.mutate(newText.trim());
           }}
           placeholder="Add a new phrase (e.g. 'Working on drawings')"
-          className="flex-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none"
+          className="flex-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-background text-sm focus:border-blue-500 focus:outline-none"
         />
         <button
           type="button"
@@ -95,107 +197,21 @@ export function TimeNotePhrasesPage() {
           disabled={!newText.trim() || create.isPending}
           className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[13px] font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5"
         >
-          <Plus className="h-3.5 w-3.5" /> Add
+          <Plus className="h-3.5 w-3.5" aria-hidden="true" /> Add
         </button>
       </div>
 
-      <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-[#FAFBFC] border-b border-slate-100 dark:border-slate-800">
-            <tr className="text-[11px] uppercase tracking-wider text-slate-400 dark:text-slate-500">
-              <th className="px-4 py-2 text-left font-semibold">Phrase</th>
-              <th className="px-4 py-2 text-right font-semibold w-[100px]">Order</th>
-              <th className="px-4 py-2 text-center font-semibold w-[110px]">Status</th>
-              <th className="px-4 py-2 text-right font-semibold w-[110px]">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {isLoading && (
-              <tr><td colSpan={4} className="text-center py-10 text-slate-400 dark:text-slate-500">Loading…</td></tr>
-            )}
-            {!isLoading && phrases.length === 0 && (
-              <tr><td colSpan={4} className="text-center py-10 text-slate-400 dark:text-slate-500 italic">No phrases yet — add one above.</td></tr>
-            )}
-            {phrases.map((p) => (
-              <tr key={p.id} className={cn('group hover:bg-slate-50/50 dark:hover:bg-slate-800/50', !p.isActive && 'opacity-60')}>
-                <td className="px-4 py-2 text-slate-700 dark:text-slate-200">
-                  {editingId === p.id ? (
-                    <input
-                      autoFocus
-                      value={editingText}
-                      onChange={(e) => setEditingText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && editingText.trim()) update.mutate({ id: p.id, patch: { text: editingText.trim() } });
-                        if (e.key === 'Escape') setEditingId(null);
-                      }}
-                      className="w-full px-2 py-1 rounded border border-blue-300 text-sm focus:border-blue-500 focus:outline-none"
-                    />
-                  ) : (
-                    p.text
-                  )}
-                </td>
-                <td className="px-4 py-2 text-right text-slate-500 dark:text-slate-400 font-mono tabular-nums">{p.sortOrder}</td>
-                <td className="px-4 py-2 text-center">
-                  <button
-                    type="button"
-                    onClick={() => update.mutate({ id: p.id, patch: { isActive: !p.isActive } })}
-                    className={cn(
-                      'rounded-full px-2 py-0.5 text-[11px] font-bold',
-                      p.isActive ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700',
-                    )}
-                    title={p.isActive ? 'Click to disable' : 'Click to enable'}
-                  >
-                    {p.isActive ? 'Active' : 'Disabled'}
-                  </button>
-                </td>
-                <td className="px-4 py-2 text-right">
-                  <div className="inline-flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {editingId === p.id ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => update.mutate({ id: p.id, patch: { text: editingText.trim() } })}
-                          className="p-1.5 rounded text-emerald-600 hover:bg-emerald-50"
-                          title="Save"
-                        >
-                          <Check className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditingId(null)}
-                          className="p-1.5 rounded text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                          title="Cancel"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => { setEditingId(p.id); setEditingText(p.text); }}
-                          className="p-1.5 rounded text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
-                          title="Edit"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={async () => { if (await confirm(`Remove "${p.text}"?`)) remove.mutate(p.id); }}
-                          className="p-1.5 rounded text-slate-400 dark:text-slate-500 hover:text-red-600 hover:bg-red-50"
-                          title="Delete"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {isLoading ? (
+        <div className="py-10 text-center text-slate-400 dark:text-slate-500">Loading…</div>
+      ) : phrases.length === 0 ? (
+        <EmptyState
+          icon={MessageSquare}
+          title="No phrases yet"
+          description="Add one above to build out the pool."
+        />
+      ) : (
+        <DataTable columns={columns} data={phrases} pageSize={1000} />
+      )}
     </div>
   );
 }
