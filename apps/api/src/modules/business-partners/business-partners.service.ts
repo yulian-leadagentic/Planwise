@@ -54,6 +54,23 @@ export class BusinessPartnersService {
       };
     }
 
+    // Employer filter — matches persons whose active worker_of edge
+    // targets the given organization id. Uses `some` so a person with
+    // multiple employers (rare but allowed) still matches on any of
+    // them. `targetType: 'organization'` is redundant given the id
+    // but keeps the where-clause aligned with the polymorphic column
+    // pair the DB is actually indexed on.
+    if (query.employerId) {
+      where.outgoingRelationships = {
+        some: {
+          targetType: 'organization',
+          targetId: query.employerId,
+          relationshipType: { code: 'worker_of' },
+          validTo: { gt: new Date() },
+        },
+      };
+    }
+
     if (query.search) {
       const s = query.search.trim();
       // Bilingual search — see comment in users.service.findAll. The

@@ -15,6 +15,19 @@ export class QueryBusinessPartnersDto {
   @IsString()
   roleType?: string;
 
+  /**
+   * Restrict to persons whose active `worker_of` relationship targets
+   * the given organization id. Server-side so the Contacts page's
+   * "Filter by employer" reaches ALL matches instead of only the
+   * currently-loaded page (bug fixed 2026-08-05 in ux/contacts).
+   */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  employerId?: number;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

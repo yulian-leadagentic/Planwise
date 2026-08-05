@@ -1,13 +1,15 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Search, X, Mail, Phone, Building2, FolderKanban, Pencil, UserPlus,
   List as ListIcon, FolderOpen, Building, ExternalLink, MapPin, UserCircle2,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
 import { useDebounce } from '@/hooks/use-debounce';
+import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { PartnerDrawer } from './partner-drawer';
 
@@ -68,6 +70,22 @@ const VIEW_TABS: Array<{ key: ViewMode; label: string; icon: React.ComponentType
   { key: 'by-customer', label: 'By Customer', icon: Building, sub: 'Contacts grouped per customer org' },
 ];
 
+// Contacts endpoint returns { data: Contact[], meta: { total, page, ... } }
+// under two wrapper layers (axios envelope + API success wrapper). The
+// query normalises to this shape so consumers stop guessing.
+type ContactsPage = {
+  data: Contact[];
+  meta: { total: number; page: number; perPage: number; totalPages: number };
+};
+
+const LIST_PAGE_SIZE = 50;
+// For grouping views (By Customer / By Project) we bump the page size
+// so the per-group counts reflect the true set — the previous 200-row
+// cap was hiding contacts whose employer sat past the boundary. 500 is
+// the ceiling here; if a tenant grows past it we'll switch grouping
+// views to a dedicated aggregation endpoint (out of scope for this fix).
+const GROUP_PAGE_SIZE = 500;
+
 export function ContactsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialView = (searchParams.get('view') as ViewMode) ?? 'list';
@@ -77,8 +95,23 @@ export function ContactsPage() {
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 250);
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('active');
+  // orgFilter drives a SERVER-side employerId param now — the previous
+  // client-side .filter() over the loaded page silently hid employees
+  // of that org whose row sat past row 200.
   const [orgFilter, setOrgFilter] = useState<string>('');
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
+  // Drawer identity in the URL (?contact=N) so refresh / outbound-return
+  // restore it, matching the task-drawer's useDrawerRoute('task') pattern.
+  const { drawerId: selectedId, openDrawer: openContact, closeDrawer: closeContact } = useDrawerRoute('contact');
+
+  const perPage = view === 'list' ? LIST_PAGE_SIZE : GROUP_PAGE_SIZE;
+
+  // Any filter change resets pagination to page 1 — otherwise a user on
+  // page 3 who narrows the search would either see empty results (if the
+  // filtered set has fewer pages) or land on an unrelated slice.
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, statusFilter, orgFilter, view]);
 
   // Sync view to URL so deep-links/back button work.
   const switchView = (v: ViewMode) => {
@@ -88,28 +121,36 @@ export function ContactsPage() {
     setSearchParams(next, { replace: true });
   };
 
-  // Contacts (persons with project enrichment). queryFn unwraps both the
-  // axios envelope (r.data) and the API's success wrapper (r.data.data) and
-  // returns the plain array — consumers below treat allContacts as Contact[].
-  const { data: contactsData, isLoading: contactsLoading } = useQuery<Contact[]>({
+  // Contacts (persons with project enrichment). Returns the full page
+  // envelope: rows + server-side meta (total, page count, …) so the
+  // header can show truthful totals and pagination controls have data.
+  const { data: contactsPage, isLoading: contactsLoading } = useQuery<ContactsPage>({
     // Prefix with 'business-partners' so the partner drawer's save mutations
     // (which invalidate ['business-partners']) cascade down to this query and
     // the list refreshes after an edit, without manual reload.
-    queryKey: ['business-partners', 'contacts-list', debouncedSearch, statusFilter],
+    queryKey: ['business-partners', 'contacts-list', view, page, perPage, debouncedSearch, statusFilter, orgFilter],
     queryFn: () =>
       client.get('/business-partners', {
         params: {
           partnerType: 'person',
           withProjects: true,
-          perPage: 200,
+          page: view === 'list' ? page : 1,
+          perPage,
           ...(debouncedSearch ? { search: debouncedSearch } : {}),
           ...(statusFilter !== 'all' ? { status: statusFilter === 'active' ? 'active' : 'inactive' } : {}),
+          ...(orgFilter ? { employerId: Number(orgFilter) } : {}),
         },
       }).then((r) => {
+        // Handle both wrapper layers — the API wraps { data: { data, meta } }
+        // and axios adds its own .data. Fall back to a plain array shape
+        // for older callers.
         const body = r.data?.data ?? r.data;
-        // The list endpoint returns { data: [...], meta: {...} } inside the
-        // success wrapper, so peel one more level when needed.
-        return Array.isArray(body) ? body : (body?.data ?? []);
+        if (Array.isArray(body)) {
+          return { data: body as Contact[], meta: { total: body.length, page: 1, perPage: body.length || perPage, totalPages: 1 } };
+        }
+        const rows = (body?.data as Contact[]) ?? [];
+        const meta = body?.meta ?? { total: rows.length, page: 1, perPage, totalPages: 1 };
+        return { data: rows, meta };
       }),
     staleTime: 60_000,
   });
@@ -142,7 +183,8 @@ export function ContactsPage() {
     staleTime: 5 * 60_000,
   });
 
-  const allContacts: Contact[] = contactsData ?? [];
+  const allContacts: Contact[] = contactsPage?.data ?? [];
+  const meta = contactsPage?.meta;
   const orgs: Org[] = orgsData ?? [];
   const orgNameById = useMemo(() => {
     const m = new Map<number, string>();
@@ -152,41 +194,40 @@ export function ContactsPage() {
 
   // Identity rule — anyone with a login account is INTERNAL staff, belongs
   // in /people not Contacts. (See partners-page comment for the history.)
+  //
+  // NB: this filter runs on the loaded page only, so a page that happens
+  // to be all-internal would render as empty when a further page has
+  // externals. Acceptable because internal accounts on the /contacts
+  // surface are already the exception (most persons here are external);
+  // the server-side partnerType='person' + the filters below narrow the
+  // set enough that this is not a routine concern.
   const externalContacts = useMemo(
     () => allContacts.filter((c) => !c.user),
     [allContacts],
   );
 
-  // Org filter values — only the employers that actually appear on this set.
-  const employerOrgs = useMemo(() => {
-    const ids = new Set<number>();
-    for (const c of externalContacts) {
-      for (const r of c.outgoingRelationships ?? []) {
-        if (r.relationshipType?.code === 'worker_of' && r.targetType === 'organization') {
-          ids.add(r.targetId);
-        }
-      }
-    }
-    return Array.from(ids)
-      .map((id) => ({ id, name: orgNameById.get(id) ?? `#${id}` }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [externalContacts, orgNameById]);
+  // Employer dropdown — sourced from the full org roster (already loaded
+  // above) instead of derived from the current page. Previously this was
+  // built from externalContacts, so paginating away from page 1 dropped
+  // employers whose only contact sat on that page. Any org can be picked;
+  // if it has zero contacts under the current filters the server returns
+  // an empty page and the empty-state kicks in.
+  const employerOrgs = useMemo(
+    () => [...orgs].sort((a, b) => a.displayName.localeCompare(b.displayName)),
+    [orgs],
+  );
 
-  const visibleContacts = useMemo(() => {
-    return externalContacts.filter((c) => {
-      if (orgFilter) {
-        const matches = (c.outgoingRelationships ?? []).some(
-          (r) => r.relationshipType?.code === 'worker_of'
-            && r.targetType === 'organization'
-            && String(r.targetId) === orgFilter,
-        );
-        if (!matches) return false;
-      }
-      return true;
-    });
-  }, [externalContacts, orgFilter]);
+  // Rows to render this page. Server-side employerId + status + search
+  // narrowed the set already — no client-side org filter here anymore.
+  const visibleContacts = externalContacts;
 
   const hasFilters = !!search || statusFilter !== 'active' || !!orgFilter;
+
+  // Header count string — server total when available so the badge is
+  // truthful even when the current page holds only a slice. Falls back
+  // to the local count for the initial render before meta lands.
+  const totalCount = meta?.total ?? externalContacts.length;
+  const totalPages = meta?.totalPages ?? 1;
 
   return (
     <div className="space-y-5">
@@ -244,7 +285,7 @@ export function ContactsPage() {
         >
           <option value="">All organizations</option>
           {employerOrgs.map((o) => (
-            <option key={o.id} value={o.id}>{o.name}</option>
+            <option key={o.id} value={o.id}>{o.displayName}</option>
           ))}
         </select>
         {hasFilters && (
@@ -256,7 +297,29 @@ export function ContactsPage() {
           </button>
         )}
         <span className="ml-auto text-[12px] text-slate-500 dark:text-slate-400">
-          {visibleContacts.length} of {externalContacts.length} contacts
+          {view === 'list' && totalCount > 0 ? (
+            <>
+              Showing{' '}
+              <span className="font-semibold text-slate-700 dark:text-slate-200 tabular-nums">
+                {(meta ? (meta.page - 1) * meta.perPage + 1 : 1)}
+                –
+                {(meta ? Math.min(meta.page * meta.perPage, totalCount) : visibleContacts.length)}
+              </span>
+              {' '}of{' '}
+              <span className="font-semibold text-slate-700 dark:text-slate-200 tabular-nums">{totalCount}</span>
+              {' '}contacts
+            </>
+          ) : (
+            <>
+              <span className="font-semibold text-slate-700 dark:text-slate-200 tabular-nums">{totalCount}</span>
+              {' '}contact{totalCount === 1 ? '' : 's'}
+              {totalCount > perPage && (
+                <span className="ml-1 text-[11px] italic text-amber-600 dark:text-amber-400" title={`Grouping views show up to ${perPage} contacts at a time`}>
+                  (showing first {perPage})
+                </span>
+              )}
+            </>
+          )}
         </span>
       </div>
 
@@ -298,7 +361,43 @@ export function ContactsPage() {
             : 'No contacts match the current filters.'}
         </div>
       ) : view === 'list' ? (
-        <ContactsListView contacts={visibleContacts} orgNameById={orgNameById} onSelect={setSelectedId} />
+        <>
+          <ContactsListView contacts={visibleContacts} orgNameById={orgNameById} onSelect={openContact} />
+          {/* Pagination — visible in list view whenever more than one
+              page exists. Prev/Next are keyboard-focusable with aria
+              labels; the page indicator uses tabular-nums so the width
+              doesn't jitter as the counter advances. */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1 || contactsLoading}
+                aria-label="Previous page"
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-50"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                Prev
+              </button>
+              <span className="text-[12px] text-slate-500 dark:text-slate-400">
+                Page{' '}
+                <span className="font-mono tabular-nums text-slate-700 dark:text-slate-200">{page}</span>
+                {' '}of{' '}
+                <span className="font-mono tabular-nums text-slate-700 dark:text-slate-200">{totalPages}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages || contactsLoading}
+                aria-label="Next page"
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-50"
+              >
+                Next
+                <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </div>
+          )}
+        </>
       ) : view === 'by-project' ? (
         <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-16 text-center text-sm text-slate-500 dark:text-slate-400">
           <FolderOpen className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600 mb-3" />
@@ -309,15 +408,17 @@ export function ContactsPage() {
         <ByCustomerView
           customers={customersData ?? []}
           contacts={visibleContacts}
-          onSelect={setSelectedId}
+          onSelect={openContact}
         />
       )}
 
-      {/* Drawer for editing a contact (reuses the partner drawer). */}
+      {/* Drawer for editing a contact (reuses the partner drawer). Now
+          driven by the URL via useDrawerRoute('contact'), so a refresh
+          or an outbound → back navigation restores the open contact. */}
       {selectedId !== null && (
         <PartnerDrawer
           partnerId={selectedId}
-          onClose={() => setSelectedId(null)}
+          onClose={closeContact}
         />
       )}
     </div>
