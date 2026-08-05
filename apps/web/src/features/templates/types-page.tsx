@@ -1,8 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Check, Plus, Search, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Check, Plus, Search, Trash2, X, LayoutGrid } from 'lucide-react';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { EmptyState } from '@/components/shared/empty-state';
 import { ColorPalettePicker } from '@/components/shared/color-palette-picker';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
@@ -520,11 +521,13 @@ export function TypesPage() {
             <TableSkeleton rows={5} cols={hasColor ? 5 : 4} />
           </div>
         ) : rows.length === 0 ? (
-          <p className="py-12 text-center text-[13px] text-slate-400 dark:text-slate-500">
-            {search
-              ? 'No types match your search.'
-              : `No ${TABS.find((t) => t.key === activeTab)?.label?.toLowerCase()} configured yet.`}
-          </p>
+          <EmptyState
+            icon={LayoutGrid}
+            title={search
+              ? 'No types match your search'
+              : `No ${TABS.find((t) => t.key === activeTab)?.label?.toLowerCase()} configured yet`}
+            description={search ? 'Try a different name.' : undefined}
+          />
         ) : (
           <table className="w-full">
             <thead>
