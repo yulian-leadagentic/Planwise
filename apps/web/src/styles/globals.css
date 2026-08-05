@@ -74,4 +74,31 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /* ─── WCAG 2.2 AA focus foundation (2026-08-05) ─────────────────
+   * The design system says "focus via border, not ring" — which was
+   * originally interpreted as "no visible focus at all" on custom
+   * controls, leaving keyboard users stranded. This block restores
+   * ONE consistent focus-visible treatment for every interactive
+   * element that doesn't already have one:
+   *   • outline width matches Tailwind's ring (2px) so a11y tests
+   *     that check for a visible focus ring still pass;
+   *   • uses the blue-500 brand color in both themes (visible on
+   *     white and on slate-900);
+   *   • `outline-offset` keeps the outline off the content;
+   *   • ONLY :focus-visible (not :focus) so mouse users don't see
+   *     the outline on click — matches modern browser defaults.
+   *
+   * Individual components can override by declaring their own
+   * `focus-visible:` classes — Tailwind's cascade wins. This is a
+   * safety net, not a straitjacket.
+   */
+  :where(button, a, [role='button'], [role='menuitem'], [role='option'],
+         [role='tab'], [role='switch'], [role='checkbox'], [role='radio'],
+         input, select, textarea, summary, [tabindex]:not([tabindex='-1'])):focus-visible {
+    outline: 2px solid theme('colors.blue.500');
+    outline-offset: 2px;
+    /* Round the outline follows so it doesn't jut past rounded borders. */
+    border-radius: inherit;
+  }
 }
