@@ -180,7 +180,7 @@ function CatalogPickerModal({
                           checked={isSelected}
                           disabled={alreadyExists}
                           onChange={() => !alreadyExists && toggleTask(task.id)}
-                          className="h-4 w-4 rounded border-gray-300"
+                          className="h-4 w-4 rounded border-gray-300 dark:border-slate-600"
                         />
                       </td>
                       <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{task.code || '-'}</td>

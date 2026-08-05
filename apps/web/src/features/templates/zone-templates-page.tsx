@@ -101,7 +101,7 @@ function InstanceCountStepper({ value, onChange }: { value: number; onChange: (n
       <button
         type="button"
         onClick={() => setEditing(true)}
-        className="rounded border border-dashed border-slate-300 px-1.5 py-0.5 text-[10px] text-slate-400 hover:border-blue-400 hover:text-blue-600"
+        className="rounded border border-dashed border-slate-300 dark:border-slate-600 px-1.5 py-0.5 text-[10px] text-slate-400 dark:text-slate-500 hover:border-blue-400 hover:text-blue-600"
         title="Set instance count — when > 1, this zone is created N times when the template is applied"
       >
         × 1
@@ -554,7 +554,7 @@ function ZoneCatalogPickerModal({
                           checked={isSelected}
                           disabled={alreadyExists}
                           onChange={() => !alreadyExists && toggleTask(task.id)}
-                          className="h-4 w-4 rounded border-gray-300"
+                          className="h-4 w-4 rounded border-gray-300 dark:border-slate-600"
                         />
                       </td>
                       <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{task.code || '-'}</td>

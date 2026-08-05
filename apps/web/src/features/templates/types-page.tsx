@@ -393,7 +393,7 @@ export function TypesPage() {
       {/* Back link */}
       <button
         onClick={() => navigate('/templates')}
-        className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-400 hover:text-slate-600 transition-colors"
+        className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
         Back to Templates
@@ -401,14 +401,14 @@ export function TypesPage() {
 
       {/* Page title */}
       <div>
-        <h1 className="text-xl font-bold tracking-tight text-slate-900">Types & Categories</h1>
-        <p className="mt-1 text-[13px] text-slate-400">
+        <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">Types & Categories</h1>
+        <p className="mt-1 text-[13px] text-slate-400 dark:text-slate-500">
           Manage types, departments, professions, and project roles
         </p>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-6 border-b border-slate-200">
+      <div className="flex gap-6 border-b border-slate-200 dark:border-slate-700">
         {TABS.map((tab) => (
           <button
             key={tab.key}
@@ -421,7 +421,7 @@ export function TypesPage() {
             className={`pb-2.5 transition-colors ${
               activeTab === tab.key
                 ? 'border-b-2 border-blue-600 text-blue-600 text-[13px] font-semibold'
-                : 'border-b-2 border-transparent text-slate-400 text-[13px] font-semibold hover:text-slate-600'
+                : 'border-b-2 border-transparent text-slate-400 dark:text-slate-500 text-[13px] font-semibold hover:text-slate-600 dark:hover:text-slate-200'
             }`}
           >
             {tab.label}
@@ -430,17 +430,17 @@ export function TypesPage() {
       </div>
 
       {/* Card */}
-      <div className="bg-white rounded-[14px] border border-slate-200 overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 overflow-hidden">
         {/* Toolbar: search + add button */}
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100 dark:border-slate-800">
           <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300 dark:text-slate-600" />
             <input
               type="text"
               placeholder="Search..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+              className="w-full pl-9 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
             />
           </div>
           {canAdd && (
@@ -458,11 +458,11 @@ export function TypesPage() {
         {showForm && canAdd && (
           <form
             onSubmit={handleSubmit}
-            className="border-b border-slate-100 bg-slate-50/60 px-5 py-4"
+            className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/60 px-5 py-4"
           >
             <div className={`grid grid-cols-1 ${isSimpleList ? 'sm:grid-cols-[1fr]' : hasColor ? 'sm:grid-cols-[1fr_120px_160px]' : 'sm:grid-cols-[1fr_120px]'} gap-3 items-end`}>
               <div>
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
                   Name <span className="text-red-400">*</span>
                 </label>
                 <input
@@ -474,29 +474,29 @@ export function TypesPage() {
                     activeTab === 'profession' ? 'e.g. Architect, MEP Engineer' :
                     'e.g. Civil Engineering'
                   }
-                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                   autoFocus
                 />
               </div>
               {!isSimpleList && (
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Code</label>
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Code</label>
                   <input
                     value={formCode}
                     onChange={(e) => setFormCode(e.target.value.toUpperCase())}
                     placeholder="e.g. BIM"
                     maxLength={10}
-                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                   />
                 </div>
               )}
               {hasColor && (
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Color</label>
-                  <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-slate-200 focus-within:border-blue-500">
-                    <span className="inline-block h-3.5 w-3.5 rounded-full shrink-0 border border-slate-200" style={{ backgroundColor: resolveColor(formColor) ?? '#CBD5E1' }} />
-                    <span className="text-sm text-slate-400">#</span>
-                    <input value={formColor} onChange={(e) => setFormColor(e.target.value.replace(/^#/, ''))} placeholder="3B82F6" maxLength={7} className="flex-1 text-sm text-slate-700 focus:outline-none bg-transparent" />
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Color</label>
+                  <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 focus-within:border-blue-500">
+                    <span className="inline-block h-3.5 w-3.5 rounded-full shrink-0 border border-slate-200 dark:border-slate-700" style={{ backgroundColor: resolveColor(formColor) ?? '#CBD5E1' }} />
+                    <span className="text-sm text-slate-400 dark:text-slate-500">#</span>
+                    <input value={formColor} onChange={(e) => setFormColor(e.target.value.replace(/^#/, ''))} placeholder="3B82F6" maxLength={7} className="flex-1 text-sm text-slate-700 dark:text-slate-200 focus:outline-none bg-transparent" />
                   </div>
                 </div>
               )}
@@ -505,7 +505,7 @@ export function TypesPage() {
               <button type="submit" disabled={isCreating} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-50">
                 {isCreating ? 'Creating...' : 'Create'}
               </button>
-              <button type="button" onClick={resetForm} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg transition-colors">
+              <button type="button" onClick={resetForm} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg transition-colors">
                 Cancel
               </button>
             </div>
@@ -518,7 +518,7 @@ export function TypesPage() {
             <TableSkeleton rows={5} cols={hasColor ? 5 : 4} />
           </div>
         ) : rows.length === 0 ? (
-          <p className="py-12 text-center text-[13px] text-slate-400">
+          <p className="py-12 text-center text-[13px] text-slate-400 dark:text-slate-500">
             {search
               ? 'No types match your search.'
               : `No ${TABS.find((t) => t.key === activeTab)?.label?.toLowerCase()} configured yet.`}
@@ -528,18 +528,18 @@ export function TypesPage() {
             <thead>
               <tr className="bg-[#FAFBFC]">
                 {hasColor && (
-                  <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-14">Color</th>
+                  <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] w-14">Color</th>
                 )}
                 {hasNumbering && (
-                  <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-14">#</th>
+                  <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] w-14">#</th>
                 )}
                 {hasCode && !hasNumbering && (
-                  <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-28">Code</th>
+                  <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] w-28">Code</th>
                 )}
-                <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">
+                <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em]">
                   {activeTab === 'department' ? 'Department Name' : activeTab === 'profession' ? 'Job Title Name' : activeTab === 'service' ? 'Category Name' : 'Name'}
                 </th>
-                <th className="px-5 py-2.5 text-right text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em] w-28">Actions</th>
+                <th className="px-5 py-2.5 text-right text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] w-28">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -548,28 +548,28 @@ export function TypesPage() {
 
                 if (isEditing && editing) {
                   return (
-                    <tr key={row.id} className="text-[13px] bg-blue-50/30 border-t border-slate-100">
+                    <tr key={row.id} className="text-[13px] bg-blue-50/30 border-t border-slate-100 dark:border-slate-800">
                       {hasColor && (
                         <td className="px-5 py-2.5">
                           <ColorInput value={editing.color} onChange={(v) => setEditing({ ...editing, color: v })} />
                         </td>
                       )}
                       {hasNumbering && (
-                        <td className="px-5 py-2.5 text-slate-400 font-medium">{rowIdx + 1}</td>
+                        <td className="px-5 py-2.5 text-slate-400 dark:text-slate-500 font-medium">{rowIdx + 1}</td>
                       )}
                       {hasCode && !hasNumbering && (
                         <td className="px-5 py-2.5">
                           <input value={editing.code} onChange={(e) => setEditing({ ...editing, code: e.target.value.toUpperCase() })}
                             onKeyDown={(e) => { if (e.key === 'Enter') saveEditing(); if (e.key === 'Escape') cancelEditing(); }}
                             maxLength={10} placeholder="CODE" disabled={activeTab === 'zone'}
-                            className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400" />
+                            className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400" />
                         </td>
                       )}
                       <td className="px-5 py-2.5">
                         <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                           onKeyDown={(e) => { if (e.key === 'Enter') saveEditing(); if (e.key === 'Escape') cancelEditing(); }}
                           placeholder="Name"
-                          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
+                          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
                           autoFocus />
                       </td>
                       <td className="px-5 py-2.5 text-right">
@@ -579,7 +579,7 @@ export function TypesPage() {
                             <Check className="h-3.5 w-3.5" />
                           </button>
                           <button onClick={cancelEditing}
-                            className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors" title="Cancel">
+                            className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 transition-colors" title="Cancel">
                             <X className="h-3.5 w-3.5" />
                           </button>
                         </div>
@@ -590,33 +590,33 @@ export function TypesPage() {
 
                 return (
                   <tr key={row.id} onClick={() => startEditing(row)}
-                    className="text-[13px] hover:bg-slate-50 border-t border-slate-100 transition-colors cursor-pointer">
+                    className="text-[13px] hover:bg-slate-50 dark:hover:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 transition-colors cursor-pointer">
                     {hasColor && (
                       <td className="px-5 py-3">
                         {resolveColor(row.color) ? (
                           <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: resolveColor(row.color) }} />
                         ) : (
-                          <span className="inline-block h-3 w-3 rounded-full bg-slate-200" />
+                          <span className="inline-block h-3 w-3 rounded-full bg-slate-200 dark:bg-slate-700" />
                         )}
                       </td>
                     )}
                     {hasNumbering && (
-                      <td className="px-5 py-3 text-slate-500 font-medium">{rowIdx + 1}</td>
+                      <td className="px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">{rowIdx + 1}</td>
                     )}
                     {hasCode && !hasNumbering && (
                       <td className="px-5 py-3">
                         {row.code ? (
-                          <span className="rounded-[5px] bg-slate-50 text-slate-600 text-[11px] font-bold tracking-wide px-2 py-0.5">{row.code}</span>
+                          <span className="rounded-[5px] bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 text-[11px] font-bold tracking-wide px-2 py-0.5">{row.code}</span>
                         ) : (
-                          <span className="text-slate-300">--</span>
+                          <span className="text-slate-300 dark:text-slate-600">--</span>
                         )}
                       </td>
                     )}
-                    <td className="px-5 py-3 font-medium text-slate-700">{row.name}</td>
+                    <td className="px-5 py-3 font-medium text-slate-700 dark:text-slate-200">{row.name}</td>
                     <td className="px-5 py-3 text-right">
                       {canDelete && (
                         <button onClick={(e) => { e.stopPropagation(); handleDelete(row); }}
-                          className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] hover:bg-red-50 text-slate-300 hover:text-red-600 transition-colors" title={`Delete ${row.name}`}>
+                          className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-[7px] hover:bg-red-50 text-slate-300 dark:text-slate-600 hover:text-red-600 transition-colors" title={`Delete ${row.name}`}>
                           <Trash2 className="h-4 w-4" />
                         </button>
                       )}
@@ -630,8 +630,8 @@ export function TypesPage() {
 
         {/* Footer count */}
         {!isLoading && rows.length > 0 && (
-          <div className="px-5 py-3 border-t border-slate-100 bg-[#FAFBFC]">
-            <span className="text-[11px] font-semibold text-slate-400 tracking-wide">
+          <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 bg-[#FAFBFC]">
+            <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 tracking-wide">
               {rows.length} {rows.length === 1 ? 'type' : 'types'}
               {search && ' matching'}
             </span>
