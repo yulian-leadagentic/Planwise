@@ -2,7 +2,9 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { MessageSquare, Send, Reply, Pencil, Trash2, AtSign, ChevronDown, ChevronRight, CheckCircle, Sparkles, XCircle, Users, UserPlus, Search, Check, Paperclip, FileText, X } from 'lucide-react';
 import { notify } from '@/lib/notify';
-import { useMessages, useCreateMessage, useDeleteMessage } from '@/hooks/use-messages';
+import { useMessages, useCreateMessage, useDeleteMessage, useUpdateMessage } from '@/hooks/use-messages';
+import { useConfirm } from '@/components/shared/confirm-dialog';
+import { useAuthStore } from '@/stores/auth.store';
 import { cn } from '@/lib/utils';
 import { formatRelative } from '@/lib/date-utils';
 import client from '@/api/client';
@@ -17,31 +19,19 @@ function getInitials(firstName: string, lastName: string) {
 }
 
 // ─── Mention Autocomplete ────────────────────────────────────────────────────
+//
+// Controlled renderer. The composer owns the filtered users list AND the
+// active highlight index so the popup and the textarea share keyboard
+// state — the composer's onKeyDown intercepts ↑/↓/Enter/Tab/Escape
+// while the popup is open and reflects the current highlight back here.
 
-function MentionAutocomplete({ search, onSelect, onClose }: {
-  search: string;
+function MentionAutocomplete({ users, activeIndex, onHoverIndex, onSelect, onClose }: {
+  users: any[];
+  activeIndex: number;
+  onHoverIndex: (i: number) => void;
   onSelect: (user: any) => void;
   onClose: () => void;
 }) {
-  const { data: users = [] } = useQuery<any[]>({
-    queryKey: ['users-active-mention', search],
-    staleTime: 30 * 1000,
-    queryFn: () =>
-      client.get('/users?isActive=true&perPage=1000').then((r) => {
-        const d = r.data?.data ?? r.data;
-        return Array.isArray(d) ? d : [];
-      }),
-  });
-
-  const filtered = useMemo(() => {
-    if (!search) return users.slice(0, 8);
-    const q = search.toLowerCase();
-    return users.filter((u: any) => {
-      const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.toLowerCase();
-      return name.includes(q) || (u.email ?? '').toLowerCase().includes(q);
-    }).slice(0, 8);
-  }, [users, search]);
-
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -51,27 +41,46 @@ function MentionAutocomplete({ search, onSelect, onClose }: {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [onClose]);
 
-  if (filtered.length === 0) return null;
+  if (users.length === 0) return null;
 
   return (
-    <div ref={ref} className="absolute bottom-full left-0 mb-1 w-64 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl z-20">
+    <div
+      ref={ref}
+      role="listbox"
+      aria-label="Mention suggestions"
+      className="absolute bottom-full left-0 mb-1 w-64 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl z-20"
+    >
       <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
         Mention a team member
       </div>
       <div className="max-h-48 overflow-y-auto py-1">
-        {filtered.map((u: any) => (
-          <button
-            key={u.id}
-            type="button"
-            onClick={() => onSelect(u)}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-blue-50 text-left"
-          >
-            <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-[9px] font-semibold flex items-center justify-center shrink-0">
-              {getInitials(u.firstName ?? '', u.lastName ?? '')}
-            </span>
-            <span className="truncate text-slate-700 dark:text-slate-200">{u.firstName} {u.lastName}</span>
-          </button>
-        ))}
+        {users.map((u: any, i: number) => {
+          const isActive = i === activeIndex;
+          return (
+            <button
+              key={u.id}
+              type="button"
+              role="option"
+              aria-selected={isActive}
+              // onMouseDown (not onClick) so the pick fires BEFORE the
+              // textarea's blur — otherwise the popup closes on the blur
+              // without ever inserting the name.
+              onMouseDown={(e) => { e.preventDefault(); onSelect(u); }}
+              onMouseEnter={() => onHoverIndex(i)}
+              className={cn(
+                'w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left',
+                isActive
+                  ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                  : 'hover:bg-blue-50 dark:hover:bg-blue-900/20 text-slate-700 dark:text-slate-200',
+              )}
+            >
+              <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-[9px] font-semibold flex items-center justify-center shrink-0">
+                {getInitials(u.firstName ?? '', u.lastName ?? '')}
+              </span>
+              <span className="truncate">{u.firstName} {u.lastName}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -87,6 +96,7 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
 }) {
   const [content, setContent] = useState('');
   const [mentionSearch, setMentionSearch] = useState<string | null>(null);
+  const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
   const [mentionedUsers, setMentionedUsers] = useState<{ id: number; name: string }[]>([]);
   const [showRecipientPicker, setShowRecipientPicker] = useState(false);
   // Attachments — files chosen via the paperclip icon. Upload happens on
@@ -104,6 +114,47 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
   // OR when nested inside a task whose project we know via ancestry. We only
   // fetch when the picker is open to avoid extra requests.
   const projectIdForRecipients = entityType === 'project' ? entityId : null;
+
+  // Mention users — lifted out of MentionAutocomplete so the composer's
+  // onKeyDown can read the current filtered list to select by index
+  // (Arrow keys + Enter/Tab), and so a single cached fetch backs the
+  // popup across search-term changes (previously the queryKey included
+  // the search term, wasting the cache).
+  const { data: mentionUsers = [] } = useQuery<any[]>({
+    queryKey: ['users-active-mention'],
+    staleTime: 30 * 1000,
+    enabled: mentionSearch !== null,
+    queryFn: () =>
+      client.get('/users?isActive=true&perPage=1000').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+
+  const filteredMentions = useMemo(() => {
+    if (mentionSearch === null) return [] as any[];
+    if (!mentionSearch) return mentionUsers.slice(0, 8);
+    const q = mentionSearch.toLowerCase();
+    return mentionUsers
+      .filter((u: any) => {
+        const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.toLowerCase();
+        return name.includes(q) || (u.email ?? '').toLowerCase().includes(q);
+      })
+      .slice(0, 8);
+  }, [mentionUsers, mentionSearch]);
+
+  // Whether the mention popup is currently "capturing" keystrokes.
+  // We're in mention MODE any time mentionSearch !== null (the user is
+  // mid-@type) — even when zero users match, send stays suppressed so
+  // an accidental Enter can't fire the message. Escape / typing past
+  // the token / picking a match all exit the mode.
+  const mentionOpen = mentionSearch !== null;
+
+  // Reset the highlighted row when the filter set changes so the arrow
+  // keys don't try to select an out-of-range index.
+  useEffect(() => {
+    setMentionActiveIndex(0);
+  }, [mentionSearch, filteredMentions.length]);
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
@@ -201,6 +252,40 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Mention mode captures navigation keys and, critically, SUPPRESSES
+    // the plain-Enter → send path. Otherwise typing "@amit<Enter>" sent
+    // the message instead of picking Amit.
+    if (mentionOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMentionSearch(null);
+        return;
+      }
+      if (filteredMentions.length > 0) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setMentionActiveIndex((i) => (i + 1) % filteredMentions.length);
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setMentionActiveIndex((i) => (i - 1 + filteredMentions.length) % filteredMentions.length);
+          return;
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          handleMentionSelect(filteredMentions[mentionActiveIndex]);
+          return;
+        }
+      }
+      // Zero matches — still swallow plain Enter so an accidental send
+      // can't slip through while the user is mid-@ typing.
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        return;
+      }
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
@@ -222,9 +307,11 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
 
   return (
     <div className="relative">
-      {mentionSearch !== null && (
+      {mentionOpen && (
         <MentionAutocomplete
-          search={mentionSearch}
+          users={filteredMentions}
+          activeIndex={mentionActiveIndex}
+          onHoverIndex={setMentionActiveIndex}
           onSelect={handleMentionSelect}
           onClose={() => setMentionSearch(null)}
         />
@@ -547,10 +634,39 @@ function MessageItem({ message, entityType, entityId, depth = 0 }: {
 }) {
   const [showReply, setShowReply] = useState(false);
   const [showReplies, setShowReplies] = useState(depth === 0);
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState<string>(message.content ?? '');
   const deleteMessage = useDeleteMessage();
+  const updateMessage = useUpdateMessage();
+  const confirm = useConfirm();
+  // Author-vs-viewer check. Own messages surface Edit/Delete affordances;
+  // everyone else's are read-only. Falls back to false when the auth
+  // store hasn't loaded a user yet, so the affordances only appear once
+  // we can confirm identity.
+  const currentUserId = useAuthStore((s) => s.user?.id);
   const author = message.author;
+  const isOwn = !!currentUserId && author?.id === currentUserId;
   const isSystem = message.type === 'system';
   const replyCount = message._count?.replies ?? message.replies?.length ?? 0;
+
+  const handleSaveEdit = () => {
+    const next = editContent.trim();
+    // Empty edit → treat as no-op (delete flow is explicit via trash icon).
+    if (!next || next === (message.content ?? '')) {
+      setEditing(false);
+      return;
+    }
+    updateMessage.mutate(
+      { id: message.id, content: next },
+      { onSuccess: () => setEditing(false) },
+    );
+  };
+
+  const handleDelete = async () => {
+    if (await confirm('Delete this message? This cannot be undone.')) {
+      deleteMessage.mutate(message.id);
+    }
+  };
 
   if (isSystem) {
     return (
@@ -581,7 +697,54 @@ function MessageItem({ message, entityType, entityId, depth = 0 }: {
               </span>
             )}
           </div>
-          <p className="text-[13px] text-slate-700 dark:text-slate-200 mt-0.5 whitespace-pre-wrap break-words">{message.content}</p>
+          {editing ? (
+            <div className="mt-1 space-y-1.5">
+              <textarea
+                autoFocus
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                onKeyDown={(e) => {
+                  // Cmd/Ctrl+Enter → save. Escape → cancel. Plain Enter
+                  // inserts a newline (multi-line messages are a thing).
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    handleSaveEdit();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setEditing(false);
+                    setEditContent(message.content ?? '');
+                  }
+                }}
+                rows={Math.max(2, Math.min(6, (editContent.match(/\n/g)?.length ?? 0) + 1))}
+                className="w-full rounded-md border border-blue-300 dark:border-blue-500 bg-white dark:bg-slate-900 px-2 py-1.5 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none resize-y"
+                aria-label="Edit message"
+              />
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleSaveEdit}
+                  disabled={updateMessage.isPending || !editContent.trim()}
+                  className="rounded-md bg-blue-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {updateMessage.isPending ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setEditing(false); setEditContent(message.content ?? ''); }}
+                  disabled={updateMessage.isPending}
+                  className="rounded-md px-2 py-1 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <span className="text-[10px] text-slate-400 dark:text-slate-500 ml-1">
+                  Cmd/Ctrl+Enter to save · Esc to cancel
+                </span>
+              </div>
+            </div>
+          ) : (
+            <p className="text-[13px] text-slate-700 dark:text-slate-200 mt-0.5 whitespace-pre-wrap break-words">{message.content}</p>
+          )}
 
           {/* Attachment chips — files attached when the user sent the
               message. metadata.attachments is an array of {fileName,
@@ -599,20 +762,43 @@ function MessageItem({ message, entityType, entityId, depth = 0 }: {
             </div>
           )}
 
-          {/* Actions */}
+          {/* Actions — Edit/Delete only rendered for the author of the
+              message so viewers never see affordances they can't use
+              (server also rejects, but hiding is the friendlier UX). */}
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <button
               onClick={() => setShowReply(!showReply)}
               className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-blue-600"
             >
-              <Reply className="h-3 w-3" />Reply
+              <Reply className="h-3 w-3" aria-hidden="true" />Reply
             </button>
+            {isOwn && !editing && (
+              <>
+                <button
+                  onClick={() => { setEditContent(message.content ?? ''); setEditing(true); }}
+                  className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-blue-600"
+                  aria-label="Edit your message"
+                  title="Edit"
+                >
+                  <Pencil className="h-3 w-3" aria-hidden="true" />Edit
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleteMessage.isPending}
+                  className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-red-600 disabled:opacity-50"
+                  aria-label="Delete your message"
+                  title="Delete"
+                >
+                  <Trash2 className="h-3 w-3" aria-hidden="true" />Delete
+                </button>
+              </>
+            )}
             {replyCount > 0 && depth === 0 && (
               <button
                 onClick={() => setShowReplies(!showReplies)}
                 className="flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-700"
               >
-                {showReplies ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                {showReplies ? <ChevronDown className="h-3 w-3" aria-hidden="true" /> : <ChevronRight className="h-3 w-3" aria-hidden="true" />}
                 {replyCount} {replyCount === 1 ? 'reply' : 'replies'}
               </button>
             )}
@@ -664,11 +850,13 @@ function ThreadActions({ messageId, entityType, entityId, isResolved }: {
   const resolveMutation = useMutation({
     mutationFn: () => client.post(`/messages/${messageId}/resolve`).then((r) => r.data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['messages', entityType, entityId] }),
+    onError: (err: any) => notify.apiError(err, 'Failed to resolve thread'),
   });
 
   const unresolveMutation = useMutation({
     mutationFn: () => client.post(`/messages/${messageId}/unresolve`).then((r) => r.data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['messages', entityType, entityId] }),
+    onError: (err: any) => notify.apiError(err, 'Failed to unresolve thread'),
   });
 
   const { data: summary, isLoading: summarizing, refetch: fetchSummary } = useQuery({
