@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { X, Clock, Paperclip, MessageSquare, UserPlus, ChevronDown, Search, Trash2, AlertCircle, AlertTriangle, Calendar, FileText, Pencil, Send, Check, RotateCcw } from 'lucide-react';
 import client from '@/api/client';
 import { NavLinkWithReturn } from '@/components/nav/return-route';
@@ -18,6 +19,9 @@ import { STATUS_LABEL } from '@/lib/task-constants';
 import { usePermissions } from '@/hooks/use-permissions';
 import { TaskChecklist } from '@/features/tasks/task-checklist';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+// Shared with the Modal shell so both surfaces enforce the same
+// WCAG 2.2 AA tab-trap semantics.
+import { useFocusTrap } from '@/components/shared/use-focus-trap';
 
 interface TaskDrawerProps {
   taskId: number | null;
@@ -34,6 +38,15 @@ interface TaskDrawerProps {
 const STATUS_OPTIONS = ['not_started', 'in_progress', 'in_review', 'completed', 'on_hold', 'cancelled'];
 const PRIORITY_OPTIONS = ['low', 'medium', 'high', 'critical'];
 
+type TabKey = 'time' | 'details' | 'files' | 'discussion';
+const VALID_TABS: TabKey[] = ['time', 'details', 'files', 'discussion'];
+function parseTab(raw: string | null, hideTimeTab: boolean): TabKey | null {
+  if (!raw || !VALID_TABS.includes(raw as TabKey)) return null;
+  // 'time' isn't valid when the Time tab is hidden.
+  if (raw === 'time' && hideTimeTab) return null;
+  return raw as TabKey;
+}
+
 const statusColors: Record<string, string> = {
   not_started: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300', in_progress: 'bg-blue-100 text-blue-700',
   in_review: 'bg-violet-100 text-violet-700', completed: 'bg-emerald-100 text-emerald-700',
@@ -47,11 +60,16 @@ const priorityColors: Record<string, string> = {
 
 export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerProps) {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   // Default to "details" when the Time tab is hidden, since "time" wouldn't
   // be a valid choice. Otherwise keep the previous default ("time") so the
   // worker-facing flow lands on the time-entry form as it always has.
-  const [tab, setTab] = useState<'time' | 'details' | 'files' | 'discussion'>(
-    hideTimeTab ? 'details' : 'time',
+  const defaultTab: TabKey = hideTimeTab ? 'details' : 'time';
+  // Initialize the active tab from the URL (?tab=...) so a deep link
+  // like /path?task=42&tab=files opens the drawer already on Files.
+  // Ignore malformed / disallowed values and fall through to the default.
+  const [tab, setTabState] = useState<TabKey>(
+    () => parseTab(searchParams.get('tab'), hideTimeTab) ?? defaultTab,
   );
   const drawerRef = useRef<HTMLDivElement>(null);
 
@@ -61,18 +79,87 @@ export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerP
     enabled: !!taskId,
   });
 
-  // Focus drawer on open + close on Escape + restore focus on close
+  // Persist the tab in the URL so back / refresh / outbound-return
+  // (see NavLinkWithReturn) restore the same tab, and remove the param
+  // when the tab is the default so the URL stays clean.
+  const setTab = useCallback((next: TabKey) => {
+    setTabState(next);
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      if (next === defaultTab) p.delete('tab');
+      else p.set('tab', next);
+      return p;
+    }, { replace: true });
+  }, [defaultTab, setSearchParams]);
+
+  // Reset the tab when the drawer switches from one task to another so
+  // the previous task's tab (e.g. Files) doesn't carry over. Also fires
+  // on close (taskId → null) so re-opening a fresh drawer starts on the
+  // default tab.
+  //
+  // NB — first mount (prev === current) is a no-op, so the useState
+  // initializer's URL-derived value survives for real deep links like
+  // /path?task=42&tab=files. Subsequent task changes forcibly land on
+  // the default AND drop the stale ?tab= param — otherwise a leftover
+  // ?tab=files from the previous task would silently keep the URL out
+  // of sync with the just-reset state.
+  //
+  // Guarded by a ref so this fires only on ACTUAL taskId transitions,
+  // not every re-render.
+  const prevTaskId = useRef(taskId);
+  useEffect(() => {
+    if (prevTaskId.current === taskId) return;
+    prevTaskId.current = taskId;
+    setTabState(defaultTab);
+    setSearchParams((prev) => {
+      if (!prev.has('tab')) return prev;
+      const p = new URLSearchParams(prev);
+      p.delete('tab');
+      return p;
+    }, { replace: true });
+  }, [taskId, defaultTab, setSearchParams]);
+
+  // Focus the drawer on open + restore focus on close. Tab-trap is
+  // delegated to useFocusTrap (shared with the Modal shell) so a Tab
+  // press inside the drawer wraps to the first/last focusable instead
+  // of leaking focus to the page underneath.
   useEffect(() => {
     if (!taskId) return;
-    const prevFocus = document.activeElement as HTMLElement;
-    setTimeout(() => drawerRef.current?.focus(), 0);
-
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', handler);
+    const prevFocus = document.activeElement as HTMLElement | null;
+    const raf = requestAnimationFrame(() => drawerRef.current?.focus());
     return () => {
-      document.removeEventListener('keydown', handler);
-      prevFocus?.focus?.();
+      cancelAnimationFrame(raf);
+      try { prevFocus?.focus?.(); } catch { /* trigger may have unmounted */ }
     };
+  }, [taskId]);
+
+  useFocusTrap(!!taskId, drawerRef);
+
+  // Escape closes the drawer — but NOT when focus is inside an inline
+  // sub-editor (due-date, assignee search, time-entry inputs, review
+  // reason, etc.). Otherwise pressing Escape to cancel a field wipes
+  // the whole drawer, which is jarring and destroys unsaved work. The
+  // sub-editor's own onKeyDown handles the field-level Escape; we
+  // simply yield the keystroke to it.
+  useEffect(() => {
+    if (!taskId) return;
+    const isFieldEditor = (el: Element | null): boolean => {
+      if (!el || !(el instanceof HTMLElement)) return false;
+      // Only elements INSIDE this drawer count — a stray focused input
+      // on the page underneath shouldn't block the drawer's Escape.
+      if (drawerRef.current && !drawerRef.current.contains(el)) return false;
+      const tag = el.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+      if (el.isContentEditable) return true;
+      return false;
+    };
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (isFieldEditor(document.activeElement)) return;
+      onClose();
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
   }, [taskId, onClose]);
 
   const updateTask = useMutation({

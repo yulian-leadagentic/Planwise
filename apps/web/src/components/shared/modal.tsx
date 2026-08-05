@@ -34,28 +34,9 @@
 import { useEffect, useId, useRef, useCallback } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-// Selector used by getFocusable(). Same set most WAI-ARIA authoring
-// docs recommend — tabbable elements, positive/zero tabindex, no
-// disabled or hidden.
-const FOCUSABLE_SELECTOR = [
-  'a[href]',
-  'button:not([disabled])',
-  'textarea:not([disabled])',
-  'input:not([disabled]):not([type="hidden"])',
-  'select:not([disabled])',
-  '[tabindex]:not([tabindex="-1"])',
-  'audio[controls]',
-  'video[controls]',
-  '[contenteditable]:not([contenteditable="false"])',
-].join(',');
-
-function getFocusable(root: HTMLElement | null): HTMLElement[] {
-  if (!root) return [];
-  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-    (el) => !el.hasAttribute('data-focus-skip') && el.offsetParent !== null,
-  );
-}
+// Extracted so the TaskDrawer (and any future modal-shaped surface)
+// runs the exact same tab-trap semantics as this shell.
+import { getFocusable, useFocusTrap } from './use-focus-trap';
 
 export interface ModalProps {
   open: boolean;
@@ -166,33 +147,18 @@ export function Modal({
     return () => { document.body.style.overflow = prev; };
   }, [open]);
 
-  // Escape + focus-trap keyboard handling.
+  // Tab-trap — shared with TaskDrawer.
+  useFocusTrap(open, panelRef);
+
+  // Escape close — kept here (not in useFocusTrap) because the drawer
+  // wants a guarded variant that yields to inline sub-editors, and the
+  // modal wants the unguarded "always closes" behavior.
   useEffect(() => {
-    if (!open) return;
+    if (!open || escapeDisabled) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !escapeDisabled) {
-        e.stopPropagation();
-        requestClose();
-        return;
-      }
-      if (e.key !== 'Tab') return;
-      const focusables = getFocusable(panelRef.current);
-      if (focusables.length === 0) {
-        e.preventDefault();
-        panelRef.current?.focus();
-        return;
-      }
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      const active = document.activeElement as HTMLElement | null;
-      // Wrap-around trap: focus the "other end" when you Tab off it.
-      if (e.shiftKey && active === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
-      }
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      requestClose();
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
