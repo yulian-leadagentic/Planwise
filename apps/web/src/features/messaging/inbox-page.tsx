@@ -44,7 +44,7 @@ export function InboxPage() {
       />
 
       {/* Tabs */}
-      <div className="flex gap-1 rounded-lg bg-slate-100 p-1 w-fit">
+      <div className="flex gap-1 rounded-lg bg-slate-100 dark:bg-slate-800 p-1 w-fit">
         {([
           { key: 'all', label: 'All' },
           { key: 'mentions', label: 'Mentions' },
@@ -55,7 +55,7 @@ export function InboxPage() {
             onClick={() => setTab(t.key)}
             className={cn(
               'px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
-              tab === t.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+              tab === t.key ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
             )}
           >
             {t.label}
@@ -67,9 +67,9 @@ export function InboxPage() {
         <PageSkeleton />
       ) : filtered.length === 0 ? (
         <div className="py-12 text-center">
-          <MessageSquare className="mx-auto h-12 w-12 text-slate-300" />
-          <p className="mt-3 text-sm font-medium text-slate-700">No messages</p>
-          <p className="mt-1 text-sm text-slate-400">
+          <MessageSquare className="mx-auto h-12 w-12 text-slate-300 dark:text-slate-600" />
+          <p className="mt-3 text-sm font-medium text-slate-700 dark:text-slate-200">No messages</p>
+          <p className="mt-1 text-sm text-slate-400 dark:text-slate-500">
             {tab === 'mentions' ? "You haven't been mentioned yet." : 'Your inbox is empty.'}
           </p>
         </div>
@@ -83,7 +83,7 @@ export function InboxPage() {
             return (
               <div
                 key={msg.id}
-                className="rounded-lg border border-slate-200 bg-white p-4 hover:border-blue-300 hover:bg-blue-50/20 cursor-pointer transition-colors"
+                className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 hover:border-blue-300 hover:bg-blue-50/20 cursor-pointer transition-colors"
                 onClick={() => navigate(getEntityLink(msg))}
               >
                 <div className="flex items-start gap-3">
@@ -95,10 +95,10 @@ export function InboxPage() {
                   <div className="flex-1 min-w-0">
                     {/* Header */}
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-semibold text-slate-800">
+                      <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
                         {author ? `${author.firstName} ${author.lastName}` : 'System'}
                       </span>
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                      <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-500 dark:text-slate-400">
                         {entityLabels[msg.entityType] || msg.entityType}
                       </span>
                       {hasMentions && (
@@ -106,13 +106,13 @@ export function InboxPage() {
                           <AtSign className="h-2.5 w-2.5" /> mentioned you
                         </span>
                       )}
-                      <span className="text-[11px] text-slate-400 ml-auto shrink-0">
+                      <span className="text-[11px] text-slate-400 dark:text-slate-500 ml-auto shrink-0">
                         {formatRelative(msg.createdAt)}
                       </span>
                     </div>
 
                     {/* Content preview */}
-                    <p className="mt-1 text-[13px] text-slate-600 line-clamp-2">{msg.content}</p>
+                    <p className="mt-1 text-[13px] text-slate-600 dark:text-slate-300 line-clamp-2">{msg.content}</p>
 
                     {/* Reply count */}
                     {replyCount > 0 && (
@@ -123,7 +123,7 @@ export function InboxPage() {
                     )}
                   </div>
 
-                  <ChevronRight className="h-4 w-4 text-slate-300 shrink-0 mt-2" />
+                  <ChevronRight className="h-4 w-4 text-slate-300 dark:text-slate-600 shrink-0 mt-2" />
                 </div>
               </div>
             );

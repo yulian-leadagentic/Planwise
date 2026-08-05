@@ -41,20 +41,20 @@ export function MessageSearchPage() {
       {/* Search bar */}
       <div className="flex gap-3">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500" />
           <input
             type="text"
             value={query}
             onChange={(e) => { setQuery(e.target.value); setPage(1); }}
             placeholder="Search messages, discussions, mentions..."
-            className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none"
+            className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none"
             autoFocus
           />
         </div>
         <select
           value={entityTypeFilter}
           onChange={(e) => { setEntityTypeFilter(e.target.value); setPage(1); }}
-          className="px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700"
+          className="px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200"
         >
           <option value="">All types</option>
           <option value="project">Projects</option>
@@ -66,19 +66,19 @@ export function MessageSearchPage() {
       {/* Results */}
       {query.length < 2 ? (
         <div className="py-12 text-center">
-          <Search className="mx-auto h-12 w-12 text-slate-300" />
-          <p className="mt-3 text-sm text-slate-400">Type at least 2 characters to search</p>
+          <Search className="mx-auto h-12 w-12 text-slate-300 dark:text-slate-600" />
+          <p className="mt-3 text-sm text-slate-400 dark:text-slate-500">Type at least 2 characters to search</p>
         </div>
       ) : isLoading ? (
-        <div className="py-12 text-center text-sm text-slate-400">Searching...</div>
+        <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Searching...</div>
       ) : results.length === 0 ? (
         <div className="py-12 text-center">
-          <MessageSquare className="mx-auto h-12 w-12 text-slate-300" />
-          <p className="mt-3 text-sm text-slate-500">No messages found for "{query}"</p>
+          <MessageSquare className="mx-auto h-12 w-12 text-slate-300 dark:text-slate-600" />
+          <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">No messages found for "{query}"</p>
         </div>
       ) : (
         <>
-          <p className="text-[12px] font-medium text-slate-400">
+          <p className="text-[12px] font-medium text-slate-400 dark:text-slate-500">
             {meta.total} result{meta.total !== 1 ? 's' : ''} for "{query}"
           </p>
           <div className="space-y-2">
@@ -101,7 +101,7 @@ export function MessageSearchPage() {
               return (
                 <div
                   key={msg.id}
-                  className="rounded-lg border border-slate-200 bg-white p-4 hover:border-blue-300 cursor-pointer transition-colors"
+                  className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 hover:border-blue-300 cursor-pointer transition-colors"
                   onClick={() => {
                     if (msg.entityType === 'project') navigate(`/projects/${msg.entityId}`);
                     else navigate('/inbox');
@@ -113,24 +113,24 @@ export function MessageSearchPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-slate-800">
+                        <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
                           {author ? `${author.firstName} ${author.lastName}` : 'System'}
                         </span>
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                        <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-500 dark:text-slate-400">
                           {entityLabels[msg.entityType] || msg.entityType}
                         </span>
                         {msg.parent && (
-                          <span className="text-[10px] text-slate-400">reply to thread</span>
+                          <span className="text-[10px] text-slate-400 dark:text-slate-500">reply to thread</span>
                         )}
-                        <span className="text-[11px] text-slate-400 ml-auto shrink-0">
+                        <span className="text-[11px] text-slate-400 dark:text-slate-500 ml-auto shrink-0">
                           {formatRelative(msg.createdAt)}
                         </span>
                       </div>
-                      <p className="mt-1 text-[13px] text-slate-600 line-clamp-3">
+                      <p className="mt-1 text-[13px] text-slate-600 dark:text-slate-300 line-clamp-3">
                         {highlightContent(msg.content)}
                       </p>
                     </div>
-                    <ChevronRight className="h-4 w-4 text-slate-300 shrink-0 mt-2" />
+                    <ChevronRight className="h-4 w-4 text-slate-300 dark:text-slate-600 shrink-0 mt-2" />
                   </div>
                 </div>
               );
@@ -143,17 +143,17 @@ export function MessageSearchPage() {
               <button
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={page === 1}
-                className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm disabled:opacity-50"
+                className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm disabled:opacity-50"
               >
                 Previous
               </button>
-              <span className="text-sm text-slate-500">
+              <span className="text-sm text-slate-500 dark:text-slate-400">
                 Page {page} of {meta.totalPages}
               </span>
               <button
                 onClick={() => setPage((p) => Math.min(meta.totalPages, p + 1))}
                 disabled={page >= meta.totalPages}
-                className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm disabled:opacity-50"
+                className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm disabled:opacity-50"
               >
                 Next
               </button>

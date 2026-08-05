@@ -54,8 +54,8 @@ function MentionAutocomplete({ search, onSelect, onClose }: {
   if (filtered.length === 0) return null;
 
   return (
-    <div ref={ref} className="absolute bottom-full left-0 mb-1 w-64 rounded-lg border border-slate-200 bg-white shadow-xl z-20">
-      <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-100">
+    <div ref={ref} className="absolute bottom-full left-0 mb-1 w-64 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl z-20">
+      <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
         Mention a team member
       </div>
       <div className="max-h-48 overflow-y-auto py-1">
@@ -69,7 +69,7 @@ function MentionAutocomplete({ search, onSelect, onClose }: {
             <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-[9px] font-semibold flex items-center justify-center shrink-0">
               {getInitials(u.firstName ?? '', u.lastName ?? '')}
             </span>
-            <span className="truncate text-slate-700">{u.firstName} {u.lastName}</span>
+            <span className="truncate text-slate-700 dark:text-slate-200">{u.firstName} {u.lastName}</span>
           </button>
         ))}
       </div>
@@ -231,11 +231,11 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
       )}
 
       {/* Recipient bar — always visible to make the audience explicit */}
-      <div className="mb-2 flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
-        <span className="text-[11px] font-semibold text-slate-500 mt-1.5 shrink-0">To:</span>
+      <div className="mb-2 flex items-start gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 px-3 py-2">
+        <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-1.5 shrink-0">To:</span>
         <div className="flex-1 flex flex-wrap items-center gap-1.5">
           {mentionedUsers.length === 0 ? (
-            <span className="text-[12px] text-slate-400 italic py-1">
+            <span className="text-[12px] text-slate-400 dark:text-slate-500 italic py-1">
               Visible in this {entityType} discussion. Add recipients to notify specific people.
             </span>
           ) : (
@@ -251,7 +251,7 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
           <button
             type="button"
             onClick={() => setShowRecipientPicker(!showRecipientPicker)}
-            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:border-blue-400 hover:text-blue-600"
+            className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:border-blue-400 hover:text-blue-600"
           >
             <UserPlus className="h-3 w-3" />
             Add recipients
@@ -275,7 +275,7 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
           {pendingFiles.map((f, i) => (
             <span
               key={`${f.name}-${i}`}
-              className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-white px-2 py-0.5 text-[11px] text-slate-700"
+              className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-white dark:bg-slate-900 px-2 py-0.5 text-[11px] text-slate-700 dark:text-slate-200"
               title={`${f.name} (${(f.size / 1024).toFixed(0)} KB)`}
             >
               <FileText className="h-3 w-3 text-blue-500" />
@@ -283,7 +283,7 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
               <button
                 type="button"
                 onClick={() => removePendingFile(i)}
-                className="ml-0.5 text-slate-400 hover:text-red-500"
+                className="ml-0.5 text-slate-400 dark:text-slate-500 hover:text-red-500"
                 aria-label={`Remove ${f.name}`}
               >
                 <X className="h-3 w-3" />
@@ -293,7 +293,7 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
         </div>
       )}
 
-      <div className="flex items-end gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+      <div className="flex items-end gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2">
         <input
           ref={fileInputRef}
           type="file"
@@ -305,7 +305,7 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading || createMessage.isPending}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50 shrink-0"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-100 disabled:opacity-50 shrink-0"
           title="Attach files"
           aria-label="Attach files"
         >
@@ -318,7 +318,7 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
           onKeyDown={handleKeyDown}
           placeholder={parentId ? 'Write a reply...' : 'Write a message... use @ to inline-mention'}
           rows={1}
-          className="flex-1 resize-none text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none"
+          className="flex-1 resize-none text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none"
           style={{ minHeight: '24px', maxHeight: '120px' }}
         />
         <button
@@ -351,13 +351,13 @@ export function MessageAttachments({ metadata }: { metadata: any }) {
           href={a.fileUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700"
+          className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-2 py-0.5 text-[11px] text-slate-700 dark:text-slate-200 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700"
           title={a.fileName}
         >
           <FileText className="h-3 w-3 text-blue-500" />
           <span className="truncate max-w-[200px]">{a.fileName}</span>
           {a.fileSize ? (
-            <span className="text-slate-400 ml-0.5">
+            <span className="text-slate-400 dark:text-slate-500 ml-0.5">
               {a.fileSize < 1024
                 ? `${a.fileSize}B`
                 : a.fileSize < 1024 * 1024
@@ -449,10 +449,10 @@ function RecipientPicker({
   };
 
   return (
-    <div ref={ref} className="absolute right-0 top-full mt-1 w-80 rounded-lg border border-slate-200 bg-white shadow-xl z-30">
+    <div ref={ref} className="absolute right-0 top-full mt-1 w-80 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl z-30">
       {/* Quick groups */}
-      <div className="p-2 border-b border-slate-100">
-        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-2 pt-1 pb-1.5">
+      <div className="p-2 border-b border-slate-100 dark:border-slate-800">
+        <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-2 pt-1 pb-1.5">
           Quick add
         </p>
         {projectId && (
@@ -460,28 +460,28 @@ function RecipientPicker({
             type="button"
             onClick={handleAddProjectTeam}
             disabled={projectTeamUsers.length === 0}
-            className="w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-700 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-700 dark:text-slate-200 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <span className="flex h-7 w-7 items-center justify-center rounded-md bg-emerald-100 text-emerald-600">
               <Users className="h-3.5 w-3.5" />
             </span>
             <span className="flex-1 text-left">
               <span className="block font-medium">Project Team</span>
-              <span className="block text-[11px] text-slate-400">{projectTeamUsers.length} member{projectTeamUsers.length === 1 ? '' : 's'}</span>
+              <span className="block text-[11px] text-slate-400 dark:text-slate-500">{projectTeamUsers.length} member{projectTeamUsers.length === 1 ? '' : 's'}</span>
             </span>
           </button>
         )}
         <button
           type="button"
           onClick={handleAddAllUsers}
-          className="w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-700 hover:bg-blue-50"
+          className="w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-700 dark:text-slate-200 hover:bg-blue-50"
         >
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-100 text-violet-600">
             <Users className="h-3.5 w-3.5" />
           </span>
           <span className="flex-1 text-left">
             <span className="block font-medium">All Users</span>
-            <span className="block text-[11px] text-slate-400">{allUsers.length} active user{allUsers.length === 1 ? '' : 's'}</span>
+            <span className="block text-[11px] text-slate-400 dark:text-slate-500">{allUsers.length} active user{allUsers.length === 1 ? '' : 's'}</span>
           </span>
         </button>
       </div>
@@ -489,22 +489,22 @@ function RecipientPicker({
       {/* Search + individuals */}
       <div className="p-2">
         <div className="relative mb-1.5">
-          <Search className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+          <Search className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             autoFocus
             placeholder="Search by name or email..."
-            className="w-full rounded-md border border-slate-200 bg-white pl-7 pr-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+            className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 pl-7 pr-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
           />
         </div>
-        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-1 pt-0.5 pb-1">
+        <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-1 pt-0.5 pb-1">
           {search ? 'Results' : 'People'}
         </p>
         <div className="max-h-56 overflow-y-auto">
           {filteredUsers.length === 0 ? (
-            <p className="px-2 py-3 text-center text-[12px] text-slate-400">No matches</p>
+            <p className="px-2 py-3 text-center text-[12px] text-slate-400 dark:text-slate-500">No matches</p>
           ) : (
             filteredUsers.map((u: any) => {
               const isSelected = selectedIds.has(u.id);
@@ -516,7 +516,7 @@ function RecipientPicker({
                   disabled={isSelected}
                   className={cn(
                     'w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-left transition-colors',
-                    isSelected ? 'bg-slate-50 text-slate-400 cursor-default' : 'hover:bg-blue-50 text-slate-700',
+                    isSelected ? 'bg-slate-50 dark:bg-slate-800/50 text-slate-400 dark:text-slate-500 cursor-default' : 'hover:bg-blue-50 text-slate-700 dark:text-slate-200',
                   )}
                 >
                   <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-[9px] font-semibold flex items-center justify-center shrink-0">
@@ -524,7 +524,7 @@ function RecipientPicker({
                   </span>
                   <span className="flex-1 truncate">
                     {u.firstName} {u.lastName}
-                    {u.email && <span className="block text-[10px] text-slate-400 truncate">{u.email}</span>}
+                    {u.email && <span className="block text-[10px] text-slate-400 dark:text-slate-500 truncate">{u.email}</span>}
                   </span>
                   {isSelected && <Check className="h-3.5 w-3.5 text-blue-600 shrink-0" />}
                 </button>
@@ -554,34 +554,34 @@ function MessageItem({ message, entityType, entityId, depth = 0 }: {
 
   if (isSystem) {
     return (
-      <div className="flex items-center gap-2 py-1.5 px-3 text-[12px] text-slate-400 italic">
-        <div className="h-px flex-1 bg-slate-100" />
+      <div className="flex items-center gap-2 py-1.5 px-3 text-[12px] text-slate-400 dark:text-slate-500 italic">
+        <div className="h-px flex-1 bg-slate-100 dark:bg-slate-800" />
         <span>{message.content}</span>
-        <div className="h-px flex-1 bg-slate-100" />
+        <div className="h-px flex-1 bg-slate-100 dark:bg-slate-800" />
       </div>
     );
   }
 
   return (
-    <div className={cn('py-2', depth > 0 && 'ml-8 border-l-2 border-slate-100 pl-3')}>
+    <div className={cn('py-2', depth > 0 && 'ml-8 border-l-2 border-slate-100 dark:border-slate-800 pl-3')}>
       <div className="flex items-start gap-2.5">
         <div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-600 text-[10px] font-semibold flex items-center justify-center shrink-0 mt-0.5">
           {author ? getInitials(author.firstName, author.lastName) : '?'}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold text-slate-800">
+            <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">
               {author ? `${author.firstName} ${author.lastName}` : 'Unknown'}
             </span>
-            <span className="text-[11px] text-slate-400">{formatRelative(message.createdAt)}</span>
-            {message.isEdited && <span className="text-[10px] text-slate-400 italic">(edited)</span>}
+            <span className="text-[11px] text-slate-400 dark:text-slate-500">{formatRelative(message.createdAt)}</span>
+            {message.isEdited && <span className="text-[10px] text-slate-400 dark:text-slate-500 italic">(edited)</span>}
             {message.source && message.source !== 'internal' && (
               <span className="rounded-full bg-purple-100 px-1.5 py-0.5 text-[9px] font-bold text-purple-700">
                 {message.source}
               </span>
             )}
           </div>
-          <p className="text-[13px] text-slate-700 mt-0.5 whitespace-pre-wrap break-words">{message.content}</p>
+          <p className="text-[13px] text-slate-700 dark:text-slate-200 mt-0.5 whitespace-pre-wrap break-words">{message.content}</p>
 
           {/* Attachment chips — files attached when the user sent the
               message. metadata.attachments is an array of {fileName,
@@ -603,7 +603,7 @@ function MessageItem({ message, entityType, entityId, depth = 0 }: {
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <button
               onClick={() => setShowReply(!showReply)}
-              className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-blue-600"
+              className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-blue-600"
             >
               <Reply className="h-3 w-3" />Reply
             </button>
@@ -690,7 +690,7 @@ function ThreadActions({ messageId, entityType, entityId, isResolved }: {
       ) : (
         <button
           onClick={() => resolveMutation.mutate()}
-          className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-green-600"
+          className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-green-600"
           title="Mark as resolved"
         >
           <CheckCircle className="h-3 w-3" /> Resolve
@@ -698,7 +698,7 @@ function ThreadActions({ messageId, entityType, entityId, isResolved }: {
       )}
       <button
         onClick={() => { if (!showSummary) fetchSummary(); setShowSummary(!showSummary); }}
-        className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-purple-600"
+        className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-purple-600"
         title="AI Summary"
       >
         <Sparkles className="h-3 w-3" /> Summary
@@ -720,7 +720,7 @@ function ThreadActions({ messageId, entityType, entityId, isResolved }: {
                   'rounded-full px-1.5 py-0.5 text-[9px] font-bold',
                   (summary as any).sentiment === 'positive' ? 'bg-green-100 text-green-600' :
                   (summary as any).sentiment === 'negative' ? 'bg-red-100 text-red-600' :
-                  'bg-slate-100 text-slate-500',
+                  'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400',
                 )}>
                   {(summary as any).sentiment}
                 </span>
@@ -753,7 +753,7 @@ export function MessagePanel({ entityType, entityId }: MessagePanelProps) {
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <MessageSquare className="h-4 w-4 text-blue-600" />
-        <h3 className="text-sm font-semibold text-slate-700">Discussion</h3>
+        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Discussion</h3>
         {messages.length > 0 && (
           <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">
             {messages.length}
@@ -766,13 +766,13 @@ export function MessagePanel({ entityType, entityId }: MessagePanelProps) {
 
       {/* Messages */}
       {isLoading ? (
-        <div className="py-6 text-center text-sm text-slate-400">Loading messages...</div>
+        <div className="py-6 text-center text-sm text-slate-400 dark:text-slate-500">Loading messages...</div>
       ) : messages.length === 0 ? (
-        <div className="py-6 text-center text-sm text-slate-400">
+        <div className="py-6 text-center text-sm text-slate-400 dark:text-slate-500">
           No messages yet. Start the discussion.
         </div>
       ) : (
-        <div className="divide-y divide-slate-100">
+        <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {messages.map((msg: any) => (
             <MessageItem
               key={msg.id}
