@@ -1,8 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Check, Plus, Search, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Check, Plus, Search, Trash2, X, Palette } from 'lucide-react';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { EmptyState } from '@/components/shared/empty-state';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
@@ -191,9 +192,11 @@ export function PhasesPage() {
         {isLoading ? (
           <div className="p-5"><TableSkeleton rows={5} cols={4} /></div>
         ) : rows.length === 0 ? (
-          <p className="py-12 text-center text-[13px] text-slate-400 dark:text-slate-500">
-            {search ? 'No services match your search.' : 'No services configured yet.'}
-          </p>
+          <EmptyState
+            icon={Palette}
+            title={search ? 'No services match your search' : 'No services configured yet'}
+            description={search ? 'Try a different name or code.' : 'Add a service (e.g. BIM Coordination, MEP) to start tagging tasks and templates.'}
+          />
         ) : (
           <table className="w-full">
             <thead>
