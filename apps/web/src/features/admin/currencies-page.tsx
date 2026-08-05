@@ -1,9 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pencil, Plus, Save, Trash2, X, DollarSign } from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
-import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
+import { DataTable } from '@/components/shared/data-table';
+import { EmptyState } from '@/components/shared/empty-state';
+import { StatusBadge } from '@/components/shared/status-badge';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
@@ -38,7 +41,6 @@ const emptyForm: FormState = {
 export function CurrenciesPage() {
   const confirm = useConfirm();
   const queryClient = useQueryClient();
-  const scrollRef = useStickyHScroll();
   const [editingCode, setEditingCode] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -116,6 +118,54 @@ export function CurrenciesPage() {
 
   const rows = data ?? [];
 
+  // DataTable column definitions. Kept sort-off (enableSorting: false)
+  // to preserve the original page's no-sort behavior — the underlying
+  // data is already ordered by sortOrder on the server.
+  const columns = useMemo<ColumnDef<CurrencyRow, unknown>[]>(() => [
+    { accessorKey: 'code', header: 'Code', enableSorting: false, size: 96,
+      cell: ({ row }) => <span className="font-mono font-medium">{row.original.code}</span> },
+    { accessorKey: 'name', header: 'Name', enableSorting: false,
+      cell: ({ row }) => row.original.name },
+    { accessorKey: 'symbol', header: 'Symbol', enableSorting: false, size: 80,
+      cell: ({ row }) => <span className="font-mono">{row.original.symbol ?? '—'}</span> },
+    { accessorKey: 'decimals', header: 'Decimals', enableSorting: false, size: 96,
+      cell: ({ row }) => <span className="text-muted-foreground">{row.original.decimals}</span> },
+    { accessorKey: 'sortOrder', header: 'Order', enableSorting: false, size: 96,
+      cell: ({ row }) => <span className="text-muted-foreground">{row.original.sortOrder}</span> },
+    { id: 'status', header: 'Status', enableSorting: false, size: 96,
+      // StatusBadge maps `active` → green pill; `inactive` isn't in
+      // STATUS_COLORS so it falls back to grey — matches the prior
+      // "Inactive" pill without hand-rolling the styles here.
+      cell: ({ row }) => <StatusBadge status={row.original.isActive ? 'active' : 'inactive'} /> },
+    { id: 'actions', header: 'Actions', enableSorting: false, size: 128,
+      cell: ({ row }) => (
+        <div className="flex items-center justify-end gap-2">
+          <button
+            onClick={() => startEdit(row.original)}
+            aria-label={`Edit currency ${row.original.code}`}
+            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
+          >
+            <Pencil className="h-3 w-3" aria-hidden="true" /> Edit
+          </button>
+          <button
+            onClick={async () => {
+              if (await confirm(`Delete currency ${row.original.code}?`)) {
+                deleteMutation.mutate(row.original.code);
+              }
+            }}
+            aria-label={`Delete currency ${row.original.code}`}
+            className="inline-flex items-center gap-1 text-xs text-red-600 hover:underline"
+          >
+            <Trash2 className="h-3 w-3" aria-hidden="true" /> Delete
+          </button>
+        </div>
+      ),
+    },
+  // deleteMutation identity is stable enough for our use — column
+  // action closures re-close automatically when the memo invalidates.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], []);
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -130,12 +180,17 @@ export function CurrenciesPage() {
               }}
               className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700"
             >
-              <Plus className="h-4 w-4" /> Add currency
+              <Plus className="h-4 w-4" aria-hidden="true" /> Add currency
             </button>
           ) : null
         }
       />
 
+      {/* Create / edit form. Previously the edit form replaced the
+          row inline via colSpan — DataTable doesn't support per-row
+          overrides, so hoisted here. Same fields + save/cancel; the
+          only visual delta is that the form sits above the table
+          instead of inside it. */}
       {showCreate && (
         <FormCard
           mode="create"
@@ -146,87 +201,30 @@ export function CurrenciesPage() {
           saving={createMutation.isPending}
         />
       )}
+      {editingCode != null && (
+        <FormCard
+          mode="edit"
+          form={form}
+          setForm={setForm}
+          onSave={() => updateMutation.mutate(form)}
+          onCancel={() => setEditingCode(null)}
+          saving={updateMutation.isPending}
+        />
+      )}
 
       {isLoading ? (
         <TableSkeleton rows={3} cols={5} />
       ) : rows.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border p-8 text-center">
-          <DollarSign className="h-8 w-8 text-muted-foreground" />
-          <p className="text-sm font-medium">No currencies configured</p>
-        </div>
+        <EmptyState
+          icon={DollarSign}
+          title="No currencies configured"
+          description="Add a currency to make it available for cost rates and monetary fields."
+        />
       ) : (
-        <div ref={scrollRef} className="rounded-lg border border-border overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
-                <th className="px-4 py-3 font-medium w-24">Code</th>
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium w-20">Symbol</th>
-                <th className="px-4 py-3 font-medium w-24">Decimals</th>
-                <th className="px-4 py-3 font-medium w-24">Order</th>
-                <th className="px-4 py-3 font-medium w-24">Status</th>
-                <th className="px-4 py-3 font-medium w-32 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => {
-                const isEditing = editingCode === row.code;
-                if (isEditing) {
-                  return (
-                    <tr key={row.code} className="border-b border-border bg-muted/20">
-                      <td colSpan={7} className="p-4">
-                        <FormCard
-                          mode="edit"
-                          form={form}
-                          setForm={setForm}
-                          onSave={() => updateMutation.mutate(form)}
-                          onCancel={() => setEditingCode(null)}
-                          saving={updateMutation.isPending}
-                        />
-                      </td>
-                    </tr>
-                  );
-                }
-                return (
-                  <tr key={row.code} className="border-b border-border last:border-0 hover:bg-muted/30">
-                    <td className="px-4 py-3 font-mono font-medium">{row.code}</td>
-                    <td className="px-4 py-3">{row.name}</td>
-                    <td className="px-4 py-3 font-mono">{row.symbol ?? '—'}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{row.decimals}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{row.sortOrder}</td>
-                    <td className="px-4 py-3">
-                      {row.isActive ? (
-                        <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">Active</span>
-                      ) : (
-                        <span className="inline-flex rounded-full bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs text-gray-600 dark:text-slate-300">Inactive</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => startEdit(row)}
-                          className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
-                        >
-                          <Pencil className="h-3 w-3" /> Edit
-                        </button>
-                        <button
-                          onClick={async () => {
-                            if (await confirm(`Delete currency ${row.code}?`)) {
-                              deleteMutation.mutate(row.code);
-                            }
-                          }}
-                          className="inline-flex items-center gap-1 text-xs text-red-600 hover:underline"
-                        >
-                          <Trash2 className="h-3 w-3" /> Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        // pageSize is high so config-length tables (a few dozen rows
+        // at most) show in one page — preserves the no-pagination
+        // behavior of the original hand-rolled table.
+        <DataTable columns={columns} data={rows} pageSize={1000} />
       )}
     </div>
   );
