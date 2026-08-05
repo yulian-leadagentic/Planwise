@@ -95,31 +95,49 @@ export function DataTable<TData>({
           <thead className="bg-muted/50">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <th
-                    key={header.id}
-                    className={cn(
-                      'px-4 py-3 text-left font-medium text-muted-foreground',
-                      header.column.getCanSort() && 'cursor-pointer select-none hover:text-foreground',
-                    )}
-                    onClick={header.column.getToggleSortingHandler()}
-                  >
-                    <div className="flex items-center gap-1">
-                      {flexRender(header.column.columnDef.header, header.getContext())}
-                      {header.column.getCanSort() && (
-                        <span className="ml-1">
-                          {header.column.getIsSorted() === 'asc' ? (
-                            <ChevronUp className="h-4 w-4" />
-                          ) : header.column.getIsSorted() === 'desc' ? (
-                            <ChevronDown className="h-4 w-4" />
-                          ) : (
-                            <ChevronsUpDown className="h-3.5 w-3.5 opacity-50" />
-                          )}
-                        </span>
+                {headerGroup.headers.map((header) => {
+                  const canSort = header.column.getCanSort();
+                  const sorted = header.column.getIsSorted();
+                  const ariaSort: React.AriaAttributes['aria-sort'] =
+                    !canSort ? undefined
+                    : sorted === 'asc' ? 'ascending'
+                    : sorted === 'desc' ? 'descending'
+                    : 'none';
+                  return (
+                    <th
+                      key={header.id}
+                      aria-sort={ariaSort}
+                      className={cn(
+                        'px-4 py-3 text-left font-medium text-muted-foreground',
+                        canSort && 'cursor-pointer select-none hover:text-foreground',
                       )}
-                    </div>
-                  </th>
-                ))}
+                    >
+                      {canSort ? (
+                        <button
+                          type="button"
+                          onClick={header.column.getToggleSortingHandler()}
+                          aria-label={`Sort by ${typeof header.column.columnDef.header === 'string' ? header.column.columnDef.header : header.id}${sorted === 'asc' ? ' — currently ascending' : sorted === 'desc' ? ' — currently descending' : ''}`}
+                          className="flex items-center gap-1 -m-1 p-1"
+                        >
+                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          <span className="ml-1" aria-hidden="true">
+                            {sorted === 'asc' ? (
+                              <ChevronUp className="h-4 w-4" />
+                            ) : sorted === 'desc' ? (
+                              <ChevronDown className="h-4 w-4" />
+                            ) : (
+                              <ChevronsUpDown className="h-3.5 w-3.5 opacity-50" />
+                            )}
+                          </span>
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          {flexRender(header.column.columnDef.header, header.getContext())}
+                        </div>
+                      )}
+                    </th>
+                  );
+                })}
               </tr>
             ))}
           </thead>
@@ -179,16 +197,18 @@ function Pagination<TData>({ table }: { table: Table<TData> }) {
         <button
           onClick={() => table.previousPage()}
           disabled={!table.getCanPreviousPage()}
+          aria-label="Previous page"
           className="rounded-md border border-border p-2 text-sm disabled:opacity-50 hover:bg-accent"
         >
-          <ChevronLeft className="h-4 w-4" />
+          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
         </button>
         <button
           onClick={() => table.nextPage()}
           disabled={!table.getCanNextPage()}
+          aria-label="Next page"
           className="rounded-md border border-border p-2 text-sm disabled:opacity-50 hover:bg-accent"
         >
-          <ChevronRight className="h-4 w-4" />
+          <ChevronRight className="h-4 w-4" aria-hidden="true" />
         </button>
       </div>
     </div>

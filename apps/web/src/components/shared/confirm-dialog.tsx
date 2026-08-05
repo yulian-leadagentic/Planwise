@@ -27,24 +27,25 @@ export function ConfirmDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/50" onClick={onClose} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title">
+      <div className="fixed inset-0 bg-black/50" onClick={onClose} aria-hidden="true" />
       <div className="relative z-50 w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg">
         <button
           onClick={onClose}
+          aria-label="Close dialog"
           className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground hover:text-foreground"
         >
-          <X className="h-4 w-4" />
+          <X className="h-4 w-4" aria-hidden="true" />
         </button>
 
         <div className="flex items-start gap-4">
           {variant === 'danger' && (
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100" aria-hidden="true">
               <AlertTriangle className="h-5 w-5 text-red-600" />
             </div>
           )}
           <div className="flex-1">
-            <h3 className="text-lg font-semibold">{title}</h3>
+            <h3 id="confirm-dialog-title" className="text-lg font-semibold">{title}</h3>
             <p className="mt-1 text-sm text-muted-foreground">{description}</p>
           </div>
         </div>

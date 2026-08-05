@@ -97,6 +97,9 @@ export function MultiSelectFilter<T extends string | number>({
         type="button"
         onClick={() => setOpen((v) => !v)}
         title={title ?? placeholder}
+        aria-label={`${title ?? placeholder} filter — ${selected.size === 0 ? 'All' : `${selected.size} selected`}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         className={cn(
           'flex items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent',
           triggerClassName ?? 'w-48',
@@ -105,7 +108,7 @@ export function MultiSelectFilter<T extends string | number>({
         <span className={cn('truncate', selected.size === 0 && 'text-slate-500 dark:text-slate-400')}>
           {triggerLabel}
         </span>
-        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />
       </button>
 
       {open && (
@@ -119,25 +122,27 @@ export function MultiSelectFilter<T extends string | number>({
         // z-50 beats sticky page headers (the Execution Board's ZONE
         // column header sits at ~z-40 and was obscuring the first rows
         // of the project dropdown).
-        <div dir="ltr" className="absolute start-0 top-full z-50 mt-1 w-72 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg">
+        <div dir="ltr" role="listbox" aria-multiselectable="true" className="absolute start-0 top-full z-50 mt-1 w-72 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg">
           {/* Search + clear-all */}
           <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 px-2 py-1.5">
-            <Search className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
+            <Search className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />
             <input
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search…"
+              aria-label={`Search ${placeholder}`}
               className="flex-1 bg-transparent text-[12px] outline-none placeholder:text-slate-400 dark:placeholder:text-slate-500"
             />
             {selected.size > 0 && (
               <button
                 type="button"
                 onClick={clearAll}
+                aria-label="Clear all selections"
                 className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
                 title="Clear all"
               >
-                <X className="h-3 w-3" /> Clear
+                <X className="h-3 w-3" aria-hidden="true" /> Clear
               </button>
             )}
           </div>

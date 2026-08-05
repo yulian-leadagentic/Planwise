@@ -44,6 +44,9 @@ export function UserSelect({
       <button
         type="button"
         onClick={() => setOpen(!open)}
+        aria-label={selected ? `User: ${selected.firstName} ${selected.lastName}. Click to change.` : placeholder}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         className="flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
       >
         {selected ? (
@@ -63,22 +66,28 @@ export function UserSelect({
         )}
         <div className="ml-auto flex items-center gap-1">
           {value && (
-            <X
-              className="h-4 w-4 text-muted-foreground hover:text-foreground"
-              onClick={(e) => {
-                e.stopPropagation();
-                onChange(null);
-              }}
-            />
+            // X as a nested button so it gets its own focusable target
+            // with its own label (WCAG 2.4.4 Link Purpose). The outer
+            // trigger's onClick doesn't fire because we stop propagation.
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label="Clear selected user"
+              className="rounded p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+              onClick={(e) => { e.stopPropagation(); onChange(null); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onChange(null); } }}
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </span>
           )}
-          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          <ChevronDown className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
         </div>
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-md border border-border bg-popover shadow-lg">
+        <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-md border border-border bg-popover shadow-lg" role="listbox">
           <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-            <Search className="h-4 w-4 text-muted-foreground" />
+            <Search className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
             <input
               type="text"
               value={search}
