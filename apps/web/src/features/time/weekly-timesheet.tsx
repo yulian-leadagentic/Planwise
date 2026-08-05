@@ -1,6 +1,6 @@
-import { useState, useMemo, useRef } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Plus, X, Home, Building2, Clock, Pencil, Trash2 } from 'lucide-react';
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ChevronLeft, ChevronRight, Plus, Home, Building2, Clock, Pencil, Trash2 } from 'lucide-react';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { PageHeader } from '@/components/shared/page-header';
@@ -15,7 +15,12 @@ import client from '@/api/client';
 import { useAuthStore } from '@/stores/auth.store';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 
-const HOURS = Array.from({ length: 13 }, (_, i) => i + 7); // 7:00 - 19:00
+// Default visible band — 07:00 – 19:00. The WeekView expands the band
+// (both directions) when any entry for the visible week starts/ends
+// outside it, so entries that would previously have been dropped from
+// the grid always get an hour row of their own.
+const DEFAULT_MIN_HOUR = 7;
+const DEFAULT_MAX_HOUR = 19; // inclusive: rows are DEFAULT_MIN..=DEFAULT_MAX
 const HOUR_HEIGHT = 48; // px per hour row
 
 function timeToMinutes(time: string): number {
@@ -488,8 +493,15 @@ function WeekView() {
   const queryClient = useQueryClient();
   const [weekOffset, setWeekOffset] = useState(0);
   const [showEntryForm, setShowEntryForm] = useState<{ date: string; startTime: string; endTime: string } | null>(null);
-  const [selecting, setSelecting] = useState<{ dayIdx: number; startHour: number } | null>(null);
-  const [selectEnd, setSelectEnd] = useState<number | null>(null);
+  // Drag-select state. `anchor` is the hour the pointer went down on;
+  // `pointer` follows the pointer (mouse OR touch) and can be BELOW
+  // `anchor` — supports upward drag by normalising min/max on commit.
+  const [selection, setSelection] = useState<{ dayIdx: number; anchor: number; pointer: number } | null>(null);
+  // Ref to the scrollable grid — used by touch handlers to translate a
+  // Touch clientX/clientY back to a specific (dayIdx, hour) cell via
+  // document.elementFromPoint (a touch that starts on one cell may move
+  // off it, so the initial target isn't sufficient).
+  const gridRef = useRef<HTMLDivElement | null>(null);
   // Delete-entry mutation: toasts + 'time' query invalidation are wired
   // inside the hook (see useDeleteTimeEntry in @/hooks/use-time).
   const deleteEntry = useDeleteTimeEntry();
@@ -595,26 +607,135 @@ function WeekView() {
   const weekTotal = (breakdownData as any)?.weeklyTotal ?? Object.values(dailyTotals).reduce((s, m) => s + (typeof m === 'number' ? m : 0), 0);
   const todayKey = format(new Date(), 'yyyy-MM-dd');
 
-  // Mouse handlers for time selection
+  // ─── Untimed vs timed split ────────────────────────────────────────
+  // Untimed entries (no startTime) were previously all dumped onto the
+  // 09:00 cell with absolute positioning that stacked them on top of
+  // each other. Extract them here so we can render them in a dedicated
+  // all-day row (side-by-side per day) instead — no data ever hidden.
+  const { timedByDay, untimedByDay } = useMemo(() => {
+    const timed = new Map<string, any[]>();
+    const untimed = new Map<string, any[]>();
+    for (const [date, entries] of entriesByDay.entries()) {
+      const t: any[] = [];
+      const u: any[] = [];
+      for (const e of entries) {
+        if (e.startTime) t.push(e);
+        else u.push(e);
+      }
+      if (t.length) timed.set(date, t);
+      if (u.length) untimed.set(date, u);
+    }
+    return { timedByDay: timed, untimedByDay: untimed };
+  }, [entriesByDay]);
+
+  // ─── Dynamic HOURS axis ────────────────────────────────────────────
+  // Base band is DEFAULT_MIN..=DEFAULT_MAX (07:00–19:00). Expand both
+  // ends so any entry that starts BEFORE the min or ends AFTER the max
+  // gets a real row. Previously a 06:00 or 21:00 entry was silently
+  // dropped from the grid (survived only in the list below).
+  const HOURS = useMemo(() => {
+    let min = DEFAULT_MIN_HOUR;
+    let max = DEFAULT_MAX_HOUR;
+    for (const entries of timedByDay.values()) {
+      for (const e of entries) {
+        const startH = e.startTime ? parseInt(e.startTime.split(':')[0], 10) : NaN;
+        // The row an entry OCCUPIES is [startH, ceil(endMins/60)-1]. Use
+        // ceil so a 21:00–21:30 entry pushes max to 21 (row 21 exists)
+        // and a 21:00–22:00 entry pushes max to 21 too — anything larger
+        // is only rendered as extra pixel height on the 21:00 row.
+        if (!Number.isNaN(startH)) min = Math.min(min, startH);
+        const endMins = e.endTime
+          ? timeToMinutes(e.endTime)
+          : (e.startTime ? timeToMinutes(e.startTime) : 0) + (e.minutes ?? 0);
+        // Last row the visual block occupies. Row H covers [H*60, H*60+60).
+        // For a 21:00–22:00 entry endMins=1320 → ceil(1320/60)-1 = 21.
+        // For a 21:00–22:30 entry endMins=1350 → ceil(1350/60)-1 = 22.
+        const lastHour = Math.max(startH, Math.ceil(endMins / 60) - 1);
+        if (Number.isFinite(lastHour)) max = Math.max(max, lastHour);
+      }
+    }
+    // Guard rails — clamp to 0..23 so a corrupt entry can't blow up the axis.
+    min = Math.max(0, Math.min(min, DEFAULT_MIN_HOUR));
+    max = Math.min(23, Math.max(max, DEFAULT_MAX_HOUR));
+    return Array.from({ length: max - min + 1 }, (_, i) => i + min);
+  }, [timedByDay]);
+
+  // Selection commit — normalises anchor/pointer so upward drag works.
+  const commitSelection = useCallback(() => {
+    if (!selection) return;
+    const { dayIdx, anchor, pointer } = selection;
+    const lo = Math.min(anchor, pointer);
+    const hi = Math.max(anchor, pointer) + 1;
+    const date = format(weekDays[dayIdx], 'yyyy-MM-dd');
+    const startTime = `${String(lo).padStart(2, '0')}:00`;
+    const endTime = `${String(hi).padStart(2, '0')}:00`;
+    setShowEntryForm({ date, startTime, endTime });
+    setSelection(null);
+  }, [selection, weekDays]);
+
+  // ─── Mouse handlers ────────────────────────────────────────────────
   const handleMouseDown = (dayIdx: number, hour: number) => {
-    setSelecting({ dayIdx, startHour: hour });
-    setSelectEnd(hour + 1);
+    setSelection({ dayIdx, anchor: hour, pointer: hour });
   };
 
   const handleMouseMove = (hour: number) => {
-    if (selecting) setSelectEnd(Math.max(selecting.startHour + 1, hour + 1));
+    setSelection((s) => (s ? { ...s, pointer: hour } : s));
   };
 
   const handleMouseUp = () => {
-    if (selecting && selectEnd) {
-      const date = format(weekDays[selecting.dayIdx], 'yyyy-MM-dd');
-      const startTime = `${String(selecting.startHour).padStart(2, '0')}:00`;
-      const endTime = `${String(selectEnd).padStart(2, '0')}:00`;
-      setShowEntryForm({ date, startTime, endTime });
-    }
-    setSelecting(null);
-    setSelectEnd(null);
+    commitSelection();
   };
+
+  // ─── Touch handlers ────────────────────────────────────────────────
+  // Touch events need a document.elementFromPoint lookup: the touch that
+  // started on cell A can move over cell B while the event target stays
+  // on A. We stamp each cell with data-day-idx / data-hour so we can
+  // recover (dayIdx, hour) from any touched element inside the grid.
+  const cellFromPoint = useCallback((x: number, y: number): { dayIdx: number; hour: number } | null => {
+    const el = document.elementFromPoint(x, y);
+    if (!el) return null;
+    // The child block sits inside the td — walk up until we find the td
+    // that carries the data attrs. Stop at the grid root.
+    const cell = (el as HTMLElement).closest?.('[data-day-idx][data-hour]');
+    if (!cell) return null;
+    const dayIdx = Number(cell.getAttribute('data-day-idx'));
+    const hour = Number(cell.getAttribute('data-hour'));
+    if (Number.isNaN(dayIdx) || Number.isNaN(hour)) return null;
+    return { dayIdx, hour };
+  }, []);
+
+  const handleTouchStart = (e: React.TouchEvent, dayIdx: number, hour: number) => {
+    // Prevent the browser from also firing synthetic mouse events (which
+    // would double-start the selection) and from scrolling the grid.
+    e.preventDefault();
+    setSelection({ dayIdx, anchor: hour, pointer: hour });
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!selection) return;
+    e.preventDefault();
+    const t = e.touches[0];
+    if (!t) return;
+    const at = cellFromPoint(t.clientX, t.clientY);
+    if (!at || at.dayIdx !== selection.dayIdx) return;
+    setSelection((s) => (s ? { ...s, pointer: at.hour } : s));
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (!selection) return;
+    e.preventDefault();
+    commitSelection();
+  };
+
+  // Document-level mouseup catches the release even if the pointer leaves
+  // the grid — replaces the old onMouseLeave-clears behaviour that was
+  // destroying in-progress selections when the mouse briefly left the box.
+  useEffect(() => {
+    if (!selection) return;
+    const up = () => commitSelection();
+    document.addEventListener('mouseup', up);
+    return () => document.removeEventListener('mouseup', up);
+  }, [selection, commitSelection]);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['time'] });
@@ -699,8 +820,62 @@ function WeekView() {
         </div>
 
         {/* Time grid — single table for perfect alignment */}
-        <div className="overflow-y-auto" style={{ maxHeight: '600px' }}
-          onMouseUp={handleMouseUp} onMouseLeave={() => { setSelecting(null); setSelectEnd(null); }}>
+        <div
+          ref={gridRef}
+          className="overflow-y-auto"
+          style={{ maxHeight: '600px' }}
+          onMouseUp={handleMouseUp}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchEnd}
+        >
+          {/* All-day row — untimed entries per day, side-by-side.
+              Prevents the previous 09:00-stacking bug where multiple
+              untimed entries were absolute-positioned on top of each
+              other and only the topmost was visible. */}
+          {untimedByDay.size > 0 && (
+            <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-slate-100 dark:border-slate-800 bg-amber-50/40 dark:bg-amber-900/10">
+              <div className="px-2 py-1.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400 text-right pr-2 align-top">
+                All-day
+              </div>
+              {weekDays.map((day, dayIdx) => {
+                const dateKey = format(day, 'yyyy-MM-dd');
+                const untimed = untimedByDay.get(dateKey) ?? [];
+                if (untimed.length === 0) return <div key={dayIdx} className="border-l border-slate-100 dark:border-slate-800 min-h-[36px]" />;
+                return (
+                  <div key={dayIdx} className="border-l border-slate-100 dark:border-slate-800 p-1 min-h-[36px]">
+                    <div className="flex flex-wrap gap-1">
+                      {untimed.map((entry: any) => {
+                        const projectName = entry.project?.name ?? '';
+                        const taskName = entry.task?.name ?? '';
+                        return (
+                          <div
+                            key={entry.id}
+                            className="group relative rounded-md bg-amber-500/90 hover:bg-amber-600 text-white px-1.5 py-0.5 text-[10px] flex-1 min-w-[80px] max-w-full overflow-hidden shadow-sm cursor-pointer"
+                            title={`Untimed · ${minutesToDisplay(entry.minutes ?? 0)}\n${projectName}\n${taskName}`}
+                          >
+                            <button
+                              type="button"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => handleDeleteEntry(e, entry)}
+                              disabled={deleteEntry.isPending}
+                              className="absolute top-0 right-0 rounded p-0.5 text-white/80 hover:text-white hover:bg-amber-700/40 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity disabled:opacity-50"
+                              title="Delete this time entry"
+                              aria-label="Delete untimed entry"
+                            >
+                              <Trash2 className="h-2.5 w-2.5" aria-hidden="true" />
+                            </button>
+                            <p className="font-semibold truncate">{minutesToDisplay(entry.minutes ?? 0)}</p>
+                            <p className="truncate opacity-90">{projectName || 'No project'}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           <table className="w-full" style={{ tableLayout: 'fixed', borderCollapse: 'collapse' }}>
             <colgroup>
               <col style={{ width: '60px' }} />
@@ -715,30 +890,43 @@ function WeekView() {
                   </td>
                   {weekDays.map((day, dayIdx) => {
                     const isWeekend = day.getDay() === 5 || day.getDay() === 6;
-                    const isSelecting = selecting?.dayIdx === dayIdx && selectEnd != null && hour >= selecting!.startHour && hour < selectEnd;
+                    // Highlight EVERY row between anchor and pointer,
+                    // inclusive — works whether the user drags up OR down.
+                    const isSelecting =
+                      selection?.dayIdx === dayIdx
+                      && hour >= Math.min(selection.anchor, selection.pointer)
+                      && hour <= Math.max(selection.anchor, selection.pointer);
                     const dateKey = format(day, 'yyyy-MM-dd');
                     const dayIsHoliday = holidayDates.has(dateKey);
                     const isNonWorking = isWeekend || dayIsHoliday;
-                    const entries = entriesByDay.get(dateKey) ?? [];
+                    // Only timed entries live in the hourly grid — untimed
+                    // ones are rendered in the all-day row above.
+                    const entries = timedByDay.get(dateKey) ?? [];
 
                     // Find entries that START in this hour
                     const hourEntries = entries.filter((e: any) => {
-                      if (!e.startTime) return hour === 9;
                       const startH = parseInt(e.startTime.split(':')[0], 10);
                       return startH === hour;
                     });
 
                     return (
                       <td key={dayIdx}
+                        data-day-idx={dayIdx}
+                        data-hour={hour}
                         className={cn('border-b border-l border-slate-100 dark:border-slate-800 cursor-crosshair hover:bg-blue-50/20 relative p-0',
                           isNonWorking && 'bg-slate-200/40 dark:bg-slate-700/40',
-                          isSelecting && 'bg-blue-100/50')}
-                        style={{ height: `${HOUR_HEIGHT}px` }}
+                          isSelecting && 'bg-blue-100/50 dark:bg-blue-900/30')}
+                        // touch-action: none on the cell only — the outer
+                        // scroll wrapper can still scroll normally (via the
+                        // header column / gaps), but a touch that STARTS on
+                        // a cell is a drag-select, not a page scroll.
+                        style={{ height: `${HOUR_HEIGHT}px`, touchAction: 'none' }}
                         onMouseDown={() => handleMouseDown(dayIdx, hour)}
-                        onMouseMove={() => handleMouseMove(hour)}>
+                        onMouseMove={() => handleMouseMove(hour)}
+                        onTouchStart={(e) => handleTouchStart(e, dayIdx, hour)}>
                         {/* Entries that start in this hour cell */}
                         {hourEntries.map((entry: any) => {
-                          const startMins = entry.startTime ? timeToMinutes(entry.startTime) : 9 * 60;
+                          const startMins = timeToMinutes(entry.startTime);
                           const endMins = entry.endTime ? timeToMinutes(entry.endTime) : startMins + (entry.minutes ?? 60);
                           const offsetInCell = ((startMins % 60) / 60) * HOUR_HEIGHT;
                           const durationHours = (endMins - startMins) / 60;
@@ -773,11 +961,13 @@ function WeekView() {
                           );
                         })}
 
-                        {/* Selection indicator */}
-                        {isSelecting && hour === selecting!.startHour && (
+                        {/* Selection indicator — shows on the TOP row of the
+                            selection (min of anchor/pointer) so upward drags
+                            get a label at the visual top of the highlight. */}
+                        {isSelecting && selection && hour === Math.min(selection.anchor, selection.pointer) && (
                           <div className="absolute inset-0 flex items-start justify-center pt-1 pointer-events-none z-20">
                             <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 rounded px-1">
-                              {String(selecting!.startHour).padStart(2, '0')}:00-{String(selectEnd).padStart(2, '0')}:00
+                              {String(Math.min(selection.anchor, selection.pointer)).padStart(2, '0')}:00-{String(Math.max(selection.anchor, selection.pointer) + 1).padStart(2, '0')}:00
                             </span>
                           </div>
                         )}
