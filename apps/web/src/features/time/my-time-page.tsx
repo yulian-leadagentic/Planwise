@@ -38,9 +38,13 @@ export function MyTimePage() {
 
   const handleClockToggle = () => {
     if (clockStatus?.isClockedIn) {
-      clockOut.mutate();
+      // TanStack Query's mutate signature requires the variable slot
+      // even when the mutationFn takes an optional payload. Passing
+      // undefined explicitly keeps intent obvious ("no payload") and
+      // satisfies the type.
+      clockOut.mutate(undefined);
     } else {
-      clockIn.mutate();
+      clockIn.mutate(undefined);
     }
   };
 

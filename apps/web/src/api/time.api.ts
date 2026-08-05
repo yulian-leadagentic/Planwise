@@ -91,13 +91,13 @@ export const timeApi = {
     client.delete(`/time-entries/${id}`).then((r) => r.data),
 
   // Weekly grid — backend: GET /time-entries/weekly
-  weeklyGrid: (params: WeeklyGridQuery) =>
+  weeklyGrid: (params: WeeklyGridQuery): Promise<WeeklyGrid> =>
     client.get('/time-entries/weekly', { params }).then((r) => {
       const d = r.data;
       // Handle both wrapped { success, data: {...} } and direct response
-      if (d?.data?.rows) return d.data;
-      if (d?.rows) return d;
-      return d?.data ?? d;
+      if (d?.data?.rows) return d.data as WeeklyGrid;
+      if (d?.rows) return d as WeeklyGrid;
+      return (d?.data ?? d) as WeeklyGrid;
     }),
 
   // Daily breakdown — backend: GET /time-entries/daily

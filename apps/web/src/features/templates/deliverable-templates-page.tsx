@@ -228,6 +228,11 @@ function EditorView({
 }) {
   const queryClient = useQueryClient();
   const [showCatalogPicker, setShowCatalogPicker] = useState(false);
+  // Sticky horizontal scrollbar for the wide catalog table. Was
+  // referenced without being declared — the parent DeliverableTemplatesPage
+  // had its own scrollRef which isn't in this component's scope, so tsc
+  // rightfully flagged it (TS2552). Each EditorView owns its own now.
+  const scrollRef = useStickyHScroll();
 
   const { data: template, isLoading } = useQuery({
     queryKey: ['templates', templateId],

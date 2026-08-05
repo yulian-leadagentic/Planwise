@@ -60,7 +60,9 @@ function getStartByDate(task: any): string | null {
     const dow = d.getDay();
     if (dow !== 5 && dow !== 6) counted++; // Skip Fri+Sat
   }
-  return formatShortDate(d);
+  // task-constants formatShortDate takes ISO strings — hand it the
+  // yyyy-mm-dd slice rather than the Date object.
+  return formatShortDate(d.toISOString().slice(0, 10));
 }
 
 /**

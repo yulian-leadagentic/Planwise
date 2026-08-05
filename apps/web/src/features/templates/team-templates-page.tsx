@@ -324,6 +324,10 @@ function EditorView({
   const [searchQuery, setSearchQuery] = useState('');
   const [roleInput, setRoleInput] = useState('');
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+  // Sticky horizontal scrollbar for the wide members table. The parent
+  // TeamTemplatesPage had its own scrollRef which isn't in this
+  // component's scope; tsc flagged it (TS2552). Own the hook locally.
+  const scrollRef = useStickyHScroll();
 
   const { data: users = [] } = useQuery<UserInfo[]>({
     queryKey: ['users-active'],

@@ -543,7 +543,10 @@ export function CombinedTemplatesPage() {
       setName('');
       setCode('');
       setDescription('');
-      setCategory('');
+      // setCategory was declared but never wired to a useState — it
+      // came from an earlier prototype. tsc surfaced the dangling
+      // reference (TS2304). No user-visible behavior change: there
+      // was never a category input to clear.
     },
     onError: (err: any) => notify.apiError(err, 'Failed to create'),
   });

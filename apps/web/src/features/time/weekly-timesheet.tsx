@@ -623,7 +623,7 @@ function WeekView() {
       {/* Quick actions */}
       <div className="flex items-center gap-2 justify-end">
         <button
-          onClick={() => clockStatus?.isClockedIn ? clockOut.mutate() : clockIn.mutate()}
+          onClick={() => clockStatus?.isClockedIn ? clockOut.mutate(undefined) : clockIn.mutate(undefined)}
           disabled={clockIn.isPending || clockOut.isPending}
           className={cn('flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50',
             clockStatus?.isClockedIn ? 'border border-red-200 bg-red-50 text-red-700 hover:bg-red-100' : 'border border-green-200 bg-green-50 text-green-700 hover:bg-green-100')}>

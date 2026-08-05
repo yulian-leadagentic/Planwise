@@ -151,47 +151,12 @@ export function TypesPage() {
     onError: (err: any) => notify.apiError(err, 'Failed to delete service type'),
   });
 
-  // -----------------------------------------------------------------------
-  // Project types queries
-  // -----------------------------------------------------------------------
-  const projectTypesQuery = useQuery({
-    queryKey: ['admin', 'project-types'],
-    staleTime: 5 * 60 * 1000,
-    queryFn: () => client.get('/admin/config/project-types').then((r) => r.data.data),
-    enabled: activeTab === 'project',
-  });
-
-  const createProjectType = useMutation({
-    mutationFn: (payload: { name: string; code?: string; color?: string }) =>
-      client.post('/admin/config/project-types', payload).then((r) => r.data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin', 'project-types'] });
-      notify.success('Project type created', { code: 'PROJECT-CREATE-200' });
-      resetForm();
-    },
-    onError: (err: any) => notify.apiError(err, 'Failed to create project type'),
-  });
-
-  const updateProjectType = useMutation({
-    mutationFn: ({ id, ...payload }: { id: number; name: string; code?: string; color?: string }) =>
-      client.patch(`/admin/config/project-types/${id}`, payload).then((r) => r.data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin', 'project-types'] });
-      notify.success('Project type updated', { code: 'PROJECT-UPDATE-200' });
-      setEditing(null);
-    },
-    onError: (err: any) => notify.apiError(err, 'Failed to update project type'),
-  });
-
-  const deleteProjectType = useMutation({
-    mutationFn: (id: number) =>
-      client.delete(`/admin/config/project-types/${id}`).then((r) => r.data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin', 'project-types'] });
-      notify.success('Project type deleted', { code: 'PROJECT-DELETE-200' });
-    },
-    onError: (err: any) => notify.apiError(err, 'Failed to delete project type'),
-  });
+  // Project types + Project roles blocks removed (was: unfinished
+  // feature — queries were gated on `activeTab === 'project'` /
+  // 'projectRole' but neither key exists on TabKey, and the query
+  // results/mutations were never referenced anywhere in the render.
+  // Cleaning the dead code lets tsc pass; the /admin/config/project-*
+  // endpoints stay on the server for when this feature ships.)
 
   // -----------------------------------------------------------------------
   // Departments queries
@@ -253,35 +218,8 @@ export function TypesPage() {
     onError: (err: any) => notify.apiError(err, 'Failed to delete profession'),
   });
 
-  // -----------------------------------------------------------------------
-  // Project role templates queries
-  // -----------------------------------------------------------------------
-  const projectRolesQuery = useQuery({
-    queryKey: ['admin', 'project-roles'],
-    staleTime: 5 * 60 * 1000,
-    queryFn: () => client.get('/admin/config/project-roles').then((r) => { const d = r.data?.data ?? r.data; return Array.isArray(d) ? d : []; }),
-    enabled: activeTab === 'projectRole',
-  });
-
-  const createProjectRole = useMutation({
-    mutationFn: (payload: { name: string }) =>
-      client.post('/admin/config/project-roles', payload).then((r) => r.data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'project-roles'] }); notify.success('Project role created'); resetForm(); },
-    onError: (err: any) => notify.apiError(err, 'Failed to create project role'),
-  });
-
-  const updateProjectRole = useMutation({
-    mutationFn: ({ id, ...payload }: { id: number; name?: string }) =>
-      client.patch(`/admin/config/project-roles/${id}`, payload).then((r) => r.data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'project-roles'] }); notify.success('Project role updated'); setEditing(null); },
-    onError: (err: any) => notify.apiError(err, 'Failed to update project role'),
-  });
-
-  const deleteProjectRole = useMutation({
-    mutationFn: (id: number) => client.delete(`/admin/config/project-roles/${id}`).then((r) => r.data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'project-roles'] }); notify.success('Project role deleted'); },
-    onError: (err: any) => notify.apiError(err, 'Failed to delete project role'),
-  });
+  // (Project roles block was here; removed for the same reason as
+  // the Project types block above — dead code that never rendered.)
 
   // -----------------------------------------------------------------------
   // Helpers

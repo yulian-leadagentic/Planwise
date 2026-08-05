@@ -27,7 +27,9 @@ export function TaskDiscussion({ taskId }: TaskDiscussionProps) {
       {
         taskId,
         content: content.trim(),
-        parentId: replyTo,
+        // addComment accepts `parentId?: number` (undefined ≠ null).
+        // Coerce the state's null → undefined at the boundary.
+        parentId: replyTo ?? undefined,
       },
       {
         onSuccess: () => {

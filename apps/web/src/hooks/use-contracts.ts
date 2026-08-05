@@ -68,7 +68,7 @@ export function useDeleteContract() {
 export function useBillings(contractId: number) {
   return useQuery({
     queryKey: ['contracts', contractId, 'billings'],
-    queryFn: () => contractsApi.listBillings(contractId),
+    queryFn: () => contractsApi.listBillings({ contractId }),
     enabled: !!contractId,
   });
 }
@@ -77,8 +77,8 @@ export function useCreateBilling() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ contractId, ...payload }: BillingPayload & { contractId: number }) =>
-      contractsApi.createBilling(contractId, payload),
+    mutationFn: (payload: BillingPayload & { contractId: number }) =>
+      contractsApi.createBilling(payload),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['contracts', variables.contractId, 'billings'] });
       notify.success('Billing created', { code: 'CONTRACT-CREATE-200' });
@@ -96,9 +96,3 @@ export function useExpenses(projectId?: number) {
   });
 }
 
-export function useMilestones(params?: { labelId?: number; partnerId?: number }) {
-  return useQuery({
-    queryKey: ['milestones', params],
-    queryFn: () => contractsApi.listMilestones(params),
-  });
-}

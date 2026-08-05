@@ -5,6 +5,12 @@
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "noEmit": true,
+    // Browser globals (window, document, localStorage, fetch, etc.)
+    // — the shared base only ships ES2022 because packages/shared and
+    // apps/api are Node/pure-lib. This override adds DOM for the web app.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // Vite-injected globals: ImportMeta.env, hot module APIs.
+    "types": ["vite/client"],
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
@@ -12,5 +18,10 @@
     }
   },
   "include": ["src"],
+  // Test files use Vitest globals (it, expect, describe) that aren't
+  // in the prod type context. `pnpm test` runs vitest which provides
+  // its own type env; the prod tsc build shouldn't try to typecheck
+  // them without those types (would need a whole separate tsconfig).
+  "exclude": ["src/**/*.spec.ts", "src/**/*.spec.tsx", "src/**/*.test.ts", "src/**/*.test.tsx"],
   "references": [{ "path": "../../packages/shared" }]
 }

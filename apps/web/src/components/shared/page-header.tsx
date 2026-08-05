@@ -1,7 +1,11 @@
 import { cn } from '@/lib/utils';
 
 interface PageHeaderProps {
-  title: string;
+  // Widened from string → ReactNode so callers can render an inline
+  // EditableText / breadcrumb / badge combo in the title slot. When
+  // a plain string is passed it still lands inside the h1 exactly
+  // as before, so no visual change for existing pages.
+  title: React.ReactNode;
   description?: string;
   actions?: React.ReactNode;
   className?: string;

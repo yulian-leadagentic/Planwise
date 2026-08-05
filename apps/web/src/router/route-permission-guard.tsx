@@ -25,9 +25,6 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
   '/admin/clock-dashboard': 'admin/clock-dashboard',
   '/admin/partner-types': 'admin/partner-types',
 
-  // Business Partners (uses the existing 'people' permission)
-  '/partners': 'people',
-
   // Top-level modules
   '/admin': 'admin',
   '/contracts': 'contracts',
@@ -42,6 +39,12 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
   '/messages': 'tasks',
   '/people': 'partners',
   '/admin/employees': 'partners',
+  // Was defined twice — an earlier "Business Partners (uses existing
+  // 'people' permission)" entry mapped '/partners' → 'people', and
+  // the later '/partners' → 'partners' below silently overrode it
+  // (which was ALSO what the runtime wanted, matching the /people
+  // and /admin/employees mappings above). tsc surfaced the collision
+  // via TS1117. Keeping the intended one.
   '/partners': 'partners',
   '/operations': 'operations',
 };
