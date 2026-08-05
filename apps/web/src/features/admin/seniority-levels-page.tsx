@@ -385,8 +385,8 @@ function FormCard({
           onClick={onSave}
           disabled={saving || !form.code.trim() || !form.name.trim()}
           className="inline-flex items-center gap-1 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-        >
-          <Save className="h-3 w-3" /> {mode === 'create' ? 'Create' : 'Save'}
+         aria-label="Save">
+          <Save className="h-3 w-3"  aria-hidden="true" /> {mode === 'create' ? 'Create' : 'Save'}
         </button>
       </div>
     </div>

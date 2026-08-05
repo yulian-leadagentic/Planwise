@@ -120,8 +120,8 @@ function CatalogPickerModal({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <h2 className="text-lg font-semibold">Pick Tasks from Catalog</h2>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent">
-            <X className="h-5 w-5" />
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent" aria-label="Close">
+            <X className="h-5 w-5"  aria-hidden="true" />
           </button>
         </div>
 

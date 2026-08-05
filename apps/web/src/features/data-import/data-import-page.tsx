@@ -333,9 +333,9 @@ function UploadStep({
           onClick={onValidate}
           disabled={!file || isValidating}
           className="flex items-center gap-1 rounded-md bg-blue-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-        >
+         aria-label="Continue">
           {isValidating ? 'Validating…' : 'Validate'}
-          <ArrowRight className="h-3.5 w-3.5" />
+          <ArrowRight className="h-3.5 w-3.5"  aria-hidden="true" />
         </button>
       </div>
     </div>

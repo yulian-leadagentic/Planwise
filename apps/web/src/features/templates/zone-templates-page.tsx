@@ -494,8 +494,8 @@ function ZoneCatalogPickerModal({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <h2 className="text-lg font-semibold">Pick Tasks from Catalog</h2>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent">
-            <X className="h-5 w-5" />
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent" aria-label="Close">
+            <X className="h-5 w-5"  aria-hidden="true" />
           </button>
         </div>
 
@@ -719,7 +719,7 @@ function ServicePickerModal({
       <div className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <h2 className="text-lg font-semibold">Select Deliverable Templates</h2>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent"><X className="h-5 w-5" /></button>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent" aria-label="Close"><X className="h-5 w-5"  aria-hidden="true" /></button>
         </div>
         <div className="border-b border-border px-5 py-3">
           <div className="relative">
@@ -1327,7 +1327,7 @@ function RootServicePickerModal({
       <div className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <h2 className="text-lg font-semibold">Select Deliverable Templates</h2>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent"><X className="h-5 w-5" /></button>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent" aria-label="Close"><X className="h-5 w-5"  aria-hidden="true" /></button>
         </div>
         <div className="border-b border-border px-5 py-3">
           <div className="relative">
@@ -1442,7 +1442,7 @@ function RootCatalogPickerModal({
       <div className="mx-4 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-lg border border-border bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <h2 className="text-lg font-semibold">Add Tasks from Catalog</h2>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent"><X className="h-5 w-5" /></button>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent" aria-label="Close"><X className="h-5 w-5"  aria-hidden="true" /></button>
         </div>
         <div className="border-b border-border px-5 py-3">
           <div className="relative">

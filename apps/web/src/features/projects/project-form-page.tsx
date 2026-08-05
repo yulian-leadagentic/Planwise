@@ -747,8 +747,8 @@ export function ProjectFormPage() {
                 type="submit"
                 disabled={isPending}
                 className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50 flex items-center gap-2"
-              >
-                {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+               aria-label="Loading">
+                {isPending && <Loader2 className="h-4 w-4 animate-spin"  aria-hidden="true" />}
                 {isEdit ? 'Update Project' : 'Create Project'}
               </button>
             </div>

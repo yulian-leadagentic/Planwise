@@ -358,14 +358,14 @@ export function CalendarDaysPage() {
         <>
           {/* Month navigation + working days count */}
           <div className="flex items-center justify-between">
-            <button onClick={prevMonth} className="rounded-md p-2 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronLeft className="h-5 w-5" /></button>
+            <button onClick={prevMonth} className="rounded-md p-2 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Previous"><ChevronLeft className="h-5 w-5"  aria-hidden="true" /></button>
             <div className="text-center">
               <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">{monthName}</h2>
               <p className="text-[12px] text-slate-400 dark:text-slate-500">
                 <span className="font-semibold text-slate-700 dark:text-slate-200">{monthWorkingDays}</span> working days this month
               </p>
             </div>
-            <button onClick={nextMonth} className="rounded-md p-2 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronRight className="h-5 w-5" /></button>
+            <button onClick={nextMonth} className="rounded-md p-2 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Next"><ChevronRight className="h-5 w-5"  aria-hidden="true" /></button>
           </div>
 
           {/* Legend */}

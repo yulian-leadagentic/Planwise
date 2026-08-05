@@ -202,8 +202,8 @@ function ToggleButton({ checked, onChange, disabled }: { checked: boolean; onCha
           : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-transparent hover:border-slate-400 dark:hover:border-slate-500',
         disabled && 'opacity-30 cursor-not-allowed',
       )}
-    >
-      {checked && <Check className="w-4 h-4" />}
+     aria-label="Toggle">
+      {checked && <Check className="w-4 h-4"  aria-hidden="true" />}
     </button>
   );
 }

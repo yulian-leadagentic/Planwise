@@ -42,8 +42,8 @@ export function DiscussionDrawer({ open, onClose, entityType, entityId, title }:
               {entityType === 'project' ? 'Project discussion' : entityType === 'task' ? 'Task discussion' : 'Zone discussion'}
             </p>
           </div>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
-            <X className="h-4 w-4" />
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" aria-label="Close">
+            <X className="h-4 w-4"  aria-hidden="true" />
           </button>
         </div>
 

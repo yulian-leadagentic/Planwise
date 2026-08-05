@@ -367,8 +367,8 @@ function EditorView({
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <button onClick={onBack} className="rounded-lg p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800">
-          <ArrowLeft className="h-5 w-5 text-slate-500 dark:text-slate-400" />
+        <button onClick={onBack} className="rounded-lg p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Back">
+          <ArrowLeft className="h-5 w-5 text-slate-500 dark:text-slate-400"  aria-hidden="true" />
         </button>
         <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100">{template.name}</h1>
         <span className="text-sm text-slate-400 dark:text-slate-500 ml-1">

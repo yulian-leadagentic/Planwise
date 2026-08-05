@@ -288,7 +288,14 @@ function TaskCard({ task, health, onClick }: { task: Task; health: TaskHealth; o
       {/* Line 1: task name + risk icon. Bare-TODO cards add an inline "-"
           marker per spec ("title with '-' no other details, in grey"). */}
       <div className="flex items-start gap-1.5">
-        <span className={cn('h-2 w-2 mt-1 shrink-0 rounded-full', STATUS_DOT[task.status] ?? 'bg-slate-400 dark:bg-slate-500')} />
+        {/* Status dot — color-only signal, so pair with a text label
+            for AT + hover-title for sighted users (WCAG 1.4.1). */}
+        <span
+          role="img"
+          aria-label={`Status: ${STATUS_LABEL[task.status] ?? task.status}`}
+          title={STATUS_LABEL[task.status] ?? task.status}
+          className={cn('h-2 w-2 mt-1 shrink-0 rounded-full', STATUS_DOT[task.status] ?? 'bg-slate-400 dark:bg-slate-500')}
+        />
         <span className={cn(
           'flex-1 text-[12px] leading-tight break-words',
           isBareTodo ? 'text-slate-500 dark:text-slate-400 font-medium' : 'font-semibold text-slate-800 dark:text-slate-100',

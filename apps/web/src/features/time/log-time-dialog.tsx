@@ -113,8 +113,8 @@ export function LogTimeDialog({
             <Clock className="h-5 w-5 text-brand-600" />
             <h2 className="text-base font-semibold">Log Time</h2>
           </div>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent">
-            <X className="h-4 w-4" />
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent" aria-label="Close">
+            <X className="h-4 w-4"  aria-hidden="true" />
           </button>
         </div>
 

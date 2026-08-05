@@ -317,8 +317,8 @@ function AddAssigneeDialog({
       <div className="w-full max-w-sm rounded-lg border border-border bg-background p-6 shadow-lg">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-sm font-semibold">Add Assignee</h3>
-          <button onClick={onClose} className="rounded p-1 hover:bg-accent">
-            <X className="h-4 w-4" />
+          <button onClick={onClose} className="rounded p-1 hover:bg-accent" aria-label="Close">
+            <X className="h-4 w-4"  aria-hidden="true" />
           </button>
         </div>
 

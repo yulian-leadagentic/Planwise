@@ -1345,8 +1345,8 @@ function CustomerContactPicker({
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[440px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
           <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Add Contact at {customerName}</h3>
-          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
-            <X className="h-4 w-4" />
+          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" aria-label="Close">
+            <X className="h-4 w-4"  aria-hidden="true" />
           </button>
         </div>
         <div className="p-5 space-y-3">
@@ -1475,8 +1475,8 @@ function RoleAssignmentPicker({
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[440px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
           <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Add {role.name}</h3>
-          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
-            <X className="h-4 w-4" />
+          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" aria-label="Close">
+            <X className="h-4 w-4"  aria-hidden="true" />
           </button>
         </div>
         <div className="p-5 space-y-3">
@@ -1688,8 +1688,8 @@ function ProjectBpPicker({
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[560px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
           <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{config.title}</h2>
-          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
-            <X className="h-4 w-4" />
+          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" aria-label="Close">
+            <X className="h-4 w-4"  aria-hidden="true" />
           </button>
         </div>
         <div className="p-5 space-y-4">
@@ -1917,8 +1917,8 @@ function AddMemberDialog({
           <button
             onClick={onClose}
             className="rounded p-1 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-          >
-            <X className="h-4 w-4" />
+           aria-label="Close">
+            <X className="h-4 w-4"  aria-hidden="true" />
           </button>
         </div>
 

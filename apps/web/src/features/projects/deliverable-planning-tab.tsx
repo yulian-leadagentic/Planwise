@@ -542,8 +542,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
             onClick={attemptSave}
             disabled={!hasUnsavedChanges || save.isPending}
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[13px] font-semibold"
-          >
-            <Save className="h-3.5 w-3.5" />
+           aria-label="Save">
+            <Save className="h-3.5 w-3.5"  aria-hidden="true" />
             {save.isPending ? 'Saving...' : 'Save all'}
           </button>
         </div>

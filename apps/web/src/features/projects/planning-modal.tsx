@@ -1343,7 +1343,7 @@ function CatalogPickerForZone({ zoneId, projectId, onClose, onDone }: {
       <div className="mx-4 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-5 py-4">
           <h2 className="text-base font-semibold">Add Tasks from Catalog</h2>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Close"><X className="h-4 w-4"  aria-hidden="true" /></button>
         </div>
         <div className="border-b border-slate-200 dark:border-slate-700 px-5 py-3">
           <div className="relative">
@@ -1444,7 +1444,7 @@ function PhaseTemplatePickerForZone({ zoneId, projectId, onClose, onDone }: {
       <div className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-5 py-4">
           <h2 className="text-base font-semibold">Select Deliverable Templates</h2>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Close"><X className="h-4 w-4"  aria-hidden="true" /></button>
         </div>
         <div className="border-b border-slate-200 dark:border-slate-700 px-5 py-3">
           <div className="relative">
@@ -1973,8 +1973,8 @@ function TemplatePickerDialog({ projectId, onClose, onApplied }: { projectId: nu
     <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 overflow-hidden">
       <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
         <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Add Zone from Template</h3>
-        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
-          <X className="w-4 h-4" />
+        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" aria-label="Close">
+          <X className="w-4 h-4"  aria-hidden="true" />
         </button>
       </div>
 
@@ -2106,8 +2106,8 @@ function ProjectArchivedTasksModal({
             <h2 id="archive-modal-title" className="text-sm font-bold text-slate-900 dark:text-slate-100">Archived Tasks</h2>
             <p className="text-[11px] text-slate-400 dark:text-slate-500">Soft-deleted tasks on this project. Click Restore to bring one back.</p>
           </div>
-          <button onClick={onClose} className="rounded-md p-1.5 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
-            <X className="h-4 w-4" />
+          <button onClick={onClose} className="rounded-md p-1.5 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Close">
+            <X className="h-4 w-4"  aria-hidden="true" />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto">
@@ -2239,7 +2239,7 @@ function AddZoneManuallyDialog({ projectId, onClose, onCreated }: { projectId: n
     <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 p-5 space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Add Zone Manually</h3>
-        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500"><X className="w-4 h-4" /></button>
+        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500" aria-label="Close"><X className="w-4 h-4"  aria-hidden="true" /></button>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -2793,7 +2793,7 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
     <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 p-5 space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Add Task at Project Root</h3>
-        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500"><X className="w-4 h-4" /></button>
+        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500" aria-label="Close"><X className="w-4 h-4"  aria-hidden="true" /></button>
       </div>
 
       {/* Mode tabs */}
@@ -3022,7 +3022,7 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
     <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 p-5 space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Add Deliverable at Project Root</h3>
-        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500"><X className="w-4 h-4" /></button>
+        <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500" aria-label="Close"><X className="w-4 h-4"  aria-hidden="true" /></button>
       </div>
       <p className="text-[12px] text-slate-500 dark:text-slate-400">Pick a deliverable template; its tasks are added directly to this project (no zone).</p>
       <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search deliverables..."

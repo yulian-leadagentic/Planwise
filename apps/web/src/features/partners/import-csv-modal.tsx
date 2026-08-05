@@ -82,8 +82,8 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[640px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
           <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Import Business Partners (CSV)</h2>
-          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
-            <X className="h-4 w-4" />
+          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" aria-label="Close">
+            <X className="h-4 w-4"  aria-hidden="true" />
           </button>
         </div>
 
