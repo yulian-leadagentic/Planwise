@@ -3,6 +3,7 @@ import { Plus, Trash2, Pencil, Save, X, Tags, Lock } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { EmptyState } from '@/components/shared/empty-state';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
@@ -777,6 +778,12 @@ function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: 
 
       {isLoading ? (
         <TableSkeleton rows={3} cols={4} />
+      ) : categories.length === 0 && editingId !== 'new' ? (
+        <EmptyState
+          icon={Tags}
+          title="No categories yet"
+          description="Add one to start grouping role types."
+        />
       ) : (
         <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
           <table className="w-full text-sm">
@@ -846,13 +853,6 @@ function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: 
                     </td>
                   </tr>
                 ),
-              )}
-              {!isLoading && categories.length === 0 && editingId !== 'new' && (
-                <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400 dark:text-slate-500 text-sm">
-                    No categories yet. Add one to start grouping role types.
-                  </td>
-                </tr>
               )}
             </tbody>
           </table>
