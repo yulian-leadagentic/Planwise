@@ -56,7 +56,7 @@ function getColumns(
       accessorKey: 'code',
       header: 'Code',
       cell: ({ row }) => (
-        <span className="text-xs font-mono text-slate-500">
+        <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
           {(row.original as any).code ?? '—'}
         </span>
       ),
@@ -64,7 +64,7 @@ function getColumns(
     {
       accessorKey: 'email',
       header: 'Email',
-      cell: ({ row }) => <span className="text-sm text-slate-600">{row.original.email ?? '-'}</span>,
+      cell: ({ row }) => <span className="text-sm text-slate-600 dark:text-slate-300">{row.original.email ?? '-'}</span>,
     },
     {
       accessorKey: 'position',
@@ -85,8 +85,8 @@ function getColumns(
       header: 'Seniority',
       cell: ({ row }) => {
         const sl = (row.original as any).seniorityLevel as { name?: string } | null | undefined;
-        if (!sl?.name) return <span className="text-slate-300">—</span>;
-        return <span className="text-sm text-slate-700">{sl.name}</span>;
+        if (!sl?.name) return <span className="text-slate-300 dark:text-slate-600">—</span>;
+        return <span className="text-sm text-slate-700 dark:text-slate-200">{sl.name}</span>;
       },
     },
   ];
@@ -121,7 +121,7 @@ function getColumns(
             }}
             onClick={(e) => e.stopPropagation()}
             className={cn(
-              'rounded-md border border-slate-200 bg-white px-2 py-1 text-sm focus:border-blue-400 focus:outline-none',
+              'rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-sm focus:border-blue-400 focus:outline-none',
               isSaving && 'opacity-50 cursor-wait',
             )}
           >
@@ -136,7 +136,7 @@ function getColumns(
       accessorKey: 'isActive',
       header: 'Status',
       cell: ({ row }) => (
-        <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', row.original.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500')}>
+        <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', row.original.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400')}>
           {row.original.isActive ? 'Active' : 'Inactive'}
         </span>
       ),
@@ -168,7 +168,7 @@ function getColumns(
           <button
             type="button"
             onClick={() => onResetPassword(row.original)}
-            className="p-1.5 rounded hover:bg-amber-50 text-slate-400 hover:text-amber-600"
+            className="p-1.5 rounded hover:bg-amber-50 text-slate-400 dark:text-slate-500 hover:text-amber-600"
             title="Reset password"
           >
             <KeyRound className="h-3.5 w-3.5" />
@@ -549,7 +549,7 @@ export function PeoplePage() {
                     'rounded-full px-2 py-0.5 text-xs font-medium',
                     user.isActive
                       ? 'bg-green-100 text-green-700'
-                      : 'bg-gray-100 text-gray-500',
+                      : 'bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400',
                   )}
                 >
                   {user.isActive ? 'Active' : 'Inactive'}
@@ -564,10 +564,10 @@ export function PeoplePage() {
       {/* Create Person Modal */}
       {showCreate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={() => setShowCreate(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-[480px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-              <h2 className="text-base font-bold text-slate-900">Add {isPartners ? 'External Employee' : 'Employee'}</h2>
-              <button onClick={() => setShowCreate(false)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[480px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Add {isPartners ? 'External Employee' : 'Employee'}</h2>
+              <button onClick={() => setShowCreate(false)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -581,14 +581,14 @@ export function PeoplePage() {
                   (see UsersService.create #3). */}
               {isPartners && (
                 <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3">
-                  <label className="text-[12px] font-semibold text-slate-700 mb-1 block">
-                    Employer Organization <span className="text-slate-400 font-normal">(customer / supplier they work at)</span>
+                  <label className="text-[12px] font-semibold text-slate-700 dark:text-slate-200 mb-1 block">
+                    Employer Organization <span className="text-slate-400 dark:text-slate-500 font-normal">(customer / supplier they work at)</span>
                   </label>
                   {form.employerOrgId === '' ? (
                     <button
                       type="button"
                       onClick={() => { setEmployerPickerSearch(''); setEmployerPickerOpen(true); }}
-                      className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-left text-slate-500 hover:border-blue-400 focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-left text-slate-500 dark:text-slate-400 hover:border-blue-400 focus:border-blue-500 focus:outline-none"
                     >
                       — Pick an organization — <span className="text-blue-600 underline ml-1">browse list</span>
                     </button>
@@ -597,7 +597,7 @@ export function PeoplePage() {
                       <button
                         type="button"
                         onClick={() => { setEmployerPickerSearch(''); setEmployerPickerOpen(true); }}
-                        className="flex-1 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-left text-slate-700 hover:border-blue-400"
+                        className="flex-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-left text-slate-700 dark:text-slate-200 hover:border-blue-400"
                       >
                         {(() => {
                           const org = employerOrgs.find((o: any) => o.id === form.employerOrgId);
@@ -609,14 +609,14 @@ export function PeoplePage() {
                       <button
                         type="button"
                         onClick={() => setForm((f) => ({ ...f, employerOrgId: '' }))}
-                        className="px-2 py-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-500 hover:text-slate-700"
+                        className="px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100"
                         title="Clear"
                       >
                         Clear
                       </button>
                     </div>
                   )}
-                  <p className="mt-1 text-[11px] text-slate-500">
+                  <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
                     Wires up an <code>employee_of</code> relationship — defines what context this contact works in.
                   </p>
                 </div>
@@ -629,13 +629,13 @@ export function PeoplePage() {
                   don't already have a user account are shown.
                   This is a DEDUPE path — separate from the Employer org
                   picker above (which is about org context, not identity). */}
-              <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-                <label className="text-[12px] font-semibold text-slate-700 mb-1 block">Link to existing person record <span className="text-slate-400 font-normal">(optional — avoids duplicates)</span></label>
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 p-3">
+                <label className="text-[12px] font-semibold text-slate-700 dark:text-slate-200 mb-1 block">Link to existing person record <span className="text-slate-400 dark:text-slate-500 font-normal">(optional — avoids duplicates)</span></label>
                 {form.businessPartnerId === '' ? (
                   <button
                     type="button"
                     onClick={() => { setPartnerPickerSearch(''); setPartnerPickerOpen(true); }}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-left text-slate-500 hover:border-blue-400 focus:border-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-left text-slate-500 dark:text-slate-400 hover:border-blue-400 focus:border-blue-500 focus:outline-none"
                   >
                     — Create a new partner record — <span className="text-blue-600 underline ml-1">pick from list</span>
                   </button>
@@ -644,7 +644,7 @@ export function PeoplePage() {
                     <button
                       type="button"
                       onClick={() => { setPartnerPickerSearch(''); setPartnerPickerOpen(true); }}
-                      className="flex-1 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-left text-slate-700 hover:border-blue-400"
+                      className="flex-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-left text-slate-700 dark:text-slate-200 hover:border-blue-400"
                     >
                       {(() => {
                         const bp = linkableBps.find((b: any) => b.id === form.businessPartnerId);
@@ -656,14 +656,14 @@ export function PeoplePage() {
                     <button
                       type="button"
                       onClick={() => handleLinkExistingBp('')}
-                      className="px-2 py-2 rounded-lg border border-slate-200 bg-white text-xs text-slate-500 hover:text-slate-700"
+                      className="px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100"
                       title="Clear link"
                     >
                       Clear
                     </button>
                   </div>
                 )}
-                <p className="mt-1 text-[11px] text-slate-500">
+                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
                   Pick someone already in <strong>Partners → Contacts</strong> to give them
                   app access without duplicating the contact record.
                 </p>
@@ -675,10 +675,10 @@ export function PeoplePage() {
                   no range bound: hidden — admins wire one up in /admin/object-numbering. */}
               {employeeRange && (
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title={`From range ${employeeRange.code} (${employeeRange.mode} mode)`}>
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title={`From range ${employeeRange.code} (${employeeRange.mode} mode)`}>
                     Employee Code
                     {employeeRange.mode !== 'auto' && <span className="text-red-500"> *</span>}
-                    <span className="ml-2 text-[10px] font-normal text-slate-400">
+                    <span className="ml-2 text-[10px] font-normal text-slate-400 dark:text-slate-500">
                       {employeeRange.mode === 'auto'
                         ? `auto from range ${employeeRange.code}`
                         : employeeRange.mode === 'manual'
@@ -691,14 +691,14 @@ export function PeoplePage() {
                       value={employeeRange.preview ?? ''}
                       disabled
                       placeholder="(allocated on save)"
-                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 bg-slate-50 text-sm font-mono text-slate-500 cursor-not-allowed"
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-sm font-mono text-slate-500 dark:text-slate-400 cursor-not-allowed"
                     />
                   ) : (
                     <input
                       value={form.code}
                       onChange={(e) => setForm((f) => ({ ...f, code: e.target.value }))}
                       placeholder={employeeRange.prefix ? `e.g. ${employeeRange.prefix}…` : 'Enter the code'}
-                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm font-mono text-slate-700 focus:border-blue-500 focus:outline-none"
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-mono text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                     />
                   )}
                 </div>
@@ -706,12 +706,12 @@ export function PeoplePage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">First Name *</label>
-                  <input value={form.firstName} onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">First Name *</label>
+                  <input value={form.firstName} onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
                 </div>
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Last Name *</label>
-                  <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Last Name *</label>
+                  <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
                 </div>
               </div>
               {/* Hebrew name (T3.3, 2026-06-28). Optional — when filled
@@ -719,55 +719,55 @@ export function PeoplePage() {
                   so the cursor sits where Hebrew typists expect. */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">שם פרטי (Hebrew first name)</label>
-                  <input dir="rtl" value={form.firstNameHe ?? ''} onChange={(e) => setForm(f => ({ ...f, firstNameHe: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">שם פרטי (Hebrew first name)</label>
+                  <input dir="rtl" value={form.firstNameHe ?? ''} onChange={(e) => setForm(f => ({ ...f, firstNameHe: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
                 </div>
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">שם משפחה (Hebrew last name)</label>
-                  <input dir="rtl" value={form.lastNameHe ?? ''} onChange={(e) => setForm(f => ({ ...f, lastNameHe: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">שם משפחה (Hebrew last name)</label>
+                  <input dir="rtl" value={form.lastNameHe ?? ''} onChange={(e) => setForm(f => ({ ...f, lastNameHe: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
                 </div>
               </div>
               <div>
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="Email is the unique identifier for every person — used for login and as the dedupe key.">
+                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="Email is the unique identifier for every person — used for login and as the dedupe key.">
                   Email <span className="text-red-500">*</span>
-                  <span className="ml-2 text-[10px] font-normal text-slate-400">(unique — login & identifier)</span>
+                  <span className="ml-2 text-[10px] font-normal text-slate-400 dark:text-slate-500">(unique — login & identifier)</span>
                 </label>
-                <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
               </div>
               <div>
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Password *</label>
-                <input type="password" value={form.password} onChange={(e) => setForm(f => ({ ...f, password: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Password *</label>
+                <input type="password" value={form.password} onChange={(e) => setForm(f => ({ ...f, password: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="Determines what the user can see and edit — separate from job title.">
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="Determines what the user can see and edit — separate from job title.">
                     Authorization Role <span className="text-red-500">*</span>
                   </label>
-                  <select value={form.roleId} onChange={(e) => setForm(f => ({ ...f, roleId: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none">
+                  <select value={form.roleId} onChange={(e) => setForm(f => ({ ...f, roleId: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none">
                     <option value="">Select role</option>
                     {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Telephone</label>
-                  <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Telephone</label>
+                  <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="What this person does by trade. Manage the list in /templates/types → Job Titles.">
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="What this person does by trade. Manage the list in /templates/types → Job Titles.">
                     Job Title
                   </label>
                   <select value={form.position} onChange={(e) => setForm(f => ({ ...f, position: e.target.value }))}
-                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none">
+                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none">
                     <option value="">Select job title</option>
                     {professions.map((p: any) => <option key={p.id} value={p.name}>{p.name}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Department</label>
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Department</label>
                   <select value={form.department} onChange={(e) => setForm(f => ({ ...f, department: e.target.value }))}
-                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none">
+                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none">
                     <option value="">Select department</option>
                     {departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
                   </select>
@@ -779,7 +779,7 @@ export function PeoplePage() {
                   level name. */}
               <div>
                 <label
-                  className="text-[13px] font-semibold text-slate-700 mb-1.5 block"
+                  className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block"
                   title="Determines the employee's default hourly cost for project labor calculations. Manage the catalog at /admin/seniority-levels."
                 >
                   Seniority Level
@@ -788,7 +788,7 @@ export function PeoplePage() {
                   {can('finance', 'read') && (() => {
                     const sel = seniorityLevels.find((s: any) => String(s.id) === String(form.seniorityLevelId));
                     return sel && sel.defaultHourlyCost != null ? (
-                      <span className="ml-2 text-[11px] font-normal text-slate-500">
+                      <span className="ml-2 text-[11px] font-normal text-slate-500 dark:text-slate-400">
                         → {sel.defaultHourlyCost}{sel.currency ? ` ${sel.currency}` : ''}/h
                       </span>
                     ) : null;
@@ -797,7 +797,7 @@ export function PeoplePage() {
                 <select
                   value={form.seniorityLevelId}
                   onChange={(e) => setForm((f) => ({ ...f, seniorityLevelId: e.target.value === '' ? '' : Number(e.target.value) }))}
-                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                 >
                   <option value="">— Pick a seniority level —</option>
                   {seniorityLevels.map((s: any) => (
@@ -819,25 +819,25 @@ export function PeoplePage() {
               {/* M4a.4 — Employment fields */}
               <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Start date</label>
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Start date</label>
                   <input
                     type="date"
                     value={form.employmentDate}
                     onChange={(e) => setForm((f) => ({ ...f, employmentDate: e.target.value }))}
-                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">End date</label>
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">End date</label>
                   <input
                     type="date"
                     value={form.employmentEndDate}
                     onChange={(e) => setForm((f) => ({ ...f, employmentEndDate: e.target.value }))}
-                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="Standard daily hours used for cost & utilisation calculations.">
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="Standard daily hours used for cost & utilisation calculations.">
                     Daily standard hours
                   </label>
                   <input
@@ -848,18 +848,18 @@ export function PeoplePage() {
                     value={form.dailyStandardHours}
                     onChange={(e) => setForm((f) => ({ ...f, dailyStandardHours: e.target.value }))}
                     placeholder="e.g. 8"
-                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                   />
                 </div>
               </div>
               {peopleTab === 'partners' && (
                 <div>
-                  <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Company Name</label>
-                  <input value={form.companyName} onChange={(e) => setForm(f => ({ ...f, companyName: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none" />
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Company Name</label>
+                  <input value={form.companyName} onChange={(e) => setForm(f => ({ ...f, companyName: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
                 </div>
               )}
-              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-                <button type="button" onClick={() => setShowCreate(false)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <button type="button" onClick={() => setShowCreate(false)} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
                 <button type="submit" disabled={createUser.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
                   {createUser.isPending ? 'Creating...' : 'Create'}
                 </button>
@@ -878,28 +878,28 @@ export function PeoplePage() {
           onClick={() => setPartnerPickerOpen(false)}
         >
           <div
-            className="bg-white rounded-2xl shadow-2xl w-[520px] max-w-[92vw] max-h-[80vh] flex flex-col"
+            className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[520px] max-w-[92vw] max-h-[80vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-              <h2 className="text-base font-bold text-slate-900">Select a partner</h2>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Select a partner</h2>
               <button
                 type="button"
                 onClick={() => setPartnerPickerOpen(false)}
-                className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600"
+                className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="p-4 border-b border-slate-100">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800">
               <input
                 autoFocus
                 value={partnerPickerSearch}
                 onChange={(e) => setPartnerPickerSearch(e.target.value)}
                 placeholder="Search by name, email, or company..."
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
               />
-              <p className="mt-1.5 text-[11px] text-slate-500">
+              <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
                 Only contacts without an existing login are shown.
               </p>
             </div>
@@ -914,7 +914,7 @@ export function PeoplePage() {
                   : linkableBps;
                 if (filtered.length === 0) {
                   return (
-                    <p className="px-5 py-6 text-center text-sm text-slate-500">
+                    <p className="px-5 py-6 text-center text-sm text-slate-500 dark:text-slate-400">
                       {linkableBps.length === 0
                         ? 'No linkable partners — every person already has a login.'
                         : 'No matches for that search.'}
@@ -922,7 +922,7 @@ export function PeoplePage() {
                   );
                 }
                 return (
-                  <ul className="divide-y divide-slate-100">
+                  <ul className="divide-y divide-slate-100 dark:divide-slate-800">
                     {filtered.map((bp: any) => (
                       <li key={bp.id}>
                         <button
@@ -931,10 +931,10 @@ export function PeoplePage() {
                             handleLinkExistingBp(String(bp.id));
                             setPartnerPickerOpen(false);
                           }}
-                          className="w-full text-left px-5 py-3 hover:bg-slate-50"
+                          className="w-full text-left px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50"
                         >
-                          <p className="text-sm font-medium text-slate-900">{bp.displayName}</p>
-                          <p className="text-xs text-slate-500">
+                          <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{bp.displayName}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
                             {bp.email ?? '—'}
                             {bp.companyName ? ` · ${bp.companyName}` : ''}
                           </p>
@@ -960,28 +960,28 @@ export function PeoplePage() {
           onClick={() => setEmployerPickerOpen(false)}
         >
           <div
-            className="bg-white rounded-2xl shadow-2xl w-[520px] max-w-[92vw] max-h-[80vh] flex flex-col"
+            className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[520px] max-w-[92vw] max-h-[80vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-              <h2 className="text-base font-bold text-slate-900">Select an organization</h2>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Select an organization</h2>
               <button
                 type="button"
                 onClick={() => setEmployerPickerOpen(false)}
-                className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600"
+                className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="p-4 border-b border-slate-100">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800">
               <input
                 autoFocus
                 value={employerPickerSearch}
                 onChange={(e) => setEmployerPickerSearch(e.target.value)}
                 placeholder="Search by name, tax ID, or email..."
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
               />
-              <p className="mt-1.5 text-[11px] text-slate-500">
+              <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
                 Customers, suppliers, subcontractors — every organization in the system.
               </p>
             </div>
@@ -996,7 +996,7 @@ export function PeoplePage() {
                   : employerOrgs;
                 if (filtered.length === 0) {
                   return (
-                    <p className="px-5 py-6 text-center text-sm text-slate-500">
+                    <p className="px-5 py-6 text-center text-sm text-slate-500 dark:text-slate-400">
                       {employerOrgs.length === 0
                         ? 'No organizations yet — add one from Partners → Organizations first.'
                         : 'No matches for that search.'}
@@ -1004,7 +1004,7 @@ export function PeoplePage() {
                   );
                 }
                 return (
-                  <ul className="divide-y divide-slate-100">
+                  <ul className="divide-y divide-slate-100 dark:divide-slate-800">
                     {filtered.map((org: any) => (
                       <li key={org.id}>
                         <button
@@ -1013,10 +1013,10 @@ export function PeoplePage() {
                             setForm((f) => ({ ...f, employerOrgId: org.id }));
                             setEmployerPickerOpen(false);
                           }}
-                          className="w-full text-left px-5 py-3 hover:bg-slate-50"
+                          className="w-full text-left px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50"
                         >
-                          <p className="text-sm font-medium text-slate-900">{org.displayName}</p>
-                          <p className="text-xs text-slate-500">
+                          <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{org.displayName}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
                             {org.mainRoleType?.name ?? 'No main role'}
                             {org.taxId ? ` · Tax ID: ${org.taxId}` : ''}
                             {org.email ? ` · ${org.email}` : ''}
@@ -1053,7 +1053,7 @@ export function PeoplePage() {
   );
 }
 
-const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
+const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
 function EditPersonModal({
   user,
@@ -1148,45 +1148,45 @@ function EditPersonModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[480px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <h2 className="text-base font-bold text-slate-900">Edit {isPartner ? 'Partner' : 'Employee'}</h2>
-          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[480px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Edit {isPartner ? 'Partner' : 'Employee'}</h2>
+          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
             <X className="h-4 w-4" />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">First Name *</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">First Name *</label>
               <input value={form.firstName} onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))} className={inputClass} />
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Last Name *</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Last Name *</label>
               <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className={inputClass} />
             </div>
           </div>
           {/* Hebrew name (T3.3, 2026-06-28). */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">שם פרטי (Hebrew first name)</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">שם פרטי (Hebrew first name)</label>
               <input dir="rtl" value={form.firstNameHe} onChange={(e) => setForm(f => ({ ...f, firstNameHe: e.target.value }))} className={inputClass} />
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">שם משפחה (Hebrew last name)</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">שם משפחה (Hebrew last name)</label>
               <input dir="rtl" value={form.lastNameHe} onChange={(e) => setForm(f => ({ ...f, lastNameHe: e.target.value }))} className={inputClass} />
             </div>
           </div>
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="Email is the unique identifier for every person — used for login and as the dedupe key on imports.">
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="Email is the unique identifier for every person — used for login and as the dedupe key on imports.">
               Email <span className="text-red-500">*</span>
-              <span className="ml-2 text-[10px] font-normal text-slate-400">(unique — login & identifier)</span>
+              <span className="ml-2 text-[10px] font-normal text-slate-400 dark:text-slate-500">(unique — login & identifier)</span>
             </label>
             <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} className={inputClass} />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="Determines what the user can see and edit — separate from job title / profession.">
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="Determines what the user can see and edit — separate from job title / profession.">
                 Authorization Role <span className="text-red-500">*</span>
               </label>
               <select value={form.roleId} onChange={(e) => setForm(f => ({ ...f, roleId: e.target.value }))} className={inputClass}>
@@ -1195,13 +1195,13 @@ function EditPersonModal({
               </select>
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Telephone</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Telephone</label>
               <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className={inputClass} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="What this person does by trade. Manage the list in /templates/types → Job Titles.">
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="What this person does by trade. Manage the list in /templates/types → Job Titles.">
                 Job Title
               </label>
               <select value={form.position} onChange={(e) => setForm(f => ({ ...f, position: e.target.value }))} className={inputClass}>
@@ -1210,7 +1210,7 @@ function EditPersonModal({
               </select>
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Department</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Department</label>
               <select value={form.department} onChange={(e) => setForm(f => ({ ...f, department: e.target.value }))} className={inputClass}>
                 <option value="">Select department</option>
                 {departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
@@ -1230,7 +1230,7 @@ function EditPersonModal({
           {/* M4a.4 — Employment fields */}
           <div className="grid grid-cols-3 gap-4">
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Start date</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Start date</label>
               <input
                 type="date"
                 value={form.employmentDate}
@@ -1239,7 +1239,7 @@ function EditPersonModal({
               />
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">End date</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">End date</label>
               <input
                 type="date"
                 value={form.employmentEndDate}
@@ -1248,7 +1248,7 @@ function EditPersonModal({
               />
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block" title="Standard daily hours used for cost & utilisation calculations.">
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="Standard daily hours used for cost & utilisation calculations.">
                 Daily standard hours
               </label>
               <input
@@ -1265,7 +1265,7 @@ function EditPersonModal({
           </div>
           {isPartner && (
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Company Name</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Company Name</label>
               <input value={form.companyName} onChange={(e) => setForm(f => ({ ...f, companyName: e.target.value }))} className={inputClass} />
             </div>
           )}
@@ -1274,12 +1274,12 @@ function EditPersonModal({
               type="checkbox"
               checked={form.isActive}
               onChange={(e) => setForm(f => ({ ...f, isActive: e.target.checked }))}
-              className="h-4 w-4 rounded border-slate-300 text-blue-600"
+              className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-blue-600"
             />
-            <span className="text-sm text-slate-700">Active</span>
+            <span className="text-sm text-slate-700 dark:text-slate-200">Active</span>
           </label>
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-            <button type="button" onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <button type="button" onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
             <button type="submit" disabled={update.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
               {update.isPending ? 'Saving...' : 'Save Changes'}
             </button>
@@ -1463,16 +1463,16 @@ function SeniorityHistorySection({
   const fmtDate = (iso: string | null) => (iso ? iso.slice(0, 10) : OPEN_ENDED_SENTINEL);
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+    <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 p-3">
       <div className="flex items-center justify-between mb-2">
         <div>
           <label
-            className="text-[13px] font-semibold text-slate-700 block"
+            className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 block"
             title="Each row is a [startDate, endDate] interval. The project cost calc looks up which row covered each time entry's date and bills at that level's hourly cost."
           >
             Seniority History
           </label>
-          <p className="text-[11px] text-slate-500">
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
             Date-effective seniority. Open-ended adds auto-close the previous current row.
           </p>
         </div>
@@ -1489,14 +1489,14 @@ function SeniorityHistorySection({
 
       {/* Add form */}
       {showAddForm && (
-        <div className="mb-3 rounded-md border border-blue-200 bg-white p-3 space-y-2">
+        <div className="mb-3 rounded-md border border-blue-200 bg-white dark:bg-slate-900 p-3 space-y-2">
           <div className="grid grid-cols-3 gap-2">
             <div>
-              <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Level</label>
+              <label className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Level</label>
               <select
                 value={newLevelId}
                 onChange={(e) => setNewLevelId(e.target.value)}
-                className="w-full mt-1 px-2 py-1.5 rounded border border-slate-200 text-[12px] focus:border-blue-500 focus:outline-none"
+                className="w-full mt-1 px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-[12px] focus:border-blue-500 focus:outline-none"
               >
                 <option value="">— Pick —</option>
                 {seniorityLevels.map((s: any) => (
@@ -1507,26 +1507,26 @@ function SeniorityHistorySection({
               </select>
             </div>
             <div>
-              <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Start</label>
+              <label className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Start</label>
               <input
                 type="date"
                 value={newStartDate}
                 onChange={(e) => setNewStartDate(e.target.value)}
-                className="w-full mt-1 px-2 py-1.5 rounded border border-slate-200 text-[12px] focus:border-blue-500 focus:outline-none"
+                className="w-full mt-1 px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-[12px] focus:border-blue-500 focus:outline-none"
               />
             </div>
             <div>
               <label
-                className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider"
+                className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider"
                 title="Defaults to 9999-12-31 (open-ended / 'current'). Set a real end date to record a closed historical period."
               >
-                End <span className="text-slate-400 normal-case">(9999-12-31 = current)</span>
+                End <span className="text-slate-400 dark:text-slate-500 normal-case">(9999-12-31 = current)</span>
               </label>
               <input
                 type="date"
                 value={newEndDate}
                 onChange={(e) => setNewEndDate(e.target.value)}
-                className="w-full mt-1 px-2 py-1.5 rounded border border-slate-200 text-[12px] focus:border-blue-500 focus:outline-none"
+                className="w-full mt-1 px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-[12px] focus:border-blue-500 focus:outline-none"
               />
             </div>
           </div>
@@ -1534,7 +1534,7 @@ function SeniorityHistorySection({
             <button
               type="button"
               onClick={() => { setShowAddForm(false); setNewLevelId(''); setNewEndDate(''); }}
-              className="px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:text-slate-800"
+              className="px-2.5 py-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-slate-100"
             >
               Cancel
             </button>
@@ -1552,9 +1552,9 @@ function SeniorityHistorySection({
 
       {/* History list */}
       {isLoading ? (
-        <p className="text-[12px] text-slate-400 italic">Loading…</p>
+        <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">Loading…</p>
       ) : history.length === 0 ? (
-        <p className="text-[12px] text-slate-400 italic">
+        <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">
           No seniority history. Add the first entry to start tracking cost.
         </p>
       ) : (
@@ -1571,7 +1571,7 @@ function SeniorityHistorySection({
                     <select
                       value={editLevelId}
                       onChange={(e) => setEditLevelId(e.target.value)}
-                      className="px-2 py-1 rounded border border-slate-200 text-[12px]"
+                      className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-[12px]"
                     >
                       {seniorityLevels.map((s: any) => (
                         <option key={s.id} value={s.id}>{s.name}</option>
@@ -1581,21 +1581,21 @@ function SeniorityHistorySection({
                       type="date"
                       value={editStartDate}
                       onChange={(e) => setEditStartDate(e.target.value)}
-                      className="px-2 py-1 rounded border border-slate-200 text-[12px]"
+                      className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-[12px]"
                     />
                     <input
                       type="date"
                       value={editEndDate}
                       onChange={(e) => setEditEndDate(e.target.value)}
                       placeholder="current"
-                      className="px-2 py-1 rounded border border-slate-200 text-[12px]"
+                      className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-[12px]"
                     />
                   </div>
                   <div className="flex justify-end gap-2">
                     <button
                       type="button"
                       onClick={() => setEditingId(null)}
-                      className="px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:text-slate-800"
+                      className="px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-slate-100"
                     >
                       Cancel
                     </button>
@@ -1616,16 +1616,16 @@ function SeniorityHistorySection({
                 key={row.id}
                 className={cn(
                   'flex items-center gap-2 rounded-md border px-3 py-2 text-[12px]',
-                  isOpen ? 'border-emerald-300 bg-emerald-50/50' : 'border-slate-200 bg-white',
+                  isOpen ? 'border-emerald-300 bg-emerald-50/50' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900',
                 )}
               >
-                <span className="font-semibold text-slate-800">{row.seniorityLevel.name}</span>
+                <span className="font-semibold text-slate-800 dark:text-slate-100">{row.seniorityLevel.name}</span>
                 {isOpen && (
                   <span className="rounded-full bg-emerald-100 text-emerald-700 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider">
                     Current
                   </span>
                 )}
-                <span className="text-slate-500 tabular-nums">
+                <span className="text-slate-500 dark:text-slate-400 tabular-nums">
                   {fmtDate(row.startDate)} → {fmtDate(row.endDate)}
                 </span>
                 {/* Hourly cost shown only to users with finance:read.
@@ -1633,13 +1633,13 @@ function SeniorityHistorySection({
                     non-finance users see the seniority + dates so they
                     can validate the history, just not the money. */}
                 {showCost && hourlyCost != null && (
-                  <span className="text-slate-400">· {hourlyCost}{currency ? ` ${currency}` : ''}/h</span>
+                  <span className="text-slate-400 dark:text-slate-500">· {hourlyCost}{currency ? ` ${currency}` : ''}/h</span>
                 )}
                 <div className="ml-auto flex items-center gap-1">
                   <button
                     type="button"
                     onClick={() => startEdit(row)}
-                    className="text-slate-400 hover:text-blue-600 p-1 rounded"
+                    className="text-slate-400 dark:text-slate-500 hover:text-blue-600 p-1 rounded"
                     title="Edit"
                   >
                     <Pencil className="h-3 w-3" />
@@ -1649,7 +1649,7 @@ function SeniorityHistorySection({
                     onClick={() => {
                       if (confirm(`Remove this seniority entry?`)) removeEntry.mutate(row.id);
                     }}
-                    className="text-slate-400 hover:text-red-600 p-1 rounded"
+                    className="text-slate-400 dark:text-slate-500 hover:text-red-600 p-1 rounded"
                     title="Remove"
                   >
                     <X className="h-3 w-3" />
@@ -1706,28 +1706,28 @@ function ResetPasswordModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[420px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <h2 className="text-base font-bold text-slate-900">Reset Password</h2>
-          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[420px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Reset Password</h2>
+          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
             <X className="h-4 w-4" />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <p className="text-[13px] text-slate-600">
-            Set a new password for <span className="font-semibold text-slate-900">{user.firstName} {user.lastName}</span>.
+          <p className="text-[13px] text-slate-600 dark:text-slate-300">
+            Set a new password for <span className="font-semibold text-slate-900 dark:text-slate-100">{user.firstName} {user.lastName}</span>.
             They'll need to use this password on their next login.
           </p>
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">New Password *</label>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">New Password *</label>
             <input type="password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} minLength={6} className={inputClass} />
           </div>
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Confirm Password *</label>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Confirm Password *</label>
             <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} minLength={6} className={inputClass} />
           </div>
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-            <button type="button" onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <button type="button" onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
             <button type="submit" disabled={reset.isPending} className="bg-amber-600 hover:bg-amber-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
               {reset.isPending ? 'Resetting...' : 'Reset Password'}
             </button>
