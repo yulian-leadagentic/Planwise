@@ -1,8 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Pencil, Save, X } from 'lucide-react';
+import { Pencil, Save, X, Layers } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { EmptyState } from '@/components/shared/empty-state';
 import { ColorPalettePicker } from '@/components/shared/color-palette-picker';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import client from '@/api/client';
@@ -88,7 +89,11 @@ export function ZoneTypesPage() {
       {isLoading ? (
         <TableSkeleton rows={5} cols={5} />
       ) : zoneTypes.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">No zone types found. Run database migrations to seed them.</p>
+        <EmptyState
+          icon={Layers}
+          title="No zone types found"
+          description="Run database migrations to seed them."
+        />
       ) : (
         <div ref={scrollRef} className="rounded-lg border border-border overflow-x-auto">
           <table className="w-full text-sm">
