@@ -16,9 +16,14 @@ import { queryKeys } from '@/lib/query-keys';
 import { TimeEntryForm } from '@/features/time/time-entry-form';
 import { useAllowedTransitions } from '@/hooks/use-allowed-transitions';
 import { STATUS_LABEL } from '@/lib/task-constants';
+// Shared colour maps used by <StatusBadge> / <PriorityBadge>. Imported
+// here so the drawer's inline <select>s can wear the same coloured
+// pill styling without a parallel local map to keep in sync.
+import { STATUS_COLORS, PRIORITY_COLORS } from '@/lib/constants';
 import { usePermissions } from '@/hooks/use-permissions';
 import { TaskChecklist } from '@/features/tasks/task-checklist';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { useDeleteTask } from '@/hooks/use-tasks';
 // Shared with the Modal shell so both surfaces enforce the same
 // WCAG 2.2 AA tab-trap semantics.
 import { useFocusTrap } from '@/components/shared/use-focus-trap';
@@ -47,16 +52,11 @@ function parseTab(raw: string | null, hideTimeTab: boolean): TabKey | null {
   return raw as TabKey;
 }
 
-const statusColors: Record<string, string> = {
-  not_started: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300', in_progress: 'bg-blue-100 text-blue-700',
-  in_review: 'bg-violet-100 text-violet-700', completed: 'bg-emerald-100 text-emerald-700',
-  on_hold: 'bg-amber-100 text-amber-700', cancelled: 'bg-red-100 text-red-700',
-};
-
-const priorityColors: Record<string, string> = {
-  low: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300', medium: 'bg-blue-100 text-blue-700',
-  high: 'bg-amber-100 text-amber-700', critical: 'bg-red-100 text-red-700',
-};
+// Local statusColors/priorityColors maps deleted — the drawer's
+// <select> pills now pull STATUS_COLORS / PRIORITY_COLORS from
+// '@/lib/constants' (the same maps <StatusBadge>/<PriorityBadge>
+// use), so there's a single source of truth for both the pill
+// styling and the badge components used across the app.
 
 export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerProps) {
   const queryClient = useQueryClient();
@@ -174,6 +174,23 @@ export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerP
     onError: (err: any) => notify.apiError(err, 'Failed to update'),
   });
 
+  // Delete task — ported from the standalone task-detail page so the
+  // drawer is now the canonical surface (parity with detail page).
+  // Confirm via the shared useConfirm hook (WCAG modal + focus trap).
+  const confirmDelete = useConfirm();
+  const deleteTask = useDeleteTask();
+  const handleDeleteTask = useCallback(async () => {
+    if (!taskId) return;
+    const ok = await confirmDelete('Delete this task? This cannot be undone.');
+    if (!ok) return;
+    deleteTask.mutate(taskId, {
+      onSuccess: () => {
+        notify.success('Task deleted');
+        onClose();
+      },
+    });
+  }, [confirmDelete, deleteTask, taskId, onClose]);
+
   if (!taskId) return null;
 
   return (
@@ -190,13 +207,39 @@ export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerP
         tabIndex={-1}
         className="fixed inset-y-0 right-0 z-50 w-[520px] max-w-[90vw] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200 focus:outline-none"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-5 py-4">
-          <h2 id="task-drawer-title" className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
-            {isLoading ? 'Loading...' : (task as any)?.name || 'Task'}
-          </h2>
+        {/* Header — editable task name (click to edit) + delete-task
+            button. Both ported from the standalone task-detail page so
+            the drawer is now the canonical task surface. Delete lives
+            here (not in the Details tab) so it's reachable regardless
+            of which tab is open, matching the detail page's placement. */}
+        <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-700 px-5 py-4">
+          <div id="task-drawer-title" className="flex-1 min-w-0">
+            {isLoading ? (
+              <span className="text-sm font-bold text-slate-900 dark:text-slate-100">Loading...</span>
+            ) : task ? (
+              <EditableText
+                value={(task as any).name}
+                placeholder="Untitled task"
+                onSave={(v) => updateTask.mutate({ field: 'name', value: v })}
+                className="text-sm font-bold text-slate-900 dark:text-slate-100"
+              />
+            ) : (
+              <span className="text-sm font-bold text-slate-900 dark:text-slate-100">Task</span>
+            )}
+          </div>
+          {!!task && (
+            <button
+              onClick={handleDeleteTask}
+              disabled={deleteTask.isPending}
+              className="rounded-md p-2 text-slate-400 dark:text-slate-500 hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-600 disabled:opacity-50"
+              aria-label="Delete task"
+              title="Delete task"
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+            </button>
+          )}
           <button onClick={onClose} className="rounded-md p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" aria-label="Close task drawer">
-            <X className="h-4 w-4" />
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
 
@@ -214,7 +257,7 @@ export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerP
                 onChange={(s) => updateTask.mutate({ field: 'status', value: s })}
               />
               <select aria-label="Task priority" value={(task as any).priority} onChange={(e) => updateTask.mutate({ field: 'priority', value: e.target.value })}
-                className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold border-0 cursor-pointer focus:outline-none', priorityColors[(task as any).priority] || priorityColors.medium)}>
+                className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold border-0 cursor-pointer focus:outline-none', PRIORITY_COLORS[(task as any).priority] || PRIORITY_COLORS.medium)}>
                 {PRIORITY_OPTIONS.map((p) => <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>)}
               </select>
             </div>
@@ -279,7 +322,7 @@ function StatusSelect({ currentStatus, onChange }: { currentStatus: string; onCh
       aria-label="Task status"
       value={currentStatus}
       onChange={(e) => onChange(e.target.value)}
-      className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold border-0 cursor-pointer focus:outline-none', statusColors[currentStatus] || statusColors.not_started)}
+      className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold border-0 cursor-pointer focus:outline-none', STATUS_COLORS[currentStatus] || STATUS_COLORS.not_started)}
     >
       {STATUS_OPTIONS.filter((s) => allowedStatuses.includes(s)).map((s) => (
         <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
@@ -596,6 +639,62 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
         )}
       </div>
 
+      {/* Description — ported from task-detail-page. Click-to-edit
+          textarea, autosaves on blur. Full-width so long descriptions
+          get room to breathe. */}
+      <div className="space-y-1">
+        <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">Description</label>
+        <EditableTextarea
+          value={task.description ?? ''}
+          onSave={(v) => onUpdate('description', v)}
+          placeholder="Click to add a description"
+        />
+      </div>
+
+      {/* Numeric + date fields ported from task-detail-page. Progress
+          drives the completion pill on the health banner; Budget Hours
+          drives the loggedHours/estHours ratio; Budget Amount is the
+          money-side counterpart. Est. Start (planning forecast) and
+          Start (actual) live here because both surfaces read them. */}
+      <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[12px]">
+        <FieldRow label="Progress">
+          <EditableNumber
+            value={task.completionPct ?? 0}
+            onSave={(v) => onUpdate('completionPct', v)}
+            min={0}
+            max={100}
+            suffix="%"
+          />
+        </FieldRow>
+        <FieldRow label="Budget Hours">
+          <EditableNumber
+            value={task.budgetHours}
+            onSave={(v) => onUpdate('budgetHours', v)}
+            min={0}
+            suffix="h"
+          />
+        </FieldRow>
+        <FieldRow label="Budget Amount">
+          <EditableNumber
+            value={task.budgetAmount}
+            onSave={(v) => onUpdate('budgetAmount', v)}
+            min={0}
+          />
+        </FieldRow>
+        <FieldRow label="Est. Start">
+          <EditableDate
+            value={task.estimatedStartDate}
+            onSave={(v) => onUpdate('estimatedStartDate', v)}
+          />
+        </FieldRow>
+        <FieldRow label="Start">
+          <EditableDate
+            value={task.startDate}
+            onSave={(v) => onUpdate('startDate', v)}
+          />
+        </FieldRow>
+      </div>
+
       <AssigneeManager taskId={task.id} assignees={task.assignees} />
 
       {/* Checklist (todo) — added per the BM mapping meeting decision that
@@ -621,6 +720,233 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
         {task.serviceType && <div><span className="text-slate-400 dark:text-slate-500">Deliverable:</span> <span className="text-slate-700 dark:text-slate-200 font-medium">{task.serviceType.name}</span></div>}
       </div>
     </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Inline-editable primitives — ported from task-detail-page.tsx so the      */
+/*  drawer has parity with the old page (task name, description, numbers,    */
+/*  dates). Kept file-local (single caller) instead of promoting to /shared. */
+/* -------------------------------------------------------------------------- */
+
+function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-slate-400 dark:text-slate-500 shrink-0">{label}:</span>
+      <span className="min-w-0 flex-1 text-slate-700 dark:text-slate-200 font-medium">{children}</span>
+    </div>
+  );
+}
+
+function EditableText({
+  value,
+  onSave,
+  className,
+  placeholder,
+}: {
+  value: string;
+  onSave: (v: string) => void;
+  className?: string;
+  placeholder?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(value);
+  useEffect(() => setVal(value), [value]);
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className={cn('inline-block w-full text-left truncate rounded px-1 -mx-1 hover:bg-slate-100 dark:hover:bg-slate-800', className)}
+        title="Click to edit"
+      >
+        {value?.trim() ? value : <span className="italic text-slate-400 dark:text-slate-500">{placeholder ?? 'Click to edit'}</span>}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      type="text"
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onBlur={() => {
+        if (val !== value) onSave(val);
+        setEditing(false);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          if (val !== value) onSave(val);
+          setEditing(false);
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setVal(value);
+          setEditing(false);
+        }
+      }}
+      autoFocus
+      className={cn('w-full rounded border border-blue-300 dark:border-blue-500 bg-white dark:bg-slate-900 px-2 py-0.5 outline-none focus:border-blue-500', className)}
+    />
+  );
+}
+
+function EditableTextarea({
+  value,
+  onSave,
+  placeholder,
+}: {
+  value: string;
+  onSave: (v: string) => void;
+  placeholder?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(value);
+  useEffect(() => setVal(value), [value]);
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="w-full text-left rounded-md border border-transparent hover:border-slate-200 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/60 px-2 py-1.5 min-h-[36px]"
+      >
+        {value?.trim()
+          ? <p className="whitespace-pre-wrap text-[13px] text-slate-700 dark:text-slate-200">{value}</p>
+          : <p className="text-[12px] italic text-slate-400 dark:text-slate-500">{placeholder ?? 'Click to add'}</p>}
+      </button>
+    );
+  }
+
+  return (
+    <textarea
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onBlur={() => {
+        if (val !== value) onSave(val);
+        setEditing(false);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setVal(value);
+          setEditing(false);
+        }
+      }}
+      autoFocus
+      rows={5}
+      className="w-full rounded-md border border-blue-300 dark:border-blue-500 bg-white dark:bg-slate-900 px-2 py-1.5 text-[13px] focus:outline-none focus:border-blue-500 resize-y"
+    />
+  );
+}
+
+function EditableNumber({
+  value,
+  onSave,
+  min,
+  max,
+  suffix = '',
+}: {
+  value: number | null | undefined;
+  onSave: (v: number) => void;
+  min?: number;
+  max?: number;
+  suffix?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(String(value ?? ''));
+  useEffect(() => setVal(String(value ?? '')), [value]);
+
+  const save = () => {
+    const num = Number(val);
+    if (!Number.isNaN(num) && num !== value) {
+      const clamped =
+        min != null && max != null ? Math.min(max, Math.max(min, num))
+        : min != null ? Math.max(min, num)
+        : max != null ? Math.min(max, num)
+        : num;
+      onSave(clamped);
+    }
+    setEditing(false);
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="inline-flex items-center rounded px-1 -mx-1 hover:bg-slate-100 dark:hover:bg-slate-800 tabular-nums"
+        title="Click to edit"
+      >
+        {value != null ? `${value}${suffix}` : <span className="italic text-slate-400 dark:text-slate-500">—</span>}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      type="number"
+      value={val}
+      min={min}
+      max={max}
+      onChange={(e) => setVal(e.target.value)}
+      onBlur={save}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); save(); }
+        if (e.key === 'Escape') { e.preventDefault(); setVal(String(value ?? '')); setEditing(false); }
+      }}
+      autoFocus
+      className="w-24 rounded border border-blue-300 dark:border-blue-500 bg-white dark:bg-slate-900 px-2 py-0.5 text-sm tabular-nums outline-none focus:border-blue-500"
+    />
+  );
+}
+
+function EditableDate({
+  value,
+  onSave,
+}: {
+  value: string | null | undefined;
+  onSave: (v: string | null) => void;
+}) {
+  const initial = value ? String(value).slice(0, 10) : '';
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(initial);
+  useEffect(() => setVal(initial), [initial]);
+
+  const save = () => {
+    // Empty input clears the date; the /tasks PATCH accepts null.
+    if (val !== initial) onSave(val || null);
+    setEditing(false);
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="inline-flex items-center rounded px-1 -mx-1 hover:bg-slate-100 dark:hover:bg-slate-800 tabular-nums"
+        title="Click to edit"
+      >
+        {initial ? formatDate(initial) : <span className="italic text-slate-400 dark:text-slate-500">—</span>}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      type="date"
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onBlur={save}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); save(); }
+        if (e.key === 'Escape') { e.preventDefault(); setVal(initial); setEditing(false); }
+      }}
+      autoFocus
+      className="rounded border border-blue-300 dark:border-blue-500 bg-white dark:bg-slate-900 px-2 py-0.5 text-sm outline-none focus:border-blue-500"
+    />
   );
 }
 

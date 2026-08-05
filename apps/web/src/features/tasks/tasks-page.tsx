@@ -1,4 +1,4 @@
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -10,7 +10,9 @@ import { StatusBadge } from '@/components/shared/status-badge';
 import { PriorityBadge } from '@/components/shared/priority-badge';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { TaskCard } from './task-card';
+import { TaskDrawer } from './task-drawer';
 import { CreateTaskModal } from './create-task-modal';
+import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { tasksApi } from '@/api/tasks.api';
 import client from '@/api/client';
 import { useFilterStore } from '@/stores/filter.store';
@@ -188,7 +190,6 @@ const columns: ColumnDef<TaskRow, unknown>[] = [
 ];
 
 export function TasksPage() {
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   // Deep-link support: ?tab=archived lands the user directly on the
   // Archived tab so the "Archived" button on the planning toolbar can
@@ -198,6 +199,11 @@ export function TasksPage() {
     ['mine', 'all', 'archived'].includes(initialTab as string) ? initialTab : 'mine',
   );
   const [showCreate, setShowCreate] = useState(false);
+  // Drawer identity in ?task=N — the canonical task surface. Row/card
+  // click opens the drawer here instead of navigating to a standalone
+  // /tasks/:id page; that page is now a thin redirect back to this one
+  // with the ?task=N param set (see task-detail-page.tsx).
+  const { drawerId: drawerTaskId, openDrawer: openTaskDrawer, closeDrawer: closeTaskDrawer } = useDrawerRoute('task');
 
   const {
     taskSearch,
@@ -410,7 +416,7 @@ export function TasksPage() {
             columns={columns}
             data={allTasks}
             isLoading={allLoading}
-            onRowClick={(task) => navigate(`/tasks/${task.id}`)}
+            onRowClick={(task) => openTaskDrawer(task.id as number)}
             renderCard={(task) => <TaskCard task={task as never} />}
             emptyMessage="No tasks found"
           />
@@ -435,7 +441,7 @@ export function TasksPage() {
               {myTasks.map((task) => (
                 <div
                   key={task.id}
-                  onClick={() => navigate(`/tasks/${task.id}`)}
+                  onClick={() => openTaskDrawer(task.id as number)}
                   className="cursor-pointer"
                 >
                   <div className="rounded-lg border border-border bg-background p-4 transition-colors hover:bg-muted/50">
@@ -581,9 +587,14 @@ export function TasksPage() {
       {showCreate && (
         <CreateTaskModal
           onClose={() => setShowCreate(false)}
-          onCreated={(id) => navigate(`/tasks/${id}`)}
+          onCreated={(id) => openTaskDrawer(id)}
         />
       )}
+
+      {/* Canonical task surface — the drawer. Every row/card click on
+          this page routes here via useDrawerRoute('task'), and the
+          old /tasks/:id route now redirects to /tasks?task=N. */}
+      <TaskDrawer taskId={drawerTaskId} onClose={closeTaskDrawer} />
     </div>
   );
 }
