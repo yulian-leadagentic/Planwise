@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
+import { Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Users, ChevronLeft, ChevronRight, BarChart3 } from 'lucide-react';
-import { PageHeader } from '@/components/shared/page-header';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
@@ -19,7 +19,26 @@ function getBarWidth(pct: number): string {
   return `${Math.min(100, pct)}%`;
 }
 
+/**
+ * Legacy /dashboard/workload entry point.
+ *
+ * Consolidated in ux/breadcrumbs-dash — the Workload view now lives
+ * as a tab inside the Operations dashboard (see operations-dashboard.tsx),
+ * since both surfaces spoke to team capacity. This route is kept alive
+ * as a redirect so bookmarks and external links keep resolving; the
+ * body of the old page moved into <WorkloadPanel /> below and is
+ * rendered by Operations when tab === 'workload'.
+ */
 export function WorkloadDashboardPage() {
+  return <Navigate to="/operations?tab=workload" replace />;
+}
+
+/**
+ * WorkloadPanel — the daily-per-user utilization table. Rendered by
+ * the Operations dashboard's Workload tab. No PageHeader here — the
+ * hosting page owns the header + summary strip.
+ */
+export function WorkloadPanel() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [viewMode, setViewMode] = useState<'utilization' | 'hours'>('utilization');
 
@@ -66,7 +85,12 @@ export function WorkloadDashboardPage() {
 
   const members = workloads ?? [];
 
-  // Summary stats
+  // Summary stats. Kept as a slim strip inside the panel so the
+  // Workload-specific numbers (avg utilization, overloaded count,
+  // under-utilized count) remain visible even when this component
+  // is embedded inside the Operations page — Operations' own summary
+  // strip covers different metrics (overdue, blocked, in-review,
+  // free capacity), so we still add value here.
   const avgUtil = members.length > 0
     ? Math.round(members.reduce((s, m) => s + (m.workload?.summary?.avgUtilization ?? 0), 0) / members.length)
     : 0;
@@ -74,11 +98,9 @@ export function WorkloadDashboardPage() {
   const underutil = members.filter((m) => (m.workload?.summary?.avgUtilization ?? 0) < 50 && (m.workload?.summary?.avgUtilization ?? 0) > 0).length;
 
   return (
-    <div className="space-y-6">
-      <PageHeader title="Team Workload" description="Cross-project resource utilization and capacity planning" />
-
-      {/* Summary cards */}
-      <div className="grid grid-cols-4 gap-3">
+    <div className="space-y-4">
+      {/* Panel summary — Workload-specific numbers only. */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 text-center">
           <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">{members.length}</p>
           <p className="text-[11px] text-slate-500 dark:text-slate-400">Team Members</p>

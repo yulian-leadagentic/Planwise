@@ -1,7 +1,7 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, ChevronRight, Users, Zap, UserCheck, MessageSquare, ExternalLink, Search, Filter } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { AlertTriangle, ChevronRight, Users, Zap, UserCheck, MessageSquare, ExternalLink, Search, Filter, BarChart3 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
@@ -10,6 +10,7 @@ import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { useNavigateWithReturn } from '@/components/nav/return-route';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
+import { WorkloadPanel } from './workload-dashboard';
 
 const STATUS_CFG: Record<string, { label: string; dot: string; bg: string; border: string; text: string }> = {
   critical: { label: 'Critical', dot: 'bg-red-600', bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700' },
@@ -63,13 +64,45 @@ function Chev({ open, size = 14 }: { open: boolean; size?: number }) {
  * department only" flips a query flag so the SERVER excludes people
  * outside the caller's department.
  */
-type OpsTab = 'risk' | 'team';
+// Third tab added in ux/breadcrumbs-dash: Workload — the daily-per-user
+// utilization view previously at /dashboard/workload. That standalone
+// page overlapped with the Team tab's capacity view; consolidating them
+// here gives one canonical place for team-capacity work. The old route
+// stays alive as a redirect (see workload-dashboard.tsx).
+type OpsTab = 'risk' | 'team' | 'workload';
+const VALID_TABS: OpsTab[] = ['risk', 'team', 'workload'];
 
 export function OperationsDashboardPage() {
   const navigate = useNavigate();
   const navWithReturn = useNavigateWithReturn();
 
-  const [tab, setTab] = useState<OpsTab>('risk');
+  // Tab synced to ?tab= so /dashboard/workload → /operations?tab=workload
+  // lands on the right pane and browser Back restores it. Default is
+  // 'risk' (the previous default).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = (searchParams.get('tab') as OpsTab) ?? 'risk';
+  const [tab, setTabState] = useState<OpsTab>(VALID_TABS.includes(initialTab) ? initialTab : 'risk');
+  // React to external URL changes too (e.g. the Navigate from the
+  // deprecated /dashboard/workload route lands here with ?tab=workload
+  // AFTER this component has already mounted with the default).
+  useEffect(() => {
+    const fromUrl = (searchParams.get('tab') as OpsTab) ?? null;
+    if (fromUrl && VALID_TABS.includes(fromUrl) && fromUrl !== tab) {
+      setTabState(fromUrl);
+    }
+    // `tab` is included so a future re-enable of react-hooks/exhaustive-
+    // deps doesn't complain. The `!== tab` guard makes tab-driven
+    // re-fires a no-op.
+  }, [searchParams, tab]);
+  const setTab = useCallback((next: OpsTab) => {
+    setTabState(next);
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      if (next === 'risk') p.delete('tab');
+      else p.set('tab', next);
+      return p;
+    }, { replace: true });
+  }, [setSearchParams]);
   const [expandedProjects, setExpandedProjects] = useState<Record<number, boolean>>({});
   const [expandedDepts, setExpandedDepts] = useState<Record<string, boolean>>({});
   const [expandedMembers, setExpandedMembers] = useState<Record<number, boolean>>({});
@@ -121,7 +154,10 @@ export function OperationsDashboardPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Operations Dashboard" description="Project risks · Review queue · Team workload" />
+      <PageHeader
+        title="Operations Dashboard"
+        description="Risk & Review (project risks + review queue) · Team by Department (capacity heat-map) · Workload (daily-per-user utilization)"
+      />
 
       {/* ═══ SUMMARY CARDS ═══ */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
@@ -166,9 +202,21 @@ export function OperationsDashboardPage() {
             tab === 'team' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
           )}
         >
-          <Users className="h-3.5 w-3.5" />
+          <Users className="h-3.5 w-3.5" aria-hidden="true" />
           Team by Department
           <span className="ml-1 text-[10px] font-bold rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2 py-0.5">{departments.reduce((s: number, d: any) => s + (d.members?.length ?? 0), 0)}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('workload')}
+          title="Daily-per-user utilization heat-map — moved here from the standalone /dashboard/workload page in ux/breadcrumbs-dash."
+          className={cn(
+            'flex items-center gap-2 px-4 py-2 text-[13px] font-semibold border-b-2 -mb-px transition-colors',
+            tab === 'workload' ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
+          )}
+        >
+          <BarChart3 className="h-3.5 w-3.5" aria-hidden="true" />
+          Workload
         </button>
 
         {/* Scope toggle — visible on both tabs, controls the query */}
@@ -518,6 +566,16 @@ export function OperationsDashboardPage() {
           )}
         </div>
       )}
+
+      {/* ═══ TAB: WORKLOAD ═══
+          Ported in ux/breadcrumbs-dash from the standalone
+          /dashboard/workload page. Distinct scope vs the Team tab
+          above — Team shows one aggregate load bar per person +
+          expandable task list; Workload shows the DAY-BY-DAY
+          utilization heat-map for the week with utilization vs
+          hours toggle. Same team-capacity domain, different lens.
+          The panel owns its own week selector + summary strip. */}
+      {tab === 'workload' && <WorkloadPanel />}
 
       {/* Discussion Drawer */}
       {chat && (
