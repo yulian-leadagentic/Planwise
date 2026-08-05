@@ -1,10 +1,10 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Search, X, Mail, Phone, Building2, FolderKanban, Pencil, UserPlus,
   List as ListIcon, FolderOpen, Building, ExternalLink, MapPin, UserCircle2,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, ChevronDown, User as UserIcon,
 } from 'lucide-react';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
@@ -12,6 +12,7 @@ import { useDebounce } from '@/hooks/use-debounce';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { PartnerDrawer } from './partner-drawer';
+import { CreatePartnerModal } from './create-partner-modal';
 
 /**
  * Dedicated Contacts page — its own route (/contacts), not a tab inside the
@@ -60,6 +61,10 @@ type Org = {
   id: number;
   displayName: string;
   companyName: string | null;
+  // The seeded "Internal" org represents your own company. Anyone with
+  // a worker_of edge pointing at it is internal staff (see
+  // internalOrgIds below). Kept optional so older responses without
+  // this field still parse.
 };
 
 type ViewMode = 'list' | 'by-project' | 'by-customer';
@@ -105,6 +110,25 @@ export function ContactsPage() {
   const { drawerId: selectedId, openDrawer: openContact, closeDrawer: closeContact } = useDrawerRoute('contact');
 
   const perPage = view === 'list' ? LIST_PAGE_SIZE : GROUP_PAGE_SIZE;
+
+  // Unified "New" split-button — offers "New Contact" and "New
+  // Organization", opening the shared CreatePartnerModal with the
+  // right default type. Consolidation from ux/partner-contact — the
+  // separate contact/organization creation flows now render the
+  // same form under the hood (see create-partner-modal.tsx).
+  const [showCreate, setShowCreate] = useState<null | 'person' | 'organization'>(null);
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const newMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!newMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (newMenuRef.current && !newMenuRef.current.contains(e.target as Node)) {
+        setNewMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [newMenuOpen]);
 
   // Any filter change resets pagination to page 1 — otherwise a user on
   // page 3 who narrows the search would either see empty results (if the
@@ -192,8 +216,23 @@ export function ContactsPage() {
     return m;
   }, [orgs]);
 
+  // Ported from the old Partners "Contacts" tab (parity requirement in
+  // ux/partner-contact): the seeded "Internal" org represents your own
+  // company, and anyone worker_of it is internal staff even if they
+  // don't have a login account yet. Primary rule below still catches
+  // the login case; this is the secondary safety net.
+  const internalOrgIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const o of orgs) {
+      const isInternal = (o.companyName ?? '').toLowerCase() === 'internal'
+        || (o.displayName ?? '').toLowerCase() === 'internal';
+      if (isInternal) ids.add(o.id);
+    }
+    return ids;
+  }, [orgs]);
+
   // Identity rule — anyone with a login account is INTERNAL staff, belongs
-  // in /people not Contacts. (See partners-page comment for the history.)
+  // in /people not Contacts.
   //
   // NB: this filter runs on the loaded page only, so a page that happens
   // to be all-internal would render as empty when a further page has
@@ -202,8 +241,19 @@ export function ContactsPage() {
   // the server-side partnerType='person' + the filters below narrow the
   // set enough that this is not a routine concern.
   const externalContacts = useMemo(
-    () => allContacts.filter((c) => !c.user),
-    [allContacts],
+    () => allContacts.filter((c) => {
+      // Primary — has a login account → internal.
+      if (c.user) return false;
+      // Secondary — explicitly working for the Internal org.
+      if (internalOrgIds.size > 0) {
+        const workerOf = c.outgoingRelationships?.find(
+          (r) => r.relationshipType?.code === 'worker_of' && r.targetType === 'organization',
+        );
+        if (workerOf && internalOrgIds.has(workerOf.targetId)) return false;
+      }
+      return true;
+    }),
+    [allContacts, internalOrgIds],
   );
 
   // Employer dropdown — sourced from the full org roster (already loaded
@@ -239,14 +289,57 @@ export function ContactsPage() {
             People at customers and partners — searchable, filterable, and grouped by project or customer.
           </p>
         </div>
-        <button
-          type="button"
-          className="inline-flex items-center gap-2 rounded-md bg-blue-600 hover:bg-blue-700 px-3.5 py-2 text-sm font-semibold text-white"
-          onClick={() => {/* opens new-contact flow — wired in Turn 3 polish */}}
-          title="Coming next: dedicated new-contact form"
-        >
-          <UserPlus className="h-4 w-4" /> New Contact
-        </button>
+        {/* Split-button "New" — the single creation entry point since
+            ux/partner-contact. Opens the shared CreatePartnerModal
+            with either 'person' or 'organization' as the starting
+            mode; the user can still flip the toggle inside the modal
+            if they picked the wrong option. */}
+        <div ref={newMenuRef} className="relative">
+          <div className="inline-flex rounded-md shadow-sm">
+            <button
+              type="button"
+              onClick={() => { setShowCreate('person'); setNewMenuOpen(false); }}
+              className="inline-flex items-center gap-2 rounded-l-md bg-blue-600 hover:bg-blue-700 px-3.5 py-2 text-sm font-semibold text-white"
+            >
+              <UserPlus className="h-4 w-4" aria-hidden="true" /> New Contact
+            </button>
+            <button
+              type="button"
+              onClick={() => setNewMenuOpen((v) => !v)}
+              aria-label="More create options"
+              aria-haspopup="menu"
+              aria-expanded={newMenuOpen}
+              className="rounded-r-md border-l border-blue-500/40 bg-blue-600 hover:bg-blue-700 px-2 py-2 text-white"
+            >
+              <ChevronDown className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
+          {newMenuOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 top-full mt-1 w-56 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg overflow-hidden z-20"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => { setShowCreate('person'); setNewMenuOpen(false); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                <UserIcon className="h-4 w-4 text-blue-600" aria-hidden="true" />
+                New Contact
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => { setShowCreate('organization'); setNewMenuOpen(false); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                <Building2 className="h-4 w-4 text-violet-600" aria-hidden="true" />
+                New Organization
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Filter strip */}
@@ -419,6 +512,16 @@ export function ContactsPage() {
         <PartnerDrawer
           partnerId={selectedId}
           onClose={closeContact}
+        />
+      )}
+
+      {/* Shared creation modal — opens the newly-created record in the
+          drawer via useDrawerRoute so the URL reflects the state. */}
+      {showCreate !== null && (
+        <CreatePartnerModal
+          defaultPartnerType={showCreate}
+          onClose={() => setShowCreate(null)}
+          onCreated={(id) => { setShowCreate(null); openContact(id); }}
         />
       )}
     </div>
