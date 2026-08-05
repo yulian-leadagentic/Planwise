@@ -1,8 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
-import { useState } from 'react';
+import { Plus, Tag } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import type { ColumnDef } from '@tanstack/react-table';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { DataTable } from '@/components/shared/data-table';
+import { EmptyState } from '@/components/shared/empty-state';
 import { ColorPalettePicker } from '@/components/shared/color-palette-picker';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
@@ -52,6 +55,32 @@ export function LabelTypesPage() {
   };
 
   const labelTypes = data ?? [];
+
+  // Columns for the shared DataTable — sorting off (matches original
+  // no-sort behavior; underlying list is server-ordered).
+  const columns = useMemo<ColumnDef<any, unknown>[]>(() => [
+    { id: 'color', header: 'Color', enableSorting: false, size: 64,
+      cell: ({ row }) => (
+        <span className="inline-block h-4 w-4 rounded-full" style={{ backgroundColor: row.original.color }} />
+      ) },
+    { accessorKey: 'name', header: 'Name', enableSorting: false,
+      cell: ({ row }) => <span className="font-medium">{row.original.name}</span> },
+    { accessorKey: 'icon', header: 'Icon', enableSorting: false,
+      cell: ({ row }) => <span className="text-muted-foreground">{row.original.icon ?? '—'}</span> },
+    { accessorKey: 'sortOrder', header: 'Order', enableSorting: false, size: 96,
+      cell: ({ row }) => <span className="text-muted-foreground">{row.original.sortOrder}</span> },
+    { id: 'actions', header: 'Actions', enableSorting: false, size: 96,
+      cell: ({ row }) => (
+        <button
+          onClick={async () => { if (await confirm(`Delete "${row.original.name}"?`)) deleteMutation.mutate(row.original.id); }}
+          aria-label={`Delete label type ${row.original.name}`}
+          className="text-xs text-red-600 hover:underline"
+        >
+          Delete
+        </button>
+      ) },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], []);
 
   return (
     <div className="space-y-6">
@@ -116,41 +145,13 @@ export function LabelTypesPage() {
       {isLoading ? (
         <TableSkeleton rows={5} cols={4} />
       ) : labelTypes.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">No label types configured yet. Click "Add Label Type" to create one.</p>
+        <EmptyState
+          icon={Tag}
+          title="No label types configured yet"
+          description={'Click "Add Label Type" to create one.'}
+        />
       ) : (
-        <div className="rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
-                <th className="px-4 py-3 font-medium">Color</th>
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium">Icon</th>
-                <th className="px-4 py-3 font-medium">Order</th>
-                <th className="px-4 py-3 font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {labelTypes.map((lt: any) => (
-                <tr key={lt.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                  <td className="px-4 py-3">
-                    <span className="inline-block h-4 w-4 rounded-full" style={{ backgroundColor: lt.color }} />
-                  </td>
-                  <td className="px-4 py-3 font-medium">{lt.name}</td>
-                  <td className="px-4 py-3 text-muted-foreground">{lt.icon ?? '—'}</td>
-                  <td className="px-4 py-3 text-muted-foreground">{lt.sortOrder}</td>
-                  <td className="px-4 py-3">
-                    <button
-                      onClick={async () => { if (await confirm(`Delete "${lt.name}"?`)) deleteMutation.mutate(lt.id); }}
-                      className="text-xs text-red-600 hover:underline"
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable columns={columns} data={labelTypes} pageSize={1000} />
       )}
     </div>
   );
