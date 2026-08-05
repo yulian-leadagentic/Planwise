@@ -32,7 +32,7 @@ export function PresenceIndicator({
           <PresenceAvatar key={u.id} user={u} />
         ))}
         {overflow > 0 && (
-          <div className="h-6 w-6 rounded-full bg-slate-200 ring-2 ring-emerald-50 flex items-center justify-center text-[10px] font-bold text-slate-600">
+          <div className="h-6 w-6 rounded-full bg-slate-200 dark:bg-slate-700 ring-2 ring-emerald-50 flex items-center justify-center text-[10px] font-bold text-slate-600 dark:text-slate-300">
             +{overflow}
           </div>
         )}

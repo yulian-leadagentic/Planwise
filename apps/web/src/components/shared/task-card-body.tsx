@@ -52,11 +52,11 @@ export function TaskCardBody({ task, isOverdue, actionSlot, compact = false, hid
   return (
     <div className="px-3.5 pb-3 pt-1">
       {!hideProject && projectName && (
-        <p className="text-[13px] font-bold text-slate-900 truncate mb-0.5" title={projectName}>
+        <p className="text-[13px] font-bold text-slate-900 dark:text-slate-100 truncate mb-0.5" title={projectName}>
           {projectName}
         </p>
       )}
-      <p className="text-[13px] font-semibold text-slate-800 leading-tight break-words mb-2.5">
+      <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 leading-tight break-words mb-2.5">
         {task.name}
       </p>
 
@@ -75,13 +75,13 @@ export function TaskCardBody({ task, isOverdue, actionSlot, compact = false, hid
             'inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] font-semibold tabular-nums',
             overdue
               ? 'bg-red-50 border-red-200 text-red-700'
-              : 'bg-slate-50 border-slate-200 text-slate-700',
+              : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200',
           )}>
             <Calendar className="h-3 w-3" />
             {formatShortDate(task.endDate)}
           </span>
         ) : (
-          <span className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-slate-200 px-2 py-1.5 text-[11px] text-slate-400">
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-slate-200 dark:border-slate-700 px-2 py-1.5 text-[11px] text-slate-400 dark:text-slate-500">
             <Calendar className="h-3 w-3" />
             No date
           </span>
@@ -95,12 +95,12 @@ export function TaskCardBody({ task, isOverdue, actionSlot, compact = false, hid
 function FieldRow({ label, value, placeholder, placeholderItalic }: { label: string; value: string; placeholder?: string; placeholderItalic?: boolean }) {
   return (
     <div className="flex items-baseline gap-2">
-      <dt className="w-[74px] shrink-0 text-[10px] font-semibold uppercase tracking-wider text-slate-400">{label}</dt>
-      <dd className="text-slate-700 truncate min-w-0" title={value}>
+      <dt className="w-[74px] shrink-0 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">{label}</dt>
+      <dd className="text-slate-700 dark:text-slate-200 truncate min-w-0" title={value}>
         {value || (
           placeholder
-            ? <span className={cn(placeholderItalic ? 'text-slate-400 italic' : 'text-slate-300')}>{placeholder}</span>
-            : <span className="text-slate-300">—</span>
+            ? <span className={cn(placeholderItalic ? 'text-slate-400 dark:text-slate-500 italic' : 'text-slate-300 dark:text-slate-600')}>{placeholder}</span>
+            : <span className="text-slate-300 dark:text-slate-600">—</span>
         )}
       </dd>
     </div>

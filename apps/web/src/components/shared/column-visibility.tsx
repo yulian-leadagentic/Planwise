@@ -125,7 +125,7 @@ export function ColumnVisibilityPicker({
           'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[13px] font-semibold transition-colors',
           hiddenCount > 0
             ? 'border-blue-300 bg-blue-50 text-blue-700 hover:border-blue-400'
-            : 'border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300',
+            : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-slate-300 dark:hover:border-slate-600',
         )}
         title="Show / hide columns"
       >
@@ -139,12 +139,12 @@ export function ColumnVisibilityPicker({
         <ChevronDown className={cn('h-3 w-3 transition-transform', open && 'rotate-180')} />
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-40 mt-1 w-[260px] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white">
-          <div className="p-2 border-b border-slate-100 flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Visible columns</span>
+        <div className="absolute right-0 top-full z-40 mt-1 w-[260px] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white dark:bg-slate-900">
+          <div className="p-2 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Visible columns</span>
             <div className="flex items-center gap-2 text-[11px]">
               <button type="button" onClick={onShowAll} className="text-blue-600 hover:text-blue-700 font-semibold">All</button>
-              <button type="button" onClick={onReset} className="text-slate-500 hover:text-slate-700 font-semibold">Default</button>
+              <button type="button" onClick={onReset} className="text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 font-semibold">Default</button>
             </div>
           </div>
           <div className="max-h-64 overflow-y-auto py-1">
@@ -159,10 +159,10 @@ export function ColumnVisibilityPicker({
                   className={cn(
                     'flex items-center gap-2 px-3 py-1.5 text-[12px]',
                     suppressed
-                      ? 'text-slate-400 italic cursor-not-allowed bg-slate-50/50'
+                      ? 'text-slate-400 dark:text-slate-500 italic cursor-not-allowed bg-slate-50/50 dark:bg-slate-800/50'
                       : c.required
-                        ? 'text-slate-700 opacity-50 cursor-not-allowed'
-                        : 'text-slate-700 hover:bg-slate-50 cursor-pointer',
+                        ? 'text-slate-700 dark:text-slate-200 opacity-50 cursor-not-allowed'
+                        : 'text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer',
                   )}
                 >
                   <input
@@ -170,11 +170,11 @@ export function ColumnVisibilityPicker({
                     checked={visible.has(c.key) && !suppressed}
                     onChange={() => !disabled && onToggle(c.key)}
                     disabled={disabled}
-                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    className="rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
                   />
                   <span className="flex-1">{c.label}</span>
-                  {c.required && <Check className="h-3 w-3 text-slate-400" />}
-                  {suppressed && <span className="text-[10px] font-semibold text-slate-400">grouping</span>}
+                  {c.required && <Check className="h-3 w-3 text-slate-400 dark:text-slate-500" />}
+                  {suppressed && <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500">grouping</span>}
                 </label>
               );
             })}

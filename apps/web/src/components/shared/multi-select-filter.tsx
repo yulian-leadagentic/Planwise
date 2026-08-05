@@ -102,10 +102,10 @@ export function MultiSelectFilter<T extends string | number>({
           triggerClassName ?? 'w-48',
         )}
       >
-        <span className={cn('truncate', selected.size === 0 && 'text-slate-500')}>
+        <span className={cn('truncate', selected.size === 0 && 'text-slate-500 dark:text-slate-400')}>
           {triggerLabel}
         </span>
-        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
       </button>
 
       {open && (
@@ -119,22 +119,22 @@ export function MultiSelectFilter<T extends string | number>({
         // z-50 beats sticky page headers (the Execution Board's ZONE
         // column header sits at ~z-40 and was obscuring the first rows
         // of the project dropdown).
-        <div dir="ltr" className="absolute start-0 top-full z-50 mt-1 w-72 rounded-md border border-slate-200 bg-white shadow-lg">
+        <div dir="ltr" className="absolute start-0 top-full z-50 mt-1 w-72 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg">
           {/* Search + clear-all */}
-          <div className="flex items-center gap-2 border-b border-slate-100 px-2 py-1.5">
-            <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+          <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 px-2 py-1.5">
+            <Search className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
             <input
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search…"
-              className="flex-1 bg-transparent text-[12px] outline-none placeholder:text-slate-400"
+              className="flex-1 bg-transparent text-[12px] outline-none placeholder:text-slate-400 dark:placeholder:text-slate-500"
             />
             {selected.size > 0 && (
               <button
                 type="button"
                 onClick={clearAll}
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-slate-500 hover:bg-slate-100"
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
                 title="Clear all"
               >
                 <X className="h-3 w-3" /> Clear
@@ -145,7 +145,7 @@ export function MultiSelectFilter<T extends string | number>({
           {/* Option list */}
           <div className="max-h-64 overflow-y-auto py-1">
             {filtered.length === 0 ? (
-              <p className="px-3 py-2 text-[12px] text-slate-400 italic">No matches</p>
+              <p className="px-3 py-2 text-[12px] text-slate-400 dark:text-slate-500 italic">No matches</p>
             ) : (
               filtered.map((o) => {
                 const isOn = selected.has(o.value);
@@ -155,7 +155,7 @@ export function MultiSelectFilter<T extends string | number>({
                     type="button"
                     onClick={() => toggle(o.value)}
                     className={cn(
-                      'flex w-full items-center gap-2 px-3 py-1.5 text-[12.5px] text-left hover:bg-slate-50',
+                      'flex w-full items-center gap-2 px-3 py-1.5 text-[12.5px] text-left hover:bg-slate-50 dark:hover:bg-slate-800/50',
                       isOn && 'bg-blue-50/40',
                     )}
                   >
@@ -169,13 +169,13 @@ export function MultiSelectFilter<T extends string | number>({
                         // was missing).
                         isOn
                           ? 'border-blue-500 bg-blue-500 text-white'
-                          : 'border-slate-400 bg-slate-50',
+                          : 'border-slate-400 dark:border-slate-500 bg-slate-50 dark:bg-slate-800/50',
                       )}
                     >
                       {isOn && <Check className="h-3 w-3" strokeWidth={3} />}
                     </div>
-                    <span className="flex-1 truncate text-slate-700">{o.label}</span>
-                    {o.hint && <span className="text-[11px] text-slate-400">{o.hint}</span>}
+                    <span className="flex-1 truncate text-slate-700 dark:text-slate-200">{o.label}</span>
+                    {o.hint && <span className="text-[11px] text-slate-400 dark:text-slate-500">{o.hint}</span>}
                   </button>
                 );
               })
@@ -184,7 +184,7 @@ export function MultiSelectFilter<T extends string | number>({
 
           {/* Footer counter — tells the user how many they have on. */}
           {selected.size > 0 && (
-            <div className="border-t border-slate-100 px-3 py-1.5 text-[11px] text-slate-500">
+            <div className="border-t border-slate-100 dark:border-slate-800 px-3 py-1.5 text-[11px] text-slate-500 dark:text-slate-400">
               {selected.size} selected
             </div>
           )}

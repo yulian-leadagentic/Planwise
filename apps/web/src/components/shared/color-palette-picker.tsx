@@ -66,16 +66,16 @@ export function ColorPalettePicker({ value, onChange, className, allowCustom = t
         aria-label="Choose colour"
       >
         <span
-          className="h-5 w-5 rounded border border-slate-300 shrink-0"
+          className="h-5 w-5 rounded border border-slate-300 dark:border-slate-600 shrink-0"
           style={{ backgroundColor: value }}
         />
-        <span className="font-mono text-xs text-slate-600">{value}</span>
-        <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+        <span className="font-mono text-xs text-slate-600 dark:text-slate-300">{value}</span>
+        <ChevronDown className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-[260px] rounded-lg border border-slate-200 bg-white p-3 shadow-xl">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Palette</p>
+        <div className="absolute left-0 top-full z-30 mt-1 w-[260px] rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 shadow-xl">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-2">Palette</p>
           <div className="grid grid-cols-5 gap-2">
             {PALETTE.map((c) => {
               const selected = c.value.toLowerCase() === value.toLowerCase();
@@ -87,7 +87,7 @@ export function ColorPalettePicker({ value, onChange, className, allowCustom = t
                   title={`${c.name} (${c.value})`}
                   className={cn(
                     'h-8 w-8 rounded-md border-2 transition-transform hover:scale-110 flex items-center justify-center',
-                    selected ? 'border-slate-900 ring-2 ring-blue-300' : 'border-white shadow',
+                    selected ? 'border-slate-900 dark:border-slate-100 ring-2 ring-blue-300' : 'border-white dark:border-slate-900 shadow',
                   )}
                   style={{ backgroundColor: c.value }}
                 >
@@ -99,7 +99,7 @@ export function ColorPalettePicker({ value, onChange, className, allowCustom = t
 
           {allowCustom && (
             <>
-              <div className="mt-3 mb-1 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+              <div className="mt-3 mb-1 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                 <Pipette className="h-3 w-3" />
                 Custom hex
               </div>

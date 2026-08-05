@@ -54,7 +54,7 @@ export function NotePresetPicker({ onPick }: { onPick: (phrase: string) => void 
         <ChevronDown className={cn('h-3 w-3 transition-transform', open && 'rotate-180')} />
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-40 mt-1 w-[320px] max-w-[92vw] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white p-1.5 max-h-64 overflow-y-auto">
+        <div className="absolute left-0 top-full z-40 mt-1 w-[320px] max-w-[92vw] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white dark:bg-slate-900 p-1.5 max-h-64 overflow-y-auto">
           {phrases.map((p) => (
             <button
               key={p.id}
@@ -63,7 +63,7 @@ export function NotePresetPicker({ onPick }: { onPick: (phrase: string) => void 
                 onPick(p.text);
                 setOpen(false);
               }}
-              className="w-full text-left px-3 py-1.5 rounded-lg text-[12px] text-slate-700 hover:bg-slate-50"
+              className="w-full text-left px-3 py-1.5 rounded-lg text-[12px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50"
             >
               {p.text}
             </button>
