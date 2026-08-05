@@ -1,11 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pencil, Save, X, Layers } from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
+import { DataTable } from '@/components/shared/data-table';
 import { ColorPalettePicker } from '@/components/shared/color-palette-picker';
-import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 
@@ -25,7 +26,6 @@ type ZoneTypeRow = {
 
 export function ZoneTypesPage() {
   const queryClient = useQueryClient();
-  const scrollRef = useStickyHScroll();
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editLabel, setEditLabel] = useState('');
   const [editColor, setEditColor] = useState('#3B82F6');
@@ -62,9 +62,7 @@ export function ZoneTypesPage() {
     setEditSortOrder(zt.sortOrder);
   };
 
-  const cancelEdit = () => {
-    setEditingId(null);
-  };
+  const cancelEdit = () => setEditingId(null);
 
   const saveEdit = (id: number) => {
     if (!editLabel.trim()) return;
@@ -78,6 +76,98 @@ export function ZoneTypesPage() {
   };
 
   const zoneTypes = Array.isArray(data) ? data : [];
+
+  const columns = useMemo<ColumnDef<ZoneTypeRow, unknown>[]>(() => [
+    { id: 'color', header: 'Color', enableSorting: false, size: 80,
+      cell: ({ row }) => {
+        const zt = row.original;
+        if (editingId === zt.id) return <ColorPalettePicker value={editColor} onChange={setEditColor} />;
+        return <span className="inline-block h-4 w-4 rounded-full" style={{ backgroundColor: zt.color }} />;
+      } },
+    { accessorKey: 'code', header: 'Code', enableSorting: false,
+      cell: ({ row }) => <span className="font-mono text-xs text-muted-foreground">{row.original.code}</span> },
+    { accessorKey: 'label', header: 'Label', enableSorting: false,
+      cell: ({ row }) => {
+        const zt = row.original;
+        if (editingId === zt.id) {
+          return (
+            <input
+              value={editLabel}
+              onChange={(e) => setEditLabel(e.target.value)}
+              className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          );
+        }
+        return <span className="font-medium">{zt.label}</span>;
+      } },
+    { accessorKey: 'icon', header: 'Icon', enableSorting: false,
+      cell: ({ row }) => {
+        const zt = row.original;
+        if (editingId === zt.id) {
+          return (
+            <input
+              value={editIcon}
+              onChange={(e) => setEditIcon(e.target.value)}
+              placeholder="lucide name"
+              className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          );
+        }
+        return <span className="text-muted-foreground">{zt.icon ?? '—'}</span>;
+      } },
+    { accessorKey: 'sortOrder', header: 'Order', enableSorting: false, size: 96,
+      cell: ({ row }) => {
+        const zt = row.original;
+        if (editingId === zt.id) {
+          return (
+            <input
+              type="number"
+              value={editSortOrder}
+              onChange={(e) => setEditSortOrder(Number(e.target.value))}
+              className="w-16 rounded-md border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          );
+        }
+        return <span className="text-muted-foreground">{zt.sortOrder}</span>;
+      } },
+    { id: 'actions', header: 'Actions', enableSorting: false, size: 160,
+      cell: ({ row }) => {
+        const zt = row.original;
+        if (editingId === zt.id) {
+          return (
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => saveEdit(zt.id)}
+                disabled={updateMutation.isPending || !editLabel.trim()}
+                aria-label={`Save ${zt.code}`}
+                className="inline-flex items-center gap-1 rounded-md bg-brand-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                <Save className="h-3 w-3" aria-hidden="true" /> Save
+              </button>
+              <button
+                onClick={cancelEdit}
+                aria-label="Cancel edit"
+                className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs hover:bg-accent"
+              >
+                <X className="h-3 w-3" aria-hidden="true" /> Cancel
+              </button>
+            </div>
+          );
+        }
+        return (
+          <div className="text-right">
+            <button
+              onClick={() => startEdit(zt)}
+              aria-label={`Edit ${zt.code}`}
+              className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
+            >
+              <Pencil className="h-3 w-3" aria-hidden="true" /> Edit
+            </button>
+          </div>
+        );
+      } },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [editingId, editLabel, editColor, editIcon, editSortOrder, updateMutation.isPending]);
 
   return (
     <div className="space-y-6">
@@ -95,98 +185,7 @@ export function ZoneTypesPage() {
           description="Run database migrations to seed them."
         />
       ) : (
-        <div ref={scrollRef} className="rounded-lg border border-border overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
-                <th className="px-4 py-3 font-medium w-16">Color</th>
-                <th className="px-4 py-3 font-medium">Code</th>
-                <th className="px-4 py-3 font-medium">Label</th>
-                <th className="px-4 py-3 font-medium">Icon</th>
-                <th className="px-4 py-3 font-medium w-20">Order</th>
-                <th className="px-4 py-3 font-medium w-32 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {zoneTypes.map((zt) => {
-                const isEditing = editingId === zt.id;
-                return (
-                  <tr key={zt.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                    <td className="px-4 py-3">
-                      {isEditing ? (
-                        <ColorPalettePicker value={editColor} onChange={setEditColor} />
-                      ) : (
-                        <span className="inline-block h-4 w-4 rounded-full" style={{ backgroundColor: zt.color }} />
-                      )}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{zt.code}</td>
-                    <td className="px-4 py-3 font-medium">
-                      {isEditing ? (
-                        <input
-                          value={editLabel}
-                          onChange={(e) => setEditLabel(e.target.value)}
-                          className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                        />
-                      ) : (
-                        zt.label
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">
-                      {isEditing ? (
-                        <input
-                          value={editIcon}
-                          onChange={(e) => setEditIcon(e.target.value)}
-                          placeholder="lucide name"
-                          className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                        />
-                      ) : (
-                        zt.icon ?? '—'
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">
-                      {isEditing ? (
-                        <input
-                          type="number"
-                          value={editSortOrder}
-                          onChange={(e) => setEditSortOrder(Number(e.target.value))}
-                          className="w-16 rounded-md border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                        />
-                      ) : (
-                        zt.sortOrder
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {isEditing ? (
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => saveEdit(zt.id)}
-                            disabled={updateMutation.isPending || !editLabel.trim()}
-                            className="inline-flex items-center gap-1 rounded-md bg-brand-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-                          >
-                            <Save className="h-3 w-3" /> Save
-                          </button>
-                          <button
-                            onClick={cancelEdit}
-                            className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs hover:bg-accent"
-                          >
-                            <X className="h-3 w-3" /> Cancel
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => startEdit(zt)}
-                          className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
-                        >
-                          <Pencil className="h-3 w-3" /> Edit
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <DataTable columns={columns} data={zoneTypes} pageSize={1000} />
       )}
     </div>
   );
