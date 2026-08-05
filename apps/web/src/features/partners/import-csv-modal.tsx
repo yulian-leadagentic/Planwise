@@ -79,21 +79,21 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[640px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <h2 className="text-base font-bold text-slate-900">Import Business Partners (CSV)</h2>
-          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[640px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Import Business Partners (CSV)</h2>
+          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
             <X className="h-4 w-4" />
           </button>
         </div>
 
         <div className="p-5 space-y-4">
-          <div className="rounded-lg bg-slate-50 p-3 text-[12px] text-slate-600 space-y-2">
+          <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 p-3 text-[12px] text-slate-600 dark:text-slate-300 space-y-2">
             <p>
-              <strong>Required columns:</strong> <code className="bg-slate-100 px-1 rounded">partner_type</code> ({'"person"'} or {'"organization"'}).
+              <strong>Required columns:</strong> <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">partner_type</code> ({'"person"'} or {'"organization"'}).
             </p>
             <p>
-              <strong>Optional:</strong> <code className="bg-slate-100 px-1 rounded">first_name</code>, <code className="bg-slate-100 px-1 rounded">last_name</code>, <code className="bg-slate-100 px-1 rounded">company_name</code>, <code className="bg-slate-100 px-1 rounded">tax_id</code>, <code className="bg-slate-100 px-1 rounded">email</code>, <code className="bg-slate-100 px-1 rounded">phone</code>, <code className="bg-slate-100 px-1 rounded">mobile</code>, <code className="bg-slate-100 px-1 rounded">address</code>, <code className="bg-slate-100 px-1 rounded">website</code>, <code className="bg-slate-100 px-1 rounded">notes</code>, <code className="bg-slate-100 px-1 rounded">roles</code> (comma-separated codes like {'"employee,consultant"'}).
+              <strong>Optional:</strong> <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">first_name</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">last_name</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">company_name</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">tax_id</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">email</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">phone</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">mobile</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">address</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">website</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">notes</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">roles</code> (comma-separated codes like {'"employee,consultant"'}).
             </p>
             <button
               type="button"
@@ -115,33 +115,33 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="w-full rounded-lg border-2 border-dashed border-slate-200 hover:border-blue-400 hover:bg-blue-50/30 p-6 flex flex-col items-center gap-2 text-slate-600"
+              className="w-full rounded-lg border-2 border-dashed border-slate-200 dark:border-slate-700 hover:border-blue-400 hover:bg-blue-50/30 p-6 flex flex-col items-center gap-2 text-slate-600 dark:text-slate-300"
             >
-              <Upload className="h-6 w-6 text-slate-400" />
+              <Upload className="h-6 w-6 text-slate-400 dark:text-slate-500" />
               <span className="text-sm font-medium">{file ? file.name : 'Click to choose a CSV file'}</span>
-              {file && <span className="text-[11px] text-slate-400">{(file.size / 1024).toFixed(1)} KB</span>}
+              {file && <span className="text-[11px] text-slate-400 dark:text-slate-500">{(file.size / 1024).toFixed(1)} KB</span>}
             </button>
           </div>
 
-          <div className="flex flex-col gap-2 text-sm text-slate-700">
+          <div className="flex flex-col gap-2 text-sm text-slate-700 dark:text-slate-200">
             <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-blue-600" />
               <span><strong>Dry run</strong> — validate only, don't write anything</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={skipExisting} onChange={(e) => setSkipExisting(e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+              <input type="checkbox" checked={skipExisting} onChange={(e) => setSkipExisting(e.target.checked)} className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-blue-600" />
               <span>Skip rows whose email already exists (otherwise treat as errors)</span>
             </label>
           </div>
 
           {result && (
-            <div className="rounded-lg border border-slate-200 p-3 space-y-2">
+            <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2">
               <div className="flex items-center gap-4 text-[13px]">
                 <div className="flex items-center gap-1.5">
                   <CheckCircle className="h-4 w-4 text-emerald-600" />
                   <span><strong>{result.summary.created}</strong> {dryRun ? 'would be created' : 'created'}</span>
                 </div>
-                <div className="text-slate-500">
+                <div className="text-slate-500 dark:text-slate-400">
                   · {result.summary.skipped} skipped
                 </div>
                 {result.summary.errors > 0 && (
@@ -150,7 +150,7 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
                     <span><strong>{result.summary.errors}</strong> errors</span>
                   </div>
                 )}
-                <div className="ml-auto text-slate-500">{result.summary.total} rows total</div>
+                <div className="ml-auto text-slate-500 dark:text-slate-400">{result.summary.total} rows total</div>
               </div>
               {result.errors.length > 0 && (
                 <div className="max-h-40 overflow-y-auto rounded bg-red-50 px-3 py-2 text-[12px] text-red-700 space-y-0.5">
@@ -175,8 +175,8 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
                instead of being silently dim — that was the "press it and
                nothing happens" complaint (user thought it was broken).
           */}
-          <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100">
-            <button onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Close</button>
+          <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <button onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Close</button>
 
             {!file ? (
               <span className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-1.5 font-medium">
@@ -187,7 +187,7 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
                 <button
                   onClick={() => { setDryRun(true); importMutation.mutate(true); }}
                   disabled={importMutation.isPending}
-                  className="bg-slate-700 hover:bg-slate-800 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
+                  className="bg-slate-700 dark:bg-slate-600 hover:bg-slate-800 dark:hover:bg-slate-500 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
                   title="Validate the file without writing anything"
                 >
                   {importMutation.isPending && dryRun ? 'Validating…' : 'Run Dry Run'}

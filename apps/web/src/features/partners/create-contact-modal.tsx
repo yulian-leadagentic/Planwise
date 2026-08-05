@@ -5,7 +5,7 @@ import client from '@/api/client';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 
-const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
+const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
 interface RelationshipType { id: number; code: string; name: string }
 interface Organization { id: number; displayName: string; companyName: string | null }
@@ -203,19 +203,19 @@ export function CreateContactModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[560px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 sticky top-0 bg-white z-10">
-          <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[560px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900 z-10">
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
             <UserIcon className="h-4 w-4 text-blue-600" />
             Add Contact
           </h2>
-          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
+          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
             <X className="h-4 w-4" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 space-y-5">
-          <p className="text-[12px] text-slate-500">
+          <p className="text-[12px] text-slate-500 dark:text-slate-400">
             A person who works at one of your customer or supplier organizations. The classification (customer-side vs supplier-side) is derived from the employer you pick — you don't tag it manually.
           </p>
 
@@ -229,26 +229,26 @@ export function CreateContactModal({
           {/* Identity */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">First Name</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">First Name</label>
               <input value={form.firstName} onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))} className={inputClass} autoFocus />
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Last Name</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Last Name</label>
               <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className={inputClass} />
             </div>
           </div>
           {/* Validation requires first OR last (not both) — so neither carries a
               hard required-asterisk; this line states the real rule. */}
-          <p className="text-[11px] text-slate-400">Enter a first and/or last name (at least one).</p>
+          <p className="text-[11px] text-slate-400 dark:text-slate-500">Enter a first and/or last name (at least one).</p>
           {/* Hebrew name (T3.3, 2026-06-28) — bilingual search picks
               these up so contacts are findable in either language. */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">שם פרטי</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">שם פרטי</label>
               <input dir="rtl" value={form.firstNameHe} onChange={(e) => setForm(f => ({ ...f, firstNameHe: e.target.value }))} className={inputClass} />
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">שם משפחה</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">שם משפחה</label>
               <input dir="rtl" value={form.lastNameHe} onChange={(e) => setForm(f => ({ ...f, lastNameHe: e.target.value }))} className={inputClass} />
             </div>
           </div>
@@ -261,8 +261,8 @@ export function CreateContactModal({
               Both are optional; Job Title can be set later via the
               partner drawer, but having it at creation saves a step. */}
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
-              Job Title <span className="text-slate-400 font-normal">(optional)</span>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+              Job Title <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
             </label>
             <select
               value={form.primaryProfessionId}
@@ -279,7 +279,7 @@ export function CreateContactModal({
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
-            <p className="mt-1 text-[11px] text-slate-400">
+            <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
               The person's actual profession (e.g. Architect, MEP Engineer). Used by project role pickers to suggest qualified candidates. Add more titles from the partner profile after creation.
             </p>
           </div>
@@ -287,8 +287,8 @@ export function CreateContactModal({
           {/* Main Role — the contact's primary categorization. Optional;
               if left blank the drawer will show a soft prompt later. */}
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
-              Main Role <span className="text-slate-400 font-normal">(optional)</span>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+              Main Role <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
             </label>
             <select
               value={form.mainRoleTypeId}
@@ -300,25 +300,25 @@ export function CreateContactModal({
                 <option key={rt.id} value={rt.id}>{rt.name}</option>
               ))}
             </select>
-            <p className="mt-1 text-[11px] text-slate-400">
+            <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
               Primary categorization (Customer, Supplier, Consultant…). Project-level responsibilities are set via relationships.
             </p>
           </div>
 
           {/* Employer + role-in-context */}
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Employer (organization)</label>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Employer (organization)</label>
             {lockEmployer && form.employerOrgId ? (
               // When the caller passes lockEmployer, we render the chosen org
               // as static text + a hidden value. The user is in a flow that
               // explicitly says "add a contact for THIS customer/supplier" —
               // letting them switch the employer would defeat the point.
-              <div className={`${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed flex items-center justify-between`}>
+              <div className={`${inputClass} bg-slate-50 dark:bg-slate-800/50 text-slate-700 dark:text-slate-200 cursor-not-allowed flex items-center justify-between`}>
                 <span className="font-medium">
                   {orgs.find((o) => String(o.id) === String(form.employerOrgId))?.displayName
                     ?? `Organization #${form.employerOrgId}`}
                 </span>
-                <span className="text-[10px] uppercase tracking-wider text-slate-400">Locked</span>
+                <span className="text-[10px] uppercase tracking-wider text-slate-400 dark:text-slate-500">Locked</span>
               </div>
             ) : (
               <select value={form.employerOrgId} onChange={(e) => setForm(f => ({ ...f, employerOrgId: e.target.value }))} className={inputClass}>
@@ -328,13 +328,13 @@ export function CreateContactModal({
                 ))}
               </select>
             )}
-            <p className="text-[11px] text-slate-400 mt-1">
+            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
               Creates a <code>worker_of</code> relationship — the contact's "context" is defined here.
             </p>
           </div>
           {form.employerOrgId && (
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Role at the organization (optional)</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Role at the organization (optional)</label>
               <input
                 value={form.roleInContext}
                 onChange={(e) => setForm(f => ({ ...f, roleInContext: e.target.value }))}
@@ -346,18 +346,18 @@ export function CreateContactModal({
 
           {/* Contact details */}
           <div className="space-y-3">
-            <h3 className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Contact details</h3>
+            <h3 className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Contact details</h3>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Email</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Email</label>
               <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} className={inputClass} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Phone</label>
+                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Phone</label>
                 <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className={inputClass} />
               </div>
               <div>
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Mobile</label>
+                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Mobile</label>
                 <input value={form.mobile} onChange={(e) => setForm(f => ({ ...f, mobile: e.target.value }))} className={inputClass} />
               </div>
             </div>
@@ -365,25 +365,25 @@ export function CreateContactModal({
 
           {/* Online presence */}
           <div className="space-y-3">
-            <h3 className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Online presence</h3>
+            <h3 className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Online presence</h3>
             <SocialField icon={<Linkedin className="h-4 w-4 text-[#0a66c2]" />} label="LinkedIn"  value={form.linkedinUrl}  onChange={(v) => setForm(f => ({ ...f, linkedinUrl: v }))}  placeholder="https://linkedin.com/in/..." />
             <SocialField icon={<Facebook className="h-4 w-4 text-[#1877f2]" />} label="Facebook"  value={form.facebookUrl}  onChange={(v) => setForm(f => ({ ...f, facebookUrl: v }))}  placeholder="https://facebook.com/..." />
             <SocialField icon={<Twitter  className="h-4 w-4 text-[#1da1f2]" />} label="Twitter / X" value={form.twitterUrl}   onChange={(v) => setForm(f => ({ ...f, twitterUrl: v }))}   placeholder="https://x.com/..." />
             <SocialField icon={<Instagram className="h-4 w-4 text-[#e4405f]" />} label="Instagram" value={form.instagramUrl} onChange={(v) => setForm(f => ({ ...f, instagramUrl: v }))} placeholder="https://instagram.com/..." />
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Website</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Website</label>
               <input value={form.website} onChange={(e) => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://example.com" className={inputClass} />
             </div>
           </div>
 
           {/* Notes */}
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Notes</label>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Notes</label>
             <textarea value={form.notes} onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))} rows={3} className={cn(inputClass, 'resize-none')} />
           </div>
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 sticky bottom-0 bg-white">
-            <button type="button" onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 sticky bottom-0 bg-white dark:bg-slate-900">
+            <button type="button" onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
             <button type="submit" disabled={create.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
               {create.isPending ? 'Creating...' : 'Create Contact'}
             </button>
@@ -403,7 +403,7 @@ function SocialField({ icon, label, value, onChange, placeholder }: {
 }) {
   return (
     <div>
-      <label className="text-[13px] font-semibold text-slate-700 mb-1.5 flex items-center gap-1.5">
+      <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 flex items-center gap-1.5">
         {icon}
         {label}
       </label>

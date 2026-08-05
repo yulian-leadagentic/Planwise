@@ -151,7 +151,7 @@ export function PartnersPage() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowImport(true)}
-                className="flex items-center gap-2 rounded-lg bg-white border border-slate-200 hover:border-slate-400 px-4 py-2 text-[13px] font-semibold text-slate-700"
+                className="flex items-center gap-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 px-4 py-2 text-[13px] font-semibold text-slate-700 dark:text-slate-200"
               >
                 <Upload className="h-4 w-4" />
                 Import CSV
@@ -191,22 +191,22 @@ export function PartnersPage() {
       </div>
 
       {/* Tab description */}
-      <p className="text-[12px] text-slate-500 -mt-3">{activeTab.description}</p>
+      <p className="text-[12px] text-slate-500 dark:text-slate-400 -mt-3">{activeTab.description}</p>
 
       {/* Search */}
       <div className="relative max-w-md">
-        <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500" />
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={`Search ${activeTab.label.toLowerCase()}...`}
-          className="w-full rounded-lg border border-slate-200 bg-white pl-9 pr-9 py-2 text-sm focus:border-blue-500 focus:outline-none"
+          className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 pl-9 pr-9 py-2 text-sm focus:border-blue-500 focus:outline-none"
         />
         {search && (
           <button
             onClick={() => setSearch('')}
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -262,10 +262,10 @@ export function PartnersPage() {
 function OrganizationsList({ partners, onSelect }: { partners: BusinessPartner[]; onSelect: (id: number) => void }) {
   const scrollRef = useStickyHScroll();
   return (
-    <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
+    <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
+          <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
             <th className="px-4 py-2 text-left font-semibold">Organization</th>
             <th className="px-4 py-2 text-left font-semibold">Main Role</th>
             <th className="px-4 py-2 text-left font-semibold">Email</th>
@@ -275,20 +275,20 @@ function OrganizationsList({ partners, onSelect }: { partners: BusinessPartner[]
         </thead>
         <tbody>
           {partners.map((bp) => (
-            <tr key={bp.id} onClick={() => onSelect(bp.id)} className="border-t border-slate-100 hover:bg-blue-50/30 cursor-pointer">
+            <tr key={bp.id} onClick={() => onSelect(bp.id)} className="border-t border-slate-100 dark:border-slate-800 hover:bg-blue-50/30 cursor-pointer">
               <td className="px-4 py-2.5">
                 <div className="flex items-center gap-3">
                   <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-100 text-violet-700 shrink-0">
                     <Building2 className="h-4 w-4" />
                   </div>
-                  <p className="font-medium text-slate-800 truncate">{bp.displayName}</p>
+                  <p className="font-medium text-slate-800 dark:text-slate-100 truncate">{bp.displayName}</p>
                 </div>
               </td>
               <td className="px-4 py-2.5">
                 <MainRoleBadge mainRole={bp.mainRoleType} />
               </td>
-              <td className="px-4 py-2.5 text-slate-600 text-[12px]">{bp.email || '—'}</td>
-              <td className="px-4 py-2.5 text-slate-600 text-[12px]">{bp.phone || '—'}</td>
+              <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300 text-[12px]">{bp.email || '—'}</td>
+              <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300 text-[12px]">{bp.phone || '—'}</td>
               <td className="px-4 py-2.5 text-center">
                 <StatusBadge status={bp.status} />
               </td>
@@ -371,9 +371,9 @@ function ContactsList({
   // explicit "edit" action button. Designed to read well at-a-glance and
   // surface more useful info without losing scannability.
   return (
-    <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden divide-y divide-slate-100">
+    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
       {partners.length === 0 && (
-        <div className="px-4 py-8 text-center text-sm text-slate-400 italic">No contacts in this group.</div>
+        <div className="px-4 py-8 text-center text-sm text-slate-400 dark:text-slate-500 italic">No contacts in this group.</div>
       )}
       {partners.map((bp) => {
         // Employer is whichever org the contact has an active worker_of
@@ -397,11 +397,11 @@ function ContactsList({
             <div className="flex items-center gap-3 min-w-0 flex-[2]">
               <UserAvatar firstName={bp.firstName ?? ''} lastName={bp.lastName ?? ''} avatarUrl={null} size="md" />
               <div className="min-w-0">
-                <p className="font-semibold text-[14px] text-slate-800 truncate">{bp.displayName}</p>
+                <p className="font-semibold text-[14px] text-slate-800 dark:text-slate-100 truncate">{bp.displayName}</p>
                 {subline ? (
-                  <p className="text-[12px] text-slate-500 truncate">{subline}</p>
+                  <p className="text-[12px] text-slate-500 dark:text-slate-400 truncate">{subline}</p>
                 ) : (
-                  <p className="text-[12px] text-slate-300 italic">no role set</p>
+                  <p className="text-[12px] text-slate-300 dark:text-slate-600 italic">no role set</p>
                 )}
               </div>
             </div>
@@ -412,14 +412,14 @@ function ContactsList({
                 <a
                   href={`mailto:${bp.email}`}
                   onClick={(e) => e.stopPropagation()}
-                  className="inline-flex items-center gap-1.5 text-slate-700 hover:text-blue-700 truncate"
+                  className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-200 hover:text-blue-700 truncate"
                   title={bp.email}
                 >
-                  <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                  <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
                   <span className="truncate">{bp.email}</span>
                 </a>
               ) : (
-                <span className="inline-flex items-center gap-1.5 text-slate-300">
+                <span className="inline-flex items-center gap-1.5 text-slate-300 dark:text-slate-600">
                   <Mail className="h-3.5 w-3.5" /> —
                 </span>
               )}
@@ -427,13 +427,13 @@ function ContactsList({
                 <a
                   href={`tel:${bp.phone || bp.mobile}`}
                   onClick={(e) => e.stopPropagation()}
-                  className="inline-flex items-center gap-1.5 text-slate-700 hover:text-blue-700"
+                  className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-200 hover:text-blue-700"
                 >
-                  <Phone className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                  <Phone className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
                   <span className="tabular-nums">{bp.phone || bp.mobile}</span>
                 </a>
               ) : (
-                <span className="inline-flex items-center gap-1.5 text-slate-300">
+                <span className="inline-flex items-center gap-1.5 text-slate-300 dark:text-slate-600">
                   <Phone className="h-3.5 w-3.5" /> —
                 </span>
               )}
@@ -442,10 +442,10 @@ function ContactsList({
             {/* Project count badge — placeholder zero until Phase-1b backend
                 wire-up; the visual layout is final so adding the real number
                 later is a one-line swap. */}
-            <div className="hidden lg:flex items-center gap-1.5 text-[11px] text-slate-600 shrink-0">
-              <FolderKanban className="h-3.5 w-3.5 text-slate-400" />
+            <div className="hidden lg:flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-300 shrink-0">
+              <FolderKanban className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
               <span className="font-semibold tabular-nums">{(bp as any).projectCount ?? '—'}</span>
-              <span className="text-slate-400">projects</span>
+              <span className="text-slate-400 dark:text-slate-500">projects</span>
             </div>
 
             {/* Status pill (active / archived). */}
@@ -459,7 +459,7 @@ function ContactsList({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelect(bp.id); }}
-              className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity rounded-md p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50"
+              className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity rounded-md p-1.5 text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50"
               title="Edit contact"
               aria-label="Edit contact"
             >
@@ -486,7 +486,7 @@ function MainRoleBadge({
 }) {
   if (!mainRole) {
     return (
-      <span className="text-[11px] text-slate-400 italic">not set</span>
+      <span className="text-[11px] text-slate-400 dark:text-slate-500 italic">not set</span>
     );
   }
   return (
@@ -501,9 +501,9 @@ function StatusBadge({ status }: { status: string }) {
   return (
     <span className={cn(
       'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize',
-      isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500',
+      isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400',
     )}>
-      <span className={cn('h-1.5 w-1.5 rounded-full', isActive ? 'bg-emerald-500' : 'bg-slate-400')} />
+      <span className={cn('h-1.5 w-1.5 rounded-full', isActive ? 'bg-emerald-500' : 'bg-slate-400 dark:bg-slate-500')} />
       {status}
     </span>
   );

@@ -7,7 +7,7 @@ import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
 import { formatDate } from '@/lib/date-utils';
 
-const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
+const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
 interface RoleType { id: number; code: string; name: string; category?: string | null }
 interface SideTarget {
@@ -143,20 +143,20 @@ export function PartnerDrawer({
   return (
     <>
       <div className="fixed inset-0 z-40 bg-black/20" onClick={onClose} />
-      <div className="fixed inset-y-0 right-0 z-50 w-[560px] max-w-[92vw] bg-white border-l border-slate-200 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
+      <div className="fixed inset-y-0 right-0 z-50 w-[560px] max-w-[92vw] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
         {/* Header */}
-        <div className="flex items-start gap-3 border-b border-slate-200 px-5 py-4">
+        <div className="flex items-start gap-3 border-b border-slate-200 dark:border-slate-700 px-5 py-4">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50 text-blue-700 shrink-0">
             {bp?.partnerType === 'organization' ? <Building2 className="h-5 w-5" /> : <UserIcon className="h-5 w-5" />}
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-base font-bold text-slate-900 truncate">{bp?.displayName ?? '...'}</h2>
-            <p className="text-[11px] text-slate-400">
+            <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 truncate">{bp?.displayName ?? '...'}</h2>
+            <p className="text-[11px] text-slate-400 dark:text-slate-500">
               {bp?.partnerType === 'organization' ? 'Organization' : 'Person'}
               {bp?.user && ' · Has login account'}
             </p>
           </div>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-600 shrink-0">
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 shrink-0">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -168,7 +168,7 @@ export function PartnerDrawer({
         {bp && <MainRoleHeaderField bp={bp} canWrite={canWrite} />}
 
         {/* Tabs */}
-        <div className="flex border-b border-slate-200 px-5">
+        <div className="flex border-b border-slate-200 dark:border-slate-700 px-5">
           {([
             { key: 'details',      label: 'Details' },
             { key: 'relationships',label: `Relationships${bp ? ` (${(bp.outgoingRelationships?.length ?? 0) + (bp.incomingRelationships?.length ?? 0)})` : ''}` },
@@ -178,7 +178,7 @@ export function PartnerDrawer({
               onClick={() => setTab(t.key)}
               className={cn(
                 'border-b-2 px-3 py-2 text-xs font-semibold transition-colors',
-                tab === t.key ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600',
+                tab === t.key ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200',
               )}
             >
               {t.label}
@@ -189,12 +189,12 @@ export function PartnerDrawer({
         {/* Content */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {isError ? (
-            <div className="text-sm text-slate-400 text-center py-8">
+            <div className="text-sm text-slate-400 dark:text-slate-500 text-center py-8">
               Couldn't load this partner.{' '}
               <button onClick={() => refetch()} className="font-medium text-blue-600 hover:underline">Retry</button>
             </div>
           ) : isLoading || !bp ? (
-            <div className="text-sm text-slate-400 text-center py-8">Loading...</div>
+            <div className="text-sm text-slate-400 dark:text-slate-500 text-center py-8">Loading...</div>
           ) : tab === 'details' ? (
             <DetailsTab bp={bp} canWrite={canWrite} canDelete={canDelete} onClose={onClose} />
           ) : (
@@ -267,7 +267,7 @@ function MainRoleHeaderField({ bp, canWrite }: { bp: BusinessPartnerFull; canWri
         setRole.mutate(v === '' ? null : Number(v));
       }}
       onBlur={() => setPicking(false)}
-      className="text-[12px] rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-700 focus:border-blue-500 focus:outline-none"
+      className="text-[12px] rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1 text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
     >
       <option value="">— None —</option>
       {options.map((rt) => (
@@ -293,8 +293,8 @@ function MainRoleHeaderField({ bp, canWrite }: { bp: BusinessPartnerFull; canWri
 
   // State 2 — set: compact pill. Click to change (write only).
   return (
-    <div className="border-b border-slate-100 bg-slate-50/40 px-5 py-2 flex items-center gap-2">
-      <span className="text-[11px] font-semibold text-slate-500 uppercase">Main role</span>
+    <div className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-800/40 px-5 py-2 flex items-center gap-2">
+      <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase">Main role</span>
       {picking ? (
         DropdownRow
       ) : (
@@ -442,8 +442,8 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
 
   const Field = ({ label, value, render }: { label: string; value: string | null | undefined; render?: () => React.ReactNode }) => (
     <div>
-      <label className="text-[11px] font-semibold text-slate-400 uppercase">{label}</label>
-      <p className="mt-1 text-[13px] text-slate-700">{render ? render() : (value || <span className="italic text-slate-400">—</span>)}</p>
+      <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase">{label}</label>
+      <p className="mt-1 text-[13px] text-slate-700 dark:text-slate-200">{render ? render() : (value || <span className="italic text-slate-400 dark:text-slate-500">—</span>)}</p>
     </div>
   );
 
@@ -452,14 +452,14 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
       <div className="space-y-4">
         <div className="flex items-center justify-end gap-2">
           {canWrite && (
-            <button onClick={() => setEditing(true)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[12px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1">
+            <button onClick={() => setEditing(true)} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1">
               <Pencil className="h-3 w-3" /> Edit
             </button>
           )}
           {canDelete && !bp.user && (
             <button
               onClick={() => { if (confirm(`Remove "${bp.displayName}"?`)) remove.mutate(); }}
-              className="bg-white border border-red-200 hover:border-red-400 text-red-600 text-[12px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
+              className="bg-white dark:bg-slate-900 border border-red-200 hover:border-red-400 text-red-600 text-[12px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
             >
               <Trash2 className="h-3 w-3" /> Remove
             </button>
@@ -480,8 +480,8 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
               label="Employer"
               value={employerRel ? (employerOrg?.displayName ?? bp.companyName ?? `#${employerRel.targetId}`) : null}
               render={() => employerRel
-                ? <span className="text-slate-700">{employerOrg?.displayName ?? bp.companyName ?? `#${employerRel.targetId}`}{employerRel.roleInContext ? <span className="text-slate-400"> · {employerRel.roleInContext}</span> : null}</span>
-                : <span className="italic text-slate-400">—</span>
+                ? <span className="text-slate-700 dark:text-slate-200">{employerOrg?.displayName ?? bp.companyName ?? `#${employerRel.targetId}`}{employerRel.roleInContext ? <span className="text-slate-400 dark:text-slate-500"> · {employerRel.roleInContext}</span> : null}</span>
+                : <span className="italic text-slate-400 dark:text-slate-500">—</span>
               }
             />
           )}
@@ -491,10 +491,10 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
           <Field label="Mobile" value={bp.mobile} />
           <Field label="Website" value={bp.website} render={() => bp.website ? (
             <a href={bp.website} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{bp.website}</a>
-          ) : <span className="italic text-slate-400">—</span>} />
+          ) : <span className="italic text-slate-400 dark:text-slate-500">—</span>} />
           <Field label="Address" value={bp.address} />
           <Field label="Status" value={bp.status} render={() => (
-            <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', bp.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500')}>
+            <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', bp.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400')}>
               {bp.status}
             </span>
           )} />
@@ -504,25 +504,25 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
         {/* Social / online presence — only show when at least one is set */}
         {(bp.linkedinUrl || bp.facebookUrl || bp.twitterUrl || bp.instagramUrl) && (
           <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase">Online presence</label>
+            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase">Online presence</label>
             <div className="mt-1.5 flex items-center gap-2">
               {bp.linkedinUrl && (
-                <a href={bp.linkedinUrl} target="_blank" rel="noopener noreferrer" title={bp.linkedinUrl} className="rounded-md p-1.5 hover:bg-slate-100">
+                <a href={bp.linkedinUrl} target="_blank" rel="noopener noreferrer" title={bp.linkedinUrl} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800">
                   <Linkedin className="h-4 w-4 text-[#0a66c2]" />
                 </a>
               )}
               {bp.facebookUrl && (
-                <a href={bp.facebookUrl} target="_blank" rel="noopener noreferrer" title={bp.facebookUrl} className="rounded-md p-1.5 hover:bg-slate-100">
+                <a href={bp.facebookUrl} target="_blank" rel="noopener noreferrer" title={bp.facebookUrl} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800">
                   <Facebook className="h-4 w-4 text-[#1877f2]" />
                 </a>
               )}
               {bp.twitterUrl && (
-                <a href={bp.twitterUrl} target="_blank" rel="noopener noreferrer" title={bp.twitterUrl} className="rounded-md p-1.5 hover:bg-slate-100">
+                <a href={bp.twitterUrl} target="_blank" rel="noopener noreferrer" title={bp.twitterUrl} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800">
                   <Twitter className="h-4 w-4 text-[#1da1f2]" />
                 </a>
               )}
               {bp.instagramUrl && (
-                <a href={bp.instagramUrl} target="_blank" rel="noopener noreferrer" title={bp.instagramUrl} className="rounded-md p-1.5 hover:bg-slate-100">
+                <a href={bp.instagramUrl} target="_blank" rel="noopener noreferrer" title={bp.instagramUrl} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800">
                   <Instagram className="h-4 w-4 text-[#e4405f]" />
                 </a>
               )}
@@ -532,8 +532,8 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
 
         {bp.notes && (
           <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase">Notes</label>
-            <p className="mt-1 text-[13px] text-slate-700 whitespace-pre-wrap">{bp.notes}</p>
+            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase">Notes</label>
+            <p className="mt-1 text-[13px] text-slate-700 dark:text-slate-200 whitespace-pre-wrap">{bp.notes}</p>
           </div>
         )}
 
@@ -542,17 +542,17 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
             have a profession concept. Drives the "Required Job Title"
             constraint on Project Role Types. */}
         {bp.partnerType === 'person' && (
-          <div className="pt-2 border-t border-slate-100">
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
             <JobTitlesSection bpId={bp.id} canWrite={canWrite} />
           </div>
         )}
 
-        <div className="text-[11px] text-slate-400 pt-3 border-t border-slate-100">
+        <div className="text-[11px] text-slate-400 dark:text-slate-500 pt-3 border-t border-slate-100 dark:border-slate-800">
           Created {formatDate(bp.createdAt)} · Updated {formatDate(bp.updatedAt)}
         </div>
 
         {bp.user && (
-          <div className="rounded-md bg-slate-50 px-3 py-2 text-[12px] text-slate-600">
+          <div className="rounded-md bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-[12px] text-slate-600 dark:text-slate-300">
             🔐 This partner has a login account (user id={bp.user.id}). Manage credentials from <strong>People → Reset Password</strong>.
           </div>
         )}
@@ -566,11 +566,11 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
       {bp.partnerType === 'person' && (
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">First Name</label>
+            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">First Name</label>
             <input value={form.firstName} onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))} className={inputClass} />
           </div>
           <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Last Name</label>
+            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Last Name</label>
             <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className={inputClass} />
           </div>
         </div>
@@ -578,17 +578,17 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
       {bp.partnerType === 'organization' ? (
         <>
           <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Company Name</label>
+            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Company Name</label>
             <input value={form.companyName} onChange={(e) => setForm(f => ({ ...f, companyName: e.target.value }))} className={inputClass} />
           </div>
           <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Tax ID</label>
+            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Tax ID</label>
             <input value={form.taxId} onChange={(e) => setForm(f => ({ ...f, taxId: e.target.value }))} className={inputClass} />
           </div>
         </>
       ) : (
         <div>
-          <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Employer (organization)</label>
+          <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Employer (organization)</label>
           <select
             value={form.employerOrgId ?? ''}
             onChange={(e) => setForm(f => ({ ...f, employerOrgId: e.target.value ? Number(e.target.value) : null }))}
@@ -602,27 +602,27 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
               <option key={o.id} value={o.id}>{o.displayName}</option>
             ))}
           </select>
-          <p className="text-[11px] text-slate-400 mt-1">
+          <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
             Saving will sync the <code>worker_of</code> relationship to this organization.
           </p>
         </div>
       )}
       <div>
-        <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Email</label>
+        <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Email</label>
         <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} className={inputClass} />
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Phone</label>
+          <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Phone</label>
           <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className={inputClass} />
         </div>
         <div>
-          <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Mobile</label>
+          <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Mobile</label>
           <input value={form.mobile} onChange={(e) => setForm(f => ({ ...f, mobile: e.target.value }))} className={inputClass} />
         </div>
       </div>
       <div>
-        <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Website</label>
+        <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Website</label>
         <input value={form.website} onChange={(e) => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://..." className={inputClass} />
       </div>
       <div className="grid grid-cols-2 gap-3">
@@ -632,23 +632,23 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
         <SocialEditField icon={<Instagram className="h-3.5 w-3.5 text-[#e4405f]" />} label="Instagram"  value={form.instagramUrl} onChange={(v) => setForm(f => ({ ...f, instagramUrl: v }))} />
       </div>
       <div>
-        <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Address</label>
+        <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Address</label>
         <input value={form.address} onChange={(e) => setForm(f => ({ ...f, address: e.target.value }))} className={inputClass} />
       </div>
       <div>
-        <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Status</label>
+        <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Status</label>
         <select value={form.status} onChange={(e) => setForm(f => ({ ...f, status: e.target.value }))} className={inputClass}>
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
         </select>
       </div>
       <div>
-        <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Notes</label>
+        <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Notes</label>
         <textarea value={form.notes} onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))} rows={3} className={cn(inputClass, 'resize-none')} />
       </div>
 
-      <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-        <button type="button" onClick={() => setEditing(false)} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
+      <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+        <button type="button" onClick={() => setEditing(false)} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
         <button onClick={() => update.mutate()} disabled={update.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50 flex items-center gap-1">
           <Save className="h-3 w-3" /> {update.isPending ? 'Saving...' : 'Save'}
         </button>
@@ -716,17 +716,17 @@ function JobTitlesSection({ bpId, canWrite }: { bpId: number; canWrite: boolean 
 
   return (
     <div>
-      <p className="text-[11px] font-semibold text-slate-400 uppercase mb-2">Job titles</p>
+      <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-2">Job titles</p>
       {isLoading ? (
-        <p className="text-[11px] text-slate-400">Loading…</p>
+        <p className="text-[11px] text-slate-400 dark:text-slate-500">Loading…</p>
       ) : current.length === 0 ? (
-        <p className="text-[12px] text-slate-400 italic mb-2">No job titles yet.</p>
+        <p className="text-[12px] text-slate-400 dark:text-slate-500 italic mb-2">No job titles yet.</p>
       ) : (
         <div className="space-y-1.5 mb-2">
           {current.map((c) => (
-            <div key={c.id} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
+            <div key={c.id} className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 px-3 py-2">
               <Briefcase className="h-3.5 w-3.5 text-violet-500 shrink-0" />
-              <span className="text-[13px] font-medium text-slate-800 flex-1">{c.profession.name}</span>
+              <span className="text-[13px] font-medium text-slate-800 dark:text-slate-100 flex-1">{c.profession.name}</span>
               {canWrite && (
                 <button
                   onClick={() => setPrimary(c.professionId)}
@@ -735,7 +735,7 @@ function JobTitlesSection({ bpId, canWrite }: { bpId: number; canWrite: boolean 
                     'rounded-full px-2 py-0.5 text-[10px] font-semibold border transition-colors',
                     c.isPrimary
                       ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
-                      : 'border-slate-200 text-slate-500 hover:border-slate-300',
+                      : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600',
                   )}
                 >
                   {c.isPrimary ? 'PRIMARY' : 'Make primary'}
@@ -744,7 +744,7 @@ function JobTitlesSection({ bpId, canWrite }: { bpId: number; canWrite: boolean 
               {canWrite && (
                 <button
                   onClick={() => removeOne(c.professionId)}
-                  className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-600"
+                  className="p-1 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
                   title="Remove job title"
                 >
                   <Trash2 className="h-3 w-3" />
@@ -757,14 +757,14 @@ function JobTitlesSection({ bpId, canWrite }: { bpId: number; canWrite: boolean 
 
       {canWrite && available.length > 0 && (
         <div>
-          <p className="text-[10px] text-slate-400 mb-1">Add:</p>
+          <p className="text-[10px] text-slate-400 dark:text-slate-500 mb-1">Add:</p>
           <div className="flex flex-wrap gap-2">
             {available.map((p) => (
               <button
                 key={p.id}
                 onClick={() => addOne(p.id)}
                 disabled={save.isPending}
-                className="rounded-full border border-slate-200 bg-white hover:border-violet-400 hover:bg-violet-50 text-slate-700 hover:text-violet-700 text-[12px] font-medium px-3 py-1 flex items-center gap-1"
+                className="rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-violet-400 hover:bg-violet-50 text-slate-700 dark:text-slate-200 hover:text-violet-700 text-[12px] font-medium px-3 py-1 flex items-center gap-1"
               >
                 <Plus className="h-3 w-3" />
                 {p.name}
@@ -775,7 +775,7 @@ function JobTitlesSection({ bpId, canWrite }: { bpId: number; canWrite: boolean 
       )}
 
       {canWrite && catalog.length === 0 && (
-        <p className="text-[11px] text-slate-400 italic">
+        <p className="text-[11px] text-slate-400 dark:text-slate-500 italic">
           No job titles defined yet. Manage the list in{' '}
           <a href="/templates/types" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
             /templates/types → Job Titles
@@ -811,27 +811,27 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
     if (items.length === 0) return null;
     return (
       <div>
-        <p className="text-[11px] font-semibold text-slate-400 uppercase mb-2 flex items-center gap-1.5">{icon}{label} ({items.length})</p>
+        <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-2 flex items-center gap-1.5">{icon}{label} ({items.length})</p>
         <div className="space-y-1.5">
           {items.map((r) => (
-            <div key={r.id} className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 flex items-start gap-2">
+            <div key={r.id} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 px-3 py-2 flex items-start gap-2">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[13px] font-medium text-slate-800">{r.relationshipType.name}</span>
-                  <span className="text-[12px] text-slate-400">→</span>
-                  <span className="text-[13px] font-semibold text-slate-900 truncate">
+                  <span className="text-[13px] font-medium text-slate-800 dark:text-slate-100">{r.relationshipType.name}</span>
+                  <span className="text-[12px] text-slate-400 dark:text-slate-500">→</span>
+                  <span className="text-[13px] font-semibold text-slate-900 dark:text-slate-100 truncate">
                     {r.targetName ?? `${r.targetType} #${r.targetId}`}
                   </span>
                   {r.targetCode && (
-                    <span className="text-[11px] text-slate-400 font-mono">({r.targetCode})</span>
+                    <span className="text-[11px] text-slate-400 dark:text-slate-500 font-mono">({r.targetCode})</span>
                   )}
                   {r.isPrimary && (
                     <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">PRIMARY</span>
                   )}
                 </div>
-                {r.roleInContext && <p className="text-[12px] text-slate-600 mt-0.5">{r.roleInContext}</p>}
+                {r.roleInContext && <p className="text-[12px] text-slate-600 dark:text-slate-300 mt-0.5">{r.roleInContext}</p>}
                 {(r.validFrom || r.validTo) && (
-                  <p className="text-[10px] text-slate-400 mt-0.5">
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
                     {r.validFrom ? `from ${formatDate(r.validFrom)}` : ''}
                     {r.validTo ? ` to ${formatDate(r.validTo)}` : ''}
                   </p>
@@ -840,7 +840,7 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
               {canDelete && (
                 <button
                   onClick={() => { if (confirm('Remove this relationship?')) remove.mutate(r.id); }}
-                  className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-600 shrink-0"
+                  className="p-1 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600 shrink-0"
                   title="Remove"
                 >
                   <Trash2 className="h-3 w-3" />
@@ -870,7 +870,7 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
   return (
     <div className="space-y-4">
       {bp.outgoingRelationships.length === 0 && incoming.length === 0 && (
-        <p className="text-[12px] text-slate-400 italic text-center py-6">No relationships yet.</p>
+        <p className="text-[12px] text-slate-400 dark:text-slate-500 italic text-center py-6">No relationships yet.</p>
       )}
 
       {/* Outgoing — this partner is Side A. */}
@@ -882,31 +882,31 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
       {/* Incoming — this partner is Side B. Use inverseLabel for natural reading. */}
       {incoming.length > 0 && (
         <div>
-          <p className="text-[11px] font-semibold text-slate-400 uppercase mb-2 flex items-center gap-1.5">
+          <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-2 flex items-center gap-1.5">
             <ChevronRight className="h-3 w-3 rotate-180" />
             Pointing at this partner ({incoming.length})
           </p>
           <div className="space-y-1.5">
             {incoming.map((r) => (
-              <div key={`in-${r.id}`} className="rounded-lg border border-slate-200 bg-amber-50/40 px-3 py-2 flex items-start gap-2">
+              <div key={`in-${r.id}`} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-amber-50/40 px-3 py-2 flex items-start gap-2">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[13px] font-medium text-slate-800">
+                    <span className="text-[13px] font-medium text-slate-800 dark:text-slate-100">
                       {r.relationshipType.inverseLabel || `← ${r.relationshipType.name}`}
                     </span>
-                    <span className="text-[12px] text-slate-400">←</span>
-                    <span className="text-[13px] font-semibold text-slate-900 truncate">{r.sourceName}</span>
-                    <span className="text-[10px] text-slate-400 font-mono">({r.sourceKind})</span>
+                    <span className="text-[12px] text-slate-400 dark:text-slate-500">←</span>
+                    <span className="text-[13px] font-semibold text-slate-900 dark:text-slate-100 truncate">{r.sourceName}</span>
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">({r.sourceKind})</span>
                     {r.isPrimary && (
                       <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">PRIMARY</span>
                     )}
                   </div>
-                  {r.roleInContext && <p className="text-[12px] text-slate-600 mt-0.5">{r.roleInContext}</p>}
+                  {r.roleInContext && <p className="text-[12px] text-slate-600 dark:text-slate-300 mt-0.5">{r.roleInContext}</p>}
                 </div>
                 {canDelete && (
                   <button
                     onClick={() => { if (confirm('Remove this relationship?')) removeIncoming.mutate(r.id); }}
-                    className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-600 shrink-0"
+                    className="p-1 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600 shrink-0"
                     title="Remove"
                   >
                     <Trash2 className="h-3 w-3" />
@@ -919,7 +919,7 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
       )}
 
       {canWrite && (
-        <div className="pt-2 border-t border-slate-100">
+        <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
           <button
             onClick={() => setShowAdd(true)}
             className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
@@ -1140,16 +1140,16 @@ function AddRelationshipModal({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[480px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <h3 className="text-base font-bold text-slate-900">Add Relationship</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[480px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+          <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Add Relationship</h3>
+          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
             <X className="h-4 w-4" />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-3">
           <div>
-            <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Relationship type</label>
+            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Relationship type</label>
             <select
               value={relationshipTypeId ?? ''}
               onChange={(e) => setRelationshipTypeId(Number(e.target.value) || null)}
@@ -1164,7 +1164,7 @@ function AddRelationshipModal({
               ))}
             </select>
             {hiddenTypeCount > 0 && (
-              <p className="text-[10px] text-slate-400 mt-1">
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
                 {hiddenTypeCount} type{hiddenTypeCount > 1 ? 's' : ''} hidden — neither side accepts this partner ({partnerKind}
                 {partnerRoleCodes.length > 0 ? ` with roles: ${partnerRoleCodes.join(', ')}` : ''}).
               </p>
@@ -1178,9 +1178,9 @@ function AddRelationshipModal({
 
           {selectedType && (
             <>
-              <div className="rounded-lg bg-blue-50/60 px-3 py-2 text-[12px] text-slate-700">
+              <div className="rounded-lg bg-blue-50/60 px-3 py-2 text-[12px] text-slate-700 dark:text-slate-200">
                 <span className="font-semibold text-blue-700">{partnerSideLabel}</span>
-                <span className="text-slate-400 mx-1.5">{forSide === 'B' ? '←' : '→'}</span>
+                <span className="text-slate-400 dark:text-slate-500 mx-1.5">{forSide === 'B' ? '←' : '→'}</span>
                 <span className="font-semibold text-violet-700">{otherSideLabel}</span>
                 {forSide === 'B' && (
                   <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
@@ -1188,10 +1188,10 @@ function AddRelationshipModal({
                   </span>
                 )}
                 {selectedType.inverseLabel && forSide === 'A' && (
-                  <span className="text-[10px] text-slate-400 ml-2">(reads back as "{selectedType.inverseLabel}")</span>
+                  <span className="text-[10px] text-slate-400 dark:text-slate-500 ml-2">(reads back as "{selectedType.inverseLabel}")</span>
                 )}
                 {candidatesData && candidatesData.existingCount > 0 && (
-                  <p className="text-[10px] text-slate-500 mt-1">
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
                     {candidatesData.existingCount} existing relationship(s) of this type already on this partner — hidden from the list below.
                   </p>
                 )}
@@ -1200,7 +1200,7 @@ function AddRelationshipModal({
               {/* Multi-kind sideB ⇒ show a kind tab strip. */}
               {kinds.length > 1 && (
                 <div>
-                  <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Kind</label>
+                  <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Kind</label>
                   <div className="flex gap-2">
                     {kinds.map((k) => (
                       <button
@@ -1209,10 +1209,10 @@ function AddRelationshipModal({
                         onClick={() => { setChosenKind(k); setTargetId(null); }}
                         className={cn(
                           'rounded-lg border-2 px-3 py-1.5 text-[12px] font-medium capitalize',
-                          chosenKind === k ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600',
+                          chosenKind === k ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300',
                         )}
                       >
-                        {k} <span className="text-[10px] text-slate-400">({(candidates[k] ?? []).length})</span>
+                        {k} <span className="text-[10px] text-slate-400 dark:text-slate-500">({(candidates[k] ?? []).length})</span>
                       </button>
                     ))}
                   </div>
@@ -1221,7 +1221,7 @@ function AddRelationshipModal({
 
               {chosenKind && (
                 <div>
-                  <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">
+                  <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">
                     {chosenKind === 'project' ? 'Project' : chosenKind === 'organization' ? 'Organization' : 'Person'}
                   </label>
                   {optionsForChosenKind.length > 0 ? (
@@ -1252,7 +1252,7 @@ function AddRelationshipModal({
               )}
 
               <div>
-                <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 block">Title / role in this context (optional)</label>
+                <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Title / role in this context (optional)</label>
                 <input
                   value={roleInContext}
                   onChange={(e) => setRoleInContext(e.target.value)}
@@ -1261,15 +1261,15 @@ function AddRelationshipModal({
                 />
               </div>
 
-              <label className="flex items-center gap-2 text-sm text-slate-700 pt-1">
-                <input type="checkbox" checked={isPrimary} onChange={(e) => setIsPrimary(e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-600" />
+              <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200 pt-1">
+                <input type="checkbox" checked={isPrimary} onChange={(e) => setIsPrimary(e.target.checked)} className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-blue-600" />
                 Mark as primary
               </label>
             </>
           )}
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-            <button type="button" onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <button type="button" onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
             <button type="submit" disabled={create.isPending || !selectedType || !targetId} className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50">
               {create.isPending ? 'Adding...' : 'Add'}
             </button>
@@ -1288,7 +1288,7 @@ function SocialEditField({ icon, label, value, onChange }: {
 }) {
   return (
     <div>
-      <label className="text-[11px] font-semibold text-slate-400 uppercase mb-1 flex items-center gap-1.5">
+      <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 flex items-center gap-1.5">
         {icon}
         {label}
       </label>

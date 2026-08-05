@@ -5,7 +5,7 @@ import client from '@/api/client';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 
-const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
+const inputClass = 'w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
 export function CreatePartnerModal({
   defaultPartnerType,
@@ -94,10 +94,10 @@ export function CreatePartnerModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[520px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <h2 className="text-base font-bold text-slate-900">Add Business Partner</h2>
-          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[520px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Add Business Partner</h2>
+          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -114,7 +114,7 @@ export function CreatePartnerModal({
                   'flex items-center justify-center gap-2 rounded-lg border-2 px-4 py-3 text-sm font-medium transition-colors',
                   partnerType === t
                     ? 'border-blue-500 bg-blue-50 text-blue-700'
-                    : 'border-slate-200 text-slate-600 hover:border-slate-300',
+                    : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600',
                 )}
               >
                 {t === 'person' ? <UserIcon className="h-4 w-4" /> : <Building2 className="h-4 w-4" />}
@@ -127,11 +127,11 @@ export function CreatePartnerModal({
           {partnerType === 'person' && (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">First Name *</label>
+                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">First Name *</label>
                 <input value={form.firstName} onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))} className={inputClass} autoFocus />
               </div>
               <div>
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Last Name *</label>
+                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Last Name *</label>
                 <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className={inputClass} />
               </div>
             </div>
@@ -140,7 +140,7 @@ export function CreatePartnerModal({
           {/* Organization-specific OR person's employer */}
           <div className="grid grid-cols-2 gap-3">
             <div className={partnerType === 'organization' ? 'col-span-2' : undefined}>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
                 {partnerType === 'organization' ? 'Organization Name *' : 'Employer (optional)'}
               </label>
               <input
@@ -152,7 +152,7 @@ export function CreatePartnerModal({
             </div>
             {partnerType === 'organization' && (
               <div className="col-span-2">
-                <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Tax ID</label>
+                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Tax ID</label>
                 <input value={form.taxId} onChange={(e) => setForm(f => ({ ...f, taxId: e.target.value }))} className={inputClass} />
               </div>
             )}
@@ -161,31 +161,31 @@ export function CreatePartnerModal({
           {/* Contact */}
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Email</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Email</label>
               <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} className={inputClass} />
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Phone</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Phone</label>
               <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className={inputClass} />
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Mobile</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Mobile</label>
               <input value={form.mobile} onChange={(e) => setForm(f => ({ ...f, mobile: e.target.value }))} className={inputClass} />
             </div>
             <div className="col-span-2">
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Website</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Website</label>
               <input value={form.website} onChange={(e) => setForm(f => ({ ...f, website: e.target.value }))} className={inputClass} />
             </div>
             <div className="col-span-2">
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Address</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Address</label>
               <input value={form.address} onChange={(e) => setForm(f => ({ ...f, address: e.target.value }))} className={inputClass} />
             </div>
           </div>
 
           {/* Main Role — single primary categorization. Optional. */}
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
-              Main Role <span className="text-slate-400 font-normal">(optional)</span>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+              Main Role <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
             </label>
             <select
               value={form.mainRoleTypeId}
@@ -197,14 +197,14 @@ export function CreatePartnerModal({
                 <option key={rt.id} value={rt.id}>{rt.name}</option>
               ))}
             </select>
-            <p className="mt-1 text-[11px] text-slate-400">
+            <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
               Primary categorization. Project-level responsibilities are set via relationships.
             </p>
           </div>
 
           {/* Notes */}
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Notes</label>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Notes</label>
             <textarea
               value={form.notes}
               onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))}
@@ -213,8 +213,8 @@ export function CreatePartnerModal({
             />
           </div>
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-            <button type="button" onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <button type="button" onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
             <button type="submit" disabled={create.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
               {create.isPending ? 'Creating...' : 'Create Partner'}
             </button>

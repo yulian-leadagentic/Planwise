@@ -193,8 +193,8 @@ export function ContactsPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Contacts</h1>
-          <p className="mt-1 text-[13px] text-slate-500">
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">Contacts</h1>
+          <p className="mt-1 text-[13px] text-slate-500 dark:text-slate-400">
             People at customers and partners — searchable, filterable, and grouped by project or customer.
           </p>
         </div>
@@ -211,17 +211,17 @@ export function ContactsPage() {
       {/* Filter strip */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[220px] max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by name, email, phone…"
-            className="w-full rounded-md border border-slate-200 bg-white pl-9 pr-9 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+            className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 pl-9 pr-9 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
           />
           {search && (
             <button onClick={() => setSearch('')} title="Clear search"
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-100">
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
               <X className="h-3.5 w-3.5" />
             </button>
           )}
@@ -229,7 +229,7 @@ export function ContactsPage() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}
-          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
           title="Filter by status"
         >
           <option value="active">Active only</option>
@@ -239,7 +239,7 @@ export function ContactsPage() {
         <select
           value={orgFilter}
           onChange={(e) => setOrgFilter(e.target.value)}
-          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm max-w-[220px]"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm max-w-[220px]"
           title="Filter by employer organization"
         >
           <option value="">All organizations</option>
@@ -250,18 +250,18 @@ export function ContactsPage() {
         {hasFilters && (
           <button
             onClick={() => { setSearch(''); setStatusFilter('active'); setOrgFilter(''); }}
-            className="rounded-md border border-slate-200 bg-white px-2.5 py-2 text-[12px] font-semibold text-slate-700 hover:border-slate-400"
+            className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-2 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
           >
             Clear filters
           </button>
         )}
-        <span className="ml-auto text-[12px] text-slate-500">
+        <span className="ml-auto text-[12px] text-slate-500 dark:text-slate-400">
           {visibleContacts.length} of {externalContacts.length} contacts
         </span>
       </div>
 
       {/* View toggle */}
-      <div className="border-b border-slate-200">
+      <div className="border-b border-slate-200 dark:border-slate-700">
         <div className="flex gap-1.5 flex-nowrap overflow-x-auto">
           {VIEW_TABS.map((t) => {
             const Icon = t.icon;
@@ -273,13 +273,13 @@ export function ContactsPage() {
                 className={cn(
                   '-mb-px rounded-t-lg border border-b-2 px-4 py-2.5 text-sm font-bold transition-colors shrink-0 whitespace-nowrap inline-flex items-center gap-2',
                   active
-                    ? 'border-slate-200 border-b-blue-600 bg-blue-50 text-blue-700'
-                    : 'border-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-800',
+                    ? 'border-slate-200 dark:border-slate-700 border-b-blue-600 bg-blue-50 text-blue-700'
+                    : 'border-transparent text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-100',
                 )}
               >
                 <Icon className="h-4 w-4" />
                 {t.label}
-                <span className={cn('ml-1 text-[11px] font-medium', active ? 'text-blue-500' : 'text-slate-400')}>
+                <span className={cn('ml-1 text-[11px] font-medium', active ? 'text-blue-500' : 'text-slate-400 dark:text-slate-500')}>
                   {t.sub}
                 </span>
               </button>
@@ -290,9 +290,9 @@ export function ContactsPage() {
 
       {/* View body */}
       {contactsLoading ? (
-        <div className="rounded-[14px] border border-slate-200 bg-white py-12 text-center text-sm text-slate-400">Loading contacts…</div>
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading contacts…</div>
       ) : visibleContacts.length === 0 ? (
-        <div className="rounded-[14px] border border-slate-200 bg-white py-12 text-center text-sm text-slate-400 italic">
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center text-sm text-slate-400 dark:text-slate-500 italic">
           {externalContacts.length === 0
             ? 'No external contacts yet. Add one from Partners → Add Contact, or click "New Contact" above.'
             : 'No contacts match the current filters.'}
@@ -300,10 +300,10 @@ export function ContactsPage() {
       ) : view === 'list' ? (
         <ContactsListView contacts={visibleContacts} orgNameById={orgNameById} onSelect={setSelectedId} />
       ) : view === 'by-project' ? (
-        <div className="rounded-[14px] border border-slate-200 bg-white py-16 text-center text-sm text-slate-500">
-          <FolderOpen className="mx-auto h-10 w-10 text-slate-300 mb-3" />
-          <p className="font-semibold text-slate-700">By Project view — coming next</p>
-          <p className="mt-1 text-[12px] text-slate-400">Project cards with stacked contact avatars; click a stack to expand.</p>
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-16 text-center text-sm text-slate-500 dark:text-slate-400">
+          <FolderOpen className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600 mb-3" />
+          <p className="font-semibold text-slate-700 dark:text-slate-200">By Project view — coming next</p>
+          <p className="mt-1 text-[12px] text-slate-400 dark:text-slate-500">Project cards with stacked contact avatars; click a stack to expand.</p>
         </div>
       ) : (
         <ByCustomerView
@@ -337,7 +337,7 @@ function ContactsListView({
   // (clickable), employer chip, project chips (top N + "+N more"), project
   // count badge, status, quick actions (edit, mail, call, linkedin).
   return (
-    <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden divide-y divide-slate-100">
+    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
       {contacts.map((c) => {
         const workerOf = (c.outgoingRelationships ?? []).find(
           (r) => r.relationshipType?.code === 'worker_of' && r.targetType === 'organization',
@@ -360,10 +360,10 @@ function ContactsListView({
                 avatarUrl={null} size="md"
               />
               <div className="min-w-0 flex-1">
-                <p className="font-semibold text-[14px] text-slate-800 truncate">{c.displayName}</p>
-                <p className="text-[12px] text-slate-500 truncate">
-                  {c.mainRoleType?.name ?? <span className="italic text-slate-400">no role</span>}
-                  {employerName ? <> · <span className="text-slate-600">{employerName}</span></> : null}
+                <p className="font-semibold text-[14px] text-slate-800 dark:text-slate-100 truncate">{c.displayName}</p>
+                <p className="text-[12px] text-slate-500 dark:text-slate-400 truncate">
+                  {c.mainRoleType?.name ?? <span className="italic text-slate-400 dark:text-slate-500">no role</span>}
+                  {employerName ? <> · <span className="text-slate-600 dark:text-slate-300">{employerName}</span></> : null}
                 </p>
               </div>
             </div>
@@ -374,36 +374,36 @@ function ContactsListView({
                 <a
                   href={`mailto:${c.email}`}
                   onClick={(e) => e.stopPropagation()}
-                  className="inline-flex items-center gap-1.5 text-slate-700 hover:text-blue-700 truncate"
+                  className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-200 hover:text-blue-700 truncate"
                   title={c.email}
                 >
-                  <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                  <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
                   <span className="truncate">{c.email}</span>
                 </a>
-              ) : <span className="inline-flex items-center gap-1.5 text-slate-300"><Mail className="h-3.5 w-3.5" /> —</span>}
+              ) : <span className="inline-flex items-center gap-1.5 text-slate-300 dark:text-slate-600"><Mail className="h-3.5 w-3.5" /> —</span>}
               {phone ? (
                 <a
                   href={`tel:${phone}`}
                   onClick={(e) => e.stopPropagation()}
-                  className="inline-flex items-center gap-1.5 text-slate-700 hover:text-blue-700"
+                  className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-200 hover:text-blue-700"
                 >
-                  <Phone className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                  <Phone className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
                   <span className="tabular-nums">{phone}</span>
                 </a>
-              ) : <span className="inline-flex items-center gap-1.5 text-slate-300"><Phone className="h-3.5 w-3.5" /> —</span>}
+              ) : <span className="inline-flex items-center gap-1.5 text-slate-300 dark:text-slate-600"><Phone className="h-3.5 w-3.5" /> —</span>}
             </div>
 
             {/* Employer chip + address */}
             <div className="hidden xl:flex flex-col gap-0.5 text-[12px] min-w-0 w-[200px] shrink-0">
               {employerName && (
-                <span className="inline-flex items-center gap-1.5 text-slate-600 truncate">
-                  <Building2 className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                <span className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300 truncate">
+                  <Building2 className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
                   <span className="truncate" title={employerName}>{employerName}</span>
                 </span>
               )}
               {c.address && (
-                <span className="inline-flex items-center gap-1.5 text-slate-500 truncate" title={c.address}>
-                  <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                <span className="inline-flex items-center gap-1.5 text-slate-500 dark:text-slate-400 truncate" title={c.address}>
+                  <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
                   <span className="truncate">{c.address}</span>
                 </span>
               )}
@@ -426,7 +426,7 @@ function ContactsListView({
                 {c.projectCount.active} active
               </span>
               {c.projectCount.archived > 0 && (
-                <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 border border-slate-200 px-1.5 py-0.5 text-slate-500 font-medium tabular-nums" title="Archived / inactive projects">
+                <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 text-slate-500 dark:text-slate-400 font-medium tabular-nums" title="Archived / inactive projects">
                   {c.projectCount.archived} archived
                 </span>
               )}
@@ -441,24 +441,24 @@ function ContactsListView({
             <div className="shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               {c.email && (
                 <a href={`mailto:${c.email}`} onClick={(e) => e.stopPropagation()}
-                   className="rounded-md p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50" title={`Email ${c.displayName}`}>
+                   className="rounded-md p-1.5 text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50" title={`Email ${c.displayName}`}>
                   <Mail className="h-3.5 w-3.5" />
                 </a>
               )}
               {phone && (
                 <a href={`tel:${phone}`} onClick={(e) => e.stopPropagation()}
-                   className="rounded-md p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50" title={`Call ${c.displayName}`}>
+                   className="rounded-md p-1.5 text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50" title={`Call ${c.displayName}`}>
                   <Phone className="h-3.5 w-3.5" />
                 </a>
               )}
               {c.linkedinUrl && (
                 <a href={c.linkedinUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
-                   className="rounded-md p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Open LinkedIn">
+                   className="rounded-md p-1.5 text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50" title="Open LinkedIn">
                   <ExternalLink className="h-3.5 w-3.5" />
                 </a>
               )}
               <button onClick={(e) => { e.stopPropagation(); onSelect(c.id); }}
-                      className="rounded-md p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50" title="Edit contact">
+                      className="rounded-md p-1.5 text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50" title="Edit contact">
                 <Pencil className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -474,9 +474,9 @@ function ContactStatusBadge({ status }: { status: string }) {
   return (
     <span className={cn(
       'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize',
-      isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500',
+      isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400',
     )}>
-      <span className={cn('h-1.5 w-1.5 rounded-full', isActive ? 'bg-emerald-500' : 'bg-slate-400')} />
+      <span className={cn('h-1.5 w-1.5 rounded-full', isActive ? 'bg-emerald-500' : 'bg-slate-400 dark:bg-slate-500')} />
       {status}
     </span>
   );
@@ -534,12 +534,12 @@ function ByCustomerView({
 
   if (customers.length === 0) {
     return (
-      <div className="rounded-[14px] border border-slate-200 bg-white py-12 text-center text-sm text-slate-400">
-        <Building className="mx-auto h-10 w-10 text-slate-300 mb-3" />
-        <p className="font-semibold text-slate-700">No customer organizations yet</p>
-        <p className="mt-1 text-[12px] text-slate-400">
-          Add an organization from <span className="font-mono text-slate-500">Partners → Organizations</span> and tag it
-          with the <span className="font-mono text-slate-500">customer</span> role to see it here.
+      <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center text-sm text-slate-400 dark:text-slate-500">
+        <Building className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600 mb-3" />
+        <p className="font-semibold text-slate-700 dark:text-slate-200">No customer organizations yet</p>
+        <p className="mt-1 text-[12px] text-slate-400 dark:text-slate-500">
+          Add an organization from <span className="font-mono text-slate-500 dark:text-slate-400">Partners → Organizations</span> and tag it
+          with the <span className="font-mono text-slate-500 dark:text-slate-400">customer</span> role to see it here.
         </p>
       </div>
     );
@@ -559,15 +559,15 @@ function ByCustomerView({
       </div>
 
       {orphanContacts.length > 0 && (
-        <div className="rounded-[14px] border border-slate-200 bg-slate-50/50 p-4">
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 p-4">
           <div className="flex items-center gap-2 mb-3">
-            <UserCircle2 className="h-4 w-4 text-slate-500" />
-            <h3 className="text-sm font-bold text-slate-700">Other contacts</h3>
-            <span className="text-[11px] text-slate-500">
+            <UserCircle2 className="h-4 w-4 text-slate-500 dark:text-slate-400" />
+            <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200">Other contacts</h3>
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
               ({orphanContacts.length} not linked to a customer)
             </span>
           </div>
-          <div className="divide-y divide-slate-100 bg-white rounded-md border border-slate-200">
+          <div className="divide-y divide-slate-100 dark:divide-slate-800 bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-700">
             {orphanContacts.map((c) => (
               <CompactContactRow key={c.id} contact={c} onSelect={onSelect} />
             ))}
@@ -586,18 +586,18 @@ function CustomerCard({
   onSelect: (id: number) => void;
 }) {
   return (
-    <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden hover:shadow-md transition-shadow">
+    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden hover:shadow-md transition-shadow">
       {/* Header */}
-      <div className="border-b border-slate-100 px-4 py-3 bg-gradient-to-br from-purple-50 to-white">
+      <div className="border-b border-slate-100 dark:border-slate-800 px-4 py-3 bg-gradient-to-br from-purple-50 to-white">
         <div className="flex items-center gap-3">
           <div className="rounded-lg bg-purple-100 p-2 shrink-0">
             <Building2 className="h-5 w-5 text-purple-700" />
           </div>
           <div className="min-w-0 flex-1">
-            <h3 className="font-bold text-[14px] text-slate-800 truncate" title={customer.displayName}>
+            <h3 className="font-bold text-[14px] text-slate-800 dark:text-slate-100 truncate" title={customer.displayName}>
               {customer.displayName}
             </h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
               <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-1.5 py-0.5 font-semibold text-purple-700">
                 Customer
               </span>
@@ -611,11 +611,11 @@ function CustomerCard({
 
       {/* Contact list */}
       {contacts.length === 0 ? (
-        <div className="px-4 py-6 text-center text-[12px] text-slate-400 italic">
+        <div className="px-4 py-6 text-center text-[12px] text-slate-400 dark:text-slate-500 italic">
           No contacts at this customer yet.
         </div>
       ) : (
-        <div className="divide-y divide-slate-50 max-h-[320px] overflow-y-auto">
+        <div className="divide-y divide-slate-50 dark:divide-slate-800 max-h-[320px] overflow-y-auto">
           {contacts.map((c) => (
             <CompactContactRow key={c.id} contact={c} onSelect={onSelect} />
           ))}
@@ -635,9 +635,9 @@ function CompactContactRow({ contact: c, onSelect }: { contact: Contact; onSelec
     >
       <UserAvatar firstName={c.firstName ?? ''} lastName={c.lastName ?? ''} avatarUrl={null} size="sm" />
       <div className="flex-1 min-w-0">
-        <p className="text-[13px] font-semibold text-slate-800 truncate">{c.displayName}</p>
-        <p className="text-[11px] text-slate-500 truncate">
-          {c.mainRoleType?.name ?? <span className="italic text-slate-400">no role</span>}
+        <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">{c.displayName}</p>
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+          {c.mainRoleType?.name ?? <span className="italic text-slate-400 dark:text-slate-500">no role</span>}
           {c.projectCount.active > 0 && (
             <> · <span className="font-semibold text-emerald-700">{c.projectCount.active}</span> active proj.</>
           )}
@@ -646,13 +646,13 @@ function CompactContactRow({ contact: c, onSelect }: { contact: Contact; onSelec
       <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
         {c.email && (
           <a href={`mailto:${c.email}`} onClick={(e) => e.stopPropagation()}
-             className="rounded-md p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50" title={c.email}>
+             className="rounded-md p-1.5 text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50" title={c.email}>
             <Mail className="h-3.5 w-3.5" />
           </a>
         )}
         {phone && (
           <a href={`tel:${phone}`} onClick={(e) => e.stopPropagation()}
-             className="rounded-md p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50" title={phone}>
+             className="rounded-md p-1.5 text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50" title={phone}>
             <Phone className="h-3.5 w-3.5" />
           </a>
         )}
