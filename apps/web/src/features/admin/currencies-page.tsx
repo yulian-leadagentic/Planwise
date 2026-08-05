@@ -196,7 +196,7 @@ export function CurrenciesPage() {
                       {row.isActive ? (
                         <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">Active</span>
                       ) : (
-                        <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">Inactive</span>
+                        <span className="inline-flex rounded-full bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs text-gray-600 dark:text-slate-300">Inactive</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">

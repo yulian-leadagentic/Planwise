@@ -131,7 +131,7 @@ export function WorkSchedulesPage() {
                   <td className="px-4 py-3">{s.shiftEnd}</td>
                   <td className="px-4 py-3">{s.breakMinutes}min</td>
                   <td className="px-4 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${s.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${s.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400'}`}>
                       {s.isActive ? 'Active' : 'Inactive'}
                     </span>
                   </td>

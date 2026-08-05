@@ -9,7 +9,7 @@ import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
 import client from '@/api/client';
 
-const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
+const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
 interface PartnerRoleCategory {
   id: number;
@@ -164,7 +164,7 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-[12px] text-slate-500">Roles a partner can hold (employee, customer, etc.). Used in the partner profile and as filters.</p>
+        <p className="text-[12px] text-slate-500 dark:text-slate-400">Roles a partner can hold (employee, customer, etc.). Used in the partner profile and as filters.</p>
         {canWrite && editingId === null && (
           <button
             onClick={() => setEditingId('new')}
@@ -179,10 +179,10 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
       {isLoading ? (
         <TableSkeleton rows={4} cols={3} />
       ) : (
-        <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
+        <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
+              <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 <th className="px-4 py-2 text-left font-semibold w-32">Code</th>
                 <th className="px-4 py-2 text-left font-semibold w-48">Name</th>
                 <th className="px-4 py-2 text-left font-semibold w-24">Category</th>
@@ -200,9 +200,9 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
                 editingId === t.id
                   ? <RoleTypeEditRow key={t.id} type={t} onClose={() => setEditingId(null)} />
                   : (
-                    <tr key={t.id} className="border-t border-slate-100">
-                      <td className="px-4 py-2.5 font-mono text-[12px] text-slate-600">{t.code}</td>
-                      <td className="px-4 py-2.5 font-medium text-slate-800">{t.name}</td>
+                    <tr key={t.id} className="border-t border-slate-100 dark:border-slate-800">
+                      <td className="px-4 py-2.5 font-mono text-[12px] text-slate-600 dark:text-slate-300">{t.code}</td>
+                      <td className="px-4 py-2.5 font-medium text-slate-800 dark:text-slate-100">{t.name}</td>
                       <td className="px-4 py-2.5">
                         {t.category ? (() => {
                           const cat = categoryByCode.get(t.category);
@@ -217,38 +217,38 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
                               {cat?.name || t.category}
                             </span>
                           );
-                        })() : <span className="italic text-slate-400 text-[11px]">—</span>}
+                        })() : <span className="italic text-slate-400 dark:text-slate-500 text-[11px]">—</span>}
                       </td>
                       <td className="px-4 py-2.5">
                         <span className={cn(
                           'inline-flex rounded-md px-1.5 py-0.5 font-mono text-[11px] font-semibold',
                           t.appliesToKind === 'person' && 'bg-blue-50 text-blue-700',
                           t.appliesToKind === 'organization' && 'bg-emerald-50 text-emerald-700',
-                          t.appliesToKind === 'any' && 'bg-slate-100 text-slate-600',
+                          t.appliesToKind === 'any' && 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300',
                         )}>
                           {t.appliesToKind}
                         </span>
                       </td>
-                      <td className="px-4 py-2.5 text-slate-600 text-[12px]">{t.description || <span className="italic text-slate-400">—</span>}</td>
+                      <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300 text-[12px]">{t.description || <span className="italic text-slate-400 dark:text-slate-500">—</span>}</td>
                       <td className="px-4 py-2.5 text-center">
                         {t.isSystem ? (
                           <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
                             <Lock className="h-2.5 w-2.5" /> System
                           </span>
                         ) : (
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">Custom</span>
+                          <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:text-slate-300">Custom</span>
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-right">
                         {canWrite && (
-                          <button onClick={() => setEditingId(t.id)} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700" title="Edit">
+                          <button onClick={() => setEditingId(t.id)} className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100" title="Edit">
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
                         )}
                         {canDelete && !t.isSystem && (
                           <button
                             onClick={() => { if (confirm(`Delete role type "${t.name}"?`)) remove.mutate(t.id); }}
-                            className="p-1.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-600"
+                            className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
                             title="Delete"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -323,7 +323,7 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
   });
 
   return (
-    <tr className="border-t border-slate-100 bg-blue-50/30">
+    <tr className="border-t border-slate-100 dark:border-slate-800 bg-blue-50/30">
       <td className="px-4 py-2">
         <input
           value={form.code}
@@ -386,7 +386,7 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
         <input value={form.description} onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))} className={inputClass} />
       </td>
       <td className="px-4 py-2 text-right whitespace-nowrap">
-        <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700" title="Cancel">
+        <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100" title="Cancel">
           <X className="h-3.5 w-3.5" />
         </button>
         <button
@@ -426,7 +426,7 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex-1 max-w-3xl">
-          <p className="text-[12px] text-slate-500 mb-1">
+          <p className="text-[12px] text-slate-500 dark:text-slate-400 mb-1">
             Defines how two business partners can be connected (person↔organization, organization↔organization, etc.). For a party's role on a specific project, use <a href="/admin/project-role-types" className="text-blue-600 hover:underline">Project Role Types</a> instead.
           </p>
         </div>
@@ -443,8 +443,8 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
 
       {/* Explainer — each row names the two sides of a relationship so
           forms and lists read as sentences instead of generic "source/target". */}
-      <div className="rounded-lg border border-slate-200 bg-blue-50/40 p-3 text-[12px] text-slate-700 space-y-2">
-        <p className="font-semibold text-slate-800">What does each row do?</p>
+      <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-blue-50/40 p-3 text-[12px] text-slate-700 dark:text-slate-200 space-y-2">
+        <p className="font-semibold text-slate-800 dark:text-slate-100">What does each row do?</p>
         <p>
           A relationship type defines <strong>how two parties connect</strong> by naming each side.
           The names appear as labels on the create form, and as a readable sentence in every list.
@@ -455,7 +455,7 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
           <li><strong>Inverse label</strong> — how the rel reads when viewed from side B (e.g. <em>Employs</em>).</li>
           <li><strong>Allows multiple</strong> — uncheck for "one at a time" types like primary employer.</li>
         </ul>
-        <p className="text-slate-600">
+        <p className="text-slate-600 dark:text-slate-300">
           <strong>Example</strong> — to express <em>"an external_contact is a contact-of a customer org"</em>:
           side A <code>Contact / person</code>, side B <code>Customer Org / organization</code>, inverse <code>Has contact</code>.
           (Plus the legacy required-role constraints below for validation.)
@@ -465,10 +465,10 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
       {isLoading ? (
         <TableSkeleton rows={4} cols={4} />
       ) : (
-        <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
+              <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 <th className="px-4 py-2 text-left font-semibold w-36">Code</th>
                 <th className="px-4 py-2 text-left font-semibold w-48">Name</th>
                 <th className="px-4 py-2 text-left font-semibold">Reads as</th>
@@ -484,9 +484,9 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
                 editingId === t.id
                   ? <RelationshipTypeEditRow key={t.id} type={t} onClose={() => setEditingId(null)} />
                   : (
-                    <tr key={t.id} className="border-t border-slate-100">
-                      <td className="px-4 py-2.5 font-mono text-[12px] text-slate-600">{t.code}</td>
-                      <td className="px-4 py-2.5 font-medium text-slate-800">{t.name}</td>
+                    <tr key={t.id} className="border-t border-slate-100 dark:border-slate-800">
+                      <td className="px-4 py-2.5 font-mono text-[12px] text-slate-600 dark:text-slate-300">{t.code}</td>
+                      <td className="px-4 py-2.5 font-medium text-slate-800 dark:text-slate-100">{t.name}</td>
                       <td className="px-4 py-2.5">
                         {/* Reads as: "Side A summary  →  Side B summary".
                             Side summary built from the structured target list. */}
@@ -495,14 +495,14 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
                             <span className="rounded-md bg-blue-50 px-2 py-0.5 font-medium text-blue-700">
                               {summarizeSide(t.sideATargets, t.sideALabel)}
                             </span>
-                            <span className="text-slate-400 mx-0.5">{t.isSymmetric ? '⇄' : '→'}</span>
+                            <span className="text-slate-400 dark:text-slate-500 mx-0.5">{t.isSymmetric ? '⇄' : '→'}</span>
                             <span className="rounded-md bg-violet-50 px-2 py-0.5 font-medium text-violet-700">
                               {summarizeSide(t.sideBTargets, t.sideBLabel)}
                             </span>
                           </div>
                           {(t.inverseLabel || !t.allowsMultiple) && (
-                            <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
-                              {t.inverseLabel && <span>inverse: <span className="font-medium text-slate-600">{t.inverseLabel}</span></span>}
+                            <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400 dark:text-slate-500">
+                              {t.inverseLabel && <span>inverse: <span className="font-medium text-slate-600 dark:text-slate-300">{t.inverseLabel}</span></span>}
                               {!t.allowsMultiple && <span className="rounded-full bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-700">one at a time</span>}
                             </div>
                           )}
@@ -514,19 +514,19 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
                             <Lock className="h-2.5 w-2.5" /> System
                           </span>
                         ) : (
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">Custom</span>
+                          <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:text-slate-300">Custom</span>
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-right">
                         {canWrite && (
-                          <button onClick={() => setEditingId(t.id)} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700" title="Edit">
+                          <button onClick={() => setEditingId(t.id)} className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100" title="Edit">
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
                         )}
                         {canDelete && !t.isSystem && (
                           <button
                             onClick={() => { if (confirm(`Delete relationship type "${t.name}"?`)) remove.mutate(t.id); }}
-                            className="p-1.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-600"
+                            className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
                             title="Delete"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -608,7 +608,7 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
   });
 
   return (
-    <tr className="border-t border-slate-100 bg-blue-50/30">
+    <tr className="border-t border-slate-100 dark:border-slate-800 bg-blue-50/30">
       <td className="px-4 py-2">
         <input
           value={form.code}
@@ -661,7 +661,7 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
             className="flex-1 min-w-[180px]"
             title="How the relationship reads when viewed from Side B's drawer. Example: type 'worker_of' shows on the person's drawer as 'Employer ← Acme'; on Acme's drawer it should show as 'Employs ← John' — set the inverse label to 'Employs'. Leave empty if symmetric or if the type name reads the same both ways."
           >
-            <span className="text-[10px] font-semibold text-slate-400 uppercase block mb-0.5">Inverse label (reads back from side B)</span>
+            <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase block mb-0.5">Inverse label (reads back from side B)</span>
             <input
               value={form.inverseLabel}
               onChange={(e) => setForm((f) => ({ ...f, inverseLabel: e.target.value }))}
@@ -678,7 +678,7 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
               checked={form.isSymmetric}
               onChange={(e) => setForm((f) => ({ ...f, isSymmetric: e.target.checked }))}
             />
-            <span className="text-slate-600">Symmetric</span>
+            <span className="text-slate-600 dark:text-slate-300">Symmetric</span>
           </label>
           <label
             className="flex items-center gap-1.5 cursor-pointer"
@@ -689,17 +689,17 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
               checked={form.allowsMultiple}
               onChange={(e) => setForm((f) => ({ ...f, allowsMultiple: e.target.checked }))}
             />
-            <span className="text-slate-600">Allow multiple active instances</span>
+            <span className="text-slate-600 dark:text-slate-300">Allow multiple active instances</span>
           </label>
         </div>
 
         {/* Live preview — the same sentence the rest of the UI will render. */}
-        <div className="rounded-lg bg-slate-50 px-3 py-2 text-[12px] text-slate-700">
-          <span className="text-[10px] font-semibold text-slate-400 uppercase mr-2">Reads as</span>
+        <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-[12px] text-slate-700 dark:text-slate-200">
+          <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase mr-2">Reads as</span>
           <span className="rounded-md bg-blue-50 px-2 py-0.5 font-medium text-blue-700">
             {summarizeSide(form.sideATargets, form.sideALabel || null)}
           </span>
-          <span className="text-slate-400 mx-1.5">{form.isSymmetric ? '⇄' : '→'}</span>
+          <span className="text-slate-400 dark:text-slate-500 mx-1.5">{form.isSymmetric ? '⇄' : '→'}</span>
           <span className="rounded-md bg-violet-50 px-2 py-0.5 font-medium text-violet-700">
             {summarizeSide(form.sideBTargets, form.sideBLabel || null)}
           </span>
@@ -707,7 +707,7 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
       </td>
       <td />
       <td className="px-4 py-2 text-right whitespace-nowrap">
-        <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700" title="Cancel">
+        <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100" title="Cancel">
           <X className="h-3.5 w-3.5" />
         </button>
         <button
@@ -756,7 +756,7 @@ function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-[12px] text-slate-500 max-w-3xl">
+        <p className="text-[12px] text-slate-500 dark:text-slate-400 max-w-3xl">
           Coarse grouping for role types (Customer-side, Supplier-side, Internal, External, …). Each role type
           references one category. Used to colour chips and as a constraint option on relationship-type side pickers.
         </p>
@@ -774,10 +774,10 @@ function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: 
       {isLoading ? (
         <TableSkeleton rows={3} cols={4} />
       ) : (
-        <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
+              <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 <th className="px-4 py-2 text-left font-semibold w-28">Code</th>
                 <th className="px-4 py-2 text-left font-semibold w-48">Name</th>
                 <th className="px-4 py-2 text-left font-semibold w-24">Color</th>
@@ -792,20 +792,20 @@ function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: 
                 editingId === c.id ? (
                   <CategoryEditRow key={c.id} category={c} onClose={() => setEditingId(null)} />
                 ) : (
-                  <tr key={c.id} className="border-t border-slate-100">
-                    <td className="px-4 py-2.5 font-mono text-[12px] text-slate-600">{c.code}</td>
-                    <td className="px-4 py-2.5 font-medium text-slate-800">{c.name}</td>
+                  <tr key={c.id} className="border-t border-slate-100 dark:border-slate-800">
+                    <td className="px-4 py-2.5 font-mono text-[12px] text-slate-600 dark:text-slate-300">{c.code}</td>
+                    <td className="px-4 py-2.5 font-medium text-slate-800 dark:text-slate-100">{c.name}</td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2">
                         <span
-                          className="inline-block h-4 w-4 rounded-full border border-slate-200"
+                          className="inline-block h-4 w-4 rounded-full border border-slate-200 dark:border-slate-700"
                           style={{ backgroundColor: c.color || '#A78BFA' }}
                         />
-                        <span className="font-mono text-[10px] text-slate-400">{c.color ?? 'auto'}</span>
+                        <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500">{c.color ?? 'auto'}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-2.5 text-slate-600 text-[12px]">
-                      {c.description || <span className="italic text-slate-400">—</span>}
+                    <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300 text-[12px]">
+                      {c.description || <span className="italic text-slate-400 dark:text-slate-500">—</span>}
                     </td>
                     <td className="px-4 py-2.5 text-center">
                       {c.isSystem ? (
@@ -813,7 +813,7 @@ function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: 
                           <Lock className="h-2.5 w-2.5" /> System
                         </span>
                       ) : (
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                        <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:text-slate-300">
                           Custom
                         </span>
                       )}
@@ -822,7 +822,7 @@ function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: 
                       {canWrite && (
                         <button
                           onClick={() => setEditingId(c.id)}
-                          className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
+                          className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
                           title="Edit"
                         >
                           <Pencil className="h-3.5 w-3.5" />
@@ -833,7 +833,7 @@ function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: 
                           onClick={() => {
                             if (confirm(`Delete category "${c.name}"?`)) remove.mutate(c.id);
                           }}
-                          className="p-1.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-600"
+                          className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
                           title="Delete"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -845,7 +845,7 @@ function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: 
               )}
               {!isLoading && categories.length === 0 && editingId !== 'new' && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400 text-sm">
+                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400 dark:text-slate-500 text-sm">
                     No categories yet. Add one to start grouping role types.
                   </td>
                 </tr>
@@ -896,7 +896,7 @@ function CategoryEditRow({ category, onClose }: { category?: PartnerRoleCategory
   });
 
   return (
-    <tr className="border-t border-slate-100 bg-blue-50/30">
+    <tr className="border-t border-slate-100 dark:border-slate-800 bg-blue-50/30">
       <td className="px-4 py-2">
         <input
           value={form.code}
@@ -923,7 +923,7 @@ function CategoryEditRow({ category, onClose }: { category?: PartnerRoleCategory
             type="color"
             value={form.color}
             onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
-            className="h-7 w-10 cursor-pointer rounded border border-slate-200"
+            className="h-7 w-10 cursor-pointer rounded border border-slate-200 dark:border-slate-700"
           />
           <input
             value={form.color}
@@ -943,7 +943,7 @@ function CategoryEditRow({ category, onClose }: { category?: PartnerRoleCategory
       </td>
       <td />
       <td className="px-4 py-2 text-right whitespace-nowrap">
-        <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700" title="Cancel">
+        <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100" title="Cancel">
           <X className="h-3.5 w-3.5" />
         </button>
         <button
@@ -1002,7 +1002,7 @@ function SidePickerCard({
     <div className={cn('rounded-lg border p-2.5 space-y-2', cardBgCls)}>
       <div className="flex items-center justify-between">
         <span className={cn('text-[10px] font-semibold uppercase', headerCls)}>{label}</span>
-        <span className="text-[10px] text-slate-400">{value.length === 0 ? 'No targets — accepts any party' : `${value.length} target${value.length > 1 ? 's' : ''}`}</span>
+        <span className="text-[10px] text-slate-400 dark:text-slate-500">{value.length === 0 ? 'No targets — accepts any party' : `${value.length} target${value.length > 1 ? 's' : ''}`}</span>
       </div>
 
       <div className="space-y-1.5">
@@ -1022,13 +1022,13 @@ function SidePickerCard({
         type="button"
         onClick={add}
         title="Add another allowed target kind to this side. Multiple targets read as OR — e.g. a Subcontractor's side B can accept a Project OR an Organization with role customer OR supplier."
-        className="w-full rounded border border-dashed border-slate-300 text-[11px] text-slate-500 py-1 hover:bg-white hover:text-slate-700"
+        className="w-full rounded border border-dashed border-slate-300 dark:border-slate-600 text-[11px] text-slate-500 dark:text-slate-400 py-1 hover:bg-white dark:hover:bg-slate-900 hover:text-slate-700 dark:hover:text-slate-100"
       >
         + Add target
       </button>
 
       <div>
-        <label className="text-[9px] font-semibold text-slate-400 uppercase block">
+        <label className="text-[9px] font-semibold text-slate-400 dark:text-slate-500 uppercase block">
           Display label (optional — defaults to summary above)
         </label>
         <input
@@ -1101,7 +1101,7 @@ function TargetRow({
   const showLegacyProject = target.kind === 'project';
 
   return (
-    <div className="rounded border border-slate-200 bg-white p-2 space-y-1.5">
+    <div className="rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2 space-y-1.5">
       <div className="flex items-center gap-2">
         <select
           value={target.kind}
@@ -1116,7 +1116,7 @@ function TargetRow({
         <button
           type="button"
           onClick={onRemove}
-          className="ml-auto p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-600"
+          className="ml-auto p-1 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
           title="Remove this target from this side"
         >
           <X className="h-3 w-3" />
@@ -1134,7 +1134,7 @@ function TargetRow({
         <>
           <div className="space-y-1">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-semibold text-slate-400 uppercase">Restrict to roles (optional)</span>
+              <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase">Restrict to roles (optional)</span>
               {hiddenCount > 0 && (
                 <button
                   type="button"
@@ -1150,7 +1150,7 @@ function TargetRow({
             <div className="space-y-1">
               {sortedCategoryKeys.map((cat) => (
                 <div key={cat} className="flex flex-wrap items-center gap-1">
-                  <span className="text-[9px] text-slate-400 font-mono uppercase mr-1">
+                  <span className="text-[9px] text-slate-400 dark:text-slate-500 font-mono uppercase mr-1">
                     {cat === '_uncategorized' ? '(no category)' : cat}
                   </span>
                   {rolesByCategory[cat].map((r) => {
@@ -1173,7 +1173,7 @@ function TargetRow({
                               : 'border-amber-400 bg-amber-50 text-amber-800'
                             : mismatched
                               ? 'border-red-200 text-red-400 hover:border-red-300'
-                              : 'border-slate-200 text-slate-500 hover:border-slate-300',
+                              : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600',
                         )}
                       >
                         {r.code}
@@ -1183,14 +1183,14 @@ function TargetRow({
                 </div>
               ))}
               {roleTypes.length === 0 && (
-                <span className="text-[10px] italic text-slate-400">No role types defined yet.</span>
+                <span className="text-[10px] italic text-slate-400 dark:text-slate-500">No role types defined yet.</span>
               )}
             </div>
           </div>
 
           {categorySuggestions.length > 0 && (
             <div className="space-y-1">
-              <span className="text-[10px] font-semibold text-slate-400 uppercase block">…or by category (matches any role in the group)</span>
+              <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase block">…or by category (matches any role in the group)</span>
               <div className="flex flex-wrap gap-1">
                 {categorySuggestions.map((c) => {
                   const on = (target.categoryCodes ?? []).includes(c);
@@ -1203,7 +1203,7 @@ function TargetRow({
                         'rounded-full border px-2 py-0.5 text-[10px] font-mono font-medium',
                         on
                           ? 'border-emerald-400 bg-emerald-50 text-emerald-800'
-                          : 'border-slate-200 text-slate-500 hover:border-slate-300',
+                          : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600',
                       )}
                     >
                       {c}
@@ -1217,7 +1217,7 @@ function TargetRow({
       )}
 
       {target.kind === 'project' && (
-        <p className="text-[10px] italic text-slate-400">Projects don't have partner-roles — no further filtering.</p>
+        <p className="text-[10px] italic text-slate-400 dark:text-slate-500">Projects don't have partner-roles — no further filtering.</p>
       )}
     </div>
   );

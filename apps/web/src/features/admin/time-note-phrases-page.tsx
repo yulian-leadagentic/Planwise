@@ -85,7 +85,7 @@ export function TimeNotePhrasesPage() {
             if (e.key === 'Enter' && newText.trim()) create.mutate(newText.trim());
           }}
           placeholder="Add a new phrase (e.g. 'Working on drawings')"
-          className="flex-1 px-3 py-2 rounded-lg border border-slate-200 text-sm focus:border-blue-500 focus:outline-none"
+          className="flex-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none"
         />
         <button
           type="button"
@@ -97,26 +97,26 @@ export function TimeNotePhrasesPage() {
         </button>
       </div>
 
-      <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
+      <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="bg-[#FAFBFC] border-b border-slate-100">
-            <tr className="text-[11px] uppercase tracking-wider text-slate-400">
+          <thead className="bg-[#FAFBFC] border-b border-slate-100 dark:border-slate-800">
+            <tr className="text-[11px] uppercase tracking-wider text-slate-400 dark:text-slate-500">
               <th className="px-4 py-2 text-left font-semibold">Phrase</th>
               <th className="px-4 py-2 text-right font-semibold w-[100px]">Order</th>
               <th className="px-4 py-2 text-center font-semibold w-[110px]">Status</th>
               <th className="px-4 py-2 text-right font-semibold w-[110px]">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {isLoading && (
-              <tr><td colSpan={4} className="text-center py-10 text-slate-400">Loading…</td></tr>
+              <tr><td colSpan={4} className="text-center py-10 text-slate-400 dark:text-slate-500">Loading…</td></tr>
             )}
             {!isLoading && phrases.length === 0 && (
-              <tr><td colSpan={4} className="text-center py-10 text-slate-400 italic">No phrases yet — add one above.</td></tr>
+              <tr><td colSpan={4} className="text-center py-10 text-slate-400 dark:text-slate-500 italic">No phrases yet — add one above.</td></tr>
             )}
             {phrases.map((p) => (
-              <tr key={p.id} className={cn('group hover:bg-slate-50/50', !p.isActive && 'opacity-60')}>
-                <td className="px-4 py-2 text-slate-700">
+              <tr key={p.id} className={cn('group hover:bg-slate-50/50 dark:hover:bg-slate-800/50', !p.isActive && 'opacity-60')}>
+                <td className="px-4 py-2 text-slate-700 dark:text-slate-200">
                   {editingId === p.id ? (
                     <input
                       autoFocus
@@ -132,14 +132,14 @@ export function TimeNotePhrasesPage() {
                     p.text
                   )}
                 </td>
-                <td className="px-4 py-2 text-right text-slate-500 font-mono tabular-nums">{p.sortOrder}</td>
+                <td className="px-4 py-2 text-right text-slate-500 dark:text-slate-400 font-mono tabular-nums">{p.sortOrder}</td>
                 <td className="px-4 py-2 text-center">
                   <button
                     type="button"
                     onClick={() => update.mutate({ id: p.id, patch: { isActive: !p.isActive } })}
                     className={cn(
                       'rounded-full px-2 py-0.5 text-[11px] font-bold',
-                      p.isActive ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500 border border-slate-200',
+                      p.isActive ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700',
                     )}
                     title={p.isActive ? 'Click to disable' : 'Click to enable'}
                   >
@@ -161,7 +161,7 @@ export function TimeNotePhrasesPage() {
                         <button
                           type="button"
                           onClick={() => setEditingId(null)}
-                          className="p-1.5 rounded text-slate-500 hover:bg-slate-100"
+                          className="p-1.5 rounded text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
                           title="Cancel"
                         >
                           <X className="h-3.5 w-3.5" />
@@ -172,7 +172,7 @@ export function TimeNotePhrasesPage() {
                         <button
                           type="button"
                           onClick={() => { setEditingId(p.id); setEditingText(p.text); }}
-                          className="p-1.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                          className="p-1.5 rounded text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
                           title="Edit"
                         >
                           <Pencil className="h-3.5 w-3.5" />
@@ -180,7 +180,7 @@ export function TimeNotePhrasesPage() {
                         <button
                           type="button"
                           onClick={() => { if (confirm(`Remove "${p.text}"?`)) remove.mutate(p.id); }}
-                          className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50"
+                          className="p-1.5 rounded text-slate-400 dark:text-slate-500 hover:text-red-600 hover:bg-red-50"
                           title="Delete"
                         >
                           <Trash2 className="h-3.5 w-3.5" />

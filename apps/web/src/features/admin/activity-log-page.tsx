@@ -58,7 +58,7 @@ export function ActivityLogPage() {
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">{log.action}</td>
                     <td className="px-4 py-3">
-                      <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', SEVERITY_STYLES[log.severity] ?? 'bg-gray-100 text-gray-700')}>
+                      <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', SEVERITY_STYLES[log.severity] ?? 'bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200')}>
                         {log.severity}
                       </span>
                     </td>

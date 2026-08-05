@@ -73,8 +73,8 @@ export function ObjectNumberingPage() {
         description="Assign which number range each object in the system draws codes from. The same range can serve several objects. Changing an assignment only affects FUTURE creates — historical codes stay as issued."
       />
 
-      <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-3 text-[12px] text-slate-700 space-y-1">
-        <p className="font-semibold text-slate-800">How it works</p>
+      <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-3 text-[12px] text-slate-700 dark:text-slate-200 space-y-1">
+        <p className="font-semibold text-slate-800 dark:text-slate-100">How it works</p>
         <ul className="list-disc pl-5 space-y-0.5">
           <li>Each <strong>object</strong> below is something the system numbers (Persons, Organizations, Employees, Projects, …).</li>
           <li>The <strong>number range</strong> dropdown picks which sequence to draw codes from. Define ranges in <a className="text-blue-600 hover:underline" href="/admin/number-ranges">Number Ranges</a>.</li>
@@ -105,9 +105,9 @@ export function ObjectNumberingPage() {
                 <tr key={k.id} className="border-b border-border last:border-0 hover:bg-muted/30">
                   <td className="px-4 py-3">
                     <div className="font-medium">{k.name}</div>
-                    <div className="font-mono text-[10px] text-slate-400 mt-0.5">{k.code}</div>
+                    <div className="font-mono text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{k.code}</div>
                   </td>
-                  <td className="px-4 py-3 text-[12px] text-slate-500">{k.description ?? '—'}</td>
+                  <td className="px-4 py-3 text-[12px] text-slate-500 dark:text-slate-400">{k.description ?? '—'}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <select
@@ -129,9 +129,9 @@ export function ObjectNumberingPage() {
                   <td className="px-4 py-3">
                     {k.numberRange ? (
                       k.numberRange.mode === 'auto' && k.numberRange.preview ? (
-                        <span className="font-mono text-xs font-semibold text-slate-800">{k.numberRange.preview}</span>
+                        <span className="font-mono text-xs font-semibold text-slate-800 dark:text-slate-100">{k.numberRange.preview}</span>
                       ) : (
-                        <span className="text-[11px] italic text-slate-400">
+                        <span className="text-[11px] italic text-slate-400 dark:text-slate-500">
                           {k.numberRange.mode === 'manual' ? 'User-entered' : 'External system'}
                         </span>
                       )
@@ -145,7 +145,7 @@ export function ObjectNumberingPage() {
               ))}
               {kinds.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-slate-400 text-sm">
+                  <td colSpan={4} className="px-4 py-8 text-center text-slate-400 dark:text-slate-500 text-sm">
                     No entity kinds — schema seed missing.
                   </td>
                 </tr>

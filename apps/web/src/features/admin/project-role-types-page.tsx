@@ -42,7 +42,7 @@ interface Profession {
   sortOrder: number;
 }
 
-const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
+const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 // 'any' removed in M4a.3 — every project role attaches to a single
 // kind (person OR organization).
 const KIND_OPTIONS: Array<'person' | 'organization'> = ['person', 'organization'];
@@ -91,8 +91,8 @@ export function ProjectRoleTypesPage() {
       />
 
       {/* Explainer */}
-      <div className="rounded-lg border border-slate-200 bg-blue-50/40 p-3 text-[12px] text-slate-700 space-y-2">
-        <p className="font-semibold text-slate-800">What does each row do?</p>
+      <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-blue-50/40 p-3 text-[12px] text-slate-700 dark:text-slate-200 space-y-2">
+        <p className="font-semibold text-slate-800 dark:text-slate-100">What does each row do?</p>
         <p>
           A project role defines <strong>what a partner does on a project</strong>. The 4 system roles
           (Customer, Supplier, Participant, plus optional ones) cover the common cases; admins
@@ -108,10 +108,10 @@ export function ProjectRoleTypesPage() {
       {isLoading ? (
         <TableSkeleton rows={4} cols={5} />
       ) : (
-        <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
+        <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
+              <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 <th className="px-4 py-2 text-left font-semibold w-32">Code</th>
                 <th className="px-4 py-2 text-left font-semibold w-44">Name</th>
                 <th className="px-4 py-2 text-left font-semibold">Rules</th>
@@ -125,9 +125,9 @@ export function ProjectRoleTypesPage() {
                 editingId === t.id
                   ? <EditRow key={t.id} type={t} onClose={() => setEditingId(null)} />
                   : (
-                    <tr key={t.id} className="border-t border-slate-100">
-                      <td className="px-4 py-2.5 font-mono text-[12px] text-slate-600">{t.code}</td>
-                      <td className="px-4 py-2.5 font-medium text-slate-800">{t.name}</td>
+                    <tr key={t.id} className="border-t border-slate-100 dark:border-slate-800">
+                      <td className="px-4 py-2.5 font-mono text-[12px] text-slate-600 dark:text-slate-300">{t.code}</td>
+                      <td className="px-4 py-2.5 font-medium text-slate-800 dark:text-slate-100">{t.name}</td>
                       <td className="px-4 py-2.5">
                         <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
                           <span className="rounded-full bg-blue-50 px-2 py-0.5 font-semibold text-blue-700">{t.allowedPartnerKind}</span>
@@ -150,7 +150,7 @@ export function ProjectRoleTypesPage() {
                             </span>
                           )}
                         </div>
-                        {t.description && <p className="text-[11px] text-slate-500 mt-0.5">{t.description}</p>}
+                        {t.description && <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">{t.description}</p>}
                       </td>
                       <td className="px-4 py-2.5 text-center">
                         {t.isSystem ? (
@@ -158,14 +158,14 @@ export function ProjectRoleTypesPage() {
                             <Lock className="h-2.5 w-2.5" /> System
                           </span>
                         ) : (
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">Custom</span>
+                          <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:text-slate-300">Custom</span>
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-right">
                         {canWrite && (
                           <button
                             onClick={() => setEditingId(t.id)}
-                            className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
+                            className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
                             title="Edit"
                           >
                             <Pencil className="h-3.5 w-3.5" />
@@ -176,7 +176,7 @@ export function ProjectRoleTypesPage() {
                             onClick={() => {
                               if (confirm(`Delete project role "${t.name}"?`)) remove.mutate(t.id);
                             }}
-                            className="p-1.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-600"
+                            className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
                             title="Delete"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -187,7 +187,7 @@ export function ProjectRoleTypesPage() {
                   ),
               )}
               {!isLoading && types.length === 0 && editingId !== 'new' && (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400 text-sm">
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400 dark:text-slate-500 text-sm">
                   <Briefcase className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   No project role types yet. Add one to get started.
                 </td></tr>
@@ -292,7 +292,7 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
   });
 
   return (
-    <tr className="border-t border-slate-100 bg-blue-50/30">
+    <tr className="border-t border-slate-100 dark:border-slate-800 bg-blue-50/30">
       <td className="px-4 py-2">
         <input
           value={form.code}
@@ -312,7 +312,7 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
       </td>
       <td className="px-4 py-2 space-y-1.5">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[10px] font-semibold text-slate-400 uppercase mr-1">Allowed kind</span>
+          <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase mr-1">Allowed kind</span>
           {KIND_OPTIONS.map((k) => {
             const on = form.allowedPartnerKind === k;
             return (
@@ -322,7 +322,7 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
                 onClick={() => setForm((f) => ({ ...f, allowedPartnerKind: k }))}
                 className={cn(
                   'rounded-full border px-2 py-0.5 text-[11px] font-medium',
-                  on ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-500',
+                  on ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400',
                 )}
               >
                 {k}
@@ -332,7 +332,7 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <span
-            className="text-[10px] font-semibold text-slate-400 uppercase whitespace-nowrap"
+            className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase whitespace-nowrap"
             title="Filter assignable parties to those who hold this partner-role globally (e.g. only employees can be a 'Project Lead'). The list only shows roles compatible with the kind you chose above."
           >
             Required partner-role
@@ -357,7 +357,7 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
         <div className="space-y-1 pt-1">
           <div className="flex items-center justify-between">
             <span
-              className="text-[10px] font-semibold text-slate-400 uppercase"
+              className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase"
               title="Filter assignable parties to those whose Job Title is in this list. Job titles are managed at /templates/types → Job Titles. Combined with Required partner-role above as AND — the party must satisfy both."
             >
               Required job title(s)
@@ -386,7 +386,7 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
                       'rounded-full border px-2 py-0.5 text-[11px] font-medium',
                       on
                         ? 'border-violet-500 bg-violet-50 text-violet-700'
-                        : 'border-slate-200 text-slate-500 hover:border-slate-300',
+                        : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600',
                     )}
                   >
                     {p.name}
@@ -395,11 +395,11 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
               })}
             </div>
           ) : (
-            <p className="text-[10px] italic text-slate-400">No job titles defined yet.</p>
+            <p className="text-[10px] italic text-slate-400 dark:text-slate-500">No job titles defined yet.</p>
           )}
         </div>
         <label
-          className="flex items-center gap-2 text-[11px] text-slate-600 pt-1"
+          className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300 pt-1"
           title="When checked, this role is REQUIRED at project creation — the project create form will render a required picker for it, and the server rejects projects without a primary assignment. Use for roles every project must have (Customer, Project Lead, …). Leave unchecked for optional roles (Architect, Engineer, etc.)."
         >
           <input
@@ -418,7 +418,7 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
       </td>
       <td />
       <td className="px-4 py-2 text-right whitespace-nowrap">
-        <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700" title="Cancel">
+        <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100" title="Cancel">
           <X className="h-3.5 w-3.5" />
         </button>
         <button

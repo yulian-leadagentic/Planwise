@@ -25,7 +25,7 @@ interface Milestone {
   isActive: boolean;
 }
 
-const inputCls = 'w-full px-2 py-1 rounded border border-slate-200 text-sm focus:border-blue-500 focus:outline-none';
+const inputCls = 'w-full px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none';
 
 export function StageMilestonesPage() {
   const queryClient = useQueryClient();
@@ -76,7 +76,7 @@ export function StageMilestonesPage() {
       <div className="flex items-center gap-3">
         <Link
           to="/admin"
-          className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100"
+          className="rounded-md p-1.5 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
           aria-label="Back to Admin"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -89,9 +89,9 @@ export function StageMilestonesPage() {
 
       <NewMilestoneRow onAdd={(data) => create.mutate(data)} submitting={create.isPending} />
 
-      <div ref={scrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
+      <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
         <table className="w-full text-[13px]">
-          <thead className="bg-slate-50 text-[10px] uppercase text-slate-500 tracking-wider">
+          <thead className="bg-slate-50 dark:bg-slate-800/50 text-[10px] uppercase text-slate-500 dark:text-slate-400 tracking-wider">
             <tr>
               <th className="px-3 py-2 text-left w-20">Sort</th>
               <th className="px-3 py-2 text-left w-[160px]">Code</th>
@@ -101,11 +101,11 @@ export function StageMilestonesPage() {
               <th className="px-3 py-2 text-right w-16"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {isLoading ? (
-              <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
+              <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400 dark:text-slate-500">Loading…</td></tr>
             ) : milestones.length === 0 ? (
-              <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400 italic">No milestones yet. Add one above.</td></tr>
+              <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400 dark:text-slate-500 italic">No milestones yet. Add one above.</td></tr>
             ) : (
               milestones.map((m) => (
                 <MilestoneRow
@@ -137,7 +137,7 @@ function NewMilestoneRow({
   const [form, setForm] = useState({ code: '', name: '', description: '', sortOrder: '' });
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50/40 p-3">
+    <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/40 dark:bg-slate-800/40 p-3">
       <div className="grid grid-cols-[80px_160px_1fr_1fr_auto] gap-2 items-center">
         <input
           type="number"
@@ -263,14 +263,14 @@ function MilestoneRow({
             type="checkbox"
             checked={m.isActive}
             onChange={(e) => onPatch({ isActive: e.target.checked })}
-            className="h-4 w-4 rounded border-slate-300"
+            className="h-4 w-4 rounded border-slate-300 dark:border-slate-600"
           />
         </label>
       </td>
       <td className="px-3 py-2 text-right">
         <button
           onClick={onDelete}
-          className="text-slate-400 hover:text-red-600 rounded p-1.5 hover:bg-red-50"
+          className="text-slate-400 dark:text-slate-500 hover:text-red-600 rounded p-1.5 hover:bg-red-50"
           title="Delete milestone"
           aria-label="Delete milestone"
         >

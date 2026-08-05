@@ -240,7 +240,7 @@ export function NumberRangesPage() {
                 return (
                   <tr key={row.id} className="border-b border-border last:border-0 hover:bg-muted/30">
                     <td className="px-4 py-3 font-mono text-xs font-semibold">{row.code}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{row.name || <span className="italic text-slate-400">—</span>}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{row.name || <span className="italic text-slate-400 dark:text-slate-500">—</span>}</td>
                     <td className="px-4 py-3">
                       <ModeBadge mode={row.mode} />
                     </td>
@@ -249,15 +249,15 @@ export function NumberRangesPage() {
                         <div className="flex items-center gap-2 font-mono text-xs">
                           <span className="text-blue-700">{row.prefix || ''}</span>
                           <span className="text-muted-foreground">{'0'.repeat(row.padWidth)}</span>
-                          <span className="text-slate-400 mx-1">→</span>
-                          <span className="font-semibold text-slate-800">{row.preview}</span>
+                          <span className="text-slate-400 dark:text-slate-500 mx-1">→</span>
+                          <span className="font-semibold text-slate-800 dark:text-slate-100">{row.preview}</span>
                         </div>
                       ) : row.mode === 'external' && row.externalPattern ? (
-                        <span className="font-mono text-xs text-slate-500" title="External codes must match this regex">
+                        <span className="font-mono text-xs text-slate-500 dark:text-slate-400" title="External codes must match this regex">
                           regex: {row.externalPattern}
                         </span>
                       ) : (
-                        <span className="text-[11px] italic text-slate-400">User-entered at create time</span>
+                        <span className="text-[11px] italic text-slate-400 dark:text-slate-500">User-entered at create time</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">
@@ -267,7 +267,7 @@ export function NumberRangesPage() {
                       {row.isActive ? (
                         <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">Active</span>
                       ) : (
-                        <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">Inactive</span>
+                        <span className="inline-flex rounded-full bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs text-gray-600 dark:text-slate-300">Inactive</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -401,7 +401,7 @@ function RangeFormCard({ mode, form, setForm, onSave, onCancel, saving }: FormCa
                   'rounded-full border px-3 py-1 text-xs font-medium capitalize transition-colors',
                   on
                     ? 'border-blue-500 bg-blue-50 text-blue-700'
-                    : 'border-slate-200 text-slate-500 hover:border-slate-300',
+                    : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600',
                 )}
               >
                 {m}

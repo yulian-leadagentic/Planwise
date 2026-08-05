@@ -219,13 +219,13 @@ export function SeniorityLevelsPage() {
                     <td className="px-4 py-3 font-medium">{row.name}</td>
                     <td className="px-4 py-3">
                       {row.defaultHourlyCost != null ? (
-                        <span className="font-mono text-sm text-slate-800">
+                        <span className="font-mono text-sm text-slate-800 dark:text-slate-100">
                           {row.defaultHourlyCost}
-                          {row.currency ? <span className="ml-1 text-[11px] text-slate-400">{row.currency}</span> : null}
-                          <span className="ml-1 text-[11px] text-slate-400">/h</span>
+                          {row.currency ? <span className="ml-1 text-[11px] text-slate-400 dark:text-slate-500">{row.currency}</span> : null}
+                          <span className="ml-1 text-[11px] text-slate-400 dark:text-slate-500">/h</span>
                         </span>
                       ) : (
-                        <span className="text-xs italic text-slate-400">—</span>
+                        <span className="text-xs italic text-slate-400 dark:text-slate-500">—</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{row.sortOrder}</td>
@@ -233,7 +233,7 @@ export function SeniorityLevelsPage() {
                       {row.isActive ? (
                         <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">Active</span>
                       ) : (
-                        <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">Inactive</span>
+                        <span className="inline-flex rounded-full bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs text-gray-600 dark:text-slate-300">Inactive</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
