@@ -194,10 +194,10 @@ function NotificationCard({ variant, title, description, code, issues, action, c
                 onClick={() => { action.onClick(); onDismiss(); }}
                 className={cn(
                   'rounded-md border px-2.5 py-1 text-[11px] font-semibold transition-colors',
-                  variant === 'success' && 'border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-100',
-                  variant === 'info' && 'border-blue-300 bg-white text-blue-800 hover:bg-blue-100',
-                  variant === 'warning' && 'border-amber-300 bg-white text-amber-800 hover:bg-amber-100',
-                  (variant === 'validation' || variant === 'businessRule') && 'border-red-300 bg-white text-red-800 hover:bg-red-100',
+                  variant === 'success' && 'border-emerald-300 bg-white dark:bg-slate-900 text-emerald-800 hover:bg-emerald-100',
+                  variant === 'info' && 'border-blue-300 bg-white dark:bg-slate-900 text-blue-800 hover:bg-blue-100',
+                  variant === 'warning' && 'border-amber-300 bg-white dark:bg-slate-900 text-amber-800 hover:bg-amber-100',
+                  (variant === 'validation' || variant === 'businessRule') && 'border-red-300 bg-white dark:bg-slate-900 text-red-800 hover:bg-red-100',
                 )}
               >
                 {action.label}
