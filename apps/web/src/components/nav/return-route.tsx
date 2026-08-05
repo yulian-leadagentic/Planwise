@@ -102,7 +102,7 @@ export function ReturnPill() {
       <button
         type="button"
         onClick={() => navigate(ret.to)}
-        className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-white text-[12px] font-semibold text-blue-700 hover:bg-blue-100 hover:border-blue-300 px-3 py-1 transition-colors"
+        className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-white dark:bg-slate-900 text-[12px] font-semibold text-blue-700 hover:bg-blue-100 hover:border-blue-300 px-3 py-1 transition-colors"
       >
         <ChevronLeft className="h-3.5 w-3.5" />
         Back to {ret.label}
