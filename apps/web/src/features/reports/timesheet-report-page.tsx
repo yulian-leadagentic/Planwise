@@ -458,7 +458,7 @@ export function TimesheetReportPage() {
                   onClick={handleExportCsv}
                   className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left"
                 >
-                  <FileText className="h-4 w-4 text-slate-500" /> CSV
+                  <FileText className="h-4 w-4 text-slate-500 dark:text-slate-400" /> CSV
                 </button>
                 <button
                   type="button"
@@ -485,19 +485,19 @@ export function TimesheetReportPage() {
           controls). */}
       <div className="grid grid-cols-1 md:grid-cols-6 gap-3 no-print">
         <div>
-          <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+          <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
             Employee
           </label>
           <UserSelect value={userId} onChange={setUserId} placeholder="All employees" />
         </div>
         <div>
-          <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+          <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
             Project
           </label>
           <ProjectSelect value={projectId} onChange={setProjectId} placeholder="All projects" />
         </div>
         <div>
-          <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+          <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
             From
           </label>
           <input
@@ -508,7 +508,7 @@ export function TimesheetReportPage() {
           />
         </div>
         <div>
-          <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+          <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
             To
           </label>
           <input
@@ -519,7 +519,7 @@ export function TimesheetReportPage() {
           />
         </div>
         <div>
-          <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+          <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
             Group by
           </label>
           <select
@@ -533,7 +533,7 @@ export function TimesheetReportPage() {
           </select>
         </div>
         <div>
-          <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+          <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
             Personal tasks
           </label>
           <select
@@ -589,7 +589,7 @@ export function TimesheetReportPage() {
         <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
+              <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 <th className="px-3 py-2 text-left font-semibold">Date</th>
                 <th className="px-3 py-2 text-left font-semibold">From</th>
                 <th className="px-3 py-2 text-left font-semibold">To</th>
@@ -641,13 +641,13 @@ function GroupBlock({ group, showHeader, showFinance }: { group: Group; showHead
   return (
     <>
       {showHeader && (
-        <tr className="bg-slate-100/80">
+        <tr className="bg-slate-100/80 dark:bg-slate-800/80">
           <td
             colSpan={showFinance ? 12 : 11}
-            className="px-3 py-1.5 text-[12px] font-bold text-slate-700 border-t border-slate-200"
+            className="px-3 py-1.5 text-[12px] font-bold text-slate-700 dark:text-slate-200 border-t border-slate-200 dark:border-slate-700"
           >
             {group.label}
-            <span className="ml-3 font-normal text-slate-500">
+            <span className="ml-3 font-normal text-slate-500 dark:text-slate-400">
               {group.rows.length} entr{group.rows.length === 1 ? 'y' : 'ies'} ·{' '}
               {group.hours.toFixed(2)}h
               {showFinance && group.costByCurrency.map((c) => (
@@ -668,37 +668,37 @@ function GroupBlock({ group, showHeader, showFinance }: { group: Group; showHead
 
 function RowLine({ row, showFinance }: { row: Row; showFinance: boolean }) {
   return (
-    <tr className="border-t border-slate-100 hover:bg-blue-50/30">
-      <td className="px-3 py-2 text-[12px] tabular-nums text-slate-600">{fmtDate(row.date)}</td>
-      <td className="px-3 py-2 text-[12px] tabular-nums text-slate-600">{row.startTime ?? '—'}</td>
-      <td className="px-3 py-2 text-[12px] tabular-nums text-slate-600">{row.endTime ?? '—'}</td>
-      <td className="px-3 py-2 text-[12px] tabular-nums text-right font-semibold text-slate-700">
+    <tr className="border-t border-slate-100 dark:border-slate-800 hover:bg-blue-50/30">
+      <td className="px-3 py-2 text-[12px] tabular-nums text-slate-600 dark:text-slate-300">{fmtDate(row.date)}</td>
+      <td className="px-3 py-2 text-[12px] tabular-nums text-slate-600 dark:text-slate-300">{row.startTime ?? '—'}</td>
+      <td className="px-3 py-2 text-[12px] tabular-nums text-slate-600 dark:text-slate-300">{row.endTime ?? '—'}</td>
+      <td className="px-3 py-2 text-[12px] tabular-nums text-right font-semibold text-slate-700 dark:text-slate-200">
         {row.hours.toFixed(2)}
       </td>
-      <td className="px-3 py-2 text-[13px] font-medium text-slate-900">{row.user.displayName}</td>
-      <td className="px-3 py-2 text-[12px] text-slate-600 max-w-[200px] truncate" title={row.project?.displayName ?? ''}>
+      <td className="px-3 py-2 text-[13px] font-medium text-slate-900 dark:text-slate-100">{row.user.displayName}</td>
+      <td className="px-3 py-2 text-[12px] text-slate-600 dark:text-slate-300 max-w-[200px] truncate" title={row.project?.displayName ?? ''}>
         {row.project?.displayName ?? '—'}
       </td>
-      <td className="px-3 py-2 text-[12px] text-slate-600 max-w-[200px]" title={row.zone?.breadcrumb.join(' › ')}>
-        {row.zone ? (row.zone.breadcrumb.length > 0 ? row.zone.breadcrumb.join(' › ') : row.zone.name) : <span className="italic text-slate-400">Project Root</span>}
+      <td className="px-3 py-2 text-[12px] text-slate-600 dark:text-slate-300 max-w-[200px]" title={row.zone?.breadcrumb.join(' › ')}>
+        {row.zone ? (row.zone.breadcrumb.length > 0 ? row.zone.breadcrumb.join(' › ') : row.zone.name) : <span className="italic text-slate-400 dark:text-slate-500">Project Root</span>}
       </td>
-      <td className="px-3 py-2 text-[12px] text-slate-600 max-w-[180px] truncate" title={row.service?.name ?? ''}>
+      <td className="px-3 py-2 text-[12px] text-slate-600 dark:text-slate-300 max-w-[180px] truncate" title={row.service?.name ?? ''}>
         {row.service?.name ?? '—'}
       </td>
-      <td className="px-3 py-2 text-[12px] text-slate-600 max-w-[200px] truncate" title={row.deliverable?.name ?? ''}>
+      <td className="px-3 py-2 text-[12px] text-slate-600 dark:text-slate-300 max-w-[200px] truncate" title={row.deliverable?.name ?? ''}>
         {row.deliverable?.name ?? '—'}
       </td>
-      <td className="px-3 py-2 text-[12px] text-slate-600 max-w-[200px] truncate" title={row.assignmentName ?? ''}>
+      <td className="px-3 py-2 text-[12px] text-slate-600 dark:text-slate-300 max-w-[200px] truncate" title={row.assignmentName ?? ''}>
         {row.assignmentName ?? '—'}
       </td>
-      <td className="px-3 py-2 text-[12px] text-slate-500 max-w-[200px] truncate" title={row.description ?? ''}>
-        {row.description ?? <span className="text-slate-300">—</span>}
+      <td className="px-3 py-2 text-[12px] text-slate-500 dark:text-slate-400 max-w-[200px] truncate" title={row.description ?? ''}>
+        {row.description ?? <span className="text-slate-300 dark:text-slate-600">—</span>}
       </td>
       {/* Cost cell — hidden for non-finance users. Backend also
           strips the value (so row.cost is null), but dropping the
           <td> entirely keeps the row aligned with the gated header. */}
       {showFinance && (
-        <td className={cn('px-3 py-2 text-[12px] tabular-nums text-right font-semibold', row.cost == null ? 'text-slate-300' : 'text-slate-800')}>
+        <td className={cn('px-3 py-2 text-[12px] tabular-nums text-right font-semibold', row.cost == null ? 'text-slate-300 dark:text-slate-600' : 'text-slate-800 dark:text-slate-100')}>
           {row.cost != null ? fmtMoney(row.cost, row.currency) : '—'}
         </td>
       )}
