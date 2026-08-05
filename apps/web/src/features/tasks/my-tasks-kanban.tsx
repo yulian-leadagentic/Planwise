@@ -20,7 +20,7 @@ import { TaskCardBody } from '@/components/shared/task-card-body';
 type TabMode = 'time' | 'kanban' | 'upcoming';
 
 const columns = [
-  { id: 'not_started', label: 'To Do', color: 'border-t-slate-400', bg: 'bg-slate-50/50' },
+  { id: 'not_started', label: 'To Do', color: 'border-t-slate-400', bg: 'bg-slate-50/50 dark:bg-slate-800/50' },
   { id: 'in_progress', label: 'In Progress', color: 'border-t-blue-500', bg: 'bg-blue-50/30' },
   { id: 'in_review', label: 'In Review', color: 'border-t-violet-500', bg: 'bg-violet-50/30' },
   { id: 'completed', label: 'Done', color: 'border-t-emerald-500', bg: 'bg-emerald-50/30' },
@@ -86,7 +86,7 @@ function TimeDropdown({ value, onChange }: { value: string; onChange: (v: string
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full px-2 py-1.5 rounded-md border border-slate-200 text-[12px] focus:border-blue-400 focus:outline-none bg-white"
+      className="w-full px-2 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 text-[12px] focus:border-blue-400 focus:outline-none bg-white dark:bg-slate-900"
     >
       {/* Allow whatever the current value is, even if off-grid (e.g.
           legacy 09:07). Keeps the rendered <option> identifiable. */}
@@ -192,27 +192,27 @@ function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskProjectId
   return (
     <div
       onClick={(e) => e.stopPropagation()}
-      className="mt-2 rounded-md border border-slate-200 bg-white shadow-sm overflow-hidden"
+      className="mt-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm overflow-hidden"
     >
       {overlap.dialog}
       {/* History header — totals + count, with collapse toggle for the
           panel itself. Neutral palette so it stays readable on top of any
           parent-card border (red/amber for at-risk, white for OK). */}
-      <div className="flex items-center justify-between px-2 py-1 border-b border-slate-100 bg-slate-50">
-        <div className="flex items-center gap-1.5 text-[10px] text-slate-600 min-w-0">
-          <Clock className="h-3 w-3 text-slate-400 shrink-0" />
+      <div className="flex items-center justify-between px-2 py-1 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+        <div className="flex items-center gap-1.5 text-[10px] text-slate-600 dark:text-slate-300 min-w-0">
+          <Clock className="h-3 w-3 text-slate-400 dark:text-slate-500 shrink-0" />
           <span className="font-semibold">Your time</span>
           {history.length > 0 ? (
             <span className="tabular-nums truncate">
               · {(historyTotalMin / 60).toFixed(2)}h across {history.length}
             </span>
           ) : (
-            <span className="text-slate-400 italic">no entries yet</span>
+            <span className="text-slate-400 dark:text-slate-500 italic">no entries yet</span>
           )}
         </div>
         <button
           onClick={() => setOpen(false)}
-          className="text-[12px] leading-none text-slate-400 hover:text-slate-600 shrink-0 px-1"
+          className="text-[12px] leading-none text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 shrink-0 px-1"
           aria-label="Close time log panel"
         >
           ×
@@ -222,25 +222,25 @@ function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskProjectId
       {/* Past entries (capped to 5 inline; deeper history lives on the
           task drawer's Time tab via "open task for full history"). */}
       {history.length > 0 && (
-        <div className="max-h-28 overflow-y-auto border-b border-slate-100 divide-y divide-slate-50">
+        <div className="max-h-28 overflow-y-auto border-b border-slate-100 dark:border-slate-800 divide-y divide-slate-50 dark:divide-slate-800">
           {history.slice(0, 5).map((e: any) => (
             <div key={e.id} className="flex items-center gap-2 px-2 py-1 text-[10px]">
-              <span className="text-slate-500 tabular-nums w-[52px] shrink-0">
+              <span className="text-slate-500 dark:text-slate-400 tabular-nums w-[52px] shrink-0">
                 {e.date ? formatShortDate(e.date) : '—'}
               </span>
-              <span className="text-slate-400 tabular-nums w-[78px] shrink-0">
+              <span className="text-slate-400 dark:text-slate-500 tabular-nums w-[78px] shrink-0">
                 {e.startTime && e.endTime ? `${e.startTime}–${e.endTime}` : ''}
               </span>
-              <span className="font-semibold text-slate-700 tabular-nums w-[36px] shrink-0">
+              <span className="font-semibold text-slate-700 dark:text-slate-200 tabular-nums w-[36px] shrink-0">
                 {((e.minutes ?? 0) / 60).toFixed(2)}h
               </span>
               {e.note && (
-                <span className="text-slate-500 truncate flex-1" title={e.note}>{e.note}</span>
+                <span className="text-slate-500 dark:text-slate-400 truncate flex-1" title={e.note}>{e.note}</span>
               )}
             </div>
           ))}
           {history.length > 5 && (
-            <div className="px-2 py-1 text-[10px] text-slate-400 text-center">
+            <div className="px-2 py-1 text-[10px] text-slate-400 dark:text-slate-500 text-center">
               + {history.length - 5} more — open task for full history
             </div>
           )}
@@ -252,31 +252,31 @@ function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskProjectId
           dropdowns + grey readout. V10 unification. */}
       <div className="px-3 py-2 space-y-2 border-l-2 border-blue-400/40">
         <div>
-          <label className="text-[10px] font-semibold text-slate-600 mb-1 block">Date</label>
+          <label className="text-[10px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">Date</label>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-            className="w-full px-2 py-1.5 rounded-md border border-slate-200 text-[12px] focus:border-blue-400 focus:outline-none" />
+            className="w-full px-2 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 text-[12px] focus:border-blue-400 focus:outline-none" />
         </div>
         <div className="grid grid-cols-3 gap-2">
           <div>
-            <label className="text-[10px] font-semibold text-slate-600 mb-1 block">Start Time</label>
+            <label className="text-[10px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">Start Time</label>
             <TimeDropdown value={start} onChange={setStart} />
           </div>
           <div>
-            <label className="text-[10px] font-semibold text-slate-600 mb-1 block">End Time</label>
+            <label className="text-[10px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">End Time</label>
             <TimeDropdown value={end} onChange={setEnd} />
           </div>
           <div>
-            <label className="text-[10px] font-semibold text-slate-600 mb-1 block">Total Hours</label>
-            <div className="w-full px-2 py-1.5 rounded-md border border-slate-200 bg-slate-50 text-[12px] text-slate-600 tabular-nums">
+            <label className="text-[10px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">Total Hours</label>
+            <div className="w-full px-2 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-[12px] text-slate-600 dark:text-slate-300 tabular-nums">
               {totalHours}h
             </div>
           </div>
         </div>
         <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
           placeholder="Description (optional)…"
-          className="w-full px-2 py-1.5 rounded-md border border-slate-200 text-[12px] focus:border-blue-400 focus:outline-none" />
+          className="w-full px-2 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 text-[12px] focus:border-blue-400 focus:outline-none" />
         <div className="flex justify-end gap-1.5 pt-1">
-          <button onClick={() => setOpen(false)} className="rounded-md border border-slate-200 px-3 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50">
+          <button onClick={() => setOpen(false)} className="rounded-md border border-slate-200 dark:border-slate-700 px-3 py-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50">
             Cancel
           </button>
           <button onClick={handleLog}
@@ -311,7 +311,7 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
   const cardBorder =
     health.level === 'critical' ? 'border-red-300 ring-1 ring-red-200'
     : health.level === 'warning' ? 'border-amber-300'
-    : 'border-slate-200';
+    : 'border-slate-200 dark:border-slate-700';
 
   return (
     // Card redesign (T-fix Tier A #11, 2026-06-30) — matches the mockup:
@@ -321,7 +321,7 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
     // pill in the header.
     <div ref={setNodeRef} style={style} {...attributes}
       className={cn(
-        'rounded-[14px] border bg-white shadow-sm hover:shadow-md transition-shadow duration-100 border-l-[3px] overflow-hidden',
+        'rounded-[14px] border bg-white dark:bg-slate-900 shadow-sm hover:shadow-md transition-shadow duration-100 border-l-[3px] overflow-hidden',
         cardBorder,
         ZONE_BORDER_COLORS[zoneType] || 'border-l-slate-300',
         isDragging && 'opacity-40 shadow-lg ring-2 ring-blue-300 z-50',
@@ -329,9 +329,9 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
     >
       {/* Header — drag handle, project name, assignee pill on the right. */}
       <div {...listeners} className="flex items-center gap-2 px-3.5 pt-3 pb-1.5 cursor-grab active:cursor-grabbing">
-        <GripVertical className="h-3.5 w-3.5 text-slate-300 shrink-0" />
+        <GripVertical className="h-3.5 w-3.5 text-slate-300 dark:text-slate-600 shrink-0" />
         {projectName && (
-          <span className="text-[13px] font-bold text-slate-900 truncate flex-1" title={projectName}>{projectName}</span>
+          <span className="text-[13px] font-bold text-slate-900 dark:text-slate-100 truncate flex-1" title={projectName}>{projectName}</span>
         )}
         {assignees.length > 0 && (
           <span
@@ -349,7 +349,7 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
       {/* Body — clickable to open drawer. Fields laid out as labeled rows. */}
       <div className="px-3.5 pb-3 pt-1 cursor-pointer" onClick={() => onOpenDrawer(task.id)}>
         {/* Task name (subtitle to the project). */}
-        <p className="text-[13px] font-semibold text-slate-800 leading-tight break-words mb-2.5">
+        <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 leading-tight break-words mb-2.5">
           {task.name}
         </p>
 
@@ -357,27 +357,27 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
             Each row: 10px uppercase slate-400 label + slate-700 value. */}
         <dl className="text-[12px] space-y-1 mb-3">
           <div className="flex items-baseline gap-2">
-            <dt className="w-[74px] shrink-0 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Zone</dt>
-            <dd className="text-slate-700 truncate min-w-0" title={zoneName || 'Project Root'}>
-              {zoneName || <span className="text-slate-400 italic">Project Root</span>}
+            <dt className="w-[74px] shrink-0 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Zone</dt>
+            <dd className="text-slate-700 dark:text-slate-200 truncate min-w-0" title={zoneName || 'Project Root'}>
+              {zoneName || <span className="text-slate-400 dark:text-slate-500 italic">Project Root</span>}
             </dd>
           </div>
           <div className="flex items-baseline gap-2">
-            <dt className="w-[74px] shrink-0 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Service</dt>
-            <dd className="text-slate-700 truncate min-w-0" title={task.phase?.name ?? ''}>
-              {task.phase?.name || <span className="text-slate-300">—</span>}
+            <dt className="w-[74px] shrink-0 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Service</dt>
+            <dd className="text-slate-700 dark:text-slate-200 truncate min-w-0" title={task.phase?.name ?? ''}>
+              {task.phase?.name || <span className="text-slate-300 dark:text-slate-600">—</span>}
             </dd>
           </div>
           <div className="flex items-baseline gap-2">
-            <dt className="w-[74px] shrink-0 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Deliverable</dt>
-            <dd className="text-slate-700 truncate min-w-0" title={task.deliverableTemplate?.name ?? task.serviceType?.name ?? ''}>
-              {task.deliverableTemplate?.name || task.serviceType?.name || <span className="text-slate-300">—</span>}
+            <dt className="w-[74px] shrink-0 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Deliverable</dt>
+            <dd className="text-slate-700 dark:text-slate-200 truncate min-w-0" title={task.deliverableTemplate?.name ?? task.serviceType?.name ?? ''}>
+              {task.deliverableTemplate?.name || task.serviceType?.name || <span className="text-slate-300 dark:text-slate-600">—</span>}
             </dd>
           </div>
           <div className="flex items-baseline gap-2">
-            <dt className="w-[74px] shrink-0 text-[10px] font-semibold uppercase tracking-wider text-slate-400">BIM Leader</dt>
-            <dd className="text-slate-700 truncate min-w-0" title={bimLeader}>
-              {bimLeader || <span className="text-slate-300">—</span>}
+            <dt className="w-[74px] shrink-0 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">BIM Leader</dt>
+            <dd className="text-slate-700 dark:text-slate-200 truncate min-w-0" title={bimLeader}>
+              {bimLeader || <span className="text-slate-300 dark:text-slate-600">—</span>}
             </dd>
           </div>
         </dl>
@@ -400,13 +400,13 @@ function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; 
               'inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] font-semibold tabular-nums',
               health.isOverdue
                 ? 'bg-red-50 border-red-200 text-red-700'
-                : 'bg-slate-50 border-slate-200 text-slate-700',
+                : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200',
             )}>
               <Calendar className="h-3 w-3" />
               {formatShortDate(task.endDate)}
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-slate-200 px-2 py-1.5 text-[11px] text-slate-400">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-slate-200 dark:border-slate-700 px-2 py-1.5 text-[11px] text-slate-400 dark:text-slate-500">
               <Calendar className="h-3 w-3" />
               No date
             </span>
@@ -445,7 +445,7 @@ function KanbanStatusSelect({ status, requiresReview = true, onStatusChange }: {
       aria-label="Change task status"
       value={status}
       onChange={(e) => onStatusChange(e.target.value)}
-      className="flex-1 rounded border border-slate-200 bg-white px-1.5 py-1 text-[10px] focus:border-blue-400 focus:outline-none"
+      className="flex-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-1.5 py-1 text-[10px] focus:border-blue-400 focus:outline-none"
     >
       {opts.filter((c) => allowedStatuses.includes(c.id)).map((c) => (
         <option key={c.id} value={c.id}>{c.label}</option>
@@ -475,7 +475,7 @@ function RowStatusSelect({ taskId, status }: { taskId: number; status: string })
       ? 'bg-blue-100 text-blue-700 border-blue-200'
       : status === 'in_review'
         ? 'bg-violet-100 text-violet-700 border-violet-200'
-        : 'bg-slate-100 text-slate-600 border-slate-200';
+        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700';
 
   const handleChange = async (newStatus: string) => {
     try {
@@ -548,7 +548,7 @@ function DroppableColumn({ column, tasks, onOpenDrawer, onStatusChange }: { colu
     <div ref={setNodeRef}
       className={cn('flex flex-col rounded-[14px] border-t-[3px] transition-all', column.color,
         collapsed ? 'min-h-[80px]' : 'min-h-[400px]',
-        isOver ? 'bg-blue-50/60 border-blue-300 border-2 shadow-inner' : `border border-slate-200 ${column.bg}`)}>
+        isOver ? 'bg-blue-50/60 border-blue-300 border-2 shadow-inner' : `border border-slate-200 dark:border-slate-700 ${column.bg}`)}>
       <div className="flex items-center justify-between px-4 py-3">
         <button
           type="button"
@@ -557,11 +557,11 @@ function DroppableColumn({ column, tasks, onOpenDrawer, onStatusChange }: { colu
           aria-expanded={!collapsed}
           className="flex items-center gap-2 group"
         >
-          <span className={cn('text-slate-400 group-hover:text-slate-600 transition-transform', collapsed ? '-rotate-90' : '')}>
+          <span className={cn('text-slate-400 dark:text-slate-500 group-hover:text-slate-600 transition-transform', collapsed ? '-rotate-90' : '')}>
             ▾
           </span>
-          <h3 className="text-[13px] font-semibold text-slate-700">{column.label}</h3>
-          <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">{tasks.length}</span>
+          <h3 className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">{column.label}</h3>
+          <span className="rounded-full bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 text-[10px] font-bold text-slate-600 dark:text-slate-300">{tasks.length}</span>
         </button>
       </div>
       {!collapsed && (
@@ -570,7 +570,7 @@ function DroppableColumn({ column, tasks, onOpenDrawer, onStatusChange }: { colu
           <DraggableTaskCard key={task.id} task={task} onOpenDrawer={onOpenDrawer} onStatusChange={onStatusChange} />
         ))}
         {tasks.length === 0 && (
-          <div className={cn('py-8 text-center text-[11px] rounded-lg border-2 border-dashed', isOver ? 'border-blue-400 text-blue-500' : 'border-slate-200 text-slate-400')}>
+          <div className={cn('py-8 text-center text-[11px] rounded-lg border-2 border-dashed', isOver ? 'border-blue-400 text-blue-500' : 'border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500')}>
             {isOver ? 'Drop here' : 'No tasks'}
           </div>
         )}
@@ -666,7 +666,7 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
   // stays in sync with every other status pill in the app.
 
   return (
-    <div className="border-b border-slate-100 last:border-b-0">
+    <div className="border-b border-slate-100 dark:border-slate-800 last:border-b-0">
       {overlap.dialog}
       <div className="flex items-center gap-2 px-4 py-2.5 hover:bg-blue-50/30 transition-colors">
         {/* Task info — name + zone clickable to open the drawer. The status
@@ -698,7 +698,7 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
                   );
                 })}
                 {task.assignees.length > 4 && (
-                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-700 text-[9px] font-bold ring-2 ring-white -ml-1 shadow-sm">
+                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-[9px] font-bold ring-2 ring-white -ml-1 shadow-sm">
                     +{task.assignees.length - 4}
                   </span>
                 )}
@@ -708,17 +708,17 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
           <button
             type="button"
             onClick={() => onOpenDrawer(task.id)}
-            className="block w-full text-left cursor-pointer rounded hover:bg-slate-50 -mx-1 px-1 py-0.5 mt-0.5"
+            className="block w-full text-left cursor-pointer rounded hover:bg-slate-50 dark:hover:bg-slate-800/50 -mx-1 px-1 py-0.5 mt-0.5"
             title="Open task details"
           >
-            <p className="text-[13px] font-medium text-slate-800 truncate">{task.name}</p>
+            <p className="text-[13px] font-medium text-slate-800 dark:text-slate-100 truncate">{task.name}</p>
             {/* Context line: zone if present, else "Project Root" + phase so
                 the row isn't silently bucket-less. Same convention as the
                 kanban card and the timesheet picker. */}
             {zoneName ? (
-              <p className="text-[10px] text-slate-500 truncate">{zoneName}</p>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{zoneName}</p>
             ) : (
-              <p className="text-[10px] text-slate-400 italic truncate">
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 italic truncate">
                 Project Root
                 {task.phase?.name ? ` · ${task.phase.name}` : task.serviceType?.name ? ` · ${task.serviceType.name}` : ''}
               </p>
@@ -738,7 +738,7 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
               ? 'bg-red-100 text-red-700 border-red-200'
               : days <= 3
                 ? 'bg-amber-100 text-amber-700 border-amber-200'
-                : 'bg-slate-100 text-slate-700 border-slate-200';
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700';
             return (
               <span className={cn(
                 'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[12px] font-bold tabular-nums',
@@ -749,13 +749,13 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
               </span>
             );
           })() : (
-            <span className="text-[11px] text-slate-300">—</span>
+            <span className="text-[11px] text-slate-300 dark:text-slate-600">—</span>
           )}
         </div>
 
         {/* Date */}
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-          className="w-[130px] rounded-md border border-slate-200 px-2 py-1.5 text-[12px] focus:border-blue-400 focus:outline-none shrink-0" />
+          className="w-[130px] rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1.5 text-[12px] focus:border-blue-400 focus:outline-none shrink-0" />
 
         {/* Start / End / Total — same shape as Add Timesheet Entry modal
             (V10 unification). Dropdown style, no arrow separator,
@@ -769,7 +769,7 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
           <TimeDropdown value={end} onChange={setEnd} />
         </div>
         <div className="w-[58px] shrink-0">
-          <div className="px-2 py-1.5 rounded-md border border-slate-200 bg-slate-50 text-[12px] text-center tabular-nums text-slate-600">
+          <div className="px-2 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-[12px] text-center tabular-nums text-slate-600 dark:text-slate-300">
             {totalHours}h
           </div>
         </div>
@@ -778,7 +778,7 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
             this task plus a note field for the new entry. Renamed from
             "+ Note" since the panel now does more than just notes. */}
         <button onClick={() => setExpanded(!expanded)}
-          className="text-[10px] text-slate-400 hover:text-slate-600 shrink-0 w-14 text-center">
+          className="text-[10px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 shrink-0 w-14 text-center">
           {expanded ? 'Hide' : 'Details'}
         </button>
 
@@ -794,15 +794,15 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
           the task. Listing history here addresses the "I only see the
           new entry, not what I've already logged" feedback. */}
       {expanded && (
-        <div className="px-4 pb-3 pl-8 bg-slate-50/60 border-t border-slate-100 space-y-2 pt-2">
+        <div className="px-4 pb-3 pl-8 bg-slate-50/60 dark:bg-slate-800/60 border-t border-slate-100 dark:border-slate-800 space-y-2 pt-2">
           <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
             placeholder="What did you work on? (optional)"
-            className="w-full rounded-md border border-slate-200 px-3 py-1.5 text-[12px] focus:border-blue-400 focus:outline-none" />
+            className="w-full rounded-md border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-[12px] focus:border-blue-400 focus:outline-none" />
 
           {/* History list — same column convention as the QuickTimeLog
               panel on the kanban card for consistency. */}
           <div>
-            <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1 px-0.5">
+            <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 mb-1 px-0.5">
               <span className="font-semibold uppercase tracking-wider">Your reporting on this task</span>
               {history.length > 0 ? (
                 <span className="tabular-nums">
@@ -812,27 +812,27 @@ function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id
               ) : null}
             </div>
             {history.length === 0 ? (
-              <p className="text-[11px] text-slate-400 italic px-0.5">No entries yet — log your first above.</p>
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 italic px-0.5">No entries yet — log your first above.</p>
             ) : (
-              <div className="rounded-md border border-slate-200 bg-white divide-y divide-slate-100 max-h-40 overflow-y-auto">
+              <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-800 max-h-40 overflow-y-auto">
                 {history.slice(0, 10).map((e: any) => (
                   <div key={e.id} className="flex items-center gap-3 px-3 py-1.5 text-[11px]">
-                    <span className="text-slate-600 tabular-nums w-[60px] shrink-0">
+                    <span className="text-slate-600 dark:text-slate-300 tabular-nums w-[60px] shrink-0">
                       {e.date ? formatShortDate(e.date) : '—'}
                     </span>
-                    <span className="text-slate-400 tabular-nums w-[90px] shrink-0">
+                    <span className="text-slate-400 dark:text-slate-500 tabular-nums w-[90px] shrink-0">
                       {e.startTime && e.endTime ? `${e.startTime}–${e.endTime}` : ''}
                     </span>
-                    <span className="font-semibold text-slate-700 tabular-nums w-[42px] shrink-0">
+                    <span className="font-semibold text-slate-700 dark:text-slate-200 tabular-nums w-[42px] shrink-0">
                       {((e.minutes ?? 0) / 60).toFixed(2)}h
                     </span>
                     {e.note && (
-                      <span className="text-slate-500 truncate flex-1" title={e.note}>{e.note}</span>
+                      <span className="text-slate-500 dark:text-slate-400 truncate flex-1" title={e.note}>{e.note}</span>
                     )}
                   </div>
                 ))}
                 {history.length > 10 && (
-                  <div className="px-3 py-1.5 text-[10px] text-slate-400 text-center">
+                  <div className="px-3 py-1.5 text-[10px] text-slate-400 dark:text-slate-500 text-center">
                     + {history.length - 10} more entries — open task for full history
                   </div>
                 )}
@@ -856,8 +856,8 @@ const DUE_BUCKETS: { key: DueBucket; label: string; tone: string }[] = [
   { key: 'today',     label: 'Due Today',   tone: 'border-amber-200 bg-amber-50/40 text-amber-700' },
   { key: 'this_week', label: 'This Week',   tone: 'border-blue-200 bg-blue-50/40 text-blue-700' },
   { key: 'next_week', label: 'Next Week',   tone: 'border-violet-200 bg-violet-50/40 text-violet-700' },
-  { key: 'later',     label: 'Later',       tone: 'border-slate-200 bg-slate-50/60 text-slate-600' },
-  { key: 'no_date',   label: 'No Due Date', tone: 'border-slate-200 bg-slate-50/60 text-slate-500' },
+  { key: 'later',     label: 'Later',       tone: 'border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300' },
+  { key: 'no_date',   label: 'No Due Date', tone: 'border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400' },
 ];
 
 /**
@@ -954,11 +954,11 @@ function UpcomingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer: (id:
         const list = grouped.get(b.key) ?? [];
         if (list.length === 0) return null;
         return (
-          <div key={b.key} className={cn('rounded-[14px] border bg-white overflow-hidden', b.tone)}>
-            <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between bg-white/60">
+          <div key={b.key} className={cn('rounded-[14px] border bg-white dark:bg-slate-900 overflow-hidden', b.tone)}>
+            <div className="px-4 py-2.5 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between bg-white/60">
               <div className="flex items-center gap-2">
                 <h3 className="text-[13px] font-semibold">{b.label}</h3>
-                <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">{list.length}</span>
+                <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-slate-600 dark:text-slate-300">{list.length}</span>
               </div>
             </div>
             {list.map((task: any) => (
@@ -971,8 +971,8 @@ function UpcomingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer: (id:
           when the list is non-empty above, but defensive for stale data) */}
       {tasks.length === 0 && (
         <div className="py-12 text-center">
-          <CalendarClock className="mx-auto h-12 w-12 text-slate-300" />
-          <p className="mt-3 text-sm text-slate-500">Nothing on your plate right now.</p>
+          <CalendarClock className="mx-auto h-12 w-12 text-slate-300 dark:text-slate-600" />
+          <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">Nothing on your plate right now.</p>
         </div>
       )}
     </div>
@@ -1063,7 +1063,7 @@ function TimeReportingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer:
           users can sort by columns that DON'T have a corresponding
           input on each row (project, status). The label flips between
           "▲" / "▼" / unset and the field clears on a third click. */}
-      <div className="flex items-center gap-2 text-[11px] text-slate-500">
+      <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
         <span className="font-semibold uppercase tracking-wider">Sort by</span>
         {([
           { field: 'project' as const, label: 'Project' },
@@ -1081,7 +1081,7 @@ function TimeReportingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer:
                 'rounded-md border px-2 py-0.5 font-medium transition-colors',
                 active
                   ? 'border-blue-300 bg-blue-50 text-blue-700'
-                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
+                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600',
               )}
             >
               {c.label}
@@ -1093,10 +1093,10 @@ function TimeReportingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer:
 
       {/* Active tasks */}
       {activeTasks.length > 0 && (
-        <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
-          <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+          <div className="bg-slate-50 dark:bg-slate-800/50 px-4 py-2.5 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <h3 className="text-[13px] font-semibold text-slate-700">Active Tasks</h3>
+              <h3 className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">Active Tasks</h3>
               <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-600">{activeTasks.length}</span>
             </div>
             {/* Header labels — widths MUST match TimeReportingRow's column
@@ -1104,7 +1104,7 @@ function TimeReportingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer:
                 row widths is at TimeReportingRow above: w-[96px] Due,
                 w-[130px] Date, w-[80px] Start/End, w-[58px] Total, w-14
                 Details button, ~w-[68px] Log button. */}
-            <div className="flex items-center gap-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wider pr-1">
+            <div className="flex items-center gap-2 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider pr-1">
               <span className="w-[96px] text-center">Due</span>
               <span className="w-[130px] text-center">Date</span>
               <span className="w-[80px] text-center">Start Time</span>
@@ -1120,10 +1120,10 @@ function TimeReportingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer:
 
       {/* Completed tasks (collapsed) */}
       {completedTasks.length > 0 && (
-        <details className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
-          <summary className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 cursor-pointer">
-            <span className="text-[13px] font-semibold text-slate-500">Completed Tasks</span>
-            <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">{completedTasks.length}</span>
+        <details className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+          <summary className="bg-slate-50 dark:bg-slate-800/50 px-4 py-2.5 border-b border-slate-200 dark:border-slate-700 cursor-pointer">
+            <span className="text-[13px] font-semibold text-slate-500 dark:text-slate-400">Completed Tasks</span>
+            <span className="ml-2 rounded-full bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-slate-500 dark:text-slate-400">{completedTasks.length}</span>
           </summary>
           {completedTasks.map((task: any) => <TimeReportingRow key={task.id} task={task} onOpenDrawer={onOpenDrawer} />)}
         </details>
@@ -1131,18 +1131,18 @@ function TimeReportingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer:
 
       {/* Recent entries today */}
       {recentEntries.length > 0 && (
-        <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
-          <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200">
-            <h3 className="text-[13px] font-semibold text-slate-700">Today's Entries ({recentEntries.length})</h3>
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+          <div className="bg-slate-50 dark:bg-slate-800/50 px-4 py-2.5 border-b border-slate-200 dark:border-slate-700">
+            <h3 className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">Today's Entries ({recentEntries.length})</h3>
           </div>
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
             {recentEntries.map((e: any) => (
               <div key={e.id} className="flex items-center gap-3 px-4 py-2 text-[12px]">
-                <span className="text-slate-500 w-28">{e.startTime ?? '-'} – {e.endTime ?? '-'}</span>
-                <span className="font-semibold text-slate-700 w-14">{((e.minutes ?? 0) / 60).toFixed(2)}h</span>
+                <span className="text-slate-500 dark:text-slate-400 w-28">{e.startTime ?? '-'} – {e.endTime ?? '-'}</span>
+                <span className="font-semibold text-slate-700 dark:text-slate-200 w-14">{((e.minutes ?? 0) / 60).toFixed(2)}h</span>
                 <span className="text-blue-600 font-medium">{e.project?.name ?? ''}</span>
-                <span className="text-slate-500 flex-1 truncate">{e.task?.name ?? ''}</span>
-                {e.note && <span className="text-slate-600 truncate max-w-[200px]">{e.note}</span>}
+                <span className="text-slate-500 dark:text-slate-400 flex-1 truncate">{e.task?.name ?? ''}</span>
+                {e.note && <span className="text-slate-600 dark:text-slate-300 truncate max-w-[200px]">{e.note}</span>}
               </div>
             ))}
           </div>
@@ -1151,8 +1151,8 @@ function TimeReportingTab({ tasks, onOpenDrawer }: { tasks: any[]; onOpenDrawer:
 
       {tasks.length === 0 && (
         <div className="py-12 text-center">
-          <UserIcon className="mx-auto h-12 w-12 text-slate-300" />
-          <p className="mt-3 text-sm text-slate-500">No tasks assigned to you</p>
+          <UserIcon className="mx-auto h-12 w-12 text-slate-300 dark:text-slate-600" />
+          <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">No tasks assigned to you</p>
         </div>
       )}
     </div>
@@ -1442,20 +1442,20 @@ export function MyTasksKanbanPage() {
           <Plus className="h-3.5 w-3.5" />
           New personal task
         </button>
-        <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 p-0.5">
+        <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
           <button onClick={() => setActiveTab('time')}
             className={cn('flex items-center gap-1.5 px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
-              activeTab === 'time' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+              activeTab === 'time' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100')}>
             <ListChecks className="h-3.5 w-3.5" /> List view
           </button>
           <button onClick={() => setActiveTab('kanban')}
             className={cn('flex items-center gap-1.5 px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
-              activeTab === 'kanban' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+              activeTab === 'kanban' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100')}>
             <Columns3 className="h-3.5 w-3.5" /> Kanban
           </button>
           <button onClick={() => setActiveTab('upcoming')}
             className={cn('flex items-center gap-1.5 px-4 py-1.5 rounded-md text-[13px] font-semibold transition-colors',
-              activeTab === 'upcoming' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+              activeTab === 'upcoming' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100')}>
             <CalendarClock className="h-3.5 w-3.5" /> Upcoming
           </button>
         </div>
@@ -1466,7 +1466,7 @@ export function MyTasksKanbanPage() {
         <select
           value={filterProjectId ?? ''}
           onChange={(e) => setFilterProjectId(e.target.value ? +e.target.value : null)}
-          className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
         >
           <option value="">All Projects</option>
           {projectOptions.map((p) => (
@@ -1476,7 +1476,7 @@ export function MyTasksKanbanPage() {
         <select
           value={filterServiceId ?? ''}
           onChange={(e) => setFilterServiceId(e.target.value ? +e.target.value : null)}
-          className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
         >
           <option value="">All Services</option>
           {services.map((s: any) => (
@@ -1486,7 +1486,7 @@ export function MyTasksKanbanPage() {
         <select
           value={filterPhaseName ?? ''}
           onChange={(e) => setFilterPhaseName(e.target.value || null)}
-          className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
         >
           <option value="">All Deliverables</option>
           {phaseOptions.map((name) => (
@@ -1498,7 +1498,7 @@ export function MyTasksKanbanPage() {
         <select
           value={filterPriority}
           onChange={(e) => setFilterPriority(e.target.value)}
-          className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
         >
           <option value="">Any Priority</option>
           <option value="critical">Critical</option>
@@ -1510,7 +1510,7 @@ export function MyTasksKanbanPage() {
         <select
           value={filterKind}
           onChange={(e) => setFilterKind(e.target.value as '' | 'personal' | 'project')}
-          className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
           title="Personal-task filter"
         >
           <option value="">Any kind</option>
@@ -1520,7 +1520,7 @@ export function MyTasksKanbanPage() {
         <select
           value={filterHasDue}
           onChange={(e) => setFilterHasDue(e.target.value as '' | 'yes' | 'no')}
-          className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
           title="Has due date"
         >
           <option value="">Due date: any</option>
@@ -1532,33 +1532,33 @@ export function MyTasksKanbanPage() {
             NOW; tasks whose estStart is >7 days out live in the
             underlying pipeline until they get close. */}
         {activeTab === 'kanban' && (
-          <label className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[12px] text-slate-600 hover:border-slate-300 cursor-pointer">
+          <label className="flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600 cursor-pointer">
             <input
               type="checkbox"
               checked={showFutureTasks}
               onChange={(e) => setShowFutureTasks(e.target.checked)}
-              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+              className="rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
             />
             Include future tasks
           </label>
         )}
         {/* Due-date range — same control set as the Execution board's
             date filter. Either side optional. */}
-        <div className="flex items-center gap-1 text-[12px] text-slate-500">
+        <div className="flex items-center gap-1 text-[12px] text-slate-500 dark:text-slate-400">
           <span className="text-[11px]">Due:</span>
           <input
             type="date"
             value={filterDueFrom}
             onChange={(e) => setFilterDueFrom(e.target.value)}
-            className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+            className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
             aria-label="Due date from"
           />
-          <span className="text-slate-400">→</span>
+          <span className="text-slate-400 dark:text-slate-500">→</span>
           <input
             type="date"
             value={filterDueTo}
             onChange={(e) => setFilterDueTo(e.target.value)}
-            className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[12px] hover:border-slate-300 focus:outline-none focus:border-blue-400"
+            className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
             aria-label="Due date to"
           />
         </div>
@@ -1574,33 +1574,33 @@ export function MyTasksKanbanPage() {
               setFilterKind('');
               setFilterHasDue('');
             }}
-            className="text-[12px] text-slate-500 hover:text-slate-700 underline"
+            className="text-[12px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 underline"
           >
             Clear filters
           </button>
         )}
-        <span className="ml-auto text-[11px] text-slate-600 tabular-nums">
+        <span className="ml-auto text-[11px] text-slate-600 dark:text-slate-300 tabular-nums">
           {tasks.length} of {allTasks.length} tasks
         </span>
       </div>
 
       {isLoading ? (
-        <div className="py-12 text-center text-sm text-slate-600">Loading your tasks...</div>
+        <div className="py-12 text-center text-sm text-slate-600 dark:text-slate-300">Loading your tasks...</div>
       ) : activeTab === 'time' ? (
         <TimeReportingTab tasks={tasks} onOpenDrawer={(id) => setDrawerTaskId(id)} />
       ) : activeTab === 'upcoming' ? (
         <UpcomingTab tasks={tasks} onOpenDrawer={(id) => setDrawerTaskId(id)} />
       ) : (activeTab === 'kanban' && tasks.length === 0 && Object.keys(otherByStatus).length === 0 && kanbanHiddenCount === 0) ? (
         <div className="py-12 text-center">
-          <UserIcon className="mx-auto h-12 w-12 text-slate-300" />
-          <p className="mt-3 text-sm text-slate-500">
+          <UserIcon className="mx-auto h-12 w-12 text-slate-300 dark:text-slate-600" />
+          <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
             {hasActiveFilter ? 'No tasks match the active filters' : 'No tasks assigned to you'}
           </p>
         </div>
       ) : tasks.length === 0 && activeTab !== 'kanban' ? (
         <div className="py-12 text-center">
-          <UserIcon className="mx-auto h-12 w-12 text-slate-300" />
-          <p className="mt-3 text-sm text-slate-500">
+          <UserIcon className="mx-auto h-12 w-12 text-slate-300 dark:text-slate-600" />
+          <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
             {hasActiveFilter ? 'No tasks match the active filters' : 'No tasks assigned to you'}
           </p>
         </div>
@@ -1628,7 +1628,7 @@ export function MyTasksKanbanPage() {
             <button
               type="button"
               onClick={() => setRevealHiddenKanban(false)}
-              className="mb-3 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[12px] font-medium text-slate-600 hover:bg-slate-100"
+              className="mb-3 inline-flex items-center gap-2 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-1.5 text-[12px] font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
             >
               <X className="h-3.5 w-3.5" />
               Hide undated / future-start again
@@ -1647,9 +1647,9 @@ export function MyTasksKanbanPage() {
             </div>
             <DragOverlay>
               {draggedTask && (
-                <div className="rounded-lg border-2 border-blue-400 bg-white p-3 shadow-2xl w-60">
+                <div className="rounded-lg border-2 border-blue-400 bg-white dark:bg-slate-900 p-3 shadow-2xl w-60">
                   {draggedTask.project?.name && <span className="text-[10px] font-semibold text-blue-600">{draggedTask.project.name}</span>}
-                  <p className="text-[13px] font-medium text-slate-800">{draggedTask.name}</p>
+                  <p className="text-[13px] font-medium text-slate-800 dark:text-slate-100">{draggedTask.name}</p>
                 </div>
               )}
             </DragOverlay>
@@ -1663,11 +1663,11 @@ export function MyTasksKanbanPage() {
               To move an item out of Other, open its drawer and change
               status explicitly — that's the intentional path. */}
           {activeTab === 'kanban' && Object.keys(otherByStatus).length > 0 && (
-            <div className="mt-6 rounded-[14px] border border-slate-200 bg-slate-50/40 p-4">
+            <div className="mt-6 rounded-[14px] border border-slate-200 dark:border-slate-700 bg-slate-50/40 dark:bg-slate-800/40 p-4">
               <div className="flex items-center gap-2 mb-3">
-                <AlertCircle className="h-3.5 w-3.5 text-slate-500" />
-                <h3 className="text-[13px] font-semibold text-slate-700">Other</h3>
-                <span className="text-[11px] text-slate-500">
+                <AlertCircle className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
+                <h3 className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">Other</h3>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
                   read-only · statuses not on the board · open the task to change status
                 </span>
               </div>
@@ -1675,17 +1675,17 @@ export function MyTasksKanbanPage() {
                 {Object.entries(otherByStatus).map(([status, items]) => (
                   <div key={status}>
                     <div className="flex items-center gap-2 mb-1.5">
-                      <span className={cn('rounded-[5px] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider', STATUS_PILL[status] ?? 'bg-slate-100 text-slate-600')}>
+                      <span className={cn('rounded-[5px] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider', STATUS_PILL[status] ?? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300')}>
                         {STATUS_LABEL[status] ?? status}
                       </span>
-                      <span className="text-[11px] text-slate-400 tabular-nums">{items.length}</span>
+                      <span className="text-[11px] text-slate-400 dark:text-slate-500 tabular-nums">{items.length}</span>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
                       {items.map((t: any) => (
                         <div
                           key={t.id}
                           onClick={() => setDrawerTaskId(t.id)}
-                          className="rounded-[14px] border border-slate-200 bg-white cursor-pointer hover:border-slate-300 opacity-80"
+                          className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 cursor-pointer hover:border-slate-300 dark:hover:border-slate-600 opacity-80"
                           title="Read-only in Other. Click to open and change status."
                         >
                           <TaskCardBody task={t} />
@@ -1796,15 +1796,15 @@ function PersonalTaskDialog({ onClose, onCreated }: { onClose: () => void; onCre
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl w-[500px] max-w-[92vw] max-h-[85vh] overflow-auto"
+        className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[500px] max-w-[92vw] max-h-[85vh] overflow-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
           <div>
-            <h2 className="text-base font-bold text-slate-900">New personal task</h2>
-            <p className="text-[12px] text-slate-500 mt-0.5">Just for you. Project / zone / deliverable are optional; Due date is required.</p>
+            <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">New personal task</h2>
+            <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">Just for you. Project / zone / deliverable are optional; Due date is required.</p>
           </div>
-          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
+          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -1813,7 +1813,7 @@ function PersonalTaskDialog({ onClose, onCreated }: { onClose: () => void; onCre
           className="p-5 space-y-4"
         >
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
               Task name <span className="text-red-500">*</span>
             </label>
             <input
@@ -1821,33 +1821,33 @@ function PersonalTaskDialog({ onClose, onCreated }: { onClose: () => void; onCre
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Review latest drawings"
-              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
             />
           </div>
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Description</label>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Description</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
               placeholder="Optional details…"
-              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none resize-none"
+              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none resize-none"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
                 Due date <span className="text-red-500">*</span>
               </label>
               <input
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
               />
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Est. hours</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Est. hours</label>
               <input
                 type="number"
                 min="0"
@@ -1855,22 +1855,22 @@ function PersonalTaskDialog({ onClose, onCreated }: { onClose: () => void; onCre
                 value={budgetHours}
                 onChange={(e) => setBudgetHours(e.target.value)}
                 placeholder="0"
-                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
               />
             </div>
           </div>
           {/* Optional project context — cascading. Zone + Deliverable
               pickers are disabled until a project is chosen. */}
-          <div className="border-t border-slate-100 pt-4 space-y-3">
-            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+          <div className="border-t border-slate-100 dark:border-slate-800 pt-4 space-y-3">
+            <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
               Optional project context
             </div>
             <div>
-              <label className="text-[12px] text-slate-600 mb-1 block">Project</label>
+              <label className="text-[12px] text-slate-600 dark:text-slate-300 mb-1 block">Project</label>
               <select
                 value={projectId}
                 onChange={(e) => handleProjectChange(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none"
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
               >
                 <option value="">— None —</option>
                 {projects.map((p) => (
@@ -1880,12 +1880,12 @@ function PersonalTaskDialog({ onClose, onCreated }: { onClose: () => void; onCre
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[12px] text-slate-600 mb-1 block">Zone</label>
+                <label className="text-[12px] text-slate-600 dark:text-slate-300 mb-1 block">Zone</label>
                 <select
                   value={zoneId}
                   disabled={!projectId}
                   onChange={(e) => setZoneId(e.target.value ? Number(e.target.value) : '')}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">— None —</option>
                   {zones.map((z) => (
@@ -1894,12 +1894,12 @@ function PersonalTaskDialog({ onClose, onCreated }: { onClose: () => void; onCre
                 </select>
               </div>
               <div>
-                <label className="text-[12px] text-slate-600 mb-1 block">Deliverable</label>
+                <label className="text-[12px] text-slate-600 dark:text-slate-300 mb-1 block">Deliverable</label>
                 <select
                   value={projectDeliverableId}
                   disabled={!projectId}
                   onChange={(e) => setProjectDeliverableId(e.target.value ? Number(e.target.value) : '')}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">— None —</option>
                   {deliverables.map((d) => (
@@ -1913,7 +1913,7 @@ function PersonalTaskDialog({ onClose, onCreated }: { onClose: () => void; onCre
             <button
               type="button"
               onClick={onClose}
-              className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
             >
               Cancel
             </button>

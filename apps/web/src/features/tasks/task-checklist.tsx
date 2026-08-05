@@ -73,24 +73,24 @@ export function TaskChecklist({ taskId }: { taskId: number }) {
   };
 
   return (
-    <div className="rounded-md border border-slate-200 bg-white">
-      <header className="flex items-center justify-between px-3 py-2 border-b border-slate-100">
+    <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+      <header className="flex items-center justify-between px-3 py-2 border-b border-slate-100 dark:border-slate-800">
         <div className="flex items-center gap-2">
-          <CheckSquare className="h-4 w-4 text-slate-500" />
-          <span className="text-[12px] font-semibold uppercase tracking-wider text-slate-600">Checklist</span>
+          <CheckSquare className="h-4 w-4 text-slate-500 dark:text-slate-400" />
+          <span className="text-[12px] font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">Checklist</span>
           {totalCount > 0 && (
-            <span className="text-[11px] text-slate-500 font-medium">
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
               {doneCount}/{totalCount} done
             </span>
           )}
         </div>
       </header>
 
-      <ul className="divide-y divide-slate-100">
+      <ul className="divide-y divide-slate-100 dark:divide-slate-800">
         {isLoading ? (
-          <li className="px-3 py-2 text-[12px] text-slate-400 italic">Loading…</li>
+          <li className="px-3 py-2 text-[12px] text-slate-400 dark:text-slate-500 italic">Loading…</li>
         ) : items.length === 0 ? (
-          <li className="px-3 py-3 text-[12px] text-slate-400 italic">
+          <li className="px-3 py-3 text-[12px] text-slate-400 dark:text-slate-500 italic">
             No items yet. Add one below.
           </li>
         ) : (
@@ -111,7 +111,7 @@ export function TaskChecklist({ taskId }: { taskId: number }) {
 
       {canWrite && (
         // Add-row redesigned per user feedback (#54):
-        //   1. The previous bg-slate-50/50 + bg-transparent input read as
+        //   1. The previous bg-slate-50/50 dark:bg-slate-800/50 + bg-transparent input read as
         //      pure greyed-out chrome — users didn't realize they could
         //      type into it.
         //   2. The Plus icon was a passive decoration; clicking it did
@@ -124,7 +124,7 @@ export function TaskChecklist({ taskId }: { taskId: number }) {
         //     input (= "initiate a new item"). Same effect as Tab-into.
         //   • Show the "Add" button always; disable when empty instead of
         //     hiding, so users see what their next action is.
-        <div className="flex items-center gap-2 px-3 py-2 border-t border-slate-100 bg-white">
+        <div className="flex items-center gap-2 px-3 py-2 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
           <button
             type="button"
             onClick={() => inputRef.current?.focus()}
@@ -147,7 +147,7 @@ export function TaskChecklist({ taskId }: { taskId: number }) {
             }}
             placeholder="Add a checklist item…"
             maxLength={500}
-            className="flex-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[13px] text-slate-700 focus:border-blue-400 focus:outline-none placeholder:text-slate-400 disabled:bg-slate-50"
+            className="flex-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-400 focus:outline-none placeholder:text-slate-400 dark:placeholder:text-slate-500 disabled:bg-slate-50"
             disabled={addItem.isPending}
           />
           <button
@@ -195,7 +195,7 @@ function ChecklistRow({
   };
 
   return (
-    <li className="group flex items-start gap-2 px-3 py-2 hover:bg-slate-50/40">
+    <li className="group flex items-start gap-2 px-3 py-2 hover:bg-slate-50/40 dark:hover:bg-slate-800/40">
       <button
         type="button"
         onClick={() => onToggle(!item.isDone)}
@@ -203,7 +203,7 @@ function ChecklistRow({
           'mt-0.5 h-4 w-4 shrink-0 rounded border flex items-center justify-center transition-colors',
           item.isDone
             ? 'bg-emerald-500 border-emerald-500 text-white'
-            : 'bg-white border-slate-300 hover:border-slate-500',
+            : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-600 hover:border-slate-500 dark:hover:border-slate-400',
         )}
         aria-label={item.isDone ? 'Mark as not done' : 'Mark as done'}
       >
@@ -226,7 +226,7 @@ function ChecklistRow({
               if (e.key === 'Escape') { setEditing(false); setDraft(item.text); }
             }}
             maxLength={500}
-            className="w-full text-[13px] bg-white border border-slate-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-blue-400"
+            className="w-full text-[13px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 focus:outline-none focus:border-blue-400"
           />
         ) : (
           <button
@@ -235,8 +235,8 @@ function ChecklistRow({
             disabled={!canWrite}
             className={cn(
               'text-[13px] text-left block w-full break-words',
-              item.isDone && 'line-through text-slate-400',
-              canWrite ? 'cursor-text hover:text-slate-600' : 'cursor-default',
+              item.isDone && 'line-through text-slate-400 dark:text-slate-500',
+              canWrite ? 'cursor-text hover:text-slate-600 dark:hover:text-slate-200' : 'cursor-default',
             )}
             title={canWrite ? 'Click to edit' : ''}
           >
@@ -244,7 +244,7 @@ function ChecklistRow({
           </button>
         )}
         {item.isDone && item.doneByUser && item.doneAt && (
-          <p className="text-[10.5px] text-slate-400 mt-0.5">
+          <p className="text-[10.5px] text-slate-400 dark:text-slate-500 mt-0.5">
             {item.doneByUser.firstName} {item.doneByUser.lastName} · {formatRelative(item.doneAt)}
           </p>
         )}
@@ -253,7 +253,7 @@ function ChecklistRow({
         <button
           type="button"
           onClick={onRemove}
-          className="opacity-0 group-hover:opacity-100 p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 transition-opacity"
+          className="opacity-0 group-hover:opacity-100 p-1 rounded text-slate-300 dark:text-slate-600 hover:text-red-500 hover:bg-red-50 transition-opacity"
           aria-label={`Remove "${item.text}"`}
           title="Remove item"
         >

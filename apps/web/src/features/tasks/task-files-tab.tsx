@@ -161,12 +161,12 @@ export function TaskFilesTab({
           they look at their own task files. Read-only here; click
           "Manage →" to add/remove project-level files. */}
       {projectId != null && (
-        <section className="rounded-md border border-slate-200 bg-slate-50/40 overflow-hidden">
-          <header className="flex items-center justify-between px-3 py-2 border-b border-slate-200 bg-slate-100/60">
+        <section className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50/40 dark:bg-slate-800/40 overflow-hidden">
+          <header className="flex items-center justify-between px-3 py-2 border-b border-slate-200 dark:border-slate-700 bg-slate-100/60 dark:bg-slate-800/60">
             <div className="flex items-center gap-2">
-              <FolderOpen className="h-3.5 w-3.5 text-slate-500" />
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600">Project Files</span>
-              <span className="text-[10px] font-semibold rounded-full bg-slate-200 text-slate-700 px-1.5 py-0.5">
+              <FolderOpen className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">Project Files</span>
+              <span className="text-[10px] font-semibold rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-1.5 py-0.5">
                 {projectFiles.length}
               </span>
             </div>
@@ -180,7 +180,7 @@ export function TaskFilesTab({
             </NavLinkWithReturn>
           </header>
           {projectFiles.length === 0 ? (
-            <div className="px-3 py-4 text-center text-[11px] text-slate-400 italic">
+            <div className="px-3 py-4 text-center text-[11px] text-slate-400 dark:text-slate-500 italic">
               No project-level files yet.
             </div>
           ) : (
@@ -191,7 +191,7 @@ export function TaskFilesTab({
                 <li
                   key={f.id}
                   className={cn(
-                    'flex items-center gap-3 px-3 py-2 hover:bg-white/60',
+                    'flex items-center gap-3 px-3 py-2 hover:bg-white/60 dark:hover:bg-slate-900/60',
                     isFav && 'bg-yellow-50/40',
                   )}
                 >
@@ -203,7 +203,7 @@ export function TaskFilesTab({
                     onClick={() => toggleFavorite(f.id)}
                     className={cn(
                       'shrink-0 p-1 rounded transition-colors',
-                      isFav ? 'text-yellow-500 hover:text-yellow-600' : 'text-slate-300 hover:text-yellow-500',
+                      isFav ? 'text-yellow-500 hover:text-yellow-600' : 'text-slate-300 dark:text-slate-600 hover:text-yellow-500',
                     )}
                     title={isFav ? 'Unpin from top' : 'Pin to top'}
                     aria-label={isFav ? 'Remove from favorites' : 'Add to favorites'}
@@ -224,11 +224,11 @@ export function TaskFilesTab({
                       target="_blank"
                       rel="noopener noreferrer"
                       title={f.url}
-                      className="font-medium text-slate-700 hover:text-blue-600 hover:underline truncate block text-[12px]"
+                      className="font-medium text-slate-700 dark:text-slate-200 hover:text-blue-600 hover:underline truncate block text-[12px]"
                     >
                       {f.name}
                     </a>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
                       {f.kind === 'upload' ? formatBytes(f.fileSize) : 'Link'}
                       {' · '}{formatDate(f.createdAt)}
                     </p>
@@ -253,8 +253,8 @@ export function TaskFilesTab({
           below so the user reads "project → my task" top-down. */}
       <header className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-bold text-slate-900">This Task's Files</h3>
-          <p className="text-[12px] text-slate-500 mt-0.5">
+          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">This Task's Files</h3>
+          <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">
             Attached to this task — also visible under{' '}
             <span className="font-medium">Project → Files → Task Files</span>.
           </p>
@@ -276,21 +276,21 @@ export function TaskFilesTab({
       </header>
 
       {isLoading ? (
-        <div className="rounded-md border border-slate-200 bg-white py-10 text-center text-[12px] text-slate-400">
+        <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-10 text-center text-[12px] text-slate-400 dark:text-slate-500">
           Loading files…
         </div>
       ) : attachments.length === 0 ? (
-        <div className="rounded-md border border-dashed border-slate-200 bg-slate-50/40 py-10 text-center">
-          <FileText className="mx-auto h-8 w-8 text-slate-300" />
-          <p className="mt-2 text-[12px] font-medium text-slate-600">No files attached yet</p>
+        <div className="rounded-md border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50/40 dark:bg-slate-800/40 py-10 text-center">
+          <FileText className="mx-auto h-8 w-8 text-slate-300 dark:text-slate-600" />
+          <p className="mt-2 text-[12px] font-medium text-slate-600 dark:text-slate-300">No files attached yet</p>
           {canWrite && (
-            <p className="text-[11px] text-slate-400 mt-0.5">Upload one to share with the team.</p>
+            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">Upload one to share with the team.</p>
           )}
         </div>
       ) : (
-        <ul className="rounded-md border border-slate-200 bg-white divide-y divide-slate-100 overflow-hidden">
+        <ul className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
           {attachments.map((att) => (
-            <li key={att.id} className="flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50/40">
+            <li key={att.id} className="flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50/40 dark:hover:bg-slate-800/40">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-blue-200 bg-blue-50 text-blue-700">
                 <FileText className="h-4 w-4" />
               </div>
@@ -298,12 +298,12 @@ export function TaskFilesTab({
                 <button
                   type="button"
                   onClick={() => handleDownload(att)}
-                  className="font-medium text-slate-800 hover:text-blue-600 hover:underline truncate block text-left text-[13px]"
+                  className="font-medium text-slate-800 dark:text-slate-100 hover:text-blue-600 hover:underline truncate block text-left text-[13px]"
                   title={`Download ${att.fileName}`}
                 >
                   {att.fileName}
                 </button>
-                <p className="text-[10.5px] text-slate-500 mt-0.5">
+                <p className="text-[10.5px] text-slate-500 dark:text-slate-400 mt-0.5">
                   {formatBytes(att.fileSize)}
                   {att.mimeType ? ` · ${att.mimeType}` : ''}
                   {' · '}
@@ -323,7 +323,7 @@ export function TaskFilesTab({
               <button
                 type="button"
                 onClick={() => handleDownload(att)}
-                className="shrink-0 p-1.5 rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                className="shrink-0 p-1.5 rounded text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-100"
                 title="Download / open"
               >
                 <Download className="h-3.5 w-3.5" />
@@ -334,7 +334,7 @@ export function TaskFilesTab({
                   onClick={() => {
                     if (confirm(`Remove "${att.fileName}"?`)) remove.mutate(att.id);
                   }}
-                  className="shrink-0 p-1.5 rounded text-slate-400 hover:bg-red-50 hover:text-red-600"
+                  className="shrink-0 p-1.5 rounded text-slate-400 dark:text-slate-500 hover:bg-red-50 hover:text-red-600"
                   title="Remove"
                 >
                   <Trash2 className="h-3.5 w-3.5" />

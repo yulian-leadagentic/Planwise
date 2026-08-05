@@ -34,13 +34,13 @@ const STATUS_OPTIONS = ['not_started', 'in_progress', 'in_review', 'completed', 
 const PRIORITY_OPTIONS = ['low', 'medium', 'high', 'critical'];
 
 const statusColors: Record<string, string> = {
-  not_started: 'bg-slate-100 text-slate-600', in_progress: 'bg-blue-100 text-blue-700',
+  not_started: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300', in_progress: 'bg-blue-100 text-blue-700',
   in_review: 'bg-violet-100 text-violet-700', completed: 'bg-emerald-100 text-emerald-700',
   on_hold: 'bg-amber-100 text-amber-700', cancelled: 'bg-red-100 text-red-700',
 };
 
 const priorityColors: Record<string, string> = {
-  low: 'bg-slate-100 text-slate-600', medium: 'bg-blue-100 text-blue-700',
+  low: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300', medium: 'bg-blue-100 text-blue-700',
   high: 'bg-amber-100 text-amber-700', critical: 'bg-red-100 text-red-700',
 };
 
@@ -100,27 +100,27 @@ export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerP
         aria-modal="true"
         aria-labelledby="task-drawer-title"
         tabIndex={-1}
-        className="fixed inset-y-0 right-0 z-50 w-[520px] max-w-[90vw] bg-white border-l border-slate-200 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200 focus:outline-none"
+        className="fixed inset-y-0 right-0 z-50 w-[520px] max-w-[90vw] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200 focus:outline-none"
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-          <h2 id="task-drawer-title" className="text-sm font-bold text-slate-900 truncate">
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-5 py-4">
+          <h2 id="task-drawer-title" className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
             {isLoading ? 'Loading...' : (task as any)?.name || 'Task'}
           </h2>
-          <button onClick={onClose} className="rounded-md p-2 hover:bg-slate-100 text-slate-400 hover:text-slate-600" aria-label="Close task drawer">
+          <button onClick={onClose} className="rounded-md p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" aria-label="Close task drawer">
             <X className="h-4 w-4" />
           </button>
         </div>
 
         {isLoading ? (
-          <div className="flex-1 flex items-center justify-center text-sm text-slate-400">Loading task...</div>
+          <div className="flex-1 flex items-center justify-center text-sm text-slate-400 dark:text-slate-500">Loading task...</div>
         ) : !task ? (
-          <div className="flex-1 flex items-center justify-center text-sm text-slate-400">Task not found</div>
+          <div className="flex-1 flex items-center justify-center text-sm text-slate-400 dark:text-slate-500">Task not found</div>
         ) : (
           <>
             {/* Task code + quick status */}
-            <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
-              {(task as any).code && <span className="font-mono text-[11px] text-slate-400">{(task as any).code}</span>}
+            <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
+              {(task as any).code && <span className="font-mono text-[11px] text-slate-400 dark:text-slate-500">{(task as any).code}</span>}
               <StatusSelect
                 currentStatus={(task as any).status}
                 onChange={(s) => updateTask.mutate({ field: 'status', value: s })}
@@ -145,7 +145,7 @@ export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerP
             {/* Tabs — Time is hidden when this drawer is opened from a
                 manager-facing surface (e.g. the project Kanban) so logging
                 hours on behalf of the team isn't even an option. */}
-            <div className="flex border-b border-slate-200 px-5">
+            <div className="flex border-b border-slate-200 dark:border-slate-700 px-5">
               {([
                 ...(hideTimeTab ? [] : [{ key: 'time' as const, label: 'Time', icon: Clock }]),
                 // Renamed "Details" → "Project Info" (Z1). The tab now
@@ -157,7 +157,7 @@ export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerP
               ]).map((t) => (
                 <button key={t.key} onClick={() => setTab(t.key)}
                   className={cn('border-b-2 px-3 py-2 text-xs font-semibold transition-colors flex items-center gap-1',
-                    tab === t.key ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600')}>
+                    tab === t.key ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200')}>
                   {t.icon && <t.icon className="h-3 w-3" />}
                   {t.label}
                 </button>
@@ -204,7 +204,7 @@ function TaskHealthBanner({ task, onUpdateDueDate }: { task: any; onUpdateDueDat
   const health = getTaskHealth(task);
   if (health.level === 'ok' && health.reasons.length === 0) {
     return (
-      <div className="px-5 py-2.5 border-b border-slate-100 bg-slate-50/50 flex items-center gap-4 text-[11px] text-slate-600">
+      <div className="px-5 py-2.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 flex items-center gap-4 text-[11px] text-slate-600 dark:text-slate-300">
         <span className="flex items-center gap-1">
           <Clock className="h-3 w-3" /> {health.loggedHours}h / {health.estimatedHours}h
         </span>
@@ -229,7 +229,7 @@ function TaskHealthBanner({ task, onUpdateDueDate }: { task: any; onUpdateDueDat
         <ul className={cn('mt-0.5 text-[12px] space-y-0.5', textCls)}>
           {health.reasons.map((r, i) => <li key={i}>• {r}</li>)}
         </ul>
-        <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-600">
+        <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-600 dark:text-slate-300">
           <span className="flex items-center gap-1">
             <Clock className="h-3 w-3" /> {health.loggedHours}h / {health.estimatedHours}h
           </span>
@@ -283,7 +283,7 @@ function DueDateChip({ task, onUpdate }: { task: any; onUpdate: (value: string |
           if (e.key === 'Escape') { e.currentTarget.value = dueDateValue; setEditing(false); }
           if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
         }}
-        className="rounded border border-blue-300 bg-white px-1.5 py-0.5 text-[11px] focus:outline-none focus:border-blue-500"
+        className="rounded border border-blue-300 bg-white dark:bg-slate-900 px-1.5 py-0.5 text-[11px] focus:outline-none focus:border-blue-500"
       />
     );
   }
@@ -296,18 +296,18 @@ function DueDateChip({ task, onUpdate }: { task: any; onUpdate: (value: string |
         disabled={!canEdit}
         className={cn(
           'inline-flex items-center gap-1 rounded px-1 py-0.5',
-          canEdit ? 'hover:bg-white/60 cursor-pointer' : 'cursor-default',
+          canEdit ? 'hover:bg-white/60 dark:hover:bg-slate-900/60 cursor-pointer' : 'cursor-default',
         )}
         title={canEdit ? 'Click to change due date' : ''}
       >
         <Calendar className="h-3 w-3" />
         {task.endDate ? formatDate(task.endDate.split('T')[0]) : (
-          <span className="italic text-slate-400">set due date</span>
+          <span className="italic text-slate-400 dark:text-slate-500">set due date</span>
         )}
         {/* Pencil affordance — shows the field is editable. #53. Permission-
             gated via canEdit above (button is disabled when not allowed). */}
         {canEdit && (
-          <Pencil className="h-2.5 w-2.5 text-slate-400" aria-hidden="true" />
+          <Pencil className="h-2.5 w-2.5 text-slate-400 dark:text-slate-500" aria-hidden="true" />
         )}
       </button>
       {/* Explicit clear button — replaces the "blur with empty value clears
@@ -319,7 +319,7 @@ function DueDateChip({ task, onUpdate }: { task: any; onUpdate: (value: string |
           onClick={() => {
             if (confirm('Clear due date?')) onUpdate(null);
           }}
-          className="p-0.5 rounded text-slate-300 hover:text-red-500 hover:bg-red-50"
+          className="p-0.5 rounded text-slate-300 dark:text-slate-600 hover:text-red-500 hover:bg-red-50"
           title="Clear due date"
           aria-label="Clear due date"
         >
@@ -384,10 +384,10 @@ function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any
             or to the project (#55). Bumped to readable weight and renamed
             to "Assigned to this task" so the scope is unambiguous. */}
         <div>
-          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-700">
+          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
             Assigned to this task
           </label>
-          <p className="text-[10.5px] text-slate-500 leading-tight">
+          <p className="text-[10.5px] text-slate-500 dark:text-slate-400 leading-tight">
             People responsible for completing this task.
           </p>
         </div>
@@ -397,23 +397,23 @@ function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any
       </div>
 
       {showPicker && (
-        <div className="mt-1.5 rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center gap-2 border-b border-slate-100 px-2.5 py-2">
-            <Search className="h-3.5 w-3.5 text-slate-400" />
+        <div className="mt-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm">
+          <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 px-2.5 py-2">
+            <Search className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search people..."
-              className="flex-1 bg-transparent text-[12px] outline-none placeholder:text-slate-400" autoFocus />
+              className="flex-1 bg-transparent text-[12px] outline-none placeholder:text-slate-400 dark:placeholder:text-slate-500" autoFocus />
           </div>
           <div className="max-h-32 overflow-y-auto py-1">
             {filtered.length === 0 ? (
-              <p className="px-3 py-2 text-[11px] text-slate-400">No users found</p>
+              <p className="px-3 py-2 text-[11px] text-slate-400 dark:text-slate-500">No users found</p>
             ) : (
               filtered.slice(0, 10).map((u: any) => (
                 <button key={u.id} onClick={() => addMutation.mutate(u.id)}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-[12px] hover:bg-slate-50">
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-[12px] hover:bg-slate-50 dark:hover:bg-slate-800/50">
                   <div className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 text-[8px] font-semibold flex items-center justify-center">
                     {(u.firstName?.[0] ?? '')}{(u.lastName?.[0] ?? '')}
                   </div>
-                  <span className="text-slate-700">{u.firstName} {u.lastName}</span>
+                  <span className="text-slate-700 dark:text-slate-200">{u.firstName} {u.lastName}</span>
                 </button>
               ))
             )}
@@ -423,19 +423,19 @@ function AssigneeManager({ taskId, assignees }: { taskId: number; assignees: any
 
       <div className="mt-1.5 space-y-1">
         {(assignees ?? []).length === 0 && !showPicker ? (
-          <p className="text-[12px] text-slate-400 italic">No assignees</p>
+          <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">No assignees</p>
         ) : (
           (assignees ?? []).map((a: any) => (
-            <div key={a.id} className="flex items-center gap-2 rounded-md bg-slate-50 px-2 py-1.5 group">
+            <div key={a.id} className="flex items-center gap-2 rounded-md bg-slate-50 dark:bg-slate-800/50 px-2 py-1.5 group">
               <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-[9px] font-semibold flex items-center justify-center">
                 {(a.user?.firstName?.[0] ?? '') + (a.user?.lastName?.[0] ?? '')}
               </div>
-              <span className="flex-1 text-[12px] text-slate-700">{a.user?.firstName} {a.user?.lastName}</span>
-              {a.role && <span className="text-[10px] text-slate-400">({a.role})</span>}
+              <span className="flex-1 text-[12px] text-slate-700 dark:text-slate-200">{a.user?.firstName} {a.user?.lastName}</span>
+              {a.role && <span className="text-[10px] text-slate-400 dark:text-slate-500">({a.role})</span>}
               <button
                 onClick={() => removeMutation.mutate(a.user?.id)}
                 aria-label={`Remove ${a.user?.firstName ?? 'assignee'}`}
-                className="opacity-60 group-hover:opacity-100 rounded p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 transition-opacity">
+                className="opacity-60 group-hover:opacity-100 rounded p-1.5 text-slate-500 dark:text-slate-400 hover:text-red-600 hover:bg-red-50 transition-opacity">
                 <X className="h-3 w-3" />
               </button>
             </div>
@@ -482,7 +482,7 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
           render a read-only span so users can still SEE the due date but
           can't change it. */}
       <div className="flex items-center gap-2">
-        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider w-20 shrink-0">Due Date</label>
+        <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider w-20 shrink-0">Due Date</label>
         {canEditDueDate ? (
           <input
             type="date"
@@ -494,11 +494,11 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
               // through unchanged; the API's @IsDateString accepts it as-is.
               if (v !== dueDateValue) onUpdate('endDate', v || null);
             }}
-            className="rounded-md border border-slate-200 px-2 py-1 text-sm focus:border-blue-400 focus:outline-none"
+            className="rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-sm focus:border-blue-400 focus:outline-none"
           />
         ) : (
-          <span className="text-sm text-slate-700">
-            {dueDateValue || <span className="text-slate-400 italic">no due date</span>}
+          <span className="text-sm text-slate-700 dark:text-slate-200">
+            {dueDateValue || <span className="text-slate-400 dark:text-slate-500 italic">no due date</span>}
           </span>
         )}
         {task.dueDateOverridden && (
@@ -522,15 +522,15 @@ function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: strin
             zone information (which made it look like a field was just
             missing rather than intentionally unscoped). */}
         <div>
-          <span className="text-slate-400">Zone:</span>{' '}
+          <span className="text-slate-400 dark:text-slate-500">Zone:</span>{' '}
           {task.zone ? (
-            <span className="text-slate-700 font-medium">{task.zone.name}</span>
+            <span className="text-slate-700 dark:text-slate-200 font-medium">{task.zone.name}</span>
           ) : (
-            <span className="text-slate-500 italic">Project Root</span>
+            <span className="text-slate-500 dark:text-slate-400 italic">Project Root</span>
           )}
         </div>
-        {task.phase && <div><span className="text-slate-400">Service:</span> <span className="text-slate-700 font-medium">{task.phase.name}</span></div>}
-        {task.serviceType && <div><span className="text-slate-400">Deliverable:</span> <span className="text-slate-700 font-medium">{task.serviceType.name}</span></div>}
+        {task.phase && <div><span className="text-slate-400 dark:text-slate-500">Service:</span> <span className="text-slate-700 dark:text-slate-200 font-medium">{task.phase.name}</span></div>}
+        {task.serviceType && <div><span className="text-slate-400 dark:text-slate-500">Deliverable:</span> <span className="text-slate-700 dark:text-slate-200 font-medium">{task.serviceType.name}</span></div>}
       </div>
     </div>
   );
@@ -543,7 +543,7 @@ function TaskProjectInfoBlock({ projectId, backLabel }: { projectId: number; bac
     staleTime: 5 * 60 * 1000,
   });
   if (isLoading) {
-    return <div className="rounded-md border border-slate-200 bg-slate-50/60 p-3 text-[12px] text-slate-400">Loading project info…</div>;
+    return <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 p-3 text-[12px] text-slate-400 dark:text-slate-500">Loading project info…</div>;
   }
   if (!project) return null;
 
@@ -558,9 +558,9 @@ function TaskProjectInfoBlock({ projectId, backLabel }: { projectId: number; bac
   ];
 
   return (
-    <div className="rounded-md border border-slate-200 bg-slate-50/60 p-3">
+    <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 p-3">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Project Info</span>
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Project Info</span>
         <NavLinkWithReturn
           to={`/projects/${projectId}`}
           returnLabel={backLabel}
@@ -571,8 +571,8 @@ function TaskProjectInfoBlock({ projectId, backLabel }: { projectId: number; bac
       </div>
       <dl className="space-y-1 text-[12px]">
         <div className="flex gap-2">
-          <dt className="text-slate-500 w-[110px] shrink-0">Project:</dt>
-          <dd className="text-slate-700 font-medium break-words min-w-0">{project.name}</dd>
+          <dt className="text-slate-500 dark:text-slate-400 w-[110px] shrink-0">Project:</dt>
+          <dd className="text-slate-700 dark:text-slate-200 font-medium break-words min-w-0">{project.name}</dd>
         </div>
         {/* BIM Leader — resolved from the project_partner_roles row with
             role.code = bim_leader (see projects.service.findOne). Shown
@@ -580,23 +580,23 @@ function TaskProjectInfoBlock({ projectId, backLabel }: { projectId: number; bac
             who owns BIM for the project without digging into the team
             tab. Falls back to em-dash when unassigned. */}
         <div className="flex gap-2">
-          <dt className="text-slate-500 w-[110px] shrink-0">BIM Leader:</dt>
-          <dd className="text-slate-700 break-words min-w-0">
+          <dt className="text-slate-500 dark:text-slate-400 w-[110px] shrink-0">BIM Leader:</dt>
+          <dd className="text-slate-700 dark:text-slate-200 break-words min-w-0">
             {project.bimLeader ? (
               `${project.bimLeader.firstName ?? ''} ${project.bimLeader.lastName ?? ''}`.trim() || (
-                <span className="text-slate-300 italic">—</span>
+                <span className="text-slate-300 dark:text-slate-600 italic">—</span>
               )
             ) : (
-              <span className="text-slate-300 italic">—</span>
+              <span className="text-slate-300 dark:text-slate-600 italic">—</span>
             )}
           </dd>
         </div>
         {fields.map((f) => (
           <div key={f.label} className="flex gap-2">
-            <dt className="text-slate-500 w-[110px] shrink-0">{f.label}:</dt>
-            <dd className="text-slate-700 break-words min-w-0">
+            <dt className="text-slate-500 dark:text-slate-400 w-[110px] shrink-0">{f.label}:</dt>
+            <dd className="text-slate-700 dark:text-slate-200 break-words min-w-0">
               {f.value == null ? (
-                <span className="text-slate-300 italic">—</span>
+                <span className="text-slate-300 dark:text-slate-600 italic">—</span>
               ) : f.isLink ? (
                 // The hub field can hold multiple "Label | URL" lines.
                 // Render each on its own row; linkify URLs.
@@ -608,7 +608,7 @@ function TaskProjectInfoBlock({ projectId, backLabel }: { projectId: number; bac
                   const url = sep >= 0 ? trimmed.slice(sep + 1).trim() : trimmed;
                   return (
                     <div key={i}>
-                      {label && <span className="text-slate-500">{label}: </span>}
+                      {label && <span className="text-slate-500 dark:text-slate-400">{label}: </span>}
                       {/^https?:\/\//.test(url)
                         ? <a href={url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline break-all">{url}</a>
                         : <span className="break-all">{url}</span>}
@@ -620,10 +620,10 @@ function TaskProjectInfoBlock({ projectId, backLabel }: { projectId: number; bac
           </div>
         ))}
       </dl>
-      <div className="mt-2 pt-2 border-t border-slate-200">
-        <span className="text-[10px] text-slate-500 uppercase tracking-wider">Services Per Contract</span>
-        <p className="text-[12px] text-slate-600 mt-1 whitespace-pre-wrap">
-          {project.servicesPerContract?.trim() || <span className="text-slate-300 italic">—</span>}
+      <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+        <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-wider">Services Per Contract</span>
+        <p className="text-[12px] text-slate-600 dark:text-slate-300 mt-1 whitespace-pre-wrap">
+          {project.servicesPerContract?.trim() || <span className="text-slate-300 dark:text-slate-600 italic">—</span>}
         </p>
       </div>
     </div>
@@ -652,21 +652,21 @@ function TaskTimeTab({ taskId }: { taskId: number }) {
           today's entry) so users can verify what they've already
           reported. Server-side, the /time-entries route is scoped to
           the caller's userId, so this is *your* reporting only. */}
-      <div className="rounded-md border border-slate-200 bg-white overflow-hidden">
-        <div className="flex items-center justify-between px-3 py-2 bg-slate-50 border-b border-slate-100">
+      <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+        <div className="flex items-center justify-between px-3 py-2 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2">
-            <Clock className="h-3.5 w-3.5 text-slate-400" />
-            <span className="text-[12px] font-semibold text-slate-700">Your reporting history</span>
+            <Clock className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
+            <span className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">Your reporting history</span>
           </div>
           <div className="flex items-center gap-3 text-[11px] tabular-nums">
-            <span className="text-slate-500">
+            <span className="text-slate-500 dark:text-slate-400">
               {list.length} {list.length === 1 ? 'entry' : 'entries'}
             </span>
-            <span className="text-slate-700 font-bold">
+            <span className="text-slate-700 dark:text-slate-200 font-bold">
               {(totalMinutes / 60).toFixed(2)}h
             </span>
             {billableMinutes !== totalMinutes && (
-              <span className="text-slate-400">
+              <span className="text-slate-400 dark:text-slate-500">
                 ({(billableMinutes / 60).toFixed(2)}h billable)
               </span>
             )}
@@ -674,13 +674,13 @@ function TaskTimeTab({ taskId }: { taskId: number }) {
         </div>
 
         {isLoading ? (
-          <div className="px-3 py-6 text-center text-[12px] text-slate-400">Loading entries…</div>
+          <div className="px-3 py-6 text-center text-[12px] text-slate-400 dark:text-slate-500">Loading entries…</div>
         ) : list.length === 0 ? (
-          <div className="px-3 py-6 text-center text-[12px] text-slate-400 italic">
+          <div className="px-3 py-6 text-center text-[12px] text-slate-400 dark:text-slate-500 italic">
             No entries yet — use the form above to log your first.
           </div>
         ) : (
-          <div className="max-h-[360px] overflow-y-auto divide-y divide-slate-100">
+          <div className="max-h-[360px] overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
             {list.map((e: any) => (
               <TimeEntryRow key={e.id} entry={e} taskId={taskId} />
             ))}
@@ -746,19 +746,19 @@ function TimeEntryRow({ entry, taskId }: { entry: any; taskId: number }) {
       <div className="px-3 py-2 bg-blue-50/40 space-y-1.5">
         <div className="flex items-center gap-2">
           <input type="date" value={date} onChange={(ev) => setDate(ev.target.value)}
-            className="rounded border border-slate-200 px-1.5 py-1 text-[11px] focus:border-blue-400 focus:outline-none" />
+            className="rounded border border-slate-200 dark:border-slate-700 px-1.5 py-1 text-[11px] focus:border-blue-400 focus:outline-none" />
           <input type="time" step="300" value={start} onChange={(ev) => setStart(ev.target.value)}
-            className="w-[82px] rounded border border-slate-200 px-1.5 py-1 text-[11px] focus:border-blue-400 focus:outline-none" />
-          <span className="text-slate-400 text-[10px]">→</span>
+            className="w-[82px] rounded border border-slate-200 dark:border-slate-700 px-1.5 py-1 text-[11px] focus:border-blue-400 focus:outline-none" />
+          <span className="text-slate-400 dark:text-slate-500 text-[10px]">→</span>
           <input type="time" step="300" value={end} onChange={(ev) => setEnd(ev.target.value)}
-            className="w-[82px] rounded border border-slate-200 px-1.5 py-1 text-[11px] focus:border-blue-400 focus:outline-none" />
+            className="w-[82px] rounded border border-slate-200 dark:border-slate-700 px-1.5 py-1 text-[11px] focus:border-blue-400 focus:outline-none" />
           <span className="ml-auto text-[11px] font-bold text-blue-600 tabular-nums">
             {(editingMinutes / 60).toFixed(2)}h
           </span>
         </div>
         <input type="text" value={note} onChange={(ev) => setNote(ev.target.value)}
           placeholder="Note (optional)…"
-          className="w-full rounded border border-slate-200 px-1.5 py-1 text-[11px] focus:border-blue-400 focus:outline-none" />
+          className="w-full rounded border border-slate-200 dark:border-slate-700 px-1.5 py-1 text-[11px] focus:border-blue-400 focus:outline-none" />
         <div className="flex items-center gap-1.5">
           <button onClick={() => updateMutation.mutate()}
             disabled={editingMinutes <= 0 || updateMutation.isPending}
@@ -767,7 +767,7 @@ function TimeEntryRow({ entry, taskId }: { entry: any; taskId: number }) {
           </button>
           <button onClick={() => setEditing(false)}
             disabled={updateMutation.isPending}
-            className="rounded px-2 py-0.5 text-[11px] font-semibold text-slate-500 hover:bg-slate-100">
+            className="rounded px-2 py-0.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
             Cancel
           </button>
         </div>
@@ -776,18 +776,18 @@ function TimeEntryRow({ entry, taskId }: { entry: any; taskId: number }) {
   }
 
   return (
-    <div className="group flex items-center gap-3 px-3 py-2 text-[12px] hover:bg-slate-50/60">
-      <span className="text-slate-600 tabular-nums w-[78px] shrink-0">
+    <div className="group flex items-center gap-3 px-3 py-2 text-[12px] hover:bg-slate-50/60 dark:hover:bg-slate-800/60">
+      <span className="text-slate-600 dark:text-slate-300 tabular-nums w-[78px] shrink-0">
         {entry.date ? formatDate(entry.date.split('T')[0]) : '—'}
       </span>
-      <span className="text-slate-500 tabular-nums w-[90px] shrink-0">
+      <span className="text-slate-500 dark:text-slate-400 tabular-nums w-[90px] shrink-0">
         {entry.startTime && entry.endTime ? `${entry.startTime} – ${entry.endTime}` : ''}
       </span>
-      <span className="font-semibold text-slate-700 tabular-nums w-[42px] shrink-0">
+      <span className="font-semibold text-slate-700 dark:text-slate-200 tabular-nums w-[42px] shrink-0">
         {((entry.minutes ?? 0) / 60).toFixed(2)}h
       </span>
       {entry.note && (
-        <span className="text-slate-600 truncate flex-1" title={entry.note}>
+        <span className="text-slate-600 dark:text-slate-300 truncate flex-1" title={entry.note}>
           {entry.note}
         </span>
       )}
@@ -805,7 +805,7 @@ function TimeEntryRow({ entry, taskId }: { entry: any; taskId: number }) {
           <button
             onClick={() => setConfirmingDelete(false)}
             disabled={deleteMutation.isPending}
-            className="text-[10px] text-slate-500 hover:text-slate-700"
+            className="text-[10px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100"
           >
             Cancel
           </button>
@@ -814,7 +814,7 @@ function TimeEntryRow({ entry, taskId }: { entry: any; taskId: number }) {
         <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             onClick={() => setEditing(true)}
-            className="rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+            className="rounded p-1 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-700 dark:hover:text-slate-100"
             aria-label="Edit entry"
             title="Edit"
           >
@@ -822,7 +822,7 @@ function TimeEntryRow({ entry, taskId }: { entry: any; taskId: number }) {
           </button>
           <button
             onClick={() => setConfirmingDelete(true)}
-            className="rounded p-1 text-slate-400 hover:bg-red-100 hover:text-red-600"
+            className="rounded p-1 text-slate-400 dark:text-slate-500 hover:bg-red-100 hover:text-red-600"
             aria-label="Delete entry"
             title="Delete"
           >
@@ -870,15 +870,15 @@ function DeliverableTargetRow({ task }: { task: any }) {
 
   return (
     <div className="flex items-center gap-2">
-      <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider w-20 shrink-0">Deliverable</label>
+      <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider w-20 shrink-0">Deliverable</label>
       <div className="flex items-center gap-2 text-sm">
-        <span className="text-slate-700 font-medium">{d.name}</span>
+        <span className="text-slate-700 dark:text-slate-200 font-medium">{d.name}</span>
         {dateStr ? (
           <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700 tabular-nums" title={zoneTarget ? `Zone × Deliverable target` : 'Deliverable-level target'}>
             {dateStr}
           </span>
         ) : (
-          <span className="text-slate-400 italic text-[12px]">no target set</span>
+          <span className="text-slate-400 dark:text-slate-500 italic text-[12px]">no target set</span>
         )}
       </div>
     </div>
@@ -935,8 +935,8 @@ function ReviewActions({ task }: { task: any }) {
   if (!canSubmit && !canDecide) return null;
 
   return (
-    <div className="px-5 py-2.5 border-b border-slate-100 bg-slate-50/60 flex items-center gap-2">
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mr-1">Review</span>
+    <div className="px-5 py-2.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/60 flex items-center gap-2">
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mr-1">Review</span>
       {canSubmit && (
         <button
           type="button"
@@ -963,7 +963,7 @@ function ReviewActions({ task }: { task: any }) {
           <button
             type="button"
             onClick={() => setShowReturn(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-amber-700 hover:bg-amber-50 text-[12px] font-semibold"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-amber-300 text-amber-700 hover:bg-amber-50 text-[12px] font-semibold"
           >
             <RotateCcw className="h-3 w-3" />
             Return for revisions
@@ -977,7 +977,7 @@ function ReviewActions({ task }: { task: any }) {
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="Why is it being returned? (required)"
-            className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-[12px] focus:border-blue-500 focus:outline-none"
+            className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] focus:border-blue-500 focus:outline-none"
             onKeyDown={(e) => {
               if (e.key === 'Enter' && reason.trim()) recordReview.mutate({ action: 'return', reason: reason.trim() });
               if (e.key === 'Escape') { setShowReturn(false); setReason(''); }
@@ -994,7 +994,7 @@ function ReviewActions({ task }: { task: any }) {
           <button
             type="button"
             onClick={() => { setShowReturn(false); setReason(''); }}
-            className="px-2 py-1.5 rounded-lg text-slate-500 hover:text-slate-700 text-[12px]"
+            className="px-2 py-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 text-[12px]"
           >
             Cancel
           </button>

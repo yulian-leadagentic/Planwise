@@ -22,7 +22,7 @@ import { cn } from '@/lib/utils';
 interface ProjectOption { id: number; name: string; number?: string }
 interface ZoneOption { id: number; name: string }
 
-const inputCls = 'w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 focus:border-blue-500 focus:outline-none';
+const inputCls = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
 export function CreateTaskModal({
   onClose,
@@ -112,10 +112,10 @@ export function CreateTaskModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-[560px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 sticky top-0 bg-white z-10">
-          <h2 className="text-base font-bold text-slate-900">New Task</h2>
-          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[560px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900 z-10">
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">New Task</h2>
+          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -123,7 +123,7 @@ export function CreateTaskModal({
         <form onSubmit={submit} className="p-5 space-y-4">
           {/* Project — required. */}
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
               Project <span className="text-red-500">*</span>
             </label>
             <select
@@ -138,15 +138,15 @@ export function CreateTaskModal({
                 </option>
               ))}
             </select>
-            <p className="mt-1 text-[11px] text-slate-400">
+            <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
               Standalone tasks (without a project link) require a schema change — coming in a later sprint.
             </p>
           </div>
 
           {/* Zone — optional. Empty = "project root" task. */}
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
-              Zone <span className="text-slate-400 font-normal">(optional)</span>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+              Zone <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
             </label>
             <select
               value={form.zoneId}
@@ -164,20 +164,20 @@ export function CreateTaskModal({
           {/* Name + Code */}
           <div className="grid grid-cols-[1fr_120px] gap-3">
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
                 Task Name <span className="text-red-500">*</span>
               </label>
               <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} className={inputCls} autoFocus />
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Code</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Code</label>
               <input value={form.code} onChange={(e) => setForm((f) => ({ ...f, code: e.target.value }))} className={inputCls} placeholder="auto" />
             </div>
           </div>
 
           {/* Description */}
           <div>
-            <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Description</label>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Description</label>
             <textarea
               value={form.description}
               onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
@@ -189,7 +189,7 @@ export function CreateTaskModal({
           {/* Priority + Estimated start + Budget hours */}
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Priority</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Priority</label>
               <select value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value }))} className={inputCls}>
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
@@ -198,17 +198,17 @@ export function CreateTaskModal({
               </select>
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Est. Start</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Est. Start</label>
               <input type="date" value={form.estimatedStartDate} onChange={(e) => setForm((f) => ({ ...f, estimatedStartDate: e.target.value }))} className={inputCls} />
             </div>
             <div>
-              <label className="text-[13px] font-semibold text-slate-700 mb-1.5 block">Budget (h)</label>
+              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Budget (h)</label>
               <input type="number" min="0" step="0.5" value={form.budgetHours} onChange={(e) => setForm((f) => ({ ...f, budgetHours: e.target.value }))} className={inputCls} />
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-            <button type="button" onClick={onClose} className="bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-[13px] font-semibold px-3.5 py-2 rounded-lg">
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <button type="button" onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">
               Cancel
             </button>
             <button type="submit" disabled={create.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">

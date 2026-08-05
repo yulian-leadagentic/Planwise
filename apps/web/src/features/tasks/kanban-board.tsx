@@ -20,7 +20,7 @@ import { STATUS_PILL, STATUS_LABEL, ZONE_BORDER_COLORS } from '@/lib/task-consta
 // same as every other status badge in the app ("To Do" / "Done", not "Not
 // Started" / "Completed").
 const columns = [
-  { id: 'not_started', label: 'To Do', color: 'border-t-slate-400', bg: 'bg-slate-50' },
+  { id: 'not_started', label: 'To Do', color: 'border-t-slate-400', bg: 'bg-slate-50 dark:bg-slate-800/50' },
   { id: 'in_progress', label: 'In Progress', color: 'border-t-blue-500', bg: 'bg-blue-50/30' },
   { id: 'in_review', label: 'In Review', color: 'border-t-violet-500', bg: 'bg-violet-50/30' },
   { id: 'on_hold', label: 'On Hold', color: 'border-t-amber-500', bg: 'bg-amber-50/30' },
@@ -53,12 +53,12 @@ function KanbanCard({ task, onOpen }: { task: any; onOpen: (id: number) => void 
       ? 'border-red-300 bg-red-50 ring-1 ring-red-200'
       : health.level === 'warning'
         ? 'border-amber-300 bg-amber-50/50'
-        : 'border-slate-200 bg-white';
+        : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900';
 
   // Hours pill tone matches /my-tasks: green<80% / amber 80-100% / red>100% / slate if no estimate.
   const pct = health.estimatedHours > 0 ? (health.loggedHours / health.estimatedHours) * 100 : 0;
   const hoursTone = health.estimatedHours <= 0
-    ? 'bg-slate-100 text-slate-600 border-slate-200'
+    ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
     : pct >= 100
       ? 'bg-red-100 text-red-700 border-red-200'
       : pct >= 80
@@ -90,11 +90,11 @@ function KanbanCard({ task, onOpen }: { task: any; onOpen: (id: number) => void 
           aria-label="Drag to reorder or change column"
           title="Drag to move"
           {...listeners}
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-slate-100 hover:text-slate-500 cursor-grab active:cursor-grabbing touch-none focus:outline-none focus:ring-2 focus:ring-blue-300 focus:opacity-100"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-300 dark:text-slate-600 opacity-0 group-hover:opacity-100 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-500 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing touch-none focus:outline-none focus:ring-2 focus:ring-blue-300 focus:opacity-100"
         >
           <GripVertical className="h-3.5 w-3.5" />
         </button>
-        {task.code && <span className="text-[10px] font-mono text-slate-500 shrink-0">{task.code}</span>}
+        {task.code && <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 shrink-0">{task.code}</span>}
         <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider shrink-0', STATUS_PILL[task.status] ?? STATUS_PILL.not_started)}>
           {STATUS_LABEL[task.status] ?? task.status}
         </span>
@@ -110,7 +110,7 @@ function KanbanCard({ task, onOpen }: { task: any; onOpen: (id: number) => void 
       <button
         type="button"
         onClick={() => onOpen(task.id)}
-        className="w-full text-left cursor-pointer hover:bg-slate-50/50 focus:outline-none focus:ring-2 focus:ring-blue-300"
+        className="w-full text-left cursor-pointer hover:bg-slate-50/50 dark:hover:bg-slate-800/50 focus:outline-none focus:ring-2 focus:ring-blue-300"
       >
         <TaskCardBody task={task} isOverdue={health.isOverdue} hideProject />
       </button>
@@ -126,7 +126,7 @@ function KanbanCard({ task, onOpen }: { task: any; onOpen: (id: number) => void 
           {health.estimatedHours > 0 && <span className="opacity-70">/ {health.estimatedHours}h</span>}
         </div>
         {breadcrumb.length > 0 && (
-          <span className="text-[10px] text-slate-400 truncate max-w-[140px]" title={breadcrumb.join(' > ')}>
+          <span className="text-[10px] text-slate-400 dark:text-slate-500 truncate max-w-[140px]" title={breadcrumb.join(' > ')}>
             {breadcrumb.join(' › ')}
           </span>
         )}
@@ -145,7 +145,7 @@ function KanbanCard({ task, onOpen }: { task: any; onOpen: (id: number) => void 
               );
             })}
             {task.assignees.length > 4 && (
-              <span className="text-[9px] text-slate-500 ml-1">+{task.assignees.length - 4}</span>
+              <span className="text-[9px] text-slate-500 dark:text-slate-400 ml-1">+{task.assignees.length - 4}</span>
             )}
           </div>
         )}
@@ -172,13 +172,13 @@ function KanbanColumn({ column, tasks, onOpen }: { column: typeof columns[0]; ta
       className={cn(
         'flex flex-col rounded-[14px] border-t-[3px] min-h-[300px]',
         column.color,
-        isOver ? 'bg-blue-50/50 border-blue-200' : `border border-slate-200 ${column.bg}`,
+        isOver ? 'bg-blue-50/50 border-blue-200' : `border border-slate-200 dark:border-slate-700 ${column.bg}`,
       )}
     >
       <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2">
-          <h3 className="text-[13px] font-semibold text-slate-700">{column.label}</h3>
-          <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
+          <h3 className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">{column.label}</h3>
+          <span className="rounded-full bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 text-[10px] font-bold text-slate-600 dark:text-slate-300">
             {tasks.length}
           </span>
         </div>
@@ -191,7 +191,7 @@ function KanbanColumn({ column, tasks, onOpen }: { column: typeof columns[0]; ta
           ))}
         </SortableContext>
         {tasks.length === 0 && (
-          <div className="py-6 text-center text-[11px] text-slate-400">
+          <div className="py-6 text-center text-[11px] text-slate-400 dark:text-slate-500">
             No tasks
           </div>
         )}
@@ -321,12 +321,12 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
   const draggedTask = activeDragId ? tasks.find((t: any) => `task-${t.id}` === activeDragId) : null;
 
   if (isLoading) {
-    return <div className="py-12 text-center text-sm text-slate-400">Loading board...</div>;
+    return <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading board...</div>;
   }
 
   if (isError) {
     return (
-      <div className="py-12 text-center text-sm text-slate-400">
+      <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">
         Couldn't load the board.{' '}
         <button onClick={() => refetch()} className="font-medium text-blue-600 hover:underline">Retry</button>
       </div>
@@ -340,19 +340,19 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
           exact same label everywhere else (planning, execution board). */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
           <input
             type="text"
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
             placeholder="Search by code or name…"
-            className="w-full rounded-md border border-slate-200 bg-white pl-8 pr-7 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
+            className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 pl-8 pr-7 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
           />
           {searchText && (
             <button
               onClick={() => setSearchText('')}
               title="Clear search"
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-100"
             >
               <X className="h-3 w-3" />
             </button>
@@ -361,7 +361,7 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
         <select
           value={deliverableFilter}
           onChange={(e) => setDeliverableFilter(e.target.value)}
-          className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-400"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-400"
           title="Filter by deliverable"
         >
           <option value="">All Deliverables</option>
@@ -372,7 +372,7 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
         <select
           value={assigneeFilter}
           onChange={(e) => setAssigneeFilter(e.target.value)}
-          className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-400"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-400"
           title="Filter by assignee"
         >
           <option value="">All Assignees</option>
@@ -383,7 +383,7 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
         <select
           value={priorityFilter}
           onChange={(e) => setPriorityFilter(e.target.value)}
-          className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-400"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-400"
           title="Filter by priority"
         >
           <option value="">All Priorities</option>
@@ -396,13 +396,13 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
           <button
             type="button"
             onClick={() => { setSearchText(''); setDeliverableFilter(''); setAssigneeFilter(''); setPriorityFilter(''); }}
-            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:border-slate-400"
+            className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
             title="Clear all filters"
           >
             Clear filters
           </button>
         )}
-        <span className="ml-auto text-[11px] text-slate-500">
+        <span className="ml-auto text-[11px] text-slate-500 dark:text-slate-400">
           {isFiltered ? <>{filteredTasks.length} of {tasks.length} task{tasks.length !== 1 ? 's' : ''}</> : <>{tasks.length} task{tasks.length !== 1 ? 's' : ''}</>}
         </span>
       </div>
@@ -421,8 +421,8 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
 
         <DragOverlay>
           {draggedTask && (
-            <div className="rounded-lg border border-blue-300 bg-white p-3 shadow-2xl opacity-90 w-64">
-              <p className="text-[13px] font-medium text-slate-800">{draggedTask.name}</p>
+            <div className="rounded-lg border border-blue-300 bg-white dark:bg-slate-900 p-3 shadow-2xl opacity-90 w-64">
+              <p className="text-[13px] font-medium text-slate-800 dark:text-slate-100">{draggedTask.name}</p>
             </div>
           )}
         </DragOverlay>

@@ -528,15 +528,15 @@ export function TasksPage() {
       {tab === 'archived' && (
         <div className="space-y-4">
           {archivedLoading ? (
-            <p className="py-12 text-center text-sm text-slate-400">Loading…</p>
+            <p className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading…</p>
           ) : !archivedData || (archivedData?.data ?? archivedData ?? []).length === 0 ? (
-            <p className="py-12 text-center text-sm text-slate-400 italic">
+            <p className="py-12 text-center text-sm text-slate-400 dark:text-slate-500 italic">
               No archived tasks. Deleted tasks land here.
             </p>
           ) : (
-            <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
+            <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
               <table className="w-full text-[13px]">
-                <thead className="bg-slate-50 text-[10px] uppercase text-slate-500">
+                <thead className="bg-slate-50 dark:bg-slate-800/50 text-[10px] uppercase text-slate-500 dark:text-slate-400">
                   <tr>
                     <th className="px-4 py-2 text-left">Code</th>
                     <th className="px-4 py-2 text-left">Name</th>
@@ -545,19 +545,19 @@ export function TasksPage() {
                     <th className="px-4 py-2 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {((archivedData as any)?.data ?? archivedData ?? []).map((t: any) => (
-                    <tr key={t.id} className="hover:bg-slate-50/50">
-                      <td className="px-4 py-2 font-mono text-slate-500 whitespace-nowrap">{t.code}</td>
+                    <tr key={t.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
+                      <td className="px-4 py-2 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">{t.code}</td>
                       <td className="px-4 py-2 max-w-[260px]">
-                        <span className="block truncate font-medium text-slate-700" title={t.name}>
+                        <span className="block truncate font-medium text-slate-700 dark:text-slate-200" title={t.name}>
                           {t.name}
                         </span>
                       </td>
-                      <td className="px-4 py-2 text-slate-600 truncate max-w-[200px]" title={t.project?.name ?? ''}>
+                      <td className="px-4 py-2 text-slate-600 dark:text-slate-300 truncate max-w-[200px]" title={t.project?.name ?? ''}>
                         {t.project?.name ?? '—'}
                       </td>
-                      <td className="px-4 py-2 text-slate-600 truncate max-w-[180px]" title={t.zone?.name ?? ''}>
+                      <td className="px-4 py-2 text-slate-600 dark:text-slate-300 truncate max-w-[180px]" title={t.zone?.name ?? ''}>
                         {t.zone?.name ?? 'Project Root'}
                       </td>
                       <td className="px-4 py-2 text-right">
