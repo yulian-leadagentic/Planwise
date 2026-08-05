@@ -1,9 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pencil, Plus, Save, Trash2, X, Hash } from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
-import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
+import { DataTable } from '@/components/shared/data-table';
+import { EmptyState } from '@/components/shared/empty-state';
+import { StatusBadge } from '@/components/shared/status-badge';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
@@ -68,7 +71,7 @@ const emptyForm: FormState = {
 export function NumberRangesPage() {
   const confirm = useConfirm();
   const queryClient = useQueryClient();
-  const scrollRef = useStickyHScroll();
+  // scrollRef removed — DataTable owns its own sticky h-scroll.
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -171,6 +174,80 @@ export function NumberRangesPage() {
 
   const rows = data ?? [];
 
+  // Columns for the shared DataTable. sorting off — the underlying
+  // list is server-ordered.
+  const columns = useMemo<ColumnDef<NumberRangeRow, unknown>[]>(() => [
+    { accessorKey: 'code', header: 'Code', enableSorting: false,
+      cell: ({ row }) => <span className="font-mono text-xs font-semibold">{row.original.code}</span> },
+    { accessorKey: 'name', header: 'Name', enableSorting: false,
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">
+          {row.original.name || <span className="italic text-slate-400 dark:text-slate-500">—</span>}
+        </span>
+      ) },
+    { id: 'mode', header: 'Mode', enableSorting: false, size: 96,
+      cell: ({ row }) => <ModeBadge mode={row.original.mode} /> },
+    { id: 'format', header: 'Format / next', enableSorting: false,
+      cell: ({ row }) => {
+        const r = row.original;
+        if (r.mode === 'auto') {
+          return (
+            <div className="flex items-center gap-2 font-mono text-xs">
+              <span className="text-blue-700">{r.prefix || ''}</span>
+              <span className="text-muted-foreground">{'0'.repeat(r.padWidth)}</span>
+              <span className="text-slate-400 dark:text-slate-500 mx-1">→</span>
+              <span className="font-semibold text-slate-800 dark:text-slate-100">{r.preview}</span>
+            </div>
+          );
+        }
+        if (r.mode === 'external' && r.externalPattern) {
+          return (
+            <span className="font-mono text-xs text-slate-500 dark:text-slate-400" title="External codes must match this regex">
+              regex: {r.externalPattern}
+            </span>
+          );
+        }
+        return <span className="text-[11px] italic text-slate-400 dark:text-slate-500">User-entered at create time</span>;
+      } },
+    { id: 'bounds', header: 'Bounds', enableSorting: false, size: 128,
+      cell: ({ row }) => {
+        const r = row.original;
+        return (
+          <span className="text-xs text-muted-foreground">
+            {r.mode === 'auto' ? <>{r.fromNumber} – {r.toNumber}</> : '—'}
+          </span>
+        );
+      } },
+    { id: 'status', header: 'Status', enableSorting: false, size: 96,
+      cell: ({ row }) => <StatusBadge status={row.original.isActive ? 'active' : 'inactive'} /> },
+    { id: 'actions', header: 'Actions', enableSorting: false, size: 128,
+      cell: ({ row }) => (
+        <div className="flex items-center justify-end gap-2">
+          <button
+            onClick={() => startEdit(row.original)}
+            aria-label={`Edit range ${row.original.code}`}
+            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
+            title="Edit (code is immutable)"
+          >
+            <Pencil className="h-3 w-3" aria-hidden="true" /> Edit
+          </button>
+          <button
+            onClick={async () => {
+              if (await confirm(`Delete range "${row.original.code}"? Any entity kind referencing it will become unassigned.`)) {
+                deleteMutation.mutate(row.original.id);
+              }
+            }}
+            aria-label={`Delete range ${row.original.code}`}
+            className="inline-flex items-center gap-1 text-xs text-red-600 hover:underline"
+          >
+            <Trash2 className="h-3 w-3" aria-hidden="true" /> Delete
+          </button>
+        </div>
+      ),
+    },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], []);
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -199,106 +276,31 @@ export function NumberRangesPage() {
         />
       )}
 
+      {/* Edit form hoisted above the table (DataTable can't do
+          per-row overrides via colSpan). Same fields, same
+          save/cancel — the row it applies to just disappears from
+          the table while the form is shown above. */}
+      {editingId != null && (
+        <RangeFormCard
+          mode="edit"
+          form={form}
+          setForm={setForm}
+          onSave={saveEdit}
+          onCancel={() => setEditingId(null)}
+          saving={updateMutation.isPending}
+        />
+      )}
+
       {isLoading ? (
         <TableSkeleton rows={5} cols={6} />
       ) : rows.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border p-8 text-center">
-          <Hash className="h-8 w-8 text-muted-foreground" />
-          <p className="text-sm font-medium">No number ranges configured</p>
-        </div>
+        <EmptyState
+          icon={Hash}
+          title="No number ranges configured"
+          description="Add a range to auto-generate codes for projects, tasks, or partners."
+        />
       ) : (
-        <div ref={scrollRef} className="rounded-lg border border-border overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
-                <th className="px-4 py-3 font-medium">Code</th>
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium w-24">Mode</th>
-                <th className="px-4 py-3 font-medium">Format / next</th>
-                <th className="px-4 py-3 font-medium w-32">Bounds</th>
-                <th className="px-4 py-3 font-medium w-24">Status</th>
-                <th className="px-4 py-3 font-medium w-32 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => {
-                const isEditing = editingId === row.id;
-                if (isEditing) {
-                  return (
-                    <tr key={row.id} className="border-b border-border bg-muted/20">
-                      <td colSpan={7} className="p-4">
-                        <RangeFormCard
-                          mode="edit"
-                          form={form}
-                          setForm={setForm}
-                          onSave={saveEdit}
-                          onCancel={() => setEditingId(null)}
-                          saving={updateMutation.isPending}
-                        />
-                      </td>
-                    </tr>
-                  );
-                }
-                return (
-                  <tr key={row.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                    <td className="px-4 py-3 font-mono text-xs font-semibold">{row.code}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{row.name || <span className="italic text-slate-400 dark:text-slate-500">—</span>}</td>
-                    <td className="px-4 py-3">
-                      <ModeBadge mode={row.mode} />
-                    </td>
-                    <td className="px-4 py-3">
-                      {row.mode === 'auto' ? (
-                        <div className="flex items-center gap-2 font-mono text-xs">
-                          <span className="text-blue-700">{row.prefix || ''}</span>
-                          <span className="text-muted-foreground">{'0'.repeat(row.padWidth)}</span>
-                          <span className="text-slate-400 dark:text-slate-500 mx-1">→</span>
-                          <span className="font-semibold text-slate-800 dark:text-slate-100">{row.preview}</span>
-                        </div>
-                      ) : row.mode === 'external' && row.externalPattern ? (
-                        <span className="font-mono text-xs text-slate-500 dark:text-slate-400" title="External codes must match this regex">
-                          regex: {row.externalPattern}
-                        </span>
-                      ) : (
-                        <span className="text-[11px] italic text-slate-400 dark:text-slate-500">User-entered at create time</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">
-                      {row.mode === 'auto' ? <>{row.fromNumber} – {row.toNumber}</> : '—'}
-                    </td>
-                    <td className="px-4 py-3">
-                      {row.isActive ? (
-                        <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">Active</span>
-                      ) : (
-                        <span className="inline-flex rounded-full bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-xs text-gray-600 dark:text-slate-300">Inactive</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => startEdit(row)}
-                          className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
-                          title="Edit (code is immutable)"
-                        >
-                          <Pencil className="h-3 w-3" /> Edit
-                        </button>
-                        <button
-                          onClick={async () => {
-                            if (await confirm(`Delete range "${row.code}"? Any entity kind referencing it will become unassigned.`)) {
-                              deleteMutation.mutate(row.id);
-                            }
-                          }}
-                          className="inline-flex items-center gap-1 text-xs text-red-600 hover:underline"
-                        >
-                          <Trash2 className="h-3 w-3" /> Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <DataTable columns={columns} data={rows} pageSize={1000} />
       )}
     </div>
   );
