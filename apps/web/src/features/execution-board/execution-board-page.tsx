@@ -207,16 +207,16 @@ function CellSummary({
 
   const agg = aggregateHealth(healths);
   const color =
-    pct >= 100 ? 'bg-emerald-500' : pct >= 60 ? 'bg-blue-500' : pct >= 30 ? 'bg-amber-500' : 'bg-slate-300';
+    pct >= 100 ? 'bg-emerald-500' : pct >= 60 ? 'bg-blue-500' : pct >= 30 ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-600';
   const textColor =
-    pct >= 100 ? 'text-emerald-600' : pct >= 60 ? 'text-blue-600' : pct >= 30 ? 'text-amber-600' : 'text-slate-500';
+    pct >= 100 ? 'text-emerald-600' : pct >= 60 ? 'text-blue-600' : pct >= 30 ? 'text-amber-600' : 'text-slate-500 dark:text-slate-400';
 
   return (
     <button
       type="button"
       onClick={onToggle}
       className={cn(
-        'w-full text-left px-1 py-0.5 rounded hover:bg-slate-50 transition-colors',
+        'w-full text-left px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors',
         isAggregate ? '' : 'mb-1',
       )}
       aria-expanded={expanded}
@@ -225,12 +225,12 @@ function CellSummary({
       <div className="flex items-center gap-1.5">
         <ChevronRight
           className={cn(
-            'h-3 w-3 text-slate-400 shrink-0 transition-transform duration-150',
+            'h-3 w-3 text-slate-400 dark:text-slate-500 shrink-0 transition-transform duration-150',
             expanded && 'rotate-90',
           )}
         />
         {showBar ? (
-          <div className="flex-1 h-[4px] bg-slate-200 rounded-full overflow-hidden">
+          <div className="flex-1 h-[4px] bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
             <div className={cn('h-full rounded-full', color)} style={{ width: `${Math.min(pct, 100)}%` }} />
           </div>
         ) : (
@@ -241,7 +241,7 @@ function CellSummary({
         <span className={cn('text-[10px] font-bold tabular-nums shrink-0', textColor)}>{pct}%</span>
         <HealthBadge agg={agg} />
       </div>
-      <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5 pl-4">
+      <div className="flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 pl-4">
         <span>{completedCount}/{tasks.length} done</span>
         {totalHours > 0 && <span>· {totalHours}h est.</span>}
       </div>
@@ -272,8 +272,8 @@ function TaskCard({ task, health, onClick }: { task: Task; health: TaskHealth; o
           : isBlueTodo
             ? 'border-sky-300 bg-sky-50'
             : isBareTodo
-              ? 'border-slate-200 bg-slate-100/60'
-              : 'border-slate-200 bg-white';
+              ? 'border-slate-200 dark:border-slate-700 bg-slate-100/60 dark:bg-slate-800/60'
+              : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900';
 
   return (
     <button
@@ -288,12 +288,12 @@ function TaskCard({ task, health, onClick }: { task: Task; health: TaskHealth; o
       {/* Line 1: task name + risk icon. Bare-TODO cards add an inline "-"
           marker per spec ("title with '-' no other details, in grey"). */}
       <div className="flex items-start gap-1.5">
-        <span className={cn('h-2 w-2 mt-1 shrink-0 rounded-full', STATUS_DOT[task.status] ?? 'bg-slate-400')} />
+        <span className={cn('h-2 w-2 mt-1 shrink-0 rounded-full', STATUS_DOT[task.status] ?? 'bg-slate-400 dark:bg-slate-500')} />
         <span className={cn(
           'flex-1 text-[12px] leading-tight break-words',
-          isBareTodo ? 'text-slate-500 font-medium' : 'font-semibold text-slate-800',
+          isBareTodo ? 'text-slate-500 dark:text-slate-400 font-medium' : 'font-semibold text-slate-800 dark:text-slate-100',
         )}>
-          {task.name}{isBareTodo && <span className="text-slate-400 ml-1">—</span>}
+          {task.name}{isBareTodo && <span className="text-slate-400 dark:text-slate-500 ml-1">—</span>}
         </span>
         {health.level === 'critical' && <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />}
         {health.level === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />}
@@ -309,7 +309,7 @@ function TaskCard({ task, health, onClick }: { task: Task; health: TaskHealth; o
 
       {/* Hours + due date — hidden on bare-TODO cards, per spec. */}
       {showDetails && (
-        <div className="flex items-center gap-1 text-[10px] text-slate-600">
+        <div className="flex items-center gap-1 text-[10px] text-slate-600 dark:text-slate-300">
           <Clock className="h-2.5 w-2.5 shrink-0" />
           <span className="tabular-nums font-medium">
             {health.loggedHours}h {health.estimatedHours > 0 ? `/ ${health.estimatedHours}h est.` : 'logged'}
@@ -320,10 +320,10 @@ function TaskCard({ task, health, onClick }: { task: Task; health: TaskHealth; o
       {/* Due date — only when we're showing details (i.e. not a bare TODO). */}
       {showDetails && task.endDate && (
         <div className="flex items-center gap-1 text-[10px]">
-          <Calendar className={cn('h-2.5 w-2.5 shrink-0', health.isOverdue ? 'text-red-600' : 'text-slate-400')} />
+          <Calendar className={cn('h-2.5 w-2.5 shrink-0', health.isOverdue ? 'text-red-600' : 'text-slate-400 dark:text-slate-500')} />
           <span className={cn(
             'tabular-nums',
-            health.isOverdue ? 'text-red-600 font-bold' : 'text-slate-500 font-medium',
+            health.isOverdue ? 'text-red-600 font-bold' : 'text-slate-500 dark:text-slate-400 font-medium',
           )}>
             Due {formatShortDate(task.endDate)}
             {health.isOverdue && ' (overdue)'}
@@ -343,7 +343,7 @@ function TaskCard({ task, health, onClick }: { task: Task; health: TaskHealth; o
             </div>
           ))}
           {task.assignees.length > 3 && (
-            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-300 text-[9px] font-bold text-slate-600 ring-1 ring-white">
+            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-300 dark:bg-slate-600 text-[9px] font-bold text-slate-600 dark:text-slate-300 ring-1 ring-white">
               +{task.assignees.length - 3}
             </div>
           )}
@@ -937,7 +937,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
           rounded-top pill that "sits on" the divider; the active one is filled
           blue with a heavier underline, inactive ones reveal a grey fill on
           hover. */}
-      <div className="border-b border-slate-200">
+      <div className="border-b border-slate-200 dark:border-slate-700">
         <div className="flex gap-1.5 flex-nowrap overflow-x-auto">
           {([
             { key: 'matrix', label: 'Matrix', sub: 'Zone × Deliverable' },
@@ -949,12 +949,12 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
               className={cn(
                 '-mb-px rounded-t-lg border border-b-2 px-4 py-2.5 text-sm font-bold transition-colors shrink-0 whitespace-nowrap',
                 viewMode === t.key
-                  ? 'border-slate-200 border-b-blue-600 bg-blue-50 text-blue-700'
-                  : 'border-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-800',
+                  ? 'border-slate-200 dark:border-slate-700 border-b-blue-600 bg-blue-50 text-blue-700'
+                  : 'border-transparent text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-100',
               )}
             >
               {t.label}
-              <span className={cn('ml-2 text-[11px] font-medium', viewMode === t.key ? 'text-blue-500' : 'text-slate-400')}>
+              <span className={cn('ml-2 text-[11px] font-medium', viewMode === t.key ? 'text-blue-500' : 'text-slate-400 dark:text-slate-500')}>
                 {t.sub}
               </span>
             </button>
@@ -1022,8 +1022,8 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
         </select>
 
         {/* Due-date range + only-with-due toggle (#3.3). */}
-        <div className="flex items-center gap-1.5 text-[12px] text-slate-600">
-          <span className="font-semibold uppercase text-[10px] tracking-wider text-slate-400">Due</span>
+        <div className="flex items-center gap-1.5 text-[12px] text-slate-600 dark:text-slate-300">
+          <span className="font-semibold uppercase text-[10px] tracking-wider text-slate-400 dark:text-slate-500">Due</span>
           <input
             type="date"
             value={dueFrom}
@@ -1031,7 +1031,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
             className="rounded-md border border-input bg-background px-2 py-1.5 text-[12px]"
             title="Earliest due date"
           />
-          <span className="text-slate-400">→</span>
+          <span className="text-slate-400 dark:text-slate-500">→</span>
           <input
             type="date"
             value={dueTo}
@@ -1040,12 +1040,12 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
             title="Latest due date"
           />
         </div>
-        <label className="flex items-center gap-1.5 text-[12px] text-slate-600 cursor-pointer select-none">
+        <label className="flex items-center gap-1.5 text-[12px] text-slate-600 dark:text-slate-300 cursor-pointer select-none">
           <input
             type="checkbox"
             checked={onlyWithDue}
             onChange={(e) => setOnlyWithDue(e.target.checked)}
-            className="rounded border-slate-300"
+            className="rounded border-slate-300 dark:border-slate-600"
           />
           Only with due date
         </label>
@@ -1058,14 +1058,14 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
           <button
             type="button"
             onClick={() => { setServiceFilter(new Set()); setDueFrom(''); setDueTo(''); setOnlyWithDue(false); setStatusFilter(''); setPhaseFilter(new Set()); }}
-            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:border-slate-400"
+            className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
             title="Clear all filters"
           >
             Clear filters
           </button>
         )}
 
-        <div className="ml-auto flex items-center gap-3 text-[11px] text-slate-500">
+        <div className="ml-auto flex items-center gap-3 text-[11px] text-slate-500 dark:text-slate-400">
           <span className="flex items-center gap-1"><AlertCircle className="h-3 w-3 text-red-600" />Overdue / critical</span>
           <span className="flex items-center gap-1"><AlertTriangle className="h-3 w-3 text-amber-600" />At risk</span>
         </div>
@@ -1142,20 +1142,20 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
           // slate background, so layering bold-vs-thin lines here just read
           // as inconsistency. (`ci` is kept in the signature for symmetry
           // with future per-column customisation.)
-          const leafBorder = (_ci: number) => 'border-l border-slate-300';
+          const leafBorder = (_ci: number) => 'border-l border-slate-300 dark:border-slate-600';
 
           return zoneTotalCols === 0 || visibleFlatRows.length === 0 ? (
-            <div className="rounded-[14px] border border-slate-200 bg-white py-12 text-center text-sm text-slate-400 italic">
+            <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center text-sm text-slate-400 dark:text-slate-500 italic">
               No tasks to display. Try clearing filters or adding tasks under a Deliverable.
             </div>
           ) : (
-            <div ref={zoneTasksScrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
+            <div ref={zoneTasksScrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
               <table className="w-max text-[12px] border-collapse">
                 <thead>
-                  <tr className="bg-slate-200/80 text-[11px] uppercase tracking-wider text-slate-800">
+                  <tr className="bg-slate-200/80 dark:bg-slate-700/80 text-[11px] uppercase tracking-wider text-slate-800 dark:text-slate-100">
                     <th
                       rowSpan={2}
-                      className="sticky left-0 top-0 z-30 bg-slate-200/80 px-4 py-2.5 text-left font-bold text-slate-700 min-w-[300px] border-r border-slate-300"
+                      className="sticky left-0 top-0 z-30 bg-slate-200/80 dark:bg-slate-700/80 px-4 py-2.5 text-left font-bold text-slate-700 dark:text-slate-200 min-w-[300px] border-r border-slate-300 dark:border-slate-600"
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span>Zone</span>
@@ -1163,7 +1163,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                           type="button"
                           onClick={() => { setExpandedZones(new Set()); setExpandedIds(new Set()); }}
                           disabled={expandedZones.size === 0 && expandedIds.size === 0}
-                          className="rounded-md border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-700 normal-case tracking-normal hover:border-slate-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                          className="rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-0.5 text-[10px] font-semibold text-slate-700 dark:text-slate-200 normal-case tracking-normal hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-40 disabled:cursor-not-allowed"
                           title="Collapse every zone / sub-zone"
                         >
                           Collapse All
@@ -1174,26 +1174,26 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                       <th
                         key={g.deliverable}
                         colSpan={g.cols.length}
-                        className="sticky top-0 z-20 bg-slate-200/80 px-3 py-2 text-center font-extrabold text-slate-800 border-l border-slate-300"
+                        className="sticky top-0 z-20 bg-slate-200/80 dark:bg-slate-700/80 px-3 py-2 text-center font-extrabold text-slate-800 dark:text-slate-100 border-l border-slate-300 dark:border-slate-600"
                         title={g.deliverable}
                       >
                         <span className="block truncate">{g.deliverable}</span>
                       </th>
                     ))}
                   </tr>
-                  <tr className="bg-white text-[10px] text-slate-700">
+                  <tr className="bg-white dark:bg-slate-900 text-[10px] text-slate-700 dark:text-slate-200">
                     {zoneGroups.map((g) =>
                       g.cols.map((c, ci) => (
                         <th
                           key={`${g.deliverable}|${c.key}`}
                           className={cn(
-                            'sticky top-[40px] z-20 bg-white px-2 py-2 text-left align-bottom min-w-[110px] max-w-[200px] border-b border-slate-200',
+                            'sticky top-[40px] z-20 bg-white dark:bg-slate-900 px-2 py-2 text-left align-bottom min-w-[110px] max-w-[200px] border-b border-slate-200 dark:border-slate-700',
                             leafBorder(ci),
                           )}
                           title={`${c.code ? c.code + ' · ' : ''}${c.name}`}
                         >
-                          {c.code && <span className="block font-mono text-[9px] text-slate-500 truncate">{c.code}</span>}
-                          <span className="block truncate normal-case font-semibold text-slate-700">{c.name}</span>
+                          {c.code && <span className="block font-mono text-[9px] text-slate-500 dark:text-slate-400 truncate">{c.code}</span>}
+                          <span className="block truncate normal-case font-semibold text-slate-700 dark:text-slate-200">{c.name}</span>
                         </th>
                       )),
                     )}
@@ -1207,7 +1207,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                       return (
                         <tr
                           key={row.key}
-                          className={cn('border-t border-slate-200 cursor-pointer hover:brightness-95 transition-all', pc.bg)}
+                          className={cn('border-t border-slate-200 dark:border-slate-700 cursor-pointer hover:brightness-95 transition-all', pc.bg)}
                           onClick={() => toggleExpand(row.key)}
                         >
                           <td
@@ -1220,14 +1220,14 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                             <div className="sticky left-0 inline-flex items-center gap-2 px-4">
                               <ChevronRight
                                 className={cn(
-                                  'h-4 w-4 text-slate-400 transition-transform duration-150',
+                                  'h-4 w-4 text-slate-400 dark:text-slate-500 transition-transform duration-150',
                                   expandedIds.has(row.key) && 'rotate-90',
                                 )}
                               />
                               <FolderKanban className={cn('h-4 w-4', pc.icon)} />
-                              <span className="font-semibold text-slate-700">{row.name}</span>
+                              <span className="font-semibold text-slate-700 dark:text-slate-200">{row.name}</span>
                               {row.number && (
-                                <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium border', pc.border, 'text-slate-600 bg-white/60')}>
+                                <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium border', pc.border, 'text-slate-600 dark:text-slate-300 bg-white/60')}>
                                   {row.number}
                                 </span>
                               )}
@@ -1246,11 +1246,11 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                     return (
                       <tr
                         key={row.key}
-                        className="group border-t border-slate-100 hover:bg-blue-50/50 transition-colors"
+                        className="group border-t border-slate-100 dark:border-slate-800 hover:bg-blue-50/50 transition-colors"
                       >
                         <td
                           className={cn(
-                            'relative sticky left-0 z-10 bg-white group-hover:bg-blue-100/70 px-4 py-2 border-r border-slate-300 cursor-pointer transition-colors',
+                            'relative sticky left-0 z-10 bg-white dark:bg-slate-900 group-hover:bg-blue-100/70 px-4 py-2 border-r border-slate-300 dark:border-slate-600 cursor-pointer transition-colors',
                           )}
                           onClick={expandFully}
                           aria-label={anyExpanded ? 'Collapse this zone' : 'Expand this zone'}
@@ -1268,13 +1268,13 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                             <ChevronRight
                               className={cn(
                                 'h-3.5 w-3.5 shrink-0 transition-transform duration-150',
-                                anyExpanded ? 'rotate-90 text-blue-600' : 'text-slate-400',
+                                anyExpanded ? 'rotate-90 text-blue-600' : 'text-slate-400 dark:text-slate-500',
                               )}
                             />
                             <span
                               className={cn(
                                 'truncate text-[13px]',
-                                row.hasChildren ? 'font-semibold text-slate-700' : 'text-slate-600',
+                                row.hasChildren ? 'font-semibold text-slate-700 dark:text-slate-200' : 'text-slate-600 dark:text-slate-300',
                               )}
                             >
                               {row.name}
@@ -1290,7 +1290,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                           g.cols.map((c, ci) => (
                             <td
                               key={`${g.deliverable}|${c.key}`}
-                              className={cn('px-2 py-1.5 text-center align-top border-b border-slate-200', leafBorder(ci))}
+                              className={cn('px-2 py-1.5 text-center align-top border-b border-slate-200 dark:border-slate-700', leafBorder(ci))}
                             >
                               <TaskStatusCell tasks={cellFor(row.id, g.deliverable, c.key)} onOpenTask={(id) => setDrawerTaskId(id)} />
                             </td>
@@ -1305,21 +1305,21 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
           );
         })()
       ) : (
-        <div ref={matrixScrollRef} className="rounded-[14px] border border-slate-200 bg-white overflow-x-auto">
+        <div ref={matrixScrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
             {/* w-max + min-w-full: grow to content (so column min-widths are
                 respected and the container scrolls horizontally) but still
                 fill the width when there are only a few columns. */}
             <table className="w-max min-w-full border-collapse text-sm">
               <thead>
-                <tr className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
-                  <th className="sticky top-0 left-0 z-30 bg-slate-50 px-4 py-2.5 text-left font-semibold min-w-[300px] border-r border-b border-slate-200">
+                <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  <th className="sticky top-0 left-0 z-30 bg-slate-50 dark:bg-slate-800/50 px-4 py-2.5 text-left font-semibold min-w-[300px] border-r border-b border-slate-200 dark:border-slate-700">
                     <div className="flex items-center justify-between gap-2">
                       <span>Zone</span>
                       <button
                         type="button"
                         onClick={() => { setExpandedZones(new Set()); setExpandedIds(new Set()); }}
                         disabled={expandedZones.size === 0 && expandedIds.size === 0}
-                        className="rounded-md border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-700 normal-case tracking-normal hover:border-slate-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-0.5 text-[10px] font-semibold text-slate-700 dark:text-slate-200 normal-case tracking-normal hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-40 disabled:cursor-not-allowed"
                         title="Collapse every zone / sub-zone"
                       >
                         Collapse All
@@ -1331,10 +1331,10 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                     return (
                       <th
                         key={name}
-                        className="sticky top-0 z-20 bg-slate-50 px-3 py-2 text-center font-semibold min-w-[200px] border-r border-b border-slate-100 last:border-r-0"
+                        className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-center font-semibold min-w-[200px] border-r border-b border-slate-100 dark:border-slate-800 last:border-r-0"
                       >
                         <div className="flex flex-col items-center gap-0.5">
-                          <span className="text-slate-700">{name}</span>
+                          <span className="text-slate-700 dark:text-slate-200">{name}</span>
                           {svc ? (
                             <span
                               className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium normal-case tracking-normal"
@@ -1347,14 +1347,14 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                               {svc.name}
                             </span>
                           ) : (
-                            <span className="text-[9px] text-slate-500 normal-case tracking-normal">— no service —</span>
+                            <span className="text-[9px] text-slate-500 dark:text-slate-400 normal-case tracking-normal">— no service —</span>
                           )}
                         </div>
                       </th>
                     );
                   })}
                   {hasNoPhase && (
-                    <th className="sticky top-0 z-20 bg-slate-50 px-3 py-2.5 text-center font-semibold min-w-[200px] text-slate-600 border-b border-slate-100">
+                    <th className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800/50 px-3 py-2.5 text-center font-semibold min-w-[200px] text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800">
                       No Deliverable
                     </th>
                   )}
@@ -1369,7 +1369,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                     return (
                       <tr
                         key={row.key}
-                        className={cn('border-t border-slate-200 cursor-pointer hover:brightness-95 transition-all', pc.bg)}
+                        className={cn('border-t border-slate-200 dark:border-slate-700 cursor-pointer hover:brightness-95 transition-all', pc.bg)}
                         onClick={() => toggleExpand(row.key)}
                       >
                         <td
@@ -1389,14 +1389,14 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                           <div className="sticky left-0 inline-flex items-center gap-2 px-4">
                             <ChevronRight
                               className={cn(
-                                'h-4 w-4 text-slate-400 transition-transform duration-150',
+                                'h-4 w-4 text-slate-400 dark:text-slate-500 transition-transform duration-150',
                                 expandedIds.has(row.key) && 'rotate-90',
                               )}
                             />
                             <FolderKanban className={cn('h-4 w-4', pc.icon)} />
-                            <span className="font-semibold text-slate-700">{row.name}</span>
+                            <span className="font-semibold text-slate-700 dark:text-slate-200">{row.name}</span>
                             {row.number && (
-                              <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium border', pc.border, 'text-slate-600 bg-white/60')}>
+                              <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium border', pc.border, 'text-slate-600 dark:text-slate-300 bg-white/60')}>
                                 {row.number}
                               </span>
                             )}
@@ -1427,15 +1427,15 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                     <tr
                       key={row.key}
                       ref={(el) => { rowRefs.current.set(row.id, el); }}
-                      className="group border-t border-slate-100 hover:bg-blue-50/50 transition-colors"
+                      className="group border-t border-slate-100 dark:border-slate-800 hover:bg-blue-50/50 transition-colors"
                     >
                       <td
                         className={cn(
-                          // sticky-left cell defaults to bg-white so it stays opaque
+                          // sticky-left cell defaults to bg-white dark:bg-slate-900 so it stays opaque
                           // when scrolled; group-hover paints it the same blue as the
                           // rest of the row so the whole line lights up together.
                           // `relative` anchors the zone-accent overlay span below.
-                          'relative sticky left-0 z-10 bg-white group-hover:bg-blue-100/70 px-4 py-2 border-r border-slate-200 cursor-pointer transition-colors',
+                          'relative sticky left-0 z-10 bg-white dark:bg-slate-900 group-hover:bg-blue-100/70 px-4 py-2 border-r border-slate-200 dark:border-slate-700 cursor-pointer transition-colors',
                         )}
                         onClick={expandFully}
                         aria-label={anyExpanded ? 'Collapse this zone' : 'Expand this zone'}
@@ -1453,13 +1453,13 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                           <ChevronRight
                             className={cn(
                               'h-3.5 w-3.5 shrink-0 transition-transform duration-150',
-                              anyExpanded ? 'rotate-90 text-blue-600' : 'text-slate-400',
+                              anyExpanded ? 'rotate-90 text-blue-600' : 'text-slate-400 dark:text-slate-500',
                             )}
                           />
                           <span
                             className={cn(
                               'truncate text-[13px]',
-                              row.hasChildren ? 'font-semibold text-slate-700' : 'text-slate-600',
+                              row.hasChildren ? 'font-semibold text-slate-700 dark:text-slate-200' : 'text-slate-600 dark:text-slate-300',
                             )}
                           >
                             {row.name}
@@ -1483,7 +1483,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
                         return (
                           <td
                             key={phaseName}
-                            className="px-2 py-1.5 align-top border-r border-slate-100 last:border-r-0"
+                            className="px-2 py-1.5 align-top border-r border-slate-100 dark:border-slate-800 last:border-r-0"
                           >
                             {aggTasks.length > 0 && (
                               <div className="flex flex-col gap-1">
@@ -1568,7 +1568,7 @@ const STATUS_ADVANCE: Record<string, number> = {
  * instances. Clicking opens the worst instance's drawer.
  */
 function TaskStatusCell({ tasks, onOpenTask }: { tasks: any[]; onOpenTask: (id: number) => void }) {
-  if (tasks.length === 0) return <span className="text-slate-300">—</span>;
+  if (tasks.length === 0) return <span className="text-slate-300 dark:text-slate-600">—</span>;
 
   // Worst (least-advanced) instance for the displayed status + drawer target.
   let worst = tasks[0];
@@ -1586,7 +1586,7 @@ function TaskStatusCell({ tasks, onOpenTask }: { tasks: any[]; onOpenTask: (id: 
     : displayStatus === 'completed' ? 'bg-emerald-100 text-emerald-700 border-emerald-300 hover:bg-emerald-200'
     : displayStatus === 'in_progress' ? 'bg-blue-100 text-blue-700 border-blue-300 hover:bg-blue-200'
     : displayStatus === 'in_review' ? 'bg-violet-100 text-violet-700 border-violet-300 hover:bg-violet-200'
-    : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200';
+    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700';
 
   const title = tasks.length > 1
     ? `${tasks.length} instances across zones — ${done}/${tasks.length} completed`
@@ -1599,7 +1599,7 @@ function TaskStatusCell({ tasks, onOpenTask }: { tasks: any[]; onOpenTask: (id: 
       title={title}
       className={cn('inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-bold uppercase tracking-wide transition-colors', tone)}
     >
-      <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', STATUS_DOT[displayStatus] ?? 'bg-slate-400')} />
+      <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', STATUS_DOT[displayStatus] ?? 'bg-slate-400 dark:bg-slate-500')} />
       <span>{STATUS_LABEL[displayStatus] ?? displayStatus}</span>
       {tasks.length > 1 && (
         <span className="font-normal normal-case opacity-70 tabular-nums">· {done}/{tasks.length}</span>
