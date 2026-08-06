@@ -34,6 +34,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
@@ -47,6 +48,11 @@ import { useConfirm } from '@/components/shared/confirm-dialog';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { DataTable } from '@/components/shared/data-table';
 import type { ColumnDef } from '@tanstack/react-table';
+// Chart view + shared tree-building helper. Manage AND Chart consume
+// the SAME `buildTree` so subtree ordering can never drift between the
+// two surfaces of the page.
+import { OrgChart } from './organization-page/org-chart';
+import { buildTree, type TreeItem } from './organization-page/build-tree';
 
 // ─── Types (mirror the backend controller shapes) ──────────────────
 
@@ -103,6 +109,41 @@ export function OrganizationPage() {
 
   const { drawerId: selectedId, openDrawer: selectUnit, closeDrawer: clearUnit } = useDrawerRoute('unit');
 
+  // View toggle (Manage | Chart) mirrored to `?view=chart`. Manage is
+  // the default and DELETES the param when selected so the URL stays
+  // clean (`?unit=42` — not `?unit=42&view=manage`). Uses the same
+  // useSearchParams instance the drawer route reads from; React Router
+  // serialises functional updates so combined writes (e.g. select-and-
+  // switch-to-Manage from the chart) apply as one navigation.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const view: 'manage' | 'chart' =
+    searchParams.get('view') === 'chart' ? 'chart' : 'manage';
+  const setView = (next: 'manage' | 'chart') => {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        if (next === 'manage') params.delete('view');
+        else params.set('view', 'chart');
+        return params;
+      },
+      { replace: true },
+    );
+  };
+  // Click-through from the chart: select the unit AND switch to Manage
+  // in a single URL write, so both back-button state and current
+  // history entry are consistent.
+  const selectFromChart = (id: number) => {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        params.set('unit', String(id));
+        params.delete('view');
+        return params;
+      },
+      { replace: false },
+    );
+  };
+
   const queryClient = useQueryClient();
   const confirm = useConfirm();
 
@@ -152,8 +193,22 @@ export function OrganizationPage() {
       <PageHeader
         title="Organization"
         description="Manage the org tree, unit managers, and each person's home unit."
+        actions={<ViewSegmented view={view} onChange={setView} />}
       />
 
+      {view === 'chart' ? (
+        isLoading ? (
+          <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 text-center text-[12px] text-slate-400 dark:text-slate-500">
+            Loading…
+          </div>
+        ) : (
+          <OrgChart
+            nodes={nodes}
+            onSelectUnit={selectFromChart}
+            onSwitchToManage={() => setView('manage')}
+          />
+        )
+      ) : (
       <div className="flex flex-col lg:flex-row gap-5">
         {/* ─── Left pane: tree ───────────────────────────────────── */}
         <aside className="w-full lg:w-96 lg:shrink-0">
@@ -226,6 +281,7 @@ export function OrganizationPage() {
           )}
         </section>
       </div>
+      )}
 
       {/* Create modal */}
       {creating && (
@@ -254,31 +310,10 @@ export function OrganizationPage() {
 }
 
 // ─── Tree (client-derived nested from flat list) ───────────────────
-
-interface TreeItem {
-  node: OrgNode;
-  children: TreeItem[];
-}
-
-function buildTree(nodes: OrgNode[]): TreeItem[] {
-  const byId = new Map<number, TreeItem>();
-  for (const n of nodes) byId.set(n.id, { node: n, children: [] });
-  const roots: TreeItem[] = [];
-  for (const n of nodes) {
-    const item = byId.get(n.id)!;
-    if (n.parentId != null && byId.has(n.parentId)) {
-      byId.get(n.parentId)!.children.push(item);
-    } else {
-      roots.push(item);
-    }
-  }
-  const sortRec = (list: TreeItem[]) => {
-    list.sort((a, b) => a.node.sortOrder - b.node.sortOrder || a.node.id - b.node.id);
-    list.forEach((c) => sortRec(c.children));
-  };
-  sortRec(roots);
-  return roots;
-}
+// `buildTree` + `TreeItem` used to live here; extracted to
+// ./organization-page/build-tree so the Chart view can share the same
+// implementation. Behaviour is identical — same signature, same sort
+// (sortOrder then id) — the type is now generic (`TreeItem<OrgNode>`).
 
 function UnitTree({
   nodes,
@@ -347,7 +382,7 @@ function TreeRow({
   onMove,
   onDelete,
 }: {
-  item: TreeItem;
+  item: TreeItem<OrgNode>;
   collapsed: Set<number>;
   onToggle: (id: number) => void;
   selectedId: number | null;
@@ -1187,5 +1222,51 @@ function MoveUnitModal({
         </div>
       </div>
     </Modal>
+  );
+}
+
+// ─── View toggle (Manage | Chart) ──────────────────────────────────
+// Segmented control rendered in the PageHeader `actions` slot. Matches
+// the toggle pattern used in deliverable-planning-tab (pill container
+// with an inset "active" button) so admin users see a familiar affordance
+// across pages. Focus visibility uses border-blue-500 per the design
+// system rule "focus via border, not ring".
+
+function ViewSegmented({
+  view,
+  onChange,
+}: {
+  view: 'manage' | 'chart';
+  onChange: (next: 'manage' | 'chart') => void;
+}) {
+  const base =
+    'px-3 py-1.5 rounded-md text-[12px] font-semibold transition-colors focus-visible:outline-none focus-visible:border-blue-500 border border-transparent';
+  const activeCls =
+    'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm';
+  const idleCls =
+    'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100';
+  return (
+    <div
+      role="group"
+      aria-label="Organization view"
+      className="inline-flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5"
+    >
+      <button
+        type="button"
+        onClick={() => onChange('manage')}
+        aria-pressed={view === 'manage'}
+        className={cn(base, view === 'manage' ? activeCls : idleCls)}
+      >
+        Manage
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange('chart')}
+        aria-pressed={view === 'chart'}
+        className={cn(base, view === 'chart' ? activeCls : idleCls)}
+      >
+        Chart
+      </button>
+    </div>
   );
 }
