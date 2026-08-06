@@ -264,41 +264,41 @@ model User {
 
   role Role @relation(fields: [roleId], references: [id])
 
-  projectsCreated     Project[]                @relation("ProjectCreatedBy")
-  projectsLed         Project[]                @relation("ProjectLeader")
-  projectMembers      ProjectMember[]
-  taskAssignees       TaskAssignee[]
-  taskComments        TaskComment[]
-  workSchedules       WorkSchedule[]
-  calendarDaysCreated CalendarDay[]            @relation("CalendarDayCreatedBy")
-  timeClocks          TimeClock[]              @relation("TimeClockUser")
-  timeClocksApproved  TimeClock[]              @relation("TimeClockApprovedBy")
-  timeClocksEdited    TimeClock[]              @relation("TimeClockEditedBy")
-  timeEntries         TimeEntry[]
-  contractsAsPartner  Contract[]               @relation("ContractPartner")
-  contractsCreated    Contract[]               @relation("ContractCreatedBy")
-  milestonesAsPartner LabelMilestone[]         @relation("MilestonePartner")
-  milestonesCreated   LabelMilestone[]         @relation("MilestoneCreatedBy")
-  contacts            Contact[]
-  expensesCreated     Expense[]
-  terms               Term[]
-  activityLogs        ActivityLog[]
-  notifications       Notification[]
-  billingsCreated     Billing[]
-  teamTemplates       TeamTemplate[]
-  teamTemplateMembers TeamTemplateMember[]
-  tasksCreated        Task[]                   @relation("TaskCreator")
-  checklistItemsCreated TaskChecklistItem[]    @relation("ChecklistCreator")
-  checklistItemsDone    TaskChecklistItem[]    @relation("ChecklistDoneBy")
-  taskReviewActions     TaskReviewEvent[]      @relation("TaskReviewActor")
-  templatesCreated    Template[]               @relation("TemplateCreator")
-  messages            Message[]                @relation("MessageAuthor")
-  messageMentions     MessageMention[]
-  taskAttachments     TaskAttachment[]
-  projectFiles        ProjectFile[]
-  notificationsActed  Notification[]           @relation("NotificationActor")
-  notificationPrefs   NotificationPreference[]
-  resourceOverrides   ResourceOverride[]       @relation("UserResourceOverrides")
+  projectsCreated       Project[]                @relation("ProjectCreatedBy")
+  projectsLed           Project[]                @relation("ProjectLeader")
+  projectMembers        ProjectMember[]
+  taskAssignees         TaskAssignee[]
+  taskComments          TaskComment[]
+  workSchedules         WorkSchedule[]
+  calendarDaysCreated   CalendarDay[]            @relation("CalendarDayCreatedBy")
+  timeClocks            TimeClock[]              @relation("TimeClockUser")
+  timeClocksApproved    TimeClock[]              @relation("TimeClockApprovedBy")
+  timeClocksEdited      TimeClock[]              @relation("TimeClockEditedBy")
+  timeEntries           TimeEntry[]
+  contractsAsPartner    Contract[]               @relation("ContractPartner")
+  contractsCreated      Contract[]               @relation("ContractCreatedBy")
+  milestonesAsPartner   LabelMilestone[]         @relation("MilestonePartner")
+  milestonesCreated     LabelMilestone[]         @relation("MilestoneCreatedBy")
+  contacts              Contact[]
+  expensesCreated       Expense[]
+  terms                 Term[]
+  activityLogs          ActivityLog[]
+  notifications         Notification[]
+  billingsCreated       Billing[]
+  teamTemplates         TeamTemplate[]
+  teamTemplateMembers   TeamTemplateMember[]
+  tasksCreated          Task[]                   @relation("TaskCreator")
+  checklistItemsCreated TaskChecklistItem[]      @relation("ChecklistCreator")
+  checklistItemsDone    TaskChecklistItem[]      @relation("ChecklistDoneBy")
+  taskReviewActions     TaskReviewEvent[]        @relation("TaskReviewActor")
+  templatesCreated      Template[]               @relation("TemplateCreator")
+  messages              Message[]                @relation("MessageAuthor")
+  messageMentions       MessageMention[]
+  taskAttachments       TaskAttachment[]
+  projectFiles          ProjectFile[]
+  notificationsActed    Notification[]           @relation("NotificationActor")
+  notificationPrefs     NotificationPreference[]
+  resourceOverrides     ResourceOverride[]       @relation("UserResourceOverrides")
 
   /// Bulk-import provenance + history. createdByImportId tags users that
   /// were created by an import (used for rollback); dataImportsRun is
@@ -308,12 +308,26 @@ model User {
   createdByImport   DataImport?  @relation("UsersCreatedByImport", fields: [createdByImportId], references: [id], onDelete: SetNull)
   dataImportsRun    DataImport[] @relation("DataImportRunner")
 
+  /// Home org unit — where this employee "sits" in the org chart. A
+  /// user has exactly zero or one home unit (a single OrgUnit id).
+  /// Nullable + additive: zero behavior change until admins actually
+  /// place people in units. Managed via OrgUnitService.assignUser.
+  orgUnitId    Int?      @map("org_unit_id")
+  orgUnit      OrgUnit?  @relation("UserOrgUnit", fields: [orgUnitId], references: [id], onDelete: SetNull)
+  /// Units this user MANAGES. Under the org-access model, exactly one
+  /// manager per unit; the reverse relation is 0..N per user because a
+  /// single person can manage multiple sibling units. A manager's view
+  /// expands to their unit's ENTIRE subtree via the `path` startsWith
+  /// query in ProjectAccessService.getManagedSubtreeUnitIds.
+  managedUnits OrgUnit[] @relation("OrgUnitManager")
+
   @@index([roleId])
   @@index([email])
   @@index([userType])
   @@index([isActive])
   @@index([deletedAt])
   @@index([createdByImportId])
+  @@index([orgUnitId])
   @@map("users")
 }
 
@@ -491,36 +505,36 @@ model ProjectRoleTemplate {
 /// gates project-list visibility; the (closed_at) index supports the
 /// hot path "list active projects" query.
 model Project {
-  id             Int           @id @default(autoincrement())
-  name           String
-  number         String?
-  description    String?
-  projectTypeId  Int           @map("project_type_id")
-  departmentId   Int?          @map("department_id")
-  leaderId       Int?          @map("leader_id")
-  status         ProjectStatus @default(draft)
-  budget         Decimal?      @db.Decimal(14, 2)
-  estimatedValue Decimal?      @map("estimated_value") @db.Decimal(14, 2)
-  startDate      DateTime?     @map("start_date")
-  endDate        DateTime?     @map("end_date")
-  isArchived     Boolean       @default(false) @map("is_archived")
+  id                       Int           @id @default(autoincrement())
+  name                     String
+  number                   String?
+  description              String?
+  projectTypeId            Int           @map("project_type_id")
+  departmentId             Int?          @map("department_id")
+  leaderId                 Int?          @map("leader_id")
+  status                   ProjectStatus @default(draft)
+  budget                   Decimal?      @db.Decimal(14, 2)
+  estimatedValue           Decimal?      @map("estimated_value") @db.Decimal(14, 2)
+  startDate                DateTime?     @map("start_date")
+  endDate                  DateTime?     @map("end_date")
+  isArchived               Boolean       @default(false) @map("is_archived")
   /// Free-text version of the authoring tool used on this project (e.g.
   /// "Revit 2024.2", "ArchiCAD 27"). Replaces the old single-purpose
   /// "Revit version" concept now that the company uses multiple tools.
   /// Surfaced on the Project Info tab and editable from the project
   /// edit form.
-  authoringToolVersion String? @map("authoring_tool_version") @db.VarChar(100)
+  authoringToolVersion     String?       @map("authoring_tool_version") @db.VarChar(100)
   /// Day of the weekly project meeting, free text ("Tuesday 10:00",
   /// "Sundays after standup"). Surfaced on the Project Info tab.
-  weeklyMeetingDay String? @map("weekly_meeting_day") @db.VarChar(100)
+  weeklyMeetingDay         String?       @map("weekly_meeting_day") @db.VarChar(100)
   /// File-management system + hub link for the project ("BIM 360 — link",
   /// "OneDrive: https://..."). Free text by design — different
   /// customers use different vendors.
-  fileSystemLink String? @map("file_system_link") @db.VarChar(500)
+  fileSystemLink           String?       @map("file_system_link") @db.VarChar(500)
   /// What we deliver to this customer per the contract — free text.
   /// Plain-text summary for the Project Info tab; the structured part
   /// lives in deliverables.
-  servicesPerContract String? @map("services_per_contract") @db.Text
+  servicesPerContract      String?       @map("services_per_contract") @db.Text
   /// Per-project display-name overrides for Deliverable groups, keyed
   /// by deliverableTemplateId (the Template's id, as a string). When a
   /// deliverable group is rendered on the planning grid, the label
@@ -530,35 +544,35 @@ model Project {
   /// Foundation") without forking the template catalog. Stored as JSON
   /// so we don't need a join table for what's effectively a small
   /// per-project KV.
-  deliverableNameOverrides Json? @map("deliverable_name_overrides")
-  createdBy      Int           @map("created_by")
-  createdAt      DateTime      @default(now()) @map("created_at")
-  updatedAt      DateTime      @updatedAt @map("updated_at")
-  deletedAt      DateTime?     @map("deleted_at")
+  deliverableNameOverrides Json?         @map("deliverable_name_overrides")
+  createdBy                Int           @map("created_by")
+  createdAt                DateTime      @default(now()) @map("created_at")
+  updatedAt                DateTime      @updatedAt @map("updated_at")
+  deletedAt                DateTime?     @map("deleted_at")
   /// When set, the project is CLOSED — finished and excluded from the
   /// default project list (the UI surfaces a "Show closed" toggle for
   /// when someone needs to find one). Distinct from `deletedAt` (soft
   /// delete) and `isArchived` (legacy boolean retained for back-compat);
   /// closing is the user-facing "I'm done with this" action.
-  closedAt       DateTime?     @map("closed_at")
+  closedAt                 DateTime?     @map("closed_at")
 
   projectType ProjectType @relation(fields: [projectTypeId], references: [id])
   department  Department? @relation(fields: [departmentId], references: [id])
   creator     User        @relation("ProjectCreatedBy", fields: [createdBy], references: [id])
   leader      User?       @relation("ProjectLeader", fields: [leaderId], references: [id])
 
-  members      ProjectMember[]
-  labels       Label[]
-  contracts    Contract[]
-  expenses     Expense[]
-  timeEntries  TimeEntry[]
-  zones        Zone[]
-  tasks        Task[]
-  categories   ProjectCategory[]
-  files        ProjectFile[]
-  partnerRoles ProjectPartnerRole[]
+  members           ProjectMember[]
+  labels            Label[]
+  contracts         Contract[]
+  expenses          Expense[]
+  timeEntries       TimeEntry[]
+  zones             Zone[]
+  tasks             Task[]
+  categories        ProjectCategory[]
+  files             ProjectFile[]
+  partnerRoles      ProjectPartnerRole[]
   milestoneStatuses ProjectMilestoneStatus[]
-  deliverables ProjectDeliverable[]
+  deliverables      ProjectDeliverable[]
 
   @@index([projectTypeId])
   @@index([departmentId])
@@ -1027,11 +1041,11 @@ model Zone {
   updatedAt    DateTime  @updatedAt @map("updated_at")
   deletedAt    DateTime? @map("deleted_at")
 
-  project          Project           @relation(fields: [projectId], references: [id])
-  parent           Zone?             @relation("ZoneTree", fields: [parentId], references: [id])
-  children         Zone[]            @relation("ZoneTree")
-  tasks            Task[]
-  zoneServiceTypes ZoneServiceType[]
+  project            Project                 @relation(fields: [projectId], references: [id])
+  parent             Zone?                   @relation("ZoneTree", fields: [parentId], references: [id])
+  children           Zone[]                  @relation("ZoneTree")
+  tasks              Task[]
+  zoneServiceTypes   ZoneServiceType[]
   deliverableTargets ZoneDeliverableTarget[]
 
   @@unique([projectId, name, deletedAt])
@@ -1170,19 +1184,19 @@ model Task {
   updatedAt             DateTime     @updatedAt @map("updated_at")
   deletedAt             DateTime?    @map("deleted_at")
 
-  zone                Zone?            @relation(fields: [zoneId], references: [id], onDelete: SetNull)
-  project             Project?         @relation(fields: [projectId], references: [id])
-  serviceType         ServiceType?     @relation(fields: [serviceTypeId], references: [id])
-  phase               Phase?           @relation(fields: [phaseId], references: [id])
-  deliverableTemplate Template?        @relation("TaskDeliverableTemplate", fields: [deliverableTemplateId], references: [id], onDelete: SetNull)
+  zone                Zone?               @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  project             Project?            @relation(fields: [projectId], references: [id])
+  serviceType         ServiceType?        @relation(fields: [serviceTypeId], references: [id])
+  phase               Phase?              @relation(fields: [phaseId], references: [id])
+  deliverableTemplate Template?           @relation("TaskDeliverableTemplate", fields: [deliverableTemplateId], references: [id], onDelete: SetNull)
   projectDeliverable  ProjectDeliverable? @relation(fields: [projectDeliverableId], references: [id], onDelete: SetNull)
-  creator             User             @relation("TaskCreator", fields: [createdBy], references: [id])
+  creator             User                @relation("TaskCreator", fields: [createdBy], references: [id])
   assignees           TaskAssignee[]
   comments            TaskComment[]
   attachments         TaskAttachment[]
   timeEntries         TimeEntry[]
-  dependencies        TaskDependency[] @relation("TaskDeps")
-  dependedBy          TaskDependency[] @relation("TaskDepBy")
+  dependencies        TaskDependency[]    @relation("TaskDeps")
+  dependedBy          TaskDependency[]    @relation("TaskDepBy")
   checklistItems      TaskChecklistItem[]
   reviewEvents        TaskReviewEvent[]
 
@@ -1202,12 +1216,12 @@ model Task {
 /// because reviews need typed fields (result, reason) that an
 /// activity-log payload would flatten. (Tier D #2a, 2026-06-30.)
 model TaskReviewEvent {
-  id         Int      @id @default(autoincrement())
-  taskId     Int      @map("task_id")
-  actorId    Int      @map("actor_id")
-  action     String   @db.VarChar(32)   // 'submit' | 'approve' | 'return'
-  reason     String?  @db.Text          // return notes / feedback
-  createdAt  DateTime @default(now()) @map("created_at")
+  id        Int      @id @default(autoincrement())
+  taskId    Int      @map("task_id")
+  actorId   Int      @map("actor_id")
+  action    String   @db.VarChar(32) // 'submit' | 'approve' | 'return'
+  reason    String?  @db.Text // return notes / feedback
+  createdAt DateTime @default(now()) @map("created_at")
 
   task  Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
   actor User @relation("TaskReviewActor", fields: [actorId], references: [id])
@@ -1236,9 +1250,9 @@ model TaskChecklistItem {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  task        Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  doneByUser  User? @relation("ChecklistDoneBy", fields: [doneBy], references: [id], onDelete: SetNull)
-  creator     User  @relation("ChecklistCreator", fields: [createdBy], references: [id])
+  task       Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  doneByUser User? @relation("ChecklistDoneBy", fields: [doneBy], references: [id], onDelete: SetNull)
+  creator    User  @relation("ChecklistCreator", fields: [createdBy], references: [id])
 
   @@index([taskId])
   @@index([deletedAt])
@@ -1251,38 +1265,38 @@ model TaskChecklistItem {
 /// sees. The catalog Template is never mutated; the project instance
 /// diverges freely. Tasks link here via Task.projectDeliverableId.
 model ProjectDeliverable {
-  id               Int       @id @default(autoincrement())
-  projectId        Int       @map("project_id")
+  id                     Int       @id @default(autoincrement())
+  projectId              Int       @map("project_id")
   /// Catalog Template (type=task_list) this was instantiated from. Null
   /// for project-only deliverables with no catalog source.
-  sourceTemplateId Int?      @map("source_template_id")
+  sourceTemplateId       Int?      @map("source_template_id")
   /// The Service (Phase) line this deliverable belongs to. Inherited from
   /// the source template's phase; editable per project.
-  serviceId        Int?      @map("service_id")
-  name             String    @db.VarChar(255)
-  description      String?   @db.Text
-  sortOrder        Int       @default(0) @map("sort_order")
-  status           String    @default("active") @db.VarChar(30)
+  serviceId              Int?      @map("service_id")
+  name                   String    @db.VarChar(255)
+  description            String?   @db.Text
+  sortOrder              Int       @default(0) @map("sort_order")
+  status                 String    @default("active") @db.VarChar(30)
   /// Deliverable Planning target date (Tier E #10). Set on the
   /// "Deliverable Planning" page as N months from a base date; the
   /// backend snaps to the first day of that week and stores it as an
   /// absolute date. Nullable — deliverables without a target date
   /// simply don't render a bar on the Gantt.
-  targetDate       DateTime? @map("target_date") @db.Date
+  targetDate             DateTime? @map("target_date") @db.Date
   /// Convenience — the relative-offset value the PM typed. Kept so we
   /// can render "in N months from base" alongside the computed date.
-  targetMonths     Int?      @map("target_months")
+  targetMonths           Int?      @map("target_months")
   /// Deliverable-level default estimated duration in CALENDAR days.
   /// Used as the fallback when a (zone × deliverable) row doesn't
   /// override it. (2026-08-02.)
-  estimatedDurationWeeks Int? @map("estimated_duration_weeks")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
-  deletedAt        DateTime? @map("deleted_at")
+  estimatedDurationWeeks Int?      @map("estimated_duration_weeks")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+  deletedAt              DateTime? @map("deleted_at")
 
-  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  sourceTemplate Template? @relation("DeliverableSourceTemplate", fields: [sourceTemplateId], references: [id], onDelete: SetNull)
-  service        Phase?    @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  project        Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceTemplate Template?               @relation("DeliverableSourceTemplate", fields: [sourceTemplateId], references: [id], onDelete: SetNull)
+  service        Phase?                  @relation(fields: [serviceId], references: [id], onDelete: SetNull)
   tasks          Task[]
   zoneTargets    ZoneDeliverableTarget[]
 
@@ -1300,16 +1314,16 @@ model ProjectDeliverable {
 /// estimatedDurationDays is CALENDAR days (not working hours). The Gantt
 /// draws the bar backward from the target date by this many days.
 model ZoneDeliverableTarget {
-  id                    Int      @id @default(autoincrement())
-  zoneId                Int      @map("zone_id")
-  projectDeliverableId  Int      @map("project_deliverable_id")
-  targetDate            DateTime? @map("target_date") @db.Date
-  targetMonths          Int?     @map("target_months")
+  id                     Int       @id @default(autoincrement())
+  zoneId                 Int       @map("zone_id")
+  projectDeliverableId   Int       @map("project_deliverable_id")
+  targetDate             DateTime? @map("target_date") @db.Date
+  targetMonths           Int?      @map("target_months")
   /// Estimated calendar days for this (zone × deliverable). Used by the
   /// Gantt to draw start = target − N days. (2026-08-02.)
-  estimatedDurationWeeks Int?    @map("estimated_duration_weeks")
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
+  estimatedDurationWeeks Int?      @map("estimated_duration_weeks")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
 
   zone               Zone               @relation(fields: [zoneId], references: [id], onDelete: Cascade)
   projectDeliverable ProjectDeliverable @relation(fields: [projectDeliverableId], references: [id], onDelete: Cascade)
@@ -1437,16 +1451,16 @@ model Template {
   updatedAt   DateTime     @updatedAt @map("updated_at")
   deletedAt   DateTime?    @map("deleted_at")
 
-  creator           User           @relation("TemplateCreator", fields: [createdBy], references: [id])
-  phase             Phase?         @relation(fields: [phaseId], references: [id])
-  templateTasks     TemplateTask[]
-  templateZones     TemplateZone[]
-  linkedZones       TemplateZone[] @relation("LinkedTaskTemplate")
-  referencedByZones TemplateZone[] @relation("ReferencedZoneTemplate")
+  creator             User                 @relation("TemplateCreator", fields: [createdBy], references: [id])
+  phase               Phase?               @relation(fields: [phaseId], references: [id])
+  templateTasks       TemplateTask[]
+  templateZones       TemplateZone[]
+  linkedZones         TemplateZone[]       @relation("LinkedTaskTemplate")
+  referencedByZones   TemplateZone[]       @relation("ReferencedZoneTemplate")
   // Project tasks materialized from this Template — back-relation for
   // Task.deliverableTemplate. Enables COUNT-by-deliverable and "where
   // is this template used" queries without scanning Tasks globally.
-  projectTasks      Task[]         @relation("TaskDeliverableTemplate")
+  projectTasks        Task[]               @relation("TaskDeliverableTemplate")
   // Per-project deliverable instances materialized from this catalog
   // template. The catalog template stays untouched; each ProjectDeliverable
   // may diverge (rename, reorder, status) without affecting the catalog.
@@ -2119,17 +2133,17 @@ model ProjectPartnerRole {
 // ProjectMilestoneStatus immediately (no draft state).
 
 model ProjectStageMilestone {
-  id         Int      @id @default(autoincrement())
-  code       String   @unique @db.VarChar(50)
-  name       String   @db.VarChar(150)
+  id          Int      @id @default(autoincrement())
+  code        String   @unique @db.VarChar(50)
+  name        String   @db.VarChar(150)
   /// Optional explanation surfaced in tooltip / drawer; e.g. "Customer
   /// signed off the URS and the doc is in the archive."
-  description String? @db.Text
+  description String?  @db.Text
   /// Column order on the board. Lower = leftmost.
-  sortOrder  Int      @default(0) @map("sort_order")
-  isActive   Boolean  @default(true) @map("is_active")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  sortOrder   Int      @default(0) @map("sort_order")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   statuses ProjectMilestoneStatus[]
 
@@ -2147,7 +2161,7 @@ model ProjectMilestoneStatus {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
-  project   Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project   Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
   milestone ProjectStageMilestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, milestoneId])
@@ -2319,4 +2333,42 @@ model DataImportRow {
   @@index([importId])
   @@index([outcome])
   @@map("data_import_rows")
+}
+
+/// Organizational hierarchy. Single-parent tree, one manager per unit,
+/// one home unit per employee (see User.orgUnitId). Managers see their
+/// own unit's subtree at unlimited depth via ProjectAccessService.
+///
+/// `path` is the materialised ancestry line — "/1/5/12/" — INCLUDING
+/// this unit's own id. Subtree lookups use `path startsWith parent.path`
+/// so a single indexed scan replaces recursive CTEs. `depth` is derived
+/// from `path` (= depth-of-parent + 1) and kept in sync by
+/// OrgUnitService.
+///
+/// Additive + nullable across the board — until admins actually place
+/// people in units and set managers, ZERO behavior changes in the
+/// existing access-control paths. Ownership is soft-deleted (deletedAt)
+/// not hard-deleted so historical assignments stay resolvable.
+model OrgUnit {
+  id            Int       @id @default(autoincrement())
+  name          String
+  code          String?   @unique
+  parentId      Int?      @map("parent_id")
+  parent        OrgUnit?  @relation("OrgUnitTree", fields: [parentId], references: [id])
+  children      OrgUnit[] @relation("OrgUnitTree")
+  managerUserId Int?      @map("manager_user_id")
+  manager       User?     @relation("OrgUnitManager", fields: [managerUserId], references: [id], onDelete: SetNull)
+  /// Materialised path, e.g. "/1/5/12/". Always starts and ends with
+  /// "/". Includes the unit's own id as the tail segment. Rewritten by
+  /// OrgUnitService.move whenever a subtree changes parent.
+  path          String    @default("/")
+  depth         Int       @default(0)
+  sortOrder     Int       @default(0) @map("sort_order")
+  deletedAt     DateTime? @map("deleted_at")
+  members       User[]    @relation("UserOrgUnit")
+
+  @@index([parentId])
+  @@index([path])
+  @@index([managerUserId])
+  @@map("org_units")
 }
