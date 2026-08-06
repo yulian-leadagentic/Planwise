@@ -13,6 +13,7 @@ import {
   Link as LinkIcon,
   Upload,
   ListChecks,
+  Network,
 } from 'lucide-react';
 import { SubNavLayout, type SubNavItem } from '@/components/layout/sub-nav-layout';
 
@@ -27,6 +28,7 @@ import { SubNavLayout, type SubNavItem } from '@/components/layout/sub-nav-layou
 const ADMIN_ITEMS: SubNavItem[] = [
   { label: 'Employees',              href: '/admin/employees',                 icon: Users,         module: 'partners',                 group: 'Access & Security' },
   { label: 'Roles & Permissions',    href: '/admin/roles',                     icon: Shield,        module: 'admin/roles',              group: 'Access & Security' },
+  { label: 'Organization',           href: '/admin/organization',              icon: Network,       module: 'org',                      group: 'Access & Security' },
   { label: 'Activity Log',           href: '/admin/activity-log',              icon: Activity,      module: 'admin/activity-log',       group: 'Access & Security' },
 
   { label: 'Partner Types',          href: '/admin/partner-types',             icon: Tags,          module: 'admin/partner-types',      group: 'People Config' },
