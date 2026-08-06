@@ -208,6 +208,161 @@ export class OrgUnitService {
   }
 
   /**
+   * Rename a unit and/or change its short code. Both fields optional;
+   * only whitelisted fields are written (never spread the raw payload
+   * so a client can't touch path/depth/parentId — those are owned by
+   * move() so the tree invariant stays intact).
+   */
+  async updateMeta(id: number, patch: { name?: string; code?: string | null }) {
+    const unit = await this.prisma.orgUnit.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true },
+    });
+    if (!unit) throw new NotFoundException(`Org unit ${id} not found`);
+
+    const data: Prisma.OrgUnitUpdateInput = {};
+    if (patch.name !== undefined) data.name = patch.name;
+    if (patch.code !== undefined) data.code = patch.code;
+
+    return this.prisma.orgUnit.update({ where: { id }, data });
+  }
+
+  /**
+   * Soft-delete a unit. BLOCKS the delete if the unit still has
+   * children — the client must reparent them first (via move()) or
+   * delete the whole subtree bottom-up.
+   *
+   * Rationale: cascading a soft-delete to descendants would silently
+   * unassign every user under this subtree from their home unit
+   * (via the SET NULL FK on User.orgUnitId), which is a big
+   * behaviour change to hide behind a single button press. Requiring
+   * an explicit reparent keeps the user in control.
+   *
+   * User assignments (User.orgUnitId → this unit) also block the
+   * delete for the same reason. The client should reassign or clear
+   * members first.
+   */
+  async softDelete(id: number) {
+    const unit = await this.prisma.orgUnit.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, path: true, name: true },
+    });
+    if (!unit) throw new NotFoundException(`Org unit ${id} not found`);
+
+    const [childCount, memberCount] = await Promise.all([
+      this.prisma.orgUnit.count({ where: { parentId: id, deletedAt: null } }),
+      this.prisma.user.count({ where: { orgUnitId: id, deletedAt: null } }),
+    ]);
+    if (childCount > 0) {
+      throw new BadRequestException(
+        `Unit "${unit.name}" has ${childCount} sub-unit${childCount === 1 ? '' : 's'}. Reparent or delete them first.`,
+      );
+    }
+    if (memberCount > 0) {
+      throw new BadRequestException(
+        `Unit "${unit.name}" has ${memberCount} member${memberCount === 1 ? '' : 's'}. Reassign them first.`,
+      );
+    }
+
+    const deleted = await this.prisma.orgUnit.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+    // Any manager who managed this unit (or something whose descendant
+    // this used to be) has a different subtree now — cache invalidate.
+    // No-op in the current implementation but the hook stays honest.
+    this.projectAccess.invalidateSubordinateCache();
+    return deleted;
+  }
+
+  /**
+   * Load every live unit + per-unit counts, ready for tree rendering
+   * on the admin page. Returns a FLAT list ordered by (parentId nulls
+   * first, then sortOrder, then id) so the caller can either use it
+   * flat (breadcrumbs / picker) or build a nested view from it.
+   *
+   * `memberCount` — users whose HOME unit is exactly this node.
+   * `subtreeMemberCount` — users whose home unit sits anywhere under
+   *   this node (path startsWith the node's path); includes memberCount.
+   * `subtreeUnitCount` — number of live units in the subtree,
+   *   INCLUDING the node itself. So a leaf shows 1.
+   *
+   * Two grouped counts + one findMany. Small enough for realistic
+   * tenants that we don't need pagination here — the admin page
+   * renders the whole tree at once and callers with hundreds of units
+   * can add search on the client.
+   */
+  async getTree() {
+    const units = await this.prisma.orgUnit.findMany({
+      where: { deletedAt: null },
+      orderBy: [{ parentId: 'asc' }, { sortOrder: 'asc' }, { id: 'asc' }],
+      include: {
+        manager: {
+          select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true },
+        },
+      },
+    });
+
+    // Direct member count — group by orgUnitId.
+    const memberGroups = await this.prisma.user.groupBy({
+      by: ['orgUnitId'],
+      where: { deletedAt: null, orgUnitId: { not: null } },
+      _count: { orgUnitId: true },
+    });
+    const directCount = new Map<number, number>();
+    for (const g of memberGroups) {
+      if (g.orgUnitId != null) directCount.set(g.orgUnitId, g._count.orgUnitId);
+    }
+
+    // Subtree member + unit counts. Both use path startsWith of the
+    // current node's path; the units already have paths so we do it
+    // in memory to keep the query count fixed.
+    return units.map((u) => {
+      let subtreeMemberCount = 0;
+      let subtreeUnitCount = 0;
+      for (const other of units) {
+        if (other.path.startsWith(u.path)) {
+          subtreeUnitCount += 1;
+          subtreeMemberCount += directCount.get(other.id) ?? 0;
+        }
+      }
+      return {
+        id: u.id,
+        name: u.name,
+        code: u.code,
+        parentId: u.parentId,
+        path: u.path,
+        depth: u.depth,
+        sortOrder: u.sortOrder,
+        managerUserId: u.managerUserId,
+        manager: u.manager,
+        memberCount: directCount.get(u.id) ?? 0,
+        subtreeMemberCount,
+        subtreeUnitCount,
+      };
+    });
+  }
+
+  /**
+   * List the users whose HOME unit is exactly `id`. Excludes
+   * soft-deleted users. Used by the admin page's member panel.
+   */
+  async getMembers(id: number) {
+    return this.prisma.user.findMany({
+      where: { orgUnitId: id, deletedAt: null },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        avatarUrl: true,
+        position: true,
+      },
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+    });
+  }
+
+  /**
    * Set (or clear) a user's home unit. Null unlinks the user from any
    * unit — they revert to the pre-org-access "no subordinate" state and
    * ProjectAccessService continues to treat them exactly as it does

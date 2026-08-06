@@ -48,10 +48,17 @@ describe('OrgUnitService', () => {
       orgUnit: {
         findFirst: jest.fn(),
         update: jest.fn(),
+        // Added in feat/org-tree-admin for updateMeta / softDelete /
+        // getTree / getMembers.
+        findMany: jest.fn(),
+        count: jest.fn(),
       },
       user: {
         findFirst: jest.fn(),
         update: jest.fn(),
+        findMany: jest.fn(),
+        count: jest.fn(),
+        groupBy: jest.fn(),
       },
     };
 
@@ -236,6 +243,129 @@ describe('OrgUnitService', () => {
       prisma.user.findFirst.mockResolvedValue({ id: 3 });
       prisma.orgUnit.findFirst.mockResolvedValue(null);
       await expect(service.assignUser(3, 5)).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  // ─── feat/org-tree-admin additions ────────────────────────────────
+  //
+  // Three new service methods drive the admin page:
+  //   updateMeta  — rename / re-code without touching path/depth
+  //   softDelete  — set deletedAt; blocked if children or members
+  //   getTree     — flat list + per-node member + subtree counts
+  //   getMembers  — direct home-unit members of a node
+
+  describe('updateMeta', () => {
+    it('writes name + code and nothing else', async () => {
+      prisma.orgUnit.findFirst.mockResolvedValue({ id: 5 });
+      prisma.orgUnit.update.mockResolvedValue({ id: 5, name: 'New', code: 'NEW' });
+
+      await service.updateMeta(5, { name: 'New', code: 'NEW' });
+      expect(prisma.orgUnit.update).toHaveBeenCalledWith({
+        where: { id: 5 },
+        data: { name: 'New', code: 'NEW' },
+      });
+    });
+
+    it('accepts partial updates (name only, code only)', async () => {
+      prisma.orgUnit.findFirst.mockResolvedValue({ id: 5 });
+      prisma.orgUnit.update.mockResolvedValue({});
+      await service.updateMeta(5, { name: 'Just a rename' });
+      const data = prisma.orgUnit.update.mock.calls[0][0].data;
+      expect(data).toEqual({ name: 'Just a rename' });
+    });
+
+    it('supports clearing the code (code=null)', async () => {
+      prisma.orgUnit.findFirst.mockResolvedValue({ id: 5 });
+      prisma.orgUnit.update.mockResolvedValue({});
+      await service.updateMeta(5, { code: null });
+      expect(prisma.orgUnit.update.mock.calls[0][0].data).toEqual({ code: null });
+    });
+
+    it('throws NotFoundException when the unit is missing', async () => {
+      prisma.orgUnit.findFirst.mockResolvedValue(null);
+      await expect(service.updateMeta(5, { name: 'X' })).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('softDelete', () => {
+    it('sets deletedAt when the unit has no children and no members', async () => {
+      prisma.orgUnit.findFirst.mockResolvedValue({ id: 5, path: '/5/', name: 'Marketing' });
+      prisma.orgUnit.count.mockResolvedValue(0);
+      prisma.user.count.mockResolvedValue(0);
+      prisma.orgUnit.update.mockResolvedValue({ id: 5, deletedAt: expect.any(Date) });
+
+      await service.softDelete(5);
+      const data = prisma.orgUnit.update.mock.calls[0][0].data;
+      expect(data.deletedAt).toBeInstanceOf(Date);
+      expect(projectAccess.invalidateSubordinateCache).toHaveBeenCalled();
+    });
+
+    it('BLOCKS delete with 400 when the unit has children', async () => {
+      prisma.orgUnit.findFirst.mockResolvedValue({ id: 5, path: '/5/', name: 'Engineering' });
+      prisma.orgUnit.count.mockResolvedValue(3); // 3 sub-units
+      prisma.user.count.mockResolvedValue(0);
+
+      await expect(service.softDelete(5)).rejects.toBeInstanceOf(BadRequestException);
+      // No update fired.
+      expect(prisma.orgUnit.update).not.toHaveBeenCalled();
+    });
+
+    it('BLOCKS delete with 400 when the unit still has members', async () => {
+      prisma.orgUnit.findFirst.mockResolvedValue({ id: 5, path: '/5/', name: 'Support' });
+      prisma.orgUnit.count.mockResolvedValue(0);
+      prisma.user.count.mockResolvedValue(7); // 7 members
+
+      await expect(service.softDelete(5)).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.orgUnit.update).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when the unit is missing', async () => {
+      prisma.orgUnit.findFirst.mockResolvedValue(null);
+      await expect(service.softDelete(5)).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('getTree', () => {
+    it('returns flat units with direct + subtree member counts and subtree unit count', async () => {
+      // Three-unit tree: root /1/ with two children /1/2/ and /1/3/.
+      prisma.orgUnit.findMany.mockResolvedValue([
+        { id: 1, name: 'Root', code: null, parentId: null, path: '/1/', depth: 0, sortOrder: 0, managerUserId: null, manager: null },
+        { id: 2, name: 'Left', code: null, parentId: 1, path: '/1/2/', depth: 1, sortOrder: 0, managerUserId: null, manager: null },
+        { id: 3, name: 'Right', code: null, parentId: 1, path: '/1/3/', depth: 1, sortOrder: 1, managerUserId: 7, manager: { id: 7, firstName: 'A', lastName: 'B', email: 'a@x', avatarUrl: null } },
+      ]);
+      // Direct member groupBy: unit 2 has 2 members, unit 3 has 1.
+      prisma.user.groupBy.mockResolvedValue([
+        { orgUnitId: 2, _count: { orgUnitId: 2 } },
+        { orgUnitId: 3, _count: { orgUnitId: 1 } },
+      ]);
+
+      const tree = await service.getTree();
+      const byId = new Map(tree.map((n) => [n.id, n]));
+
+      // Root: 0 direct, 3 in subtree (2+1 via descendants), 3 units (self + 2 kids).
+      expect(byId.get(1)).toMatchObject({ memberCount: 0, subtreeMemberCount: 3, subtreeUnitCount: 3 });
+      // Left leaf.
+      expect(byId.get(2)).toMatchObject({ memberCount: 2, subtreeMemberCount: 2, subtreeUnitCount: 1 });
+      // Right leaf with manager passed through.
+      expect(byId.get(3)).toMatchObject({ memberCount: 1, subtreeMemberCount: 1, subtreeUnitCount: 1, managerUserId: 7 });
+      expect(byId.get(3)!.manager).toEqual({ id: 7, firstName: 'A', lastName: 'B', email: 'a@x', avatarUrl: null });
+    });
+
+    it('returns [] when there are no units', async () => {
+      prisma.orgUnit.findMany.mockResolvedValue([]);
+      prisma.user.groupBy.mockResolvedValue([]);
+      expect(await service.getTree()).toEqual([]);
+    });
+  });
+
+  describe('getMembers', () => {
+    it('lists live users with orgUnitId = id, ordered by first+last', async () => {
+      prisma.user.findMany.mockResolvedValue([{ id: 3 }, { id: 7 }]);
+      const rows = await service.getMembers(5);
+      expect(rows).toEqual([{ id: 3 }, { id: 7 }]);
+      const call = prisma.user.findMany.mock.calls[0][0];
+      expect(call.where).toEqual({ orgUnitId: 5, deletedAt: null });
+      expect(call.orderBy).toEqual([{ firstName: 'asc' }, { lastName: 'asc' }]);
     });
   });
 });

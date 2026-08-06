@@ -50,6 +50,11 @@ async function main() {
     { name: 'Personal Data', route: 'personal-data', icon: 'User', sortOrder: 91, parentId: adminMod?.id },
     { name: 'Calendar', route: 'calendar', icon: 'Calendar', sortOrder: 92, parentId: adminMod?.id },
     { name: 'Roles', route: 'roles', icon: 'Shield', sortOrder: 93, parentId: adminMod?.id },
+    // Org-tree admin — introduced in feat/org-tree-admin. Guarded by
+    // `org:manage` (read+write on this module). Admin only by default;
+    // any other role that gets it can create / rename / move / delete
+    // org units and set unit managers / user home units.
+    { name: 'Organization', route: 'org', icon: 'Sitemap', sortOrder: 94, parentId: adminMod?.id },
     { name: 'Operations', route: '/operations', icon: 'Activity', sortOrder: 10, parentId: dashboardMod?.id },
   ];
   // Idempotent sub-module upsert keyed on `route` (unique). Fixes the
@@ -93,12 +98,18 @@ async function main() {
   }
 
   // Role-module permissions (upsert to avoid duplicates)
+  //
+  // Admin-only defaults: 'Organization' (the org-tree admin surface)
+  // is gated by `org:manage` and is admin-only in the seed. Other
+  // modules follow the standard four-role default matrix.
+  const ADMIN_ONLY_MODULES = new Set(['Organization']);
   for (const mod of modules) {
+    const isAdminOnly = ADMIN_ONLY_MODULES.has(mod.name);
     const perms = [
       { roleId: adminRole.id, moduleId: mod.id, canRead: true, canWrite: true, canDelete: true, canApprove: true, canExport: true },
-      { roleId: managerRole.id, moduleId: mod.id, canRead: true, canWrite: mod.name !== 'Admin', canDelete: false, canApprove: ['Time', 'Tasks', 'Time Approval', 'Task Approval'].includes(mod.name), canExport: ['Reports'].includes(mod.name) },
-      { roleId: employeeRole.id, moduleId: mod.id, canRead: mod.name !== 'Admin', canWrite: ['Tasks', 'Time'].includes(mod.name), canDelete: false, canApprove: false, canExport: false },
-      { roleId: partnerRole.id, moduleId: mod.id, canRead: ['Dashboard', 'Tasks', 'Time', 'Projects'].includes(mod.name), canWrite: ['Tasks', 'Time'].includes(mod.name), canDelete: false, canApprove: false, canExport: false },
+      { roleId: managerRole.id, moduleId: mod.id, canRead: !isAdminOnly, canWrite: !isAdminOnly && mod.name !== 'Admin', canDelete: false, canApprove: !isAdminOnly && ['Time', 'Tasks', 'Time Approval', 'Task Approval'].includes(mod.name), canExport: !isAdminOnly && ['Reports'].includes(mod.name) },
+      { roleId: employeeRole.id, moduleId: mod.id, canRead: !isAdminOnly && mod.name !== 'Admin', canWrite: !isAdminOnly && ['Tasks', 'Time'].includes(mod.name), canDelete: false, canApprove: false, canExport: false },
+      { roleId: partnerRole.id, moduleId: mod.id, canRead: !isAdminOnly && ['Dashboard', 'Tasks', 'Time', 'Projects'].includes(mod.name), canWrite: !isAdminOnly && ['Tasks', 'Time'].includes(mod.name), canDelete: false, canApprove: false, canExport: false },
     ];
     for (const p of perms) {
       const existing = await prisma.roleModule.findFirst({

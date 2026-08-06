@@ -23,6 +23,7 @@ import { BusinessPartnersModule } from './modules/business-partners/business-par
 import { BusinessPartnerRelationshipsModule } from './modules/business-partner-relationships/business-partner-relationships.module';
 import { PartnerTypesModule } from './modules/partner-types/partner-types.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { OrgModule } from './modules/org/org.module';
 import { ZonesModule } from './modules/zones/zones.module';
 import { PlanningModule } from './modules/planning/planning.module';
 import { ServiceTypesModule } from './modules/service-types/service-types.module';
@@ -101,6 +102,7 @@ import { ActivityLogModule } from './common/services/activity-log.module';
     BusinessPartnerRelationshipsModule,
     PartnerTypesModule,
     AdminModule,
+    OrgModule,
     ZonesModule,
     PlanningModule,
     ServiceTypesModule,
