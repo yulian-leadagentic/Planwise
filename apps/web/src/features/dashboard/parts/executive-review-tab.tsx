@@ -392,7 +392,7 @@ export function ExecutiveReviewTab({
                                     'block text-left w-full rounded-lg px-2 py-1 transition-colors focus-visible:outline-none focus-visible:border-blue-500 border border-transparent',
                                     noteText
                                       ? 'text-slate-700 dark:text-slate-200 hover:border-slate-200 dark:hover:border-slate-700'
-                                      : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 hover:border-slate-200 dark:hover:border-slate-700 italic',
+                                      : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 hover:border-slate-200 dark:hover:border-slate-700 italic',
                                   )}
                                 >
                                   {noteText ? (

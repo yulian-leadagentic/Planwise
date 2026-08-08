@@ -169,7 +169,7 @@ export function ActiveProjectsTab({
                             : 'bg-slate-100 text-slate-500 border border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
                         )}
                       >
-                        <span className={cn('w-1.5 h-1.5 rounded-full', p.flag === 'active' ? 'bg-emerald-500' : 'bg-slate-400')} aria-hidden="true" />
+                        <span className={cn('w-1.5 h-1.5 rounded-full', p.flag === 'active' ? 'bg-emerald-500' : 'bg-slate-400 dark:bg-slate-500')} aria-hidden="true" />
                         {p.flag === 'active' ? 'ACTIVE' : 'DORMANT'}
                       </span>
                     </td>
