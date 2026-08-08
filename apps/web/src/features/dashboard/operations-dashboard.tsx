@@ -45,6 +45,11 @@ import { ServiceIntensityPanel } from './parts/service-intensity-panel';
 type OpsTab = 'risk' | 'team' | 'bim' | 'active' | 'workload' | 'executive';
 const VALID_TABS: OpsTab[] = ['risk', 'team', 'bim', 'active', 'workload', 'executive'];
 
+// Summary-card → filter mapping. Clicking a card narrows the content
+// below AND jumps to the tab that houses that content. Clicking the
+// same card again clears the filter.
+type CardFilter = 'overdue' | 'blocked' | 'review' | 'overloaded' | 'available';
+
 export function OperationsDashboardPage() {
   const navWithReturn = useNavigateWithReturn();
 
@@ -76,6 +81,16 @@ export function OperationsDashboardPage() {
   const [myDeptOnly, setMyDeptOnly] = useState(false);
   const [memberSearch, setMemberSearch] = useState('');
 
+  // Active summary-card filter. Clicking a card sets this + jumps to
+  // the relevant tab; clicking the same card again clears it. Same
+  // filter model as the pre-6-tab layout — restored here to bring
+  // back the click-to-filter behaviour the cards used to have.
+  const [cardFilter, setCardFilter] = useState<CardFilter | null>(null);
+  const pickCard = useCallback((f: CardFilter, goTab: OpsTab) => {
+    setCardFilter((cur) => (cur === f ? null : f));
+    setTab(goTab);
+  }, [setTab]);
+
   const openProject = useCallback(
     (projectId: number) => navWithReturn(`/projects/${projectId}`, 'Operations'),
     [navWithReturn],
@@ -105,18 +120,35 @@ export function OperationsDashboardPage() {
 
   const departmentsFiltered = useMemo(() => {
     const q = memberSearch.trim().toLowerCase();
-    if (!q) return departments;
+    // Also applies the summary-card filter (Overloaded / Available) at
+    // member level, so clicking a card on the Team tab narrows the
+    // visible people without changing the dept grouping.
+    const cardMember = (m: any) => {
+      if (cardFilter === 'overloaded') return m.capacity > 0 && m.hoursWeek > m.capacity;
+      if (cardFilter === 'available') return m.capacity > 0 && m.hoursWeek < m.capacity * 0.7;
+      return true;
+    };
+    if (!q && cardFilter !== 'overloaded' && cardFilter !== 'available') return departments;
     return departments
       .map((d) => ({
         ...d,
         members: (d.members ?? []).filter((m: any) => {
+          if (!cardMember(m)) return false;
+          if (!q) return true;
           const name = `${m.firstName ?? ''} ${m.lastName ?? ''}`.toLowerCase();
           const pos = (m.position ?? '').toLowerCase();
           return name.includes(q) || pos.includes(q);
         }),
       }))
       .filter((d) => (d.members ?? []).length > 0);
-  }, [departments, memberSearch]);
+  }, [departments, memberSearch, cardFilter]);
+
+  // Risk-tab project list, narrowed by the Overdue / Blocked cards.
+  const riskProjects = useMemo(() => {
+    if (cardFilter === 'overdue') return projects.filter((p: any) => (p.overdueTasks?.length ?? 0) > 0);
+    if (cardFilter === 'blocked') return projects.filter((p: any) => (p.blockedTasks ?? 0) > 0);
+    return projects;
+  }, [projects, cardFilter]);
 
   // Loading + error take precedence over the tab content so we never
   // silently render a half-populated page.
@@ -143,25 +175,35 @@ export function OperationsDashboardPage() {
         />
       )}
 
-      {/* Summary cards */}
+      {/* Summary cards — click a card to filter the tab below. */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        {[
-          { n: summary.totalOverdue, label: 'Overdue', sub: `Blocking ${summary.totalBlocked} tasks`, bg: 'bg-red-50', border: 'border-red-200', iconBg: 'bg-red-600', textDark: 'text-red-900', textLight: 'text-red-700' },
-          { n: summary.totalBlocked, label: 'Blocked', sub: 'Waiting on dependencies', bg: 'bg-amber-50', border: 'border-amber-200', iconBg: 'bg-amber-600', textDark: 'text-amber-900', textLight: 'text-amber-700' },
-          { n: summary.reviewCount ?? 0, label: 'In Review', sub: 'Awaiting your call', bg: 'bg-indigo-50', border: 'border-indigo-200', iconBg: 'bg-indigo-600', textDark: 'text-indigo-900', textLight: 'text-indigo-700' },
-          { n: summary.overloadedCount, label: 'Overloaded', sub: `${summary.employeesAtRiskCount ?? 0} at risk`, bg: summary.overloadedCount > 0 ? 'bg-red-50' : 'bg-emerald-50', border: summary.overloadedCount > 0 ? 'border-red-200' : 'border-emerald-200', iconBg: summary.overloadedCount > 0 ? 'bg-red-600' : 'bg-emerald-600', textDark: summary.overloadedCount > 0 ? 'text-red-900' : 'text-emerald-900', textLight: summary.overloadedCount > 0 ? 'text-red-700' : 'text-emerald-700' },
-          { n: summary.availableCount, label: 'Available', sub: `${summary.availableHours}h free capacity`, bg: 'bg-emerald-50', border: 'border-emerald-200', iconBg: 'bg-emerald-600', textDark: 'text-emerald-900', textLight: 'text-emerald-700' },
-        ].map((s, i) => (
-          <div key={i} className={cn('rounded-xl border p-3 flex items-center gap-3', s.bg, s.border)}>
-            <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center text-white shrink-0', s.iconBg)}>
-              <span className="text-base font-bold font-mono tabular-nums">{s.n}</span>
-            </div>
-            <div className="min-w-0">
-              <p className={cn('text-[13px] font-bold', s.textDark)}>{s.label}</p>
-              <p className={cn('text-[11px]', s.textLight)}>{s.sub}</p>
-            </div>
-          </div>
-        ))}
+        {([
+          { n: summary.totalOverdue, label: 'Overdue', sub: `Blocking ${summary.totalBlocked} tasks`, bg: 'bg-red-50', border: 'border-red-200', iconBg: 'bg-red-600', textDark: 'text-red-900', textLight: 'text-red-700', filter: 'overdue' as CardFilter, goTab: 'risk' as OpsTab, ring: 'ring-red-500' },
+          { n: summary.totalBlocked, label: 'Blocked', sub: 'Waiting on dependencies', bg: 'bg-amber-50', border: 'border-amber-200', iconBg: 'bg-amber-600', textDark: 'text-amber-900', textLight: 'text-amber-700', filter: 'blocked' as CardFilter, goTab: 'risk' as OpsTab, ring: 'ring-amber-500' },
+          { n: summary.reviewCount ?? 0, label: 'In Review', sub: 'Awaiting your call', bg: 'bg-indigo-50', border: 'border-indigo-200', iconBg: 'bg-indigo-600', textDark: 'text-indigo-900', textLight: 'text-indigo-700', filter: 'review' as CardFilter, goTab: 'risk' as OpsTab, ring: 'ring-indigo-500' },
+          { n: summary.overloadedCount, label: 'Overloaded', sub: `${summary.employeesAtRiskCount ?? 0} at risk`, bg: summary.overloadedCount > 0 ? 'bg-red-50' : 'bg-emerald-50', border: summary.overloadedCount > 0 ? 'border-red-200' : 'border-emerald-200', iconBg: summary.overloadedCount > 0 ? 'bg-red-600' : 'bg-emerald-600', textDark: summary.overloadedCount > 0 ? 'text-red-900' : 'text-emerald-900', textLight: summary.overloadedCount > 0 ? 'text-red-700' : 'text-emerald-700', filter: 'overloaded' as CardFilter, goTab: 'team' as OpsTab, ring: 'ring-red-500' },
+          { n: summary.availableCount, label: 'Available', sub: `${summary.availableHours}h free capacity`, bg: 'bg-emerald-50', border: 'border-emerald-200', iconBg: 'bg-emerald-600', textDark: 'text-emerald-900', textLight: 'text-emerald-700', filter: 'available' as CardFilter, goTab: 'team' as OpsTab, ring: 'ring-emerald-500' },
+        ]).map((s, i) => {
+          const active = cardFilter === s.filter;
+          return (
+            <button
+              key={i}
+              type="button"
+              aria-pressed={active}
+              onClick={() => pickCard(s.filter, s.goTab)}
+              title={active ? 'Clear filter' : `Filter by ${s.label}`}
+              className={cn('rounded-xl border p-3 flex items-center gap-3 text-left transition-all hover:brightness-[0.98] focus-visible:outline-none focus-visible:border-blue-500', s.bg, s.border, active && cn('ring-2 ring-offset-1', s.ring))}
+            >
+              <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center text-white shrink-0', s.iconBg)}>
+                <span className="text-base font-bold font-mono tabular-nums">{s.n}</span>
+              </div>
+              <div className="min-w-0">
+                <p className={cn('text-[13px] font-bold', s.textDark)}>{s.label}</p>
+                <p className={cn('text-[11px]', s.textLight)}>{active ? 'Filtering · click to clear' : s.sub}</p>
+              </div>
+            </button>
+          );
+        })}
       </div>
 
       {/* Tab strip */}
@@ -279,8 +321,8 @@ export function OperationsDashboardPage() {
             <ServiceIntensityPanel services={services} />
           </div>
 
-          {/* Review queue */}
-          {reviewQueue.length > 0 && (
+          {/* Review queue — hidden when a non-review card filter is on. */}
+          {(cardFilter === null || cardFilter === 'review') && reviewQueue.length > 0 && (
             <div>
               <div className="flex items-center gap-2 mb-3">
                 <span className="w-1 h-5 rounded-sm bg-indigo-600" />
@@ -346,8 +388,9 @@ export function OperationsDashboardPage() {
             </div>
           )}
 
-          {/* Projects at Risk */}
-          {projects.length > 0 && (
+          {/* Projects at Risk — hidden under the 'review' card filter,
+              narrowed by 'overdue' / 'blocked' via riskProjects. */}
+          {cardFilter !== 'review' && riskProjects.length > 0 && (
             <div>
               <div className="flex items-center gap-2 mb-3">
                 <span className="w-1 h-5 rounded-sm bg-red-600" />
@@ -356,7 +399,7 @@ export function OperationsDashboardPage() {
               </div>
 
               <div className="space-y-2">
-                {projects.map((project: any) => {
+                {riskProjects.map((project: any) => {
                   const cfg = OPS_STATUS_CFG[project.status] ?? OPS_STATUS_CFG.ok;
                   const isExp = !!expandedProjects[project.id];
                   const overdueTasks: any[] = project.overdueTasks ?? [];
