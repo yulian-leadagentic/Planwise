@@ -1,5 +1,5 @@
-import { Controller, Get, Param, Query, ParseIntPipe, UseGuards, ForbiddenException } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { Body, Controller, Get, Param, Post, Query, ParseIntPipe, UseGuards, ForbiddenException } from '@nestjs/common';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiBody } from '@nestjs/swagger';
 
 import { ExecutionPlanningService } from './execution-planning.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -158,10 +158,16 @@ export class ExecutionPlanningController {
   }
 
   // ─── Operations Dashboard ──────────────────────────────────────────────
+  //
+  // The Operations screen is a read-only aggregation. Its endpoints are
+  // gated on `projects:read` so anyone who can already see a project
+  // through ProjectAccessService can see the aggregation over that same
+  // set. Operations is NOT its own grantable module — see
+  // apps/api/prisma/seed.ts for the rationale (feat/ops-complete).
 
   @Get('dashboard/operations')
   @RequirePermissions({ module: 'projects', action: 'read' })
-  @ApiOperation({ summary: 'Operations dashboard — projects at risk, team load, review queue' })
+  @ApiOperation({ summary: 'Operations dashboard — projects at risk, team load, review queue, employees at risk, service intensity' })
   async getOperationsDashboard(
     @CurrentUser() user: any,
     // Client feedback 2026-08-02: each manager sees only their
@@ -171,245 +177,83 @@ export class ExecutionPlanningController {
     // set (admins), the filter no-ops and everyone is returned.
     @Query('myDeptOnly') myDeptOnly?: string,
   ) {
-    const prisma = this.eps['prisma'];
-    const now = new Date();
-    const scopeToMyDept = String(myDeptOnly ?? '').toLowerCase() === 'true';
-
-    // Scope to projects the caller can access
-    const acc = await this.access.getAccessibleProjectIds(user.id, user.roleId);
-    const projectScope = acc.all ? {} : { id: { in: acc.projectIds } };
-
-    // Resolve caller's department for optional employee scoping. If
-    // scopeToMyDept was requested but the caller has no department,
-    // the filter degrades to a no-op (we don't want to hide the
-    // entire team from an unscoped admin who ticked the box).
-    const caller = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { department: true },
-    });
-    const callerDept = caller?.department ?? null;
-    const applyDeptScope = scopeToMyDept && !!callerDept;
-
-    const activeProjects = await prisma.project.findMany({
-      where: { ...projectScope, deletedAt: null, status: { in: ['active', 'on_hold'] } },
-      include: {
-        leader: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
-        department: { select: { id: true, name: true } },
-        _count: { select: { tasks: true, zones: true, members: true } },
-      },
-    });
-
-    const projectIds = activeProjects.map((p: any) => p.id);
-
-    const allTasks = await prisma.task.findMany({
-      where: { projectId: { in: projectIds }, deletedAt: null, isArchived: false, status: { notIn: ['completed', 'cancelled'] } },
-      include: {
-        project: { select: { id: true, name: true, number: true } },
-        zone: { select: { id: true, name: true } },
-        assignees: { where: { deletedAt: null }, include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true, position: true, department: true } } } },
-        dependencies: { include: { dependsOn: { select: { id: true, status: true } } } },
-      },
-    });
-
-    const overdueTasks = allTasks.filter((t: any) => t.endDate && new Date(t.endDate) < now);
-    const overdueIds = new Set(overdueTasks.map((t: any) => t.id));
-
-    const blockedByOverdue = allTasks.filter((t: any) =>
-      t.dependencies?.some((d: any) => overdueIds.has(d.dependsOnId) || (d.dependsOn?.status && d.dependsOn.status !== 'completed'))
+    return this.eps.getOperationsDashboard(
+      { id: user.id, roleId: user.roleId ?? null },
+      myDeptOnly,
     );
-
-    const budgetData = await Promise.all(activeProjects.map(async (p: any) => {
-      const [taskBudget, timeLogged] = await Promise.all([
-        prisma.task.aggregate({ where: { projectId: p.id, deletedAt: null, isArchived: false }, _sum: { budgetAmount: true, budgetHours: true }, _count: true }),
-        // Resolve "logged on this project" via task.projectId, not
-        // entry.projectId — the latter is NULL on many historical rows
-        // (QuickTimeLog / TaskDrawer paths didn't always set it) and
-        // would understate the project's true logged time.
-        prisma.timeEntry.aggregate({
-          where: {
-            deletedAt: null,
-            task: { projectId: p.id },
-          },
-          _sum: { minutes: true },
-        }),
-      ]);
-      return { projectId: p.id, budgetAmount: Number(taskBudget._sum.budgetAmount ?? 0), budgetHours: Number(taskBudget._sum.budgetHours ?? 0), loggedMinutes: Number(timeLogged._sum.minutes ?? 0) };
-    }));
-    const budgetMap = new Map(budgetData.map((b) => [b.projectId, b]));
-
-    const projects = activeProjects.map((p: any) => {
-      const bd = budgetMap.get(p.id);
-      const projectOverdue = overdueTasks.filter((t: any) => t.projectId === p.id);
-      const budget = Number(p.budget ?? 0);
-      const budgetUsed = bd ? bd.budgetAmount : 0;
-      const budgetPct = budget > 0 ? Math.round(budgetUsed / budget * 100) : 0;
-      const daysLeft = p.endDate ? Math.round((new Date(p.endDate).getTime() - now.getTime()) / 86400000) : null;
-      const loggedHours = bd ? Math.round(bd.loggedMinutes / 60) : 0;
-      const budgetHours = bd ? bd.budgetHours : 0;
-      const progressPct = budgetHours > 0 ? Math.min(100, Math.round(loggedHours / budgetHours * 100)) : 0;
-
-      const riskFactors: { text: string; severity: string }[] = [];
-      if (budgetPct > 85 && progressPct < 60) riskFactors.push({ text: `Budget ${budgetPct}% used with only ${progressPct}% progress`, severity: 'critical' });
-      if (daysLeft !== null && daysLeft < 0) riskFactors.push({ text: `Deadline passed ${Math.abs(daysLeft)} days ago`, severity: 'critical' });
-      if (projectOverdue.length > 3) riskFactors.push({ text: `${projectOverdue.length} overdue tasks`, severity: 'high' });
-
-      const status = riskFactors.some((r) => r.severity === 'critical') ? 'critical'
-        : (riskFactors.length > 0 || projectOverdue.length > 0) ? 'high'
-        : (budgetPct > 70 || (daysLeft !== null && daysLeft < 30)) ? 'medium' : 'ok';
-
-      return {
-        id: p.id, name: p.name, number: p.number, status,
-        leader: p.leader, department: p.department,
-        progress: progressPct, budget, budgetUsed, budgetPct, daysLeft, riskFactors,
-        overdueTasks: projectOverdue.map((t: any) => ({
-          id: t.id, code: t.code, name: t.name,
-          // Root tasks (zoneId=null) have no zone relation. Surface
-          // "Project Root" so the dashboard doesn't render "undefined ·
-          // 4h left" or worse "null · ..." for them.
-          zone: t.zone?.name ?? 'Project Root',
-          assignee: t.assignees?.[0]?.user ?? null,
-          hoursLeft: Number(t.budgetHours ?? 0),
-          daysOverdue: Math.round((now.getTime() - new Date(t.endDate).getTime()) / 86400000),
-          priority: t.priority, blockedTasks: blockedByOverdue.filter((b: any) => b.dependencies?.some((d: any) => d.dependsOnId === t.id)).length,
-        })),
-        blockedTasks: blockedByOverdue.filter((t: any) => t.projectId === p.id).length,
-      };
-    })
-    .filter((p: any) => p.status !== 'ok' || p.overdueTasks.length > 0)
-    .sort((a: any, b: any) => { const rank: any = { critical: 0, high: 1, medium: 2, ok: 3 }; return (rank[a.status] ?? 3) - (rank[b.status] ?? 3); });
-
-    // Team load by department. When the caller opted into "my dept
-    // only" (client feedback 2026-08-02), narrow the employee set so
-    // managers see only their own people.
-    const employees = await prisma.user.findMany({
-      where: {
-        isActive: true,
-        userType: { in: ['employee', 'both'] },
-        deletedAt: null,
-        ...(applyDeptScope ? { department: callerDept } : {}),
-      },
-      select: { id: true, firstName: true, lastName: true, avatarUrl: true, position: true, department: true, dailyStandardHours: true },
-    });
-
-    const weekStart = new Date(now); weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1); weekStart.setHours(0, 0, 0, 0);
-    const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 4); weekEnd.setHours(23, 59, 59, 999);
-
-    const weekEntries = await prisma.timeEntry.groupBy({ by: ['userId'], where: { deletedAt: null, date: { gte: weekStart, lte: weekEnd } }, _sum: { minutes: true } });
-    const hoursMap = new Map(weekEntries.map((e: any) => [e.userId, Math.round(Number(e._sum.minutes ?? 0) / 60)]));
-
-    const taskCountByUser = await prisma.taskAssignee.groupBy({ by: ['userId'], where: { deletedAt: null, task: { deletedAt: null, status: { notIn: ['completed', 'cancelled'] } } }, _count: true });
-    const taskCountMap = new Map(taskCountByUser.map((t: any) => [t.userId, t._count]));
-
-    // Build per-member task list from allTasks
-    const memberTasksMap = new Map<number, any[]>();
-    for (const t of allTasks) {
-      for (const a of (t.assignees ?? [])) {
-        if (!memberTasksMap.has(a.userId)) memberTasksMap.set(a.userId, []);
-        memberTasksMap.get(a.userId)!.push({
-          id: t.id, code: t.code, name: t.name, status: t.status, priority: t.priority,
-          projectId: t.projectId, projectName: t.project?.name, projectNumber: t.project?.number,
-          zone: t.zone?.name, hoursLeft: Number(t.budgetHours ?? 0),
-          daysOverdue: t.endDate && new Date(t.endDate) < now ? Math.round((now.getTime() - new Date(t.endDate).getTime()) / 86400000) : null,
-          endDate: t.endDate,
-        });
-      }
-    }
-
-    const deptMap = new Map<string, any>();
-    for (const emp of employees) {
-      const deptName = emp.department || 'Unassigned';
-      if (!deptMap.has(deptName)) deptMap.set(deptName, { name: deptName, members: [] });
-      const capacity = Number(emp.dailyStandardHours ?? 8) * 5;
-      const empTasks = memberTasksMap.get(emp.id) ?? [];
-      deptMap.get(deptName).members.push({
-        id: emp.id, firstName: emp.firstName, lastName: emp.lastName, avatarUrl: emp.avatarUrl, position: emp.position,
-        hoursWeek: hoursMap.get(emp.id) ?? 0, capacity, tasks: taskCountMap.get(emp.id) ?? 0,
-        overdueTasks: empTasks.filter((t: any) => t.daysOverdue !== null && t.daysOverdue > 0).length,
-        taskList: empTasks,
-      });
-    }
-
-    const departments = Array.from(deptMap.values()).map((d: any) => ({
-      ...d,
-      totalHours: d.members.reduce((s: number, m: any) => s + m.hoursWeek, 0),
-      totalCapacity: d.members.reduce((s: number, m: any) => s + m.capacity, 0),
-      totalOverdue: d.members.reduce((s: number, m: any) => s + m.overdueTasks, 0),
-    }));
-
-    const overloaded = employees.filter((e) => (hoursMap.get(e.id) ?? 0) > Number(e.dailyStandardHours ?? 8) * 5);
-    const available = employees.filter((e) => (hoursMap.get(e.id) ?? 0) < Number(e.dailyStandardHours ?? 8) * 5 * 0.7);
-
-    // ── Review queue (client feedback 2026-08-02) ─────────────────
-    // Tasks currently sitting in `in_review` waiting on a manager.
-    // Same project scope as the rest of the dashboard; when
-    // `myDeptOnly` is on, only tasks whose CREATOR (submitter) lives
-    // in the caller's department are shown — that's what a "team
-    // manager" wants to triage.
-    const submitterFilter = applyDeptScope
-      ? { creator: { department: callerDept ?? undefined } }
-      : {};
-    const reviewTasks = await prisma.task.findMany({
-      where: {
-        projectId: { in: projectIds },
-        deletedAt: null,
-        isArchived: false,
-        status: 'in_review',
-        ...submitterFilter,
-      },
-      include: {
-        project: { select: { id: true, name: true, number: true } },
-        zone: { select: { id: true, name: true } },
-        creator: { select: { id: true, firstName: true, lastName: true, avatarUrl: true, department: true } },
-        assignees: { where: { deletedAt: null }, include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } } },
-        reviewEvents: { orderBy: { createdAt: 'desc' }, take: 1, select: { action: true, actorId: true, createdAt: true, reason: true } },
-      },
-      orderBy: [{ updatedAt: 'desc' }],
-      take: 100,
-    });
-    const reviewQueue = reviewTasks.map((t: any) => {
-      const returnCount = 0; // filled below via aggregate for accuracy
-      return {
-        id: t.id,
-        code: t.code,
-        name: t.name,
-        priority: t.priority,
-        projectId: t.projectId,
-        projectName: t.project?.name,
-        zone: t.zone?.name ?? 'Project Root',
-        submitter: t.creator ? { id: t.creator.id, firstName: t.creator.firstName, lastName: t.creator.lastName, department: t.creator.department } : null,
-        assignee: t.assignees?.[0]?.user ?? null,
-        submittedAt: t.reviewEvents?.[0]?.createdAt ?? t.updatedAt,
-        lastAction: t.reviewEvents?.[0]?.action ?? 'submit',
-        returnCount,
-      };
-    });
-    // One aggregate query for return counts across the whole
-    // in-review batch (avoids N+1 in the map above).
-    if (reviewQueue.length > 0) {
-      const returns = await prisma.taskReviewEvent.groupBy({
-        by: ['taskId'],
-        where: { taskId: { in: reviewQueue.map((r) => r.id) }, action: 'return' },
-        _count: true,
-      });
-      const returnMap = new Map(returns.map((r: any) => [r.taskId, r._count]));
-      for (const r of reviewQueue) r.returnCount = Number(returnMap.get(r.id) ?? 0);
-    }
-
-    return {
-      summary: {
-        totalOverdue: overdueTasks.length, totalBlocked: blockedByOverdue.length,
-        overloadedCount: overloaded.length, availableCount: available.length,
-        availableHours: available.reduce((s, e) => s + (Number(e.dailyStandardHours ?? 8) * 5 - (hoursMap.get(e.id) ?? 0)), 0),
-        reviewCount: reviewQueue.length,
-      },
-      projects,
-      departments,
-      reviewQueue,
-      // Echo the scoping mode so the UI can label "showing my dept only".
-      scope: {
-        myDeptOnly: applyDeptScope,
-        deptName: applyDeptScope ? callerDept : null,
-      },
-    };
   }
+
+  // BIM Leader tab — groups accessible projects by BIM Leader with
+  // per-leader counts (# active projects / # deliverables / # open
+  // tasks / # overdue). Expandable to project rows. Same
+  // projects:read gate as the ops dashboard; `myDeptOnly` narrows to
+  // the caller's department. (feat/ops-complete)
+  @Get('dashboard/operations/bim-leaders')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'Operations dashboard — workload grouped by BIM Leader' })
+  async getBimLeaderDashboard(
+    @CurrentUser() user: any,
+    @Query('myDeptOnly') myDeptOnly?: string,
+  ) {
+    return this.eps.getBimLeaderDashboard(
+      { id: user.id, roleId: user.roleId ?? null },
+      myDeptOnly,
+    );
+  }
+
+  // Active Projects tab — flags each accessible project ACTIVE or
+  // DORMANT based on upcoming due tasks + last 14d activity (time
+  // entries + activity logs). (feat/ops-complete)
+  @Get('dashboard/operations/active-projects')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'Operations dashboard — active/dormant projects (activity model)' })
+  async getActiveProjectsDashboard(
+    @CurrentUser() user: any,
+    @Query('myDeptOnly') myDeptOnly?: string,
+  ) {
+    return this.eps.getActiveProjectsDashboard(
+      { id: user.id, roleId: user.roleId ?? null },
+      myDeptOnly,
+    );
+  }
+
+  // Executive Review tab — capped task list (default 200) with
+  // per-task ops note (the "Comment" column). totalCount is returned
+  // so the UI can render "showing first N of M". (feat/ops-complete)
+  @Get('dashboard/operations/executive-review')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'Operations dashboard — executive review task list with per-task ops note' })
+  async getExecutiveReview(
+    @CurrentUser() user: any,
+    @Query('myDeptOnly') myDeptOnly?: string,
+    @Query('take') take?: string,
+  ) {
+    return this.eps.getExecutiveReview(
+      { id: user.id, roleId: user.roleId ?? null },
+      myDeptOnly,
+      take,
+    );
+  }
+
+  // Persist / clear a per-task ops note (Executive Review Comment
+  // column). Empty content clears the note. Access is checked via
+  // ProjectAccessService inside the service. Requires projects:write
+  // — the note is scoped to the same audience that can edit project
+  // data. (feat/ops-complete)
+  @Post('dashboard/operations/tasks/:taskId/ops-note')
+  @RequirePermissions({ module: 'projects', action: 'write' })
+  @ApiOperation({ summary: 'Upsert (or clear when content is empty) the Executive Review ops note for a task' })
+  @ApiBody({ schema: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] } })
+  async upsertOpsNote(
+    @CurrentUser() user: any,
+    @Param('taskId', ParseIntPipe) taskId: number,
+    @Body('content') content?: string,
+  ) {
+    return this.eps.upsertTaskOpsNote(
+      { id: user.id, roleId: user.roleId ?? null },
+      taskId,
+      content ?? '',
+    );
+  }
+
 }

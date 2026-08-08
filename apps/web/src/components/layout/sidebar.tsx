@@ -9,7 +9,10 @@ import { cn } from '@/lib/utils';
 
 const NAV_MODULE_MAP: Record<string, string> = {
   '/': 'dashboard',
-  '/operations': 'operations',
+  // Operations is a read-only aggregation, not its own grantable module.
+  // Anyone with projects:read can see it (matches the API guards + the
+  // RoutePermissionGuard mapping). (feat/ops-complete, 2026-08.)
+  '/operations': 'projects',
   '/execution-board': 'projects',
   '/status-board': 'projects',
   '/projects': 'projects',

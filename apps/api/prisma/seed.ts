@@ -34,6 +34,11 @@ async function main() {
   const timeMod = modules.find((m: any) => m.name === 'Time');
   const templatesMod = modules.find((m: any) => m.name === 'Templates');
   const adminMod = modules.find((m: any) => m.name === 'Admin');
+  // Dashboard is a top-level module but no sub-modules currently hang
+  // off it. Operations used to be registered here but was retired in
+  // feat/ops-complete (see block below). Leaving this line as a
+  // reference for future dashboard sub-modules.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const dashboardMod = modules.find((m: any) => m.name === 'Dashboard');
 
   const subModuleData = [
@@ -55,7 +60,13 @@ async function main() {
     // any other role that gets it can create / rename / move / delete
     // org units and set unit managers / user home units.
     { name: 'Organization', route: 'org', icon: 'Sitemap', sortOrder: 94, parentId: adminMod?.id },
-    { name: 'Operations', route: '/operations', icon: 'Activity', sortOrder: 10, parentId: dashboardMod?.id },
+    // Note: the Operations dashboard is intentionally NOT registered as
+    // a grantable module. Its endpoints are gated on `projects:read`
+    // and the view itself is a read-only aggregation over projects the
+    // caller already has access to — so exposing it in the permissions
+    // matrix would only invite drift ("I unchecked Operations but the
+    // person still sees it"). The '/operations' front-end route falls
+    // back to the projects:read check. (feat/ops-complete, 2026-08.)
   ];
   // Idempotent sub-module upsert keyed on `route` (unique). Fixes the
   // long-standing "Operations doesn't appear in Add Module" bug — the

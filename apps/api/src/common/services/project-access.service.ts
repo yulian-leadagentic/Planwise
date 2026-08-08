@@ -81,7 +81,7 @@ export class ProjectAccessService {
 
     const project = await this.prisma.project.findFirst({
       where: { id: projectId, deletedAt: null },
-      select: { id: true, leaderId: true, createdBy: true },
+      select: { id: true, leaderId: true, createdBy: true, departmentId: true },
     });
     if (!project) throw new NotFoundException('Project not found');
 
@@ -92,6 +92,25 @@ export class ProjectAccessService {
       select: { id: true },
     });
     if (membership) return;
+
+    // Department-level backup access (feat/ops-complete, 2026-08).
+    // Mirrors getAccessibleProjectIds: a user can READ any project in
+    // their department for backup, even without a direct membership
+    // or task assignment. Kept as a fallback below leader/member
+    // checks so the fast-path (direct access) still short-circuits.
+    if (project.departmentId != null) {
+      const caller = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { department: true },
+      });
+      if (caller?.department) {
+        const dept = await this.prisma.department.findUnique({
+          where: { name: caller.department },
+          select: { id: true },
+        });
+        if (dept && dept.id === project.departmentId) return;
+      }
+    }
 
     // Hierarchical fallback — a manager whose subordinate touches the
     // project (as member / leader / creator) inherits access.
@@ -187,6 +206,18 @@ export class ProjectAccessService {
    * they touch (member of, or leader/creator of). Empty subordinate
    * set (no org-tree involvement) skips the widen step entirely —
    * bit-for-bit identical to the pre-feature behaviour.
+   *
+   * Extended for department-level backup access (feat/ops-complete,
+   * 2026-08): a user can always READ the projects of their department
+   * for backup, even without a direct membership or task assignment.
+   * The caller's `User.department` (free-text) is matched against
+   * `Department.name` (unique) and every project with that
+   * `departmentId` is added to the accessible set. Task assignment
+   * only NARROWS what the UI shows in "my tasks"/filters — it never
+   * removes department-mates' projects from the reading set. This
+   * mirrors the BM requirements doc: "access is department-level; a
+   * user can always read the projects of their department hierarchy
+   * for backup even without a task assignment".
    */
   async getAccessibleProjectIds(
     userId: number,
@@ -205,6 +236,28 @@ export class ProjectAccessService {
     const ids = new Set<number>();
     for (const m of memberships) ids.add(m.projectId);
     for (const p of led) ids.add(p.id);
+
+    // Department widen — the caller may READ every project in their
+    // own department for backup. Missing department (null) or an
+    // unrecognized name (no matching Department row) simply skips
+    // this step, keeping legacy behaviour.
+    const caller = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { department: true },
+    });
+    if (caller?.department) {
+      const dept = await this.prisma.department.findUnique({
+        where: { name: caller.department },
+        select: { id: true },
+      });
+      if (dept) {
+        const deptProjects = await this.prisma.project.findMany({
+          where: { departmentId: dept.id, deletedAt: null },
+          select: { id: true },
+        });
+        for (const p of deptProjects) ids.add(p.id);
+      }
+    }
 
     // Hierarchical widen.
     const subs = await this.getSubordinateUserIds(userId);

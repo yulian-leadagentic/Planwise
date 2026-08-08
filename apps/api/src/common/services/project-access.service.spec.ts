@@ -23,7 +23,17 @@ describe('ProjectAccessService', () => {
       // test path behaves exactly as it did before the feature
       // (empty subordinate set → no widen).
       orgUnit: { findMany: jest.fn().mockResolvedValue([]) },
-      user: { findMany: jest.fn().mockResolvedValue([]) },
+      user: {
+        findMany: jest.fn().mockResolvedValue([]),
+        // Department widen (feat/ops-complete) queries the caller's
+        // own row for their department string. Defaulting to a
+        // department-less user preserves the pre-feature behaviour
+        // — the widen step is a no-op when department is null.
+        findUnique: jest.fn().mockResolvedValue({ department: null }),
+      },
+      // Department widen (feat/ops-complete) — kept unresolved by
+      // default so no dept-scoped projects are added.
+      department: { findUnique: jest.fn().mockResolvedValue(null) },
     };
 
     const moduleRef = await Test.createTestingModule({

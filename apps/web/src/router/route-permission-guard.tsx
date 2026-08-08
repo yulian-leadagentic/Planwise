@@ -46,7 +46,13 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
   // and /admin/employees mappings above). tsc surfaced the collision
   // via TS1117. Keeping the intended one.
   '/partners': 'partners',
-  '/operations': 'operations',
+  // Operations dashboard is a read-only aggregation and is NOT its own
+  // grantable module (see apps/api/prisma/seed.ts). Everyone with
+  // projects:read may view it; the API endpoints enforce the same. The
+  // frontend gate mirrors this so a role that can read projects can
+  // reach /operations even when no 'operations' module row exists in
+  // their role_modules. (feat/ops-complete, 2026-08.)
+  '/operations': 'projects',
 };
 
 const SORTED_PREFIXES = Object.keys(ROUTE_MODULE_MAP).sort((a, b) => b.length - a.length);

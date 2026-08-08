@@ -291,6 +291,7 @@ model User {
   checklistItemsCreated TaskChecklistItem[]      @relation("ChecklistCreator")
   checklistItemsDone    TaskChecklistItem[]      @relation("ChecklistDoneBy")
   taskReviewActions     TaskReviewEvent[]        @relation("TaskReviewActor")
+  taskOpsNotesUpdated   TaskOpsNote[]            @relation("TaskOpsNoteUpdater")
   templatesCreated      Template[]               @relation("TemplateCreator")
   messages              Message[]                @relation("MessageAuthor")
   messageMentions       MessageMention[]
@@ -1199,6 +1200,7 @@ model Task {
   dependedBy          TaskDependency[]    @relation("TaskDepBy")
   checklistItems      TaskChecklistItem[]
   reviewEvents        TaskReviewEvent[]
+  opsNote             TaskOpsNote?
 
   @@index([zoneId])
   @@index([projectId])
@@ -1432,6 +1434,28 @@ model TaskComment {
 
   @@index([taskId])
   @@map("task_comments")
+}
+
+/// Operations-review annotation. One-per-task free-text note editable from
+/// the Executive Review tab in the Operations dashboard. Kept separate
+/// from TaskComment because TaskComment is a threaded discussion (many
+/// per task, with mentions/attachments/replies) whereas the Executive
+/// Review "Comment" column is a single, always-latest per-task
+/// annotation the ops manager updates in place. Cascade-deleted with
+/// the parent task. (feat/ops-complete, 2026-08.)
+model TaskOpsNote {
+  id        Int      @id @default(autoincrement())
+  taskId    Int      @unique @map("task_id")
+  content   String   @db.Text
+  updatedBy Int      @map("updated_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  task          Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  updatedByUser User @relation("TaskOpsNoteUpdater", fields: [updatedBy], references: [id])
+
+  @@index([updatedBy])
+  @@map("task_ops_notes")
 }
 
 // ─── Templates ─────────────────────────────────────────────────────────────
