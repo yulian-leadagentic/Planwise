@@ -201,12 +201,23 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   };
 
   const [overrideConfirm, setOverrideConfirm] = useState<{ taskId: number; taskName: string; currentDue: string | null; targetDate: string | null }[] | null>(null);
-  // Blocking-modal state for tasks that ALREADY have a due date
-  // AFTER the new deliverable target. Client feedback 2026-08-03:
-  // don't override, don't allow save — user must fix task dates
-  // manually before saving. We render a modal listing every
-  // offender with a link into the task.
-  const [exceedBlock, setExceedBlock] = useState<{ taskId: number; code: string | null; taskName: string; endDate: string; targetDate: string; deliverableName: string; zoneName: string }[] | null>(null);
+  // Per-task conflict prompt for tasks whose current endDate is AFTER
+  // the about-to-be-saved deliverable target. Client feedback
+  // 2026-08-08: don't block — surface the conflicts, let the PM pick
+  // per task whether to overwrite the Due date to the new target or
+  // keep it as-is, then finish the save. Previously this was a hard
+  // block ("fix task dates first") which forced the PM out of the
+  // planning flow.
+  type ExceedItem = { taskId: number; code: string | null; taskName: string; endDate: string; targetDate: string; deliverableName: string; zoneName: string };
+  const [exceedPrompt, setExceedPrompt] = useState<ExceedItem[] | null>(null);
+  // Per-task choice made by the PM in the conflict prompt. 'update' =
+  // apply the target to the task's endDate (force-apply after save);
+  // 'keep' = leave the task's endDate alone. Default 'update' — the
+  // common case per the "notify and update" spec.
+  const [exceedChoices, setExceedChoices] = useState<Record<number, 'update' | 'keep'>>({});
+  // Loading flag while the sequenced Save + per-task force-apply chain
+  // runs. Guards the confirm button and disables per-row toggling.
+  const [exceedApplying, setExceedApplying] = useState(false);
   // Post-save reminder — a toast that lists rows whose deliverable
   // target moved AND have at least one task with an existing due
   // date, so the PM knows they need to eyeball those task dates.
@@ -249,12 +260,13 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
 
   /**
    * Preflight before save: find every task whose current endDate is
-   * strictly AFTER its (about-to-be-saved) deliverable target. Those
-   * are blocked — the PM must either extend the deliverable target or
-   * pull the task's due date in before we allow the save.
+   * strictly AFTER its (about-to-be-saved) deliverable target. The
+   * conflict prompt (formerly a hard block) surfaces these and lets
+   * the PM pick per task whether to overwrite or keep — the save
+   * completes either way. Client feedback 2026-08-08.
    */
-  const findExceedingTasks = (): typeof exceedBlock => {
-    const offenders: NonNullable<typeof exceedBlock> = [];
+  const findExceedingTasks = (): ExceedItem[] | null => {
+    const offenders: ExceedItem[] = [];
     for (const r of rows) {
       const newTargetIso = targetDateDrafts[r.key] || computePreview(drafts[r.key] ?? '') || r.savedDate;
       if (!newTargetIso) continue;
@@ -279,8 +291,53 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
 
   const attemptSave = () => {
     const offenders = findExceedingTasks();
-    if (offenders) { setExceedBlock(offenders); return; }
+    if (offenders) {
+      // Default every conflicting task to 'update' — the "notify and
+      // update" spec's happy path. PM can flip individual rows to
+      // 'keep' or use "Keep all" before confirming.
+      const defaults: Record<number, 'update' | 'keep'> = {};
+      for (const o of offenders) defaults[o.taskId] = 'update';
+      setExceedChoices(defaults);
+      setExceedPrompt(offenders);
+      return;
+    }
     save.mutate();
+  };
+
+  /**
+   * Confirm handler for the conflict prompt. Sequenced so the new
+   * deliverable target is persisted FIRST (batch save), then any tasks
+   * the PM chose to update get their endDate force-applied to that
+   * target. Force-apply reads the just-saved target on the server, so
+   * the ordering is load-bearing.
+   */
+  const confirmExceed = async () => {
+    if (!exceedPrompt) return;
+    setExceedApplying(true);
+    try {
+      await save.mutateAsync();
+      const updateIds = exceedPrompt
+        .filter((t) => exceedChoices[t.taskId] === 'update')
+        .map((t) => t.taskId);
+      // Fire per-task force-apply in parallel — the endpoint is
+      // idempotent and each hits a different task row so there's no
+      // ordering constraint between them.
+      const results = await Promise.allSettled(
+        updateIds.map((id) => forceApply.mutateAsync(id)),
+      );
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) {
+        notify.warning(`${updateIds.length - failed} of ${updateIds.length} task due dates updated`);
+      } else if (updateIds.length > 0) {
+        notify.success(`Updated ${updateIds.length} task due date${updateIds.length === 1 ? '' : 's'} to the new target`);
+      }
+      // Refresh planning so the updated task endDates are picked up.
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+    } finally {
+      setExceedApplying(false);
+      setExceedPrompt(null);
+      setExceedChoices({});
+    }
   };
 
   const forceApply = useMutation({
@@ -348,47 +405,112 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
 
   return (
     <div className="space-y-6">
-      {/* Blocking modal — one or more tasks have due dates AFTER the
-          about-to-be-saved deliverable target (client 2026-08-03).
-          User MUST fix task dates or bump the deliverable target
-          before we allow the save. */}
-      {exceedBlock && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 backdrop-blur-sm" onClick={() => setExceedBlock(null)}>
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[620px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+      {/* Per-task conflict prompt (client feedback 2026-08-08).
+          Replaces the old hard block with a notify-and-update flow:
+          list every task whose current Due is after the new deliverable
+          target, let the PM choose per-task whether to overwrite the
+          task's Due with the target OR keep it as-is, then continue
+          with the save. "Apply to all" (Update / Keep) flips the whole
+          list at once. */}
+      {exceedPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 backdrop-blur-sm" onClick={() => !exceedApplying && setExceedPrompt(null)}>
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[720px] max-w-[92vw] max-h-[85vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-start gap-3">
-              <div className="w-9 h-9 rounded-full bg-red-50 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5 text-red-600" />
+              <div className="w-9 h-9 rounded-full bg-amber-50 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-600" aria-hidden="true" />
               </div>
-              <div className="min-w-0">
-                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Tasks with due dates AFTER the new deliverable target</h3>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Some tasks end after the new deliverable target</h3>
                 <p className="text-[13px] text-slate-500 dark:text-slate-400 mt-0.5">
-                  These tasks would end after their deliverable's promised date. Fix the task due dates (open the task) or extend the deliverable target, then save.
+                  Pick per task whether to update the task's Due date to the new deliverable target, or keep it as-is. The save proceeds either way.
                 </p>
               </div>
             </div>
-            <div className="p-5 space-y-2">
-              {exceedBlock.map((t) => (
-                <div key={t.taskId} className="border border-red-200 bg-red-50/40 rounded-lg p-3 text-[12px]">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-slate-500 dark:text-slate-400 shrink-0">{t.code ?? '—'}</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-100 truncate">{t.taskName}</span>
+            {/* Bulk-toggle bar — "Apply to all" affordance. */}
+            <div className="px-5 py-2 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2 text-[12px] bg-slate-50/60 dark:bg-slate-800/40">
+              <span className="font-semibold text-slate-500 dark:text-slate-400">Apply to all:</span>
+              <button
+                type="button"
+                disabled={exceedApplying}
+                onClick={() => {
+                  const next: Record<number, 'update' | 'keep'> = {};
+                  for (const o of exceedPrompt) next[o.taskId] = 'update';
+                  setExceedChoices(next);
+                }}
+                className="px-2.5 py-1 rounded-md border border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 font-semibold disabled:opacity-50"
+              >
+                Update all to target
+              </button>
+              <button
+                type="button"
+                disabled={exceedApplying}
+                onClick={() => {
+                  const next: Record<number, 'update' | 'keep'> = {};
+                  for (const o of exceedPrompt) next[o.taskId] = 'keep';
+                  setExceedChoices(next);
+                }}
+                className="px-2.5 py-1 rounded-md border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold disabled:opacity-50"
+              >
+                Keep all as-is
+              </button>
+              <span className="ml-auto text-slate-400 dark:text-slate-500 tabular-nums">
+                {exceedPrompt.filter((t) => exceedChoices[t.taskId] === 'update').length} of {exceedPrompt.length} will update
+              </span>
+            </div>
+            <div className="p-5 space-y-2 overflow-auto">
+              {exceedPrompt.map((t) => {
+                const choice = exceedChoices[t.taskId] ?? 'update';
+                return (
+                  <div key={t.taskId} className="border border-slate-200 dark:border-slate-700 rounded-lg p-3">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400 shrink-0 tabular-nums">{t.code ?? '—'}</span>
+                      <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">{t.taskName}</span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-2 flex-wrap text-[11px] text-slate-500 dark:text-slate-400">
+                      <span>{t.zoneName} · {t.deliverableName}</span>
+                      <span className="text-slate-300 dark:text-slate-600">·</span>
+                      <span>current due <span className="font-mono tabular-nums font-semibold text-slate-700 dark:text-slate-200">{t.endDate}</span></span>
+                      <span className="text-slate-300 dark:text-slate-600">→ new target</span>
+                      <span className="font-mono tabular-nums font-semibold text-slate-700 dark:text-slate-200">{t.targetDate}</span>
+                    </div>
+                    <div className="mt-2 inline-flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
+                      <button
+                        type="button"
+                        disabled={exceedApplying}
+                        onClick={() => setExceedChoices((s) => ({ ...s, [t.taskId]: 'update' }))}
+                        className={cn('px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors disabled:opacity-50', choice === 'update' ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100')}
+                      >
+                        Update to target
+                      </button>
+                      <button
+                        type="button"
+                        disabled={exceedApplying}
+                        onClick={() => setExceedChoices((s) => ({ ...s, [t.taskId]: 'keep' }))}
+                        className={cn('px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors disabled:opacity-50', choice === 'keep' ? 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100')}
+                      >
+                        Keep as-is
+                      </button>
+                    </div>
                   </div>
-                  <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
-                    <span>{t.zoneName} · {t.deliverableName}</span>
-                    <span className="text-slate-300 dark:text-slate-600">·</span>
-                    <span>due <span className="tabular-nums font-semibold text-red-700">{t.endDate}</span></span>
-                    <span className="text-slate-300 dark:text-slate-600">→ deliv. target</span>
-                    <span className="tabular-nums font-semibold text-slate-700 dark:text-slate-200">{t.targetDate}</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">
               <button
-                onClick={() => setExceedBlock(null)}
-                className="bg-red-600 hover:bg-red-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg"
+                type="button"
+                disabled={exceedApplying}
+                onClick={() => setExceedPrompt(null)}
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg disabled:opacity-50"
               >
-                Understood — fix task dates first
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={exceedApplying}
+                onClick={confirmExceed}
+                className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
+              >
+                {exceedApplying ? 'Applying…' : 'Confirm and save'}
               </button>
             </div>
           </div>
