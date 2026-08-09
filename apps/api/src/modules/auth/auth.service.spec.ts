@@ -53,14 +53,19 @@ describe('AuthService', () => {
 
     it('throws UnauthorizedException for wrong password', async () => {
       const hashed = await bcrypt.hash('correct', 10);
-      prisma.user.findFirst.mockResolvedValueOnce({ id: 1, password: hashed });
+      prisma.user.findFirst.mockResolvedValueOnce({ id: 1, password: hashed, allowPasswordLogin: true });
       await expect(service.validateUser('a@b.com', 'wrong')).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it('throws UnauthorizedException for SSO-only users (null password)', async () => {
+      prisma.user.findFirst.mockResolvedValueOnce({ id: 1, password: null, allowPasswordLogin: true });
+      await expect(service.validateUser('a@b.com', 'anything')).rejects.toBeInstanceOf(UnauthorizedException);
     });
 
     it('returns user without password on valid credentials', async () => {
       const hashed = await bcrypt.hash('correct', 10);
       prisma.user.findFirst
-        .mockResolvedValueOnce({ id: 1, password: hashed })
+        .mockResolvedValueOnce({ id: 1, password: hashed, allowPasswordLogin: true })
         .mockResolvedValueOnce({ id: 1, password: hashed, email: 'a@b.com', role: { roleModules: [] } });
 
       const result = await service.validateUser('a@b.com', 'correct');

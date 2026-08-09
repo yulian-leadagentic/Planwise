@@ -30,14 +30,30 @@ export class AuthService {
   ) {}
 
   async validateUser(email: string, password: string): Promise<any> {
-    // First: lightweight credential check (no JOINs)
+    // First: lightweight credential check (no JOINs). We also pull the
+    // `allowPasswordLogin` toggle here so we can gate the password path
+    // AFTER the hash check succeeds (never before — leaking "SSO-only"
+    // as a distinct error against a wrong password would let an
+    // attacker enumerate accounts).
     const user = await this.prisma.user.findFirst({
       where: { email, isActive: true },
-      select: { id: true, password: true },
+      select: { id: true, password: true, allowPasswordLogin: true },
     });
 
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
+    }
+
+    // SSO-only rows have password=null — no bcrypt.compare (which
+    // would throw on a non-string), just a friendly "use SSO" message
+    // BEFORE any timing signal that could hint at account existence.
+    // We accept this small enumeration surface because the message is
+    // more helpful than a generic "invalid credentials" the user then
+    // spends ten minutes debugging.
+    if (user.password === null) {
+      throw new UnauthorizedException(
+        'This account uses single sign-on. Please sign in with your organization identity provider.',
+      );
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
@@ -243,6 +259,15 @@ export class AuthService {
     const user = await this.prisma.user.findFirst({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+
+    // SSO-only users don't have a local password to change. Direct
+    // them at the IdP rather than silently succeeding — bcrypt.compare
+    // on null throws with a misleading message.
+    if (user.password === null) {
+      throw new BadRequestException(
+        'This account uses single sign-on. Password changes are managed by your organization identity provider.',
+      );
     }
 
     const isValid = await bcrypt.compare(currentPassword, user.password);

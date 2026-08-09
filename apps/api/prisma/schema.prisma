@@ -210,7 +210,14 @@ model User {
   /// compat with users created before M1.1.
   code               String?         @unique @db.VarChar(50)
   email              String          @unique
-  password           String
+  /// Nullable because SSO-only users have no local password. Legacy
+  /// password-login continues to work for rows that still have a hash;
+  /// AuthService.validateUser rejects a login attempt on a null-password
+  /// row with a message that nudges the user toward SSO. Flip
+  /// allowPasswordLogin=false to lock a specific user to SSO even when
+  /// a stale hash lingers.
+  password           String?
+  allowPasswordLogin Boolean         @default(true) @map("allow_password_login")
   firstName          String          @map("first_name")
   lastName           String          @map("last_name")
   /// Optional Hebrew rendering of the user's name. The search query
@@ -322,6 +329,12 @@ model User {
   /// query in ProjectAccessService.getManagedSubtreeUnitIds.
   managedUnits OrgUnit[] @relation("OrgUnitManager")
 
+  /// External IdP identity links (Microsoft, Google, …). One user can
+  /// hold multiple identities (e.g. Microsoft work account + Google
+  /// personal). The (provider, subject) pair is the stable IdP-side
+  /// key — NEVER email — so a renamed mailbox doesn't lose its user.
+  identities UserIdentity[]
+
   @@index([roleId])
   @@index([email])
   @@index([userType])
@@ -343,6 +356,7 @@ model Role {
   roleModules       RoleModule[]
   stageTransitions  RoleStageTransition[]
   resourceOverrides ResourceOverride[]
+  orgAuthConfigs    OrgAuthConfig[]
 
   @@map("roles")
 }
@@ -2395,4 +2409,83 @@ model OrgUnit {
   @@index([path])
   @@index([managerUserId])
   @@map("org_units")
+}
+
+// ─── SSO / Identity ────────────────────────────────────────────────
+//
+// P1 — infrastructure + Microsoft Entra ID. Google + Entra App-Roles
+// are deferred to P2/P3.
+//
+// OrgAuthConfig holds one row per (organization × provider). Today
+// Planwise is single-company, so organizationId is nullable and there
+// is effectively one row per provider. The client-secret is stored as
+// AES-256-GCM (ciphertext + iv + tag + keyVersion) — never plaintext,
+// never in application logs, never in an API response.
+//
+// UserIdentity binds a Planwise User to a stable IdP subject (e.g.
+// Entra `oid`) — NOT email. Emails change; subjects don't. The unique
+// (provider, subject) index is what OidcUserResolverService.byIdentity()
+// looks up on every SSO login.
+
+model OrgAuthConfig {
+  id                Int      @id @default(autoincrement())
+  /// Nullable — Planwise is single-company at P1; the column exists
+  /// so a future multi-tenant model can add a per-tenant configuration
+  /// without another migration.
+  organizationId    Int?     @map("organization_id")
+  /// 'microsoft' | 'google' (google gated to P2). Enforced by the DTO
+  /// validator, not the DB, so a future provider can be added without
+  /// schema churn.
+  provider          String   @db.VarChar(20)
+  enabled           Boolean  @default(false)
+  /// Entra tenant id (GUID). Nullable — Google doesn't use one.
+  tenantId          String?  @map("tenant_id") @db.VarChar(191)
+  clientId          String   @map("client_id") @db.VarChar(191)
+  /// AES-256-GCM(ciphertext | iv | tag | keyVersion). Written and read
+  /// EXCLUSIVELY through SecretCryptoService — never touch the raw
+  /// bytes elsewhere.
+  secretCiphertext  Bytes    @map("secret_ciphertext")
+  secretIv          Bytes    @map("secret_iv")
+  secretTag         Bytes    @map("secret_tag")
+  keyVersion        Int      @map("key_version")
+  /// CSV of allowed email domains for JIT provisioning. Enforced BEFORE
+  /// any user create/link. Kept as a plain string (comma-separated) for
+  /// admin ergonomics; the resolver splits and trims.
+  allowedDomains    String   @default("") @map("allowed_domains") @db.VarChar(500)
+  /// Fallback role assigned when the resolver JIT-creates a new user
+  /// from an SSO callback. FK so a role rename doesn't strand configs.
+  defaultRoleId     Int      @map("default_role_id")
+  /// When true, users with allowPasswordLogin=false are hard-blocked
+  /// from the /auth/login path — even a valid bcrypt hash won't let
+  /// them in. Enforced in AuthService.validateUser.
+  ssoOnly           Boolean  @default(false) @map("sso_only")
+  updatedBy         Int?     @map("updated_by")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  defaultRole       Role     @relation(fields: [defaultRoleId], references: [id])
+
+  @@unique([organizationId, provider])
+  @@map("org_auth_configs")
+}
+
+model UserIdentity {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  provider  String   @db.VarChar(20)
+  /// The IdP-side stable subject (`oid` for Entra, `sub` for Google).
+  /// This is the ONLY safe primary lookup key — email can change on
+  /// the IdP side without notice and would break linkage.
+  subject   String   @db.VarChar(191)
+  /// Snapshot of the email the IdP presented at link time. Purely
+  /// informational for admin debug ("which mailbox was this?") —
+  /// NEVER used as a lookup key.
+  email     String?  @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, subject])
+  @@index([userId])
+  @@map("user_identities")
 }
