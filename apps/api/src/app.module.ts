@@ -44,6 +44,7 @@ import { ProjectStatusBoardModule } from './modules/project-status-board/project
 import { ProjectDeliverablesModule } from './modules/project-deliverables/project-deliverables.module';
 import { ActivityLogModule } from './common/services/activity-log.module';
 import { SecretCryptoModule } from './common/secret-crypto.module';
+import { SsoAdminModule } from './modules/sso-admin/sso-admin.module';
 
 @Module({
   imports: [
@@ -123,6 +124,7 @@ import { SecretCryptoModule } from './common/secret-crypto.module';
     DataImportModule,
     ProjectStatusBoardModule,
     ProjectDeliverablesModule,
+    SsoAdminModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
