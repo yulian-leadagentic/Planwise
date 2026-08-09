@@ -44,6 +44,8 @@
     "date-fns": "^3.3.0",
     "exceljs": "^4.4.0",
     "express": "^4.22.1",
+    "google-auth-library": "^9.14.0",
+    "googleapis": "^144.0.0",
     "handlebars": "^4.7.8",
     "helmet": "^7.1.0",
     "nestjs-pino": "^4.6.1",
