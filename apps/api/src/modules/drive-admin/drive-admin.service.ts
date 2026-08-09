@@ -267,9 +267,11 @@ export class DriveAdminService {
       // one-shot health check for the "Test connection" button.
       const { data } = await drive.drives.get({
         driveId: row.sharedDriveId,
-        // Redundant on drives.get but kept explicit for consistency
-        // with every other call in DriveService — the invariant is
-        // "every drive.* call passes supportsAllDrives:true".
+        // drive.drives.get does NOT accept supportsAllDrives (per
+        // googleapis' typedef) — the call is already scoped to a
+        // single Shared Drive by the driveId. The "every drive.*
+        // call passes supportsAllDrives:true" invariant applies to
+        // drive.files.* only, where it toggles cross-drive access.
       });
       result = {
         ok: true,
