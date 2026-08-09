@@ -65,4 +65,12 @@ export const authApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     }).then((r) => r.data.data);
   },
+
+  // Public list of enabled SSO providers. The login page reads this
+  // to decide which "Sign in with X" button to render. Contains no
+  // secrets or tenant ids — safe to fetch unauthenticated.
+  getOidcProviders: () =>
+    client
+      .get<ApiResponse<{ provider: string; enabled: boolean }[]>>('/auth/oidc/providers')
+      .then((r) => r.data.data ?? []),
 };
