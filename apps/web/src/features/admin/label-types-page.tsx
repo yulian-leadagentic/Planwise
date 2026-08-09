@@ -79,7 +79,6 @@ export function LabelTypesPage() {
           Delete
         </button>
       ) },
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   ], []);
 
   return (

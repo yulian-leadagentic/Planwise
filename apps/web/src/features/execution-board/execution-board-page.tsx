@@ -174,7 +174,6 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       addZones(data.zones[project.id] ?? []);
     }
     setExpandedIds((prev) => new Set([...prev, ...keys]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectIds, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, data]);
 
   const toggleExpand = useCallback((key: string) => {
@@ -303,7 +302,6 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     if (filtered.length !== serviceFilter.size) {
       setServiceFilter(new Set(filtered));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [availableServices]);
 
   // Same construction as availableServices but resolved via getTaskServiceName

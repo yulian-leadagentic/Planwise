@@ -751,7 +751,6 @@ function TableView({
   // Visible rows: pass every column filter.
   const filtered = useMemo(
     () => rows.filter((r) => (['deliverable', 'zone', 'service', 'months', 'duration', 'target'] as ColKey[]).every((c) => rowPassesCol(r, c, colFilters))),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [rows, drafts, durationDrafts, colFilters],
   );
 
@@ -844,7 +843,6 @@ function TableView({
       }
     }
     return groups;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered, sort, drafts, durationDrafts]);
 
   const toggleSort = (col: typeof sort.col) => {
@@ -1177,7 +1175,6 @@ function GanttView({
     if (merged.length !== rowOrder.length || merged.some((k, i) => k !== rowOrder[i])) {
       setRowOrder(merged);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows]);
   useEffect(() => {
     try { localStorage.setItem(orderKey, JSON.stringify(rowOrder)); } catch { /* ignore */ }
@@ -1296,7 +1293,6 @@ function GanttView({
   // left edge. Runs once per width change, not on every scroll.
   useEffect(() => {
     scrollToToday(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalTimelineWidth]);
 
   // Past-date confirmation state (client feedback 2026-08-02).

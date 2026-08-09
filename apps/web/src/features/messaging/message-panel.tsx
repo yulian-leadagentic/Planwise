@@ -193,7 +193,7 @@ function MessageComposer({ entityType, entityId, parentId, onSent }: {
 
   const handleSubmit = async () => {
     if (!content.trim() && pendingFiles.length === 0) return;
-    let attachments: Array<{ fileName: string; fileUrl: string; fileSize?: number; mimeType?: string }> = [];
+    const attachments: Array<{ fileName: string; fileUrl: string; fileSize?: number; mimeType?: string }> = [];
     if (pendingFiles.length > 0) {
       setUploading(true);
       try {

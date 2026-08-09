@@ -598,7 +598,6 @@ const BulkCollapseContext = createContext<{ desired: boolean | null; version: nu
 function useBulkCollapseSync(setCollapsed: (b: boolean) => void) {
   const { desired, version } = useContext(BulkCollapseContext);
   // Watching `version` (not `desired`) is intentional: see contract above.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (desired != null) setCollapsed(desired);
   }, [version]);
@@ -2073,7 +2072,6 @@ function ProjectArchivedTasksModal({
           const d = r.data?.data ?? r.data;
           if (Array.isArray(d)) return d;
           if (d?.data && Array.isArray(d.data)) return d.data;
-          // eslint-disable-next-line no-console
           console.warn('[archive-modal] unexpected response shape', r.data);
           return [];
         }),
@@ -3535,7 +3533,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <button onClick={async () => {
                 if (!newTask.code.trim() || !newTask.name.trim()) { notify.warning('Code and Name required'); return; }
                 const payload = { code: newTask.code.trim(), name: newTask.name.trim(), budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined, budgetAmount: newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined };
-                if (saveToCatalog) { try { const cats = await client.get('/templates?type=task_list').then(r => r.data.data ?? r.data); const cat = (Array.isArray(cats) ? cats : []).find((t: any) => t.code === '__TASK_CATALOG__'); if (cat) await client.post(`/templates/${cat.id}/tasks`, { ...payload, defaultBudgetHours: payload.budgetHours, defaultBudgetAmount: payload.budgetAmount }); } catch {} }
+                if (saveToCatalog) { try { const cats = await client.get('/templates?type=task_list').then(r => r.data.data ?? r.data); const cat = (Array.isArray(cats) ? cats : []).find((t: any) => t.code === '__TASK_CATALOG__'); if (cat) await client.post(`/templates/${cat.id}/tasks`, { ...payload, defaultBudgetHours: payload.budgetHours, defaultBudgetAmount: payload.budgetAmount }); } catch { /* best-effort catalog sync — task create below still runs */ } }
                 createTask.mutate({ zoneId: zone.id, ...payload });
               }} disabled={createTask.isPending} className="bg-blue-600 text-white text-[11px] font-semibold px-3 py-1.5 rounded-md disabled:opacity-50">Save</button>
               <label className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 cursor-pointer whitespace-nowrap"><input type="checkbox" checked={saveToCatalog} onChange={(e) => setSaveToCatalog(e.target.checked)} className="h-3 w-3 rounded" />Catalog</label>

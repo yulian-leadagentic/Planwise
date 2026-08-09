@@ -83,7 +83,6 @@ client.interceptors.response.use(
         // Log to the console so the failure is visible (helps diagnose
         // the kick-out reports). The redirect still happens — but at
         // least we leave a trace.
-        // eslint-disable-next-line no-console
         console.warn('[auth] refresh failed → redirecting to /login', refreshError?.message ?? refreshError);
         useAuthStore.getState().clearAuth();
         window.location.href = '/login';

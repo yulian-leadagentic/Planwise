@@ -163,7 +163,6 @@ export function CurrenciesPage() {
     },
   // deleteMutation identity is stable enough for our use — column
   // action closures re-close automatically when the memo invalidates.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   ], []);
 
   return (

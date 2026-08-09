@@ -17,14 +17,14 @@ export function DroppableColumn({ column, tasks, onOpenDrawer, onStatusChange }:
       const v = localStorage.getItem(lsKey);
       if (v === '1') return true;
       if (v === '0') return false;
-    } catch {}
+    } catch { /* localStorage may be unavailable in private mode */ }
     // Default: collapse "To Do" only when it has more than 10 tasks.
     return column.id === 'not_started' && tasks.length > 10;
   });
   const toggleCollapsed = () => {
     setCollapsed((prev) => {
       const next = !prev;
-      try { localStorage.setItem(lsKey, next ? '1' : '0'); } catch {}
+      try { localStorage.setItem(lsKey, next ? '1' : '0'); } catch { /* localStorage may be unavailable in private mode */ }
       return next;
     });
   };

@@ -26,7 +26,7 @@ export function getStartByDate(task: any): string | null {
   if (hours <= 0) return null;
   const workingDays = Math.ceil(hours / 8); // 8h per day
   const due = new Date(task.endDate);
-  let d = new Date(due);
+  const d = new Date(due);
   let counted = 0;
   while (counted < workingDays) {
     d.setDate(d.getDate() - 1);

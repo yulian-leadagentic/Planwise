@@ -110,7 +110,6 @@ export function PartnersPage() {
       next.delete('focus');
       setSearchParams(next, { replace: true });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusedBpId]);
 
   // ─── Data fetch ───────────────────────────────────────────────────────────

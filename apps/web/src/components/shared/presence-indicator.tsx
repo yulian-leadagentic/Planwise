@@ -53,7 +53,6 @@ function PresenceAvatar({ user }: { user: PresenceUser }) {
       )}
     >
       {user.avatarUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
         <img src={user.avatarUrl} alt={fullName} className="h-full w-full rounded-full object-cover" />
       ) : (
         initials

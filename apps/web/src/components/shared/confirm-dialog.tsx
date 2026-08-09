@@ -127,10 +127,8 @@ export function useConfirm(): ConfirmFn {
     // logs a warning and defers to window.confirm so behavior is at
     // least preserved. In practice ConfirmMount is at app root.
     if (typeof console !== 'undefined') {
-      // eslint-disable-next-line no-console
       console.warn('[useConfirm] called outside <ConfirmMount />. Falling back to window.confirm().');
     }
-    // eslint-disable-next-line no-alert
     return async (msg: string) => window.confirm(msg);
   }
   return fn;
