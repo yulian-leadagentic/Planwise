@@ -61,6 +61,24 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    // Password matched — before minting a token, apply the SSO gate.
+    // When ANY OrgAuthConfig has ssoOnly=true AND this user has
+    // allowPasswordLogin=false, the password path is closed even for
+    // a valid hash. The org-wide toggle makes the per-user flag
+    // enforceable; without it a user with the flag set could still
+    // be blocked only if we hard-coded it, and we don't want that.
+    if (!user.allowPasswordLogin) {
+      const enforced = await this.prisma.orgAuthConfig.findFirst({
+        where: { enabled: true, ssoOnly: true },
+        select: { id: true },
+      });
+      if (enforced) {
+        throw new UnauthorizedException(
+          'Your organization requires SSO — please sign in with your organization identity provider.',
+        );
+      }
+    }
+
     // Only load full role graph after successful password check
     const fullUser = await this.prisma.user.findFirst({
       where: { id: user.id },
