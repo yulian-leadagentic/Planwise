@@ -46,6 +46,7 @@ import { ActivityLogModule } from './common/services/activity-log.module';
 import { SecretCryptoModule } from './common/secret-crypto.module';
 import { SsoAdminModule } from './modules/sso-admin/sso-admin.module';
 import { DriveAdminModule } from './modules/drive-admin/drive-admin.module';
+import { DriveModule } from './modules/drive/drive.module';
 
 @Module({
   imports: [
@@ -127,6 +128,7 @@ import { DriveAdminModule } from './modules/drive-admin/drive-admin.module';
     ProjectDeliverablesModule,
     SsoAdminModule,
     DriveAdminModule,
+    DriveModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
