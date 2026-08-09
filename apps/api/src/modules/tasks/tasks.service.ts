@@ -66,6 +66,56 @@ export class TasksService {
     }
   }
 
+  /**
+   * Every CORE task (isPersonal !== true) must carry the fields that
+   * make it schedulable and countable: a Service (serviceTypeId), a
+   * Zone (zoneId), a Deliverable link (projectDeliverableId OR
+   * deliverableTemplateId), and an explicit Review flag
+   * (requiresReview must be set, not defaulted). Personal tasks are
+   * exempt — they belong to the individual employee.
+   *
+   * Returns the list of missing field names — an empty list means the
+   * task is valid. Callers throw a 400 with a machine-readable body so
+   * the frontend can highlight each field inline.
+   */
+  private missingCoreFields(
+    dto: Partial<CreateTaskDto>,
+    existing?: { zoneId: number | null; serviceTypeId: number | null; projectDeliverableId: number | null; deliverableTemplateId: number | null; requiresReview: boolean | null; isPersonal: boolean } | null,
+  ): string[] {
+    const merged = {
+      isPersonal: dto.isPersonal ?? existing?.isPersonal ?? false,
+      // For each field: prefer the DTO value if the caller sent that key
+      // (including explicit null → "clearing"), otherwise fall through to
+      // the persisted value on update.
+      zoneId: dto.zoneId !== undefined ? dto.zoneId : (existing?.zoneId ?? null),
+      serviceTypeId: dto.serviceTypeId !== undefined ? dto.serviceTypeId : (existing?.serviceTypeId ?? null),
+      projectDeliverableId:
+        dto.projectDeliverableId !== undefined
+          ? dto.projectDeliverableId
+          : (existing?.projectDeliverableId ?? null),
+      deliverableTemplateId:
+        dto.deliverableTemplateId !== undefined
+          ? dto.deliverableTemplateId
+          : (existing?.deliverableTemplateId ?? null),
+      // requiresReview must be explicitly set on a core task — on
+      // create we detect "not sent"; on update we fall through to the
+      // existing value (already a boolean, always set).
+      requiresReview:
+        dto.requiresReview !== undefined
+          ? dto.requiresReview
+          : (existing?.requiresReview ?? null),
+    };
+    if (merged.isPersonal) return [];
+    const missing: string[] = [];
+    if (merged.serviceTypeId == null) missing.push('serviceTypeId');
+    if (merged.zoneId == null) missing.push('zoneId');
+    if (merged.projectDeliverableId == null && merged.deliverableTemplateId == null) {
+      missing.push('projectDeliverableId');
+    }
+    if (merged.requiresReview == null) missing.push('requiresReview');
+    return missing;
+  }
+
   async create(userId: number, dto: CreateTaskDto) {
     // Three paths:
     //   • personal task: isPersonal=true → project/zone/service ALL optional
@@ -75,6 +125,19 @@ export class TasksService {
     // employee opens one for themselves. If they happen to link it to a
     // project/deliverable the hours still roll up, but the task doesn't
     // block that Deliverable's completion.
+    //
+    // Core-task guardrail (Ops backlog #2, 2026-08-08): a non-personal
+    // task MUST carry Service, Zone, Deliverable, and an explicit
+    // Review flag. Reject with a structured 400 listing every missing
+    // field so the frontend can highlight them inline.
+    const missing = this.missingCoreFields(dto);
+    if (missing.length > 0) {
+      throw new BadRequestException({
+        error: 'missing_required_fields',
+        message: 'Core tasks require Service, Zone, Deliverable, and an explicit Review flag.',
+        missing,
+      });
+    }
     let projectId: number | null = null;
     if (dto.isPersonal) {
       // Any / all of the project context fields may be supplied but none are required.
@@ -453,6 +516,28 @@ export class TasksService {
 
   async update(id: number, dto: UpdateTaskDto, userId?: number) {
     const existing = await this.findOne(id);
+
+    // Core-task guardrail (Ops backlog #2, 2026-08-08): the merged
+    // post-update state of a non-personal task MUST still carry
+    // Service, Zone, Deliverable, and an explicit Review flag. Merge
+    // DTO on top of the persisted row before validating so a partial
+    // update that leaves fields untouched still passes.
+    const existingCore = {
+      zoneId: (existing as any).zoneId ?? null,
+      serviceTypeId: (existing as any).serviceTypeId ?? null,
+      projectDeliverableId: (existing as any).projectDeliverableId ?? null,
+      deliverableTemplateId: (existing as any).deliverableTemplateId ?? null,
+      requiresReview: (existing as any).requiresReview ?? null,
+      isPersonal: (existing as any).isPersonal ?? false,
+    };
+    const missing = this.missingCoreFields(dto, existingCore);
+    if (missing.length > 0) {
+      throw new BadRequestException({
+        error: 'missing_required_fields',
+        message: 'Core tasks require Service, Zone, Deliverable, and an explicit Review flag.',
+        missing,
+      });
+    }
 
     // Pull date fields out so we can either set them, clear them, or leave
     // them untouched depending on whether the caller sent each key.
