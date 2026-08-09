@@ -356,6 +356,23 @@ export const notify = {
     const code = getErrorCode(error, module, action);
     const message = getErrorMessage(error, fallbackMessage);
 
+    // Structured "missing_required_fields" 400 — surface each missing
+    // field as a bullet so the user can pinpoint what to fix even when
+    // the calling form doesn't wire inline errors. (Ops backlog #2,
+    // 2026-08-08 — matches the core-task guardrail in tasks.service.)
+    const body = error?.response?.data;
+    if (body?.error === 'missing_required_fields' && Array.isArray(body.missing) && body.missing.length > 0) {
+      const labels: Record<string, string> = {
+        serviceTypeId: 'Service',
+        zoneId: 'Zone',
+        projectDeliverableId: 'Deliverable (project or template)',
+        deliverableTemplateId: 'Deliverable (template)',
+        requiresReview: 'Review flag (yes / no)',
+      };
+      const issues = body.missing.map((k: string) => `${labels[k] ?? k} is required for core tasks`);
+      return render('validation', message || 'Missing required fields', { code, issues });
+    }
+
     // Validation-shaped responses (NestJS ValidationPipe returns
     // { details: string[] } in the envelope). Show as bullet list.
     const details = error?.response?.data?.error?.details

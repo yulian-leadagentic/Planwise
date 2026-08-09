@@ -7,6 +7,7 @@ import { TaskDrawer } from '@/features/tasks/task-drawer';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
+import { useMe } from '@/hooks/use-auth';
 import { getTaskHealth, type TaskHealth } from '@/lib/task-health';
 import { STATUS_LABEL } from '@/lib/task-constants';
 import { cn } from '@/lib/utils';
@@ -102,7 +103,18 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   // Multi-select set of service names — empty = no filter (all services).
   // See `serviceFilter` above for the parallel deliverable-name set.
   const [phaseFilter, setPhaseFilter] = useState<Set<string>>(new Set());
+  // Once the user changes the Service filter, stop overriding it with the
+  // Zone Tasks view's department default (Ops backlog #3, 2026-08-08).
+  // Reset to false only when the user explicitly clears filters — see
+  // "Clear filters" below.
+  const [phaseFilterTouched, setPhaseFilterTouched] = useState(false);
+  const setPhaseFilterUserPick = useCallback((next: Set<string>) => {
+    setPhaseFilterTouched(true);
+    setPhaseFilter(next);
+  }, []);
   const didAutoExpand = useRef(false);
+  // Current user (department drives the Zone Tasks default Service filter).
+  const { data: me } = useMe();
 
   // Don't pass serviceId to the server anymore; we filter client-side.
   // For projectId, pass the forcedProjectId only (embedded mode); the
@@ -162,7 +174,6 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       addZones(data.zones[project.id] ?? []);
     }
     setExpandedIds((prev) => new Set([...prev, ...keys]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectIds, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, data]);
 
   const toggleExpand = useCallback((key: string) => {
@@ -231,10 +242,24 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   // in some unrelated project then matched zero tasks and the user
   // saw "all rows vanish". Now the dropdown only offers values that
   // can actually produce a result.
+  //
+  // Cascading Service → Deliverable narrowing (Ops backlog #5,
+  // 2026-08-08): when the Service filter is set, only surface
+  // deliverables whose resolved service is in the selected set.
+  // Regression note: this dependency on phaseFilter had been dropped —
+  // picking a Service used to leave every deliverable visible in the
+  // Deliverable dropdown, so the filter chain no longer "narrowed
+  // down". The extra guard on getTaskServiceName mirrors the same
+  // predicate filteredTasks uses, so dropdown ≡ column ≡ filter.
   const availableServices = useMemo(() => {
-    const allTasks = (data?.tasks ?? []).filter((t: any) =>
-      projectIds.size === 0 ? true : projectIds.has(t.projectId),
-    );
+    const allTasks = (data?.tasks ?? []).filter((t: any) => {
+      if (projectIds.size > 0 && !projectIds.has(t.projectId)) return false;
+      if (phaseFilter.size > 0) {
+        const svc = getTaskServiceName(t, deliverableNameToService) ?? '__none__';
+        if (!phaseFilter.has(svc)) return false;
+      }
+      return true;
+    });
     const templates = data?.templates ?? [];
 
     // CRITICAL — the dropdown must offer EXACTLY the deliverable column
@@ -261,7 +286,23 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     }
 
     return ordered;
-  }, [data?.tasks, data?.templates, projectIds]);
+  }, [data?.tasks, data?.templates, projectIds, phaseFilter, deliverableNameToService]);
+
+  // Prune stale picks from the Deliverable filter whenever the Service
+  // filter narrows the available options. Without this, a Deliverable
+  // value that was legal under a broader Service set stays "selected"
+  // but matches nothing — the board goes empty and the user has to
+  // manually clear the filter. Only runs when a real intersection
+  // exists so we never accidentally clear a user pick that is still
+  // valid.
+  useEffect(() => {
+    if (serviceFilter.size === 0) return;
+    const legal = new Set(availableServices);
+    const filtered = Array.from(serviceFilter).filter((v) => legal.has(v));
+    if (filtered.length !== serviceFilter.size) {
+      setServiceFilter(new Set(filtered));
+    }
+  }, [availableServices]);
 
   // Same construction as availableServices but resolved via getTaskServiceName
   // — the Service filter only offers values that actually appear on tasks
@@ -293,13 +334,17 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   const filteredTasks = useMemo(() => {
     const all = data?.tasks ?? [];
     return all.filter((t: any) => {
+      void viewMode; // referenced below via the status-filter guard
       // Project multi-select: empty set = no filter (all projects). Otherwise
       // the task must belong to one of the selected projects. This filter
       // used to be missing entirely — tasks flowed through unfiltered and
       // every downstream view (Status / Task / Matrix / Zone Tasks) showed
       // all projects regardless of selection (bug, 2026-06-21).
       if (projectIds.size > 0 && !projectIds.has(t.projectId)) return false;
-      if (statusFilter && t.status !== statusFilter) return false;
+      // Status filter is removed from the Zone Tasks view (Ops backlog
+      // #3(b), 2026-08-08). Skip it there even if a stale value lingers
+      // from switching from Matrix view.
+      if (viewMode !== 'zone-tasks' && statusFilter && t.status !== statusFilter) return false;
       if (phaseFilter.size > 0 && !phaseFilter.has(getTaskServiceName(t, deliverableNameToService) ?? '__none__')) return false;
       if (onlyWithDue && !t.endDate) return false;
       if (dueFrom || dueTo) {
@@ -319,7 +364,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       }
       return true;
     });
-  }, [data?.tasks, projectIds, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, deliverableNameToService]);
+  }, [data?.tasks, projectIds, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, deliverableNameToService, viewMode]);
 
   const { phaseColumns, directMatrix, hasNoPhase, phaseToService } = useMemo(() => {
     const tasks = filteredTasks;
@@ -587,6 +632,35 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     return result;
   }, [data, projectId, projectIds, expandedIds, projectsWithRootTasks]);
 
+  // Zone Tasks view — preconfigure the Service filter to the current
+  // user's DEPARTMENT service(s) by default (Ops backlog #3(a),
+  // 2026-08-08). Matches user.department (free-text) against the
+  // service names loaded on-screen (case-insensitive substring —
+  // Department table doesn't link to Phase, so this is the best signal
+  // we have without a schema change). Only fires when:
+  //   • viewMode === 'zone-tasks'
+  //   • the user hasn't already touched the Service filter (once
+  //     they change it, we never override again)
+  //   • the current filter is empty (no clobbering of the primary
+  //     view's user picks)
+  //   • the user has a department set
+  //   • at least one service name matches
+  useEffect(() => {
+    if (viewMode !== 'zone-tasks') return;
+    if (phaseFilterTouched) return;
+    if (phaseFilter.size > 0) return;
+    const dept = (me as any)?.department;
+    if (!dept || typeof dept !== 'string' || !dept.trim()) return;
+    const deptLower = dept.trim().toLowerCase();
+    const matched = availablePhases.filter((name) =>
+      name.toLowerCase().includes(deptLower) || deptLower.includes(name.toLowerCase()),
+    );
+    if (matched.length === 0) return;
+    setPhaseFilter(new Set(matched));
+    // Not marking as "touched" — this is a system-applied default, not
+    // a user pick. The next user change flips the touched flag.
+  }, [viewMode, phaseFilterTouched, phaseFilter, me, availablePhases]);
+
   // When any client-side filter is active, hide rows that have zero
   // tasks under any phase column. Without this the user picks a filter
   // (e.g. service = "BIM") and still sees every zone with empty cells
@@ -596,7 +670,11 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   // aggregated-tasks list for it. Project rows are kept if any of their
   // child zones survive — collapsing/expanding still works because
   // expandedIds is unaffected.
-  const isFilterActive = projectIds.size > 0 || serviceFilter.size > 0 || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter || phaseFilter.size > 0;
+  // Status filter is inactive on Zone Tasks — mirror the filteredTasks
+  // guard so the "any filter active" check doesn't spuriously flip the
+  // empty-row pruning on a stale status.
+  const statusFilterActive = viewMode !== 'zone-tasks' && !!statusFilter;
+  const isFilterActive = projectIds.size > 0 || serviceFilter.size > 0 || !!dueFrom || !!dueTo || onlyWithDue || statusFilterActive || phaseFilter.size > 0;
   const visibleFlatRows = useMemo(() => {
     if (!isFilterActive) return flatRows;
 
@@ -762,7 +840,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
         <MultiSelectFilter
           options={availablePhases.map((name) => ({ value: name, label: name }))}
           selected={phaseFilter}
-          onChange={setPhaseFilter}
+          onChange={setPhaseFilterUserPick}
           placeholder="Services"
           title="Filter by service"
         />
@@ -778,18 +856,22 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
           title="Filter by deliverable"
         />
 
-        {/* General task-status filter — applies across all three views. */}
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
-          title="Filter by task status"
-        >
-          <option value="">All Statuses</option>
-          {['not_started', 'in_progress', 'in_review', 'completed', 'on_hold', 'cancelled'].map((s) => (
-            <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
-          ))}
-        </select>
+        {/* General task-status filter — applies to Matrix only. Removed
+            from Zone Tasks per Ops backlog #3(b): the view is redundant
+            there since each cell already renders the task's status pill. */}
+        {viewMode !== 'zone-tasks' && (
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent"
+            title="Filter by task status"
+          >
+            <option value="">All Statuses</option>
+            {['not_started', 'in_progress', 'in_review', 'completed', 'on_hold', 'cancelled'].map((s) => (
+              <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
+            ))}
+          </select>
+        )}
 
         {/* Due-date range + only-with-due toggle (#3.3). */}
         <div className="flex items-center gap-1.5 text-[12px] text-slate-600 dark:text-slate-300">
@@ -827,7 +909,17 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
         {(serviceFilter.size > 0 || dueFrom || dueTo || onlyWithDue || statusFilter || phaseFilter.size > 0) && (
           <button
             type="button"
-            onClick={() => { setServiceFilter(new Set()); setDueFrom(''); setDueTo(''); setOnlyWithDue(false); setStatusFilter(''); setPhaseFilter(new Set()); }}
+            onClick={() => {
+              setServiceFilter(new Set());
+              setDueFrom('');
+              setDueTo('');
+              setOnlyWithDue(false);
+              setStatusFilter('');
+              setPhaseFilter(new Set());
+              // Reset the touched flag so the Zone Tasks department default
+              // re-applies on the next render, matching a fresh visit.
+              setPhaseFilterTouched(false);
+            }}
             className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
             title="Clear all filters"
           >

@@ -1056,7 +1056,7 @@ function MonthView() {
 
   const workingDays = countWorkingDays(viewYear, viewMonth, holidayDates);
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
-  const firstDow = (() => { let d = new Date(viewYear, viewMonth, 1).getDay() - 1; return d < 0 ? 6 : d; })();
+  const firstDow = (() => { const d = new Date(viewYear, viewMonth, 1).getDay() - 1; return d < 0 ? 6 : d; })();
   const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
   return (

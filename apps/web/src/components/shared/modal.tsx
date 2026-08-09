@@ -94,7 +94,6 @@ export function Modal({
   // close-X (and Escape) share one path.
   const requestClose = useCallback(() => {
     if (isDirty) {
-      // eslint-disable-next-line no-alert
       const ok = window.confirm(dirtyWarning);
       if (!ok) return;
     }

@@ -34,7 +34,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   isBootstrapping: hasAuthFlag,
 
   setAuth: (token, user) => {
-    try { localStorage.setItem(AUTH_FLAG_KEY, '1'); } catch {}
+    try { localStorage.setItem(AUTH_FLAG_KEY, '1'); } catch { /* localStorage may be unavailable in private mode */ }
     set({ accessToken: token, user, isAuthenticated: true, isBootstrapping: false });
   },
 
@@ -43,14 +43,14 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   setToken: (token) => {
-    try { localStorage.setItem(AUTH_FLAG_KEY, '1'); } catch {}
+    try { localStorage.setItem(AUTH_FLAG_KEY, '1'); } catch { /* localStorage may be unavailable in private mode */ }
     set({ accessToken: token, isAuthenticated: true, isBootstrapping: false });
   },
 
   setBootstrapComplete: () => set({ isBootstrapping: false }),
 
   clearAuth: () => {
-    try { localStorage.removeItem(AUTH_FLAG_KEY); } catch {}
+    try { localStorage.removeItem(AUTH_FLAG_KEY); } catch { /* localStorage may be unavailable in private mode */ }
     set({ accessToken: null, user: null, isAuthenticated: false, isBootstrapping: false });
   },
 }));

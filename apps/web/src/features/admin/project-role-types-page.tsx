@@ -264,7 +264,6 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
     ) {
       setForm((f) => ({ ...f, requiredPartnerRoleCode: '' }));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.allowedPartnerKind, partnerRoleTypes]);
 
   const toggleProfession = (id: number) => {

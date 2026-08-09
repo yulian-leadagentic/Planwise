@@ -270,7 +270,6 @@ export function ProjectListPage() {
     return entries.map(([label, items]) => ({ key: label, label, items }));
     // intentionally not depending on groupLabelFor — its only inputs are
     // groupBy + roleTypes, both already in the dep list.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projects, groupBy, roleTypes]);
 
   // Fetch departments for display

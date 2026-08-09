@@ -173,7 +173,6 @@ export function PhasesPage() {
           </button>
         </div>
       ) },
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [confirm, deleteMutation]);
 
   return (

@@ -171,7 +171,6 @@ export function TimeNotePhrasesPage() {
           </div>
         );
       } },
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [editingId, editingText, update, remove, confirm]);
 
   return (

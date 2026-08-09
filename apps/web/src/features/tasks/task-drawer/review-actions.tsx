@@ -6,14 +6,19 @@ import { notify } from '@/lib/notify';
 import { queryKeys } from '@/lib/query-keys';
 
 /**
- * ReviewActions (Tier D #2a, 2026-06-30)
+ * ReviewActions (Tier D #2a, 2026-06-30 — extended Ops backlog #6, 2026-08-08)
  *
  * Contextual review controls shown right below the drawer's status
  * pill. Renders different buttons depending on where the task sits
  * in its review lifecycle:
  *   - not_started / in_progress + requiresReview  → "Submit for review"
  *   - in_review                                    → "Approve" + "Return with reason"
+ *   - completed                                    → "Return with reason"  (Ops #6)
  *   - anything else                                → nothing
+ *
+ * Returning from Done bounces the task back to its previous stage —
+ * in_review for tasks that require review, in_progress otherwise. The
+ * server derives the target status from `requiresReview`.
  *
  * Each click POSTs /tasks/:id/review; the server flips the status +
  * appends a task_review_events row. On success we invalidate the task
@@ -51,8 +56,12 @@ export function ReviewActions({ task }: { task: any }) {
   // and get a red toast).
   const canSubmit = requiresReview && (status === 'not_started' || status === 'in_progress');
   const canDecide = status === 'in_review';
+  // Return-from-Done (Ops backlog #6): a manager can bounce a
+  // completed task back to its previous stage. Approve is not shown
+  // here — it wouldn't make sense on an already-completed task.
+  const canReturnFromDone = status === 'completed';
 
-  if (!canSubmit && !canDecide) return null;
+  if (!canSubmit && !canDecide && !canReturnFromDone) return null;
 
   return (
     <div className="px-5 py-2.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/60 flex items-center gap-2">
@@ -90,7 +99,20 @@ export function ReviewActions({ task }: { task: any }) {
           </button>
         </>
       )}
-      {canDecide && showReturn && (
+      {canReturnFromDone && !showReturn && (
+        <button
+          type="button"
+          onClick={() => setShowReturn(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-amber-300 text-amber-700 hover:bg-amber-50 text-[12px] font-semibold"
+          title={requiresReview
+            ? 'Bounce this Done task back to In Review — logged in the review history'
+            : 'Bounce this Done task back to In Progress — logged in the review history'}
+        >
+          <RotateCcw className="h-3 w-3" />
+          Return from Done
+        </button>
+      )}
+      {(canDecide || canReturnFromDone) && showReturn && (
         <div className="flex-1 flex items-center gap-1.5">
           <input
             autoFocus

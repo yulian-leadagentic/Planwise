@@ -166,7 +166,6 @@ export function ZoneTypesPage() {
           </div>
         );
       } },
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [editingId, editLabel, editColor, editIcon, editSortOrder, updateMutation.isPending]);
 
   return (

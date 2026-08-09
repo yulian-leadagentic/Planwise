@@ -182,7 +182,6 @@ export function SeniorityLevelsPage() {
         </div>
       ),
     },
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   ], []);
 
   return (
