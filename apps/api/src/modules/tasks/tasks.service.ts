@@ -142,6 +142,11 @@ export class TasksService {
         isPersonal: dto.isPersonal ?? false,
         requiresReview: dto.requiresReview ?? true,
         createdBy: userId,
+        // Personal tasks are "for yourself" — auto-assign the creator so
+        // the task shows up in My Tasks (the /mine query filters by
+        // assignee, not by creator). Non-personal tasks keep explicit
+        // assignment via addAssignee.
+        assignees: dto.isPersonal ? { create: [{ userId }] } : undefined,
       },
       include: {
         zone: true,
