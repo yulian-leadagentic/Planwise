@@ -24,6 +24,11 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
   '/admin/notification-settings': 'admin/notification-settings',
   '/admin/clock-dashboard': 'admin/clock-dashboard',
   '/admin/partner-types': 'admin/partner-types',
+  // SSO + Drive both live under the `org` module — the Access &
+  // Security group. Matches the admin-layout entry so the sub-nav
+  // gate and route gate agree.
+  '/admin/sso': 'org',
+  '/admin/drive': 'org',
 
   // Top-level modules
   '/admin': 'admin',

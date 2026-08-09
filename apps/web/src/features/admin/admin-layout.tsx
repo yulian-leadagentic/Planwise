@@ -15,6 +15,7 @@ import {
   ListChecks,
   Network,
   KeyRound,
+  HardDrive,
 } from 'lucide-react';
 import { SubNavLayout, type SubNavItem } from '@/components/layout/sub-nav-layout';
 
@@ -31,6 +32,7 @@ const ADMIN_ITEMS: SubNavItem[] = [
   { label: 'Roles & Permissions',    href: '/admin/roles',                     icon: Shield,        module: 'admin/roles',              group: 'Access & Security' },
   { label: 'Organization',           href: '/admin/organization',              icon: Network,       module: 'org',                      group: 'Access & Security' },
   { label: 'SSO / Identity',         href: '/admin/sso',                       icon: KeyRound,      module: 'org',                      group: 'Access & Security' },
+  { label: 'Google Drive',           href: '/admin/drive',                     icon: HardDrive,     module: 'org',                      group: 'Access & Security' },
   { label: 'Activity Log',           href: '/admin/activity-log',              icon: Activity,      module: 'admin/activity-log',       group: 'Access & Security' },
 
   { label: 'Partner Types',          href: '/admin/partner-types',             icon: Tags,          module: 'admin/partner-types',      group: 'People Config' },
