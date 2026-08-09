@@ -1041,6 +1041,19 @@ export class TasksService {
     // flag: if a task didn't need review, its normal path is
     // in_progress → completed; but approve from in_review always
     // lands on completed either way.
+    //
+    // Return (Ops backlog #6, 2026-08-08) is now allowed from BOTH
+    // in_review AND completed — a manager can bounce a finished task
+    // back after the fact. Target status is derived from the CURRENT
+    // status so the task lands on its previous stage:
+    //   • from in_review  → in_progress            (existing)
+    //   • from completed  → in_review if requiresReview else in_progress
+    //     (previous stage — a task with review always came from
+    //     in_review before being approved; skip-review tasks came
+    //     from in_progress). Consulting the review-event log for a
+    //     more precise "prior stage" is possible but overkill —
+    //     the requiresReview flag is authoritative for the workflow
+    //     shape.
     let nextStatus: string;
     switch (action) {
       case 'submit':
@@ -1056,7 +1069,13 @@ export class TasksService {
         if (!reason || !reason.trim()) {
           throw new BadRequestException('A reason is required when returning a task');
         }
-        nextStatus = 'in_progress';
+        if (task.status === 'in_review') {
+          nextStatus = 'in_progress';
+        } else if (task.status === 'completed') {
+          nextStatus = task.requiresReview ? 'in_review' : 'in_progress';
+        } else {
+          throw new BadRequestException('A task can only be returned from In Review or Done');
+        }
         break;
       default:
         throw new BadRequestException('Unknown review action');
