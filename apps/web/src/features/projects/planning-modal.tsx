@@ -4137,7 +4137,11 @@ function ProjectRootGroup({
             selectedTaskIds={selectedTaskIds}
             onToggleTask={onToggleTask}
             onToggleMany={onToggleMany}
-            kind={subCtx.dim === 'phase' ? 'service' : 'deliverable'}
+            // Zone-as-sub-group added Ops backlog #4 (2026-08-08) —
+            // the ProjectRootGroup path was missing 'zone' in the kind
+            // switch, so grouping root tasks by Zone as a sub-dim
+            // labelled the header chip "deliverable" (the fallback).
+            kind={subCtx.dim === 'phase' ? 'service' : subCtx.dim === 'zone' ? 'zone' : 'deliverable'}
             editableTemplateId={subCtx.dim === 'service' ? sg.editableTemplateId : null}
             editableDeliverableId={subCtx.dim === 'service' ? sg.editableDeliverableId : null}
           />
