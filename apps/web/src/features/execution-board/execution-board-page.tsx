@@ -243,10 +243,24 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   // in some unrelated project then matched zero tasks and the user
   // saw "all rows vanish". Now the dropdown only offers values that
   // can actually produce a result.
+  //
+  // Cascading Service → Deliverable narrowing (Ops backlog #5,
+  // 2026-08-08): when the Service filter is set, only surface
+  // deliverables whose resolved service is in the selected set.
+  // Regression note: this dependency on phaseFilter had been dropped —
+  // picking a Service used to leave every deliverable visible in the
+  // Deliverable dropdown, so the filter chain no longer "narrowed
+  // down". The extra guard on getTaskServiceName mirrors the same
+  // predicate filteredTasks uses, so dropdown ≡ column ≡ filter.
   const availableServices = useMemo(() => {
-    const allTasks = (data?.tasks ?? []).filter((t: any) =>
-      projectIds.size === 0 ? true : projectIds.has(t.projectId),
-    );
+    const allTasks = (data?.tasks ?? []).filter((t: any) => {
+      if (projectIds.size > 0 && !projectIds.has(t.projectId)) return false;
+      if (phaseFilter.size > 0) {
+        const svc = getTaskServiceName(t, deliverableNameToService) ?? '__none__';
+        if (!phaseFilter.has(svc)) return false;
+      }
+      return true;
+    });
     const templates = data?.templates ?? [];
 
     // CRITICAL — the dropdown must offer EXACTLY the deliverable column
@@ -273,7 +287,24 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     }
 
     return ordered;
-  }, [data?.tasks, data?.templates, projectIds]);
+  }, [data?.tasks, data?.templates, projectIds, phaseFilter, deliverableNameToService]);
+
+  // Prune stale picks from the Deliverable filter whenever the Service
+  // filter narrows the available options. Without this, a Deliverable
+  // value that was legal under a broader Service set stays "selected"
+  // but matches nothing — the board goes empty and the user has to
+  // manually clear the filter. Only runs when a real intersection
+  // exists so we never accidentally clear a user pick that is still
+  // valid.
+  useEffect(() => {
+    if (serviceFilter.size === 0) return;
+    const legal = new Set(availableServices);
+    const filtered = Array.from(serviceFilter).filter((v) => legal.has(v));
+    if (filtered.length !== serviceFilter.size) {
+      setServiceFilter(new Set(filtered));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableServices]);
 
   // Same construction as availableServices but resolved via getTaskServiceName
   // — the Service filter only offers values that actually appear on tasks
