@@ -218,10 +218,6 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   // Loading flag while the sequenced Save + per-task force-apply chain
   // runs. Guards the confirm button and disables per-row toggling.
   const [exceedApplying, setExceedApplying] = useState(false);
-  // Post-save reminder — a toast that lists rows whose deliverable
-  // target moved AND have at least one task with an existing due
-  // date, so the PM knows they need to eyeball those task dates.
-  const [postSaveReminder, setPostSaveReminder] = useState<string[] | null>(null);
 
   const save = useMutation({
     mutationFn: () =>
@@ -246,14 +242,9 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
       const payload = data?.data ?? data;
       notify.success(`Saved ${payload?.updated ?? rows.length} deliverable targets`);
-      // Post-save reminder if any dated tasks exist under the saved
-      // deliverables — user needs to eyeball those on the task grid.
-      const rowsWithDatedTasks = rows
-        .filter((r) => (r.taskList ?? []).some((t: any) => !!t.endDate))
-        .map((r) => `${r.zoneName} · ${r.deliverableName}`);
-      if (rowsWithDatedTasks.length > 0) {
-        setPostSaveReminder(rowsWithDatedTasks);
-      }
+      // Task due-date conflicts are handled up-front by the per-task
+      // Update/Keep dialog in attemptSave; a silent success here is
+      // the correct outcome when there are no conflicts.
     },
     onError: (err: any) => notify.apiError(err, 'Failed to save target dates'),
   });
@@ -511,46 +502,6 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                 className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
               >
                 {exceedApplying ? 'Applying…' : 'Confirm and save'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Post-save reminder — client 2026-08-03. Task due dates are
-          NEVER auto-overwritten anymore; this toast-style modal nudges
-          the PM to verify them by hand on the task grid when the
-          affected rows have tasks with existing dates. */}
-      {postSaveReminder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={() => setPostSaveReminder(null)}>
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[460px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-start gap-3">
-              <div className="w-9 h-9 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5 text-blue-600" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Remember to maintain task due dates</h3>
-                <p className="text-[13px] text-slate-500 dark:text-slate-400 mt-0.5">
-                  The deliverable target changed. Task-level due dates were NOT overwritten — please review them manually on the Planning tab.
-                </p>
-              </div>
-            </div>
-            <div className="p-5 max-h-[240px] overflow-auto">
-              <ul className="space-y-1 text-[12px] text-slate-600 dark:text-slate-300">
-                {postSaveReminder.map((label, i) => (
-                  <li key={i} className="flex items-center gap-2">
-                    <span className="w-1 h-1 rounded-full bg-slate-400 dark:bg-slate-500" />
-                    <span className="truncate">{label}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end">
-              <button
-                onClick={() => setPostSaveReminder(null)}
-                className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg"
-              >
-                Got it
               </button>
             </div>
           </div>
