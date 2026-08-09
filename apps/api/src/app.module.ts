@@ -43,6 +43,7 @@ import { DataImportModule } from './modules/data-import/data-import.module';
 import { ProjectStatusBoardModule } from './modules/project-status-board/project-status-board.module';
 import { ProjectDeliverablesModule } from './modules/project-deliverables/project-deliverables.module';
 import { ActivityLogModule } from './common/services/activity-log.module';
+import { SecretCryptoModule } from './common/secret-crypto.module';
 
 @Module({
   imports: [
@@ -87,6 +88,7 @@ import { ActivityLogModule } from './common/services/activity-log.module';
     EventEmitterModule.forRoot(),
     PrismaModule,
     ActivityLogModule,
+    SecretCryptoModule,
     AuthModule,
     ProjectsModule,
     LabelsModule,
