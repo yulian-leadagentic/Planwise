@@ -45,9 +45,12 @@ interface ProjectFile {
    *  Used to render a clickable badge that opens the task drawer. */
   taskId?: number;
   taskName?: string | null;
-  kind: 'upload' | 'link';
+  /** 'drive'-kind rows store the Drive fileId in `url` and the
+   *  user-facing URL in `webViewLink`. See project-files.service.ts. */
+  kind: 'upload' | 'link' | 'drive';
   name: string;
   url: string;
+  webViewLink?: string | null;
   fileSize: number | null;
   mimeType: string | null;
   description: string | null;
@@ -500,6 +503,13 @@ function FileRow({
   const isCloudLink = provider !== 'generic';
   const isFavorite = favorites.has(f.id);
   const openable = f.kind === 'link' && isHttpUrl(f.url);
+  // For 'drive' rows, `url` is the fileId and `webViewLink` is the
+  // canonical Drive URL. Fall back to the deterministic pattern if
+  // webViewLink is missing.
+  const driveHref =
+    f.kind === 'drive'
+      ? (f.webViewLink ?? `https://drive.google.com/file/d/${f.url}/view`)
+      : null;
   return (
     <tr className={cn(
       'border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50/40 dark:hover:bg-slate-800/40',
@@ -523,15 +533,27 @@ function FileRow({
           <div className={cn(
             'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg shadow-sm border',
             f.kind === 'upload' ? 'bg-blue-100 text-blue-700 border-blue-200'
+              : f.kind === 'drive' ? 'bg-blue-100 text-blue-700 border-blue-200'
               : provider === 'google-drive' ? 'bg-yellow-100 text-yellow-800 border-yellow-200'
               : 'bg-violet-100 text-violet-700 border-violet-200',
           )}>
             {f.kind === 'upload' ? <FileText className="h-5 w-5" /> :
+              f.kind === 'drive' ? <HardDrive className="h-5 w-5" /> :
               isCloudLink ? <HardDrive className="h-5 w-5" /> :
               <LinkIcon className="h-5 w-5" />}
           </div>
           <div className="min-w-0 flex-1">
-            {openable ? (
+            {driveHref ? (
+              <a
+                href={driveHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={driveHref}
+                className="font-medium text-slate-800 dark:text-slate-100 hover:text-blue-600 hover:underline truncate block"
+              >
+                {f.name}
+              </a>
+            ) : openable ? (
               <a
                 href={f.url}
                 target="_blank"
@@ -569,10 +591,11 @@ function FileRow({
         <span className={cn(
           'rounded-full px-2 py-0.5 text-[11px] font-semibold',
           f.kind === 'upload' ? 'bg-blue-50 text-blue-700'
+            : f.kind === 'drive' ? 'bg-blue-50 text-blue-700'
             : provider === 'google-drive' ? 'bg-yellow-50 text-yellow-700'
             : 'bg-violet-50 text-violet-700',
         )}>
-          {f.kind === 'upload' ? 'Upload' : PROVIDER_LABEL[provider]}
+          {f.kind === 'upload' ? 'Upload' : f.kind === 'drive' ? 'Google Drive' : PROVIDER_LABEL[provider]}
         </span>
       </td>
       <td className="px-4 py-3">
@@ -596,6 +619,16 @@ function FileRow({
             >
               <Download className="h-3.5 w-3.5" />
             </button>
+          ) : f.kind === 'drive' && driveHref ? (
+            <a
+              href={driveHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
+              title="Open in Drive"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
           ) : (
             <>
               {isHttpUrl(f.url) && (

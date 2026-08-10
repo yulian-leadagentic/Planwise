@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Upload, Trash2, Download, FileText, FolderOpen, ExternalLink, Link as LinkIcon, Star } from 'lucide-react';
+import { Upload, Trash2, Download, FileText, FolderOpen, ExternalLink, Link as LinkIcon, Star, HardDrive } from 'lucide-react';
 import { NavLinkWithReturn } from '@/components/nav/return-route';
 import { tasksApi } from '@/api/tasks.api';
 import client from '@/api/client';
@@ -10,6 +10,7 @@ import { UserAvatar } from '@/components/shared/user-avatar';
 import { useProjectFileFavorites } from '@/features/projects/use-project-file-favorites';
 import { cn } from '@/lib/utils';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { AttachDriveFileModal } from '@/features/drive/attach-drive-file-modal';
 
 /**
  * Task-scoped files view inside the task drawer. Two panels:
@@ -41,9 +42,12 @@ interface ProjectFile {
   source: 'project' | 'task';
   taskId?: number;
   taskName?: string | null;
-  kind: 'upload' | 'link';
+  /** 'drive'-kind rows store the Drive fileId in `url` and the
+   *  user-facing URL in `webViewLink`. See project-files.service.ts. */
+  kind: 'upload' | 'link' | 'drive';
   name: string;
   url: string;
+  webViewLink?: string | null;
   fileSize: number | null;
   mimeType: string | null;
   createdAt: string;
@@ -79,6 +83,7 @@ export function TaskFilesTab({
   const canWrite = isAdmin || can('tasks', 'write');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [showDriveAttach, setShowDriveAttach] = useState(false);
 
   const { data: attachments = [], isLoading } = useQuery<TaskAttachment[]>({
     queryKey: ['task-attachments', taskId],
@@ -216,13 +221,27 @@ export function TaskFilesTab({
                     'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border',
                     f.kind === 'upload'
                       ? 'bg-blue-50 text-blue-700 border-blue-200'
-                      : 'bg-violet-50 text-violet-700 border-violet-200',
+                      : f.kind === 'drive'
+                        ? 'bg-blue-50 text-blue-700 border-blue-200'
+                        : 'bg-violet-50 text-violet-700 border-violet-200',
                   )}>
-                    {f.kind === 'upload' ? <FileText className="h-3.5 w-3.5" /> : <LinkIcon className="h-3.5 w-3.5" />}
+                    {f.kind === 'upload' ? (
+                      <FileText className="h-3.5 w-3.5" />
+                    ) : f.kind === 'drive' ? (
+                      <HardDrive className="h-3.5 w-3.5" />
+                    ) : (
+                      <LinkIcon className="h-3.5 w-3.5" />
+                    )}
                   </div>
                   <div className="min-w-0 flex-1">
                     <a
-                      href={f.kind === 'link' ? f.url : `/api/v1/projects/${projectId}/files/${f.rawId}/download`}
+                      href={
+                        f.kind === 'link'
+                          ? f.url
+                          : f.kind === 'drive'
+                            ? (f.webViewLink ?? `https://drive.google.com/file/d/${f.url}/view`)
+                            : `/api/v1/projects/${projectId}/files/${f.rawId}/download`
+                      }
                       target="_blank"
                       rel="noopener noreferrer"
                       title={f.url}
@@ -231,7 +250,7 @@ export function TaskFilesTab({
                       {f.name}
                     </a>
                     <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                      {f.kind === 'upload' ? formatBytes(f.fileSize) : 'Link'}
+                      {f.kind === 'upload' ? formatBytes(f.fileSize) : f.kind === 'drive' ? 'Google Drive' : 'Link'}
                       {' · '}{formatDate(f.createdAt)}
                     </p>
                   </div>
@@ -266,6 +285,15 @@ export function TaskFilesTab({
             <input ref={fileInputRef} type="file" multiple onChange={handleFilePick} className="hidden" />
             <button
               type="button"
+              onClick={() => setShowDriveAttach(true)}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-md flex items-center gap-1.5"
+              title="Paste a Google Drive share link — the file must live in your organization's Shared Drive."
+            >
+              <HardDrive className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+              Attach Drive file
+            </button>
+            <button
+              type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={uploading}
               className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-md flex items-center gap-1.5 disabled:opacity-50"
@@ -276,6 +304,18 @@ export function TaskFilesTab({
           </div>
         )}
       </header>
+
+      {showDriveAttach && (
+        <AttachDriveFileModal
+          open={showDriveAttach}
+          onClose={() => setShowDriveAttach(false)}
+          target={{ kind: 'task', taskId }}
+          invalidateKeys={[
+            ['task-attachments', taskId],
+            projectId != null ? ['projects', projectId, 'files'] : ['projects'],
+          ]}
+        />
+      )}
 
       {isLoading ? (
         <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-10 text-center text-[12px] text-slate-400 dark:text-slate-500">

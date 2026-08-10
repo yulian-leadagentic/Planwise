@@ -38,6 +38,7 @@ import { ProjectCloseControl } from './project-detail/project-close-control';
 import { ProjectPrevNext } from './project-detail/project-prev-next';
 import { ProjectInfoTab } from './project-detail/project-info-tab';
 import { TeamTab } from './project-detail/team-tab';
+import { OpenInDriveButton } from '@/features/drive/open-in-drive-button';
 
 export function ProjectDetailPage() {
   const confirm = useConfirm();
@@ -129,6 +130,12 @@ export function ProjectDetailPage() {
               )}
             </div>
             <div className="flex items-center gap-2">
+              {/* Open in Drive — ensures the project folder in the
+                  configured Shared Drive and opens it in a new tab.
+                  Toast surfaces gracefully when Drive isn't
+                  configured; the header still renders the button so a
+                  fresh admin discovers the integration. */}
+              <OpenInDriveButton entity="project" id={projectId} size="md" />
               {/* Close / Reopen — distinct from Delete. Close marks the
                   project as "done" (keeps all data, just hides from
                   default list); Delete soft-removes it. T3.6+7. */}

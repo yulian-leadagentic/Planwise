@@ -1215,6 +1215,7 @@ model Task {
   checklistItems      TaskChecklistItem[]
   reviewEvents        TaskReviewEvent[]
   opsNote             TaskOpsNote?
+  projectFiles        ProjectFile[]
 
   @@index([zoneId])
   @@index([projectId])
@@ -1315,6 +1316,7 @@ model ProjectDeliverable {
   service        Phase?                  @relation(fields: [serviceId], references: [id], onDelete: SetNull)
   tasks          Task[]
   zoneTargets    ZoneDeliverableTarget[]
+  projectFiles   ProjectFile[]
 
   @@index([projectId])
   @@index([sourceTemplateId])
@@ -1376,6 +1378,12 @@ model TaskAttachment {
 enum ProjectFileKind {
   upload
   link
+  /// Google Drive file referenced by fileId (stored in `url`) — the file
+  /// LIVES in the customer's Shared Drive. Planwise stores metadata + the
+  /// deep-link but never a byte of content. Access is authorised on the
+  /// Google side via Shared-Drive membership; Planwise does NOT manage
+  /// per-file permissions. See modules/drive/drive.service.ts.
+  drive
 }
 
 model ProjectFile {
@@ -1387,13 +1395,33 @@ model ProjectFile {
   fileSize    Int?            @map("file_size")
   mimeType    String?         @map("mime_type") @db.VarChar(100)
   description String?         @db.Text
+  /// For `drive`-kind rows: the Drive `webViewLink` returned by
+  /// files.get — the user-facing URL to open the file in Drive UI.
+  /// Nullable because Drive occasionally omits it for shortcuts; the
+  /// client falls back to `https://drive.google.com/file/d/{url}/view`
+  /// (where `url` is the fileId).
+  webViewLink String?         @map("web_view_link") @db.VarChar(1000)
+  /// Optional task the file is attached to (for `drive` / task-scope
+  /// files). ProjectFile stays the union type — task attachments used
+  /// to live only in TaskAttachment (uploads), but Drive links use
+  /// this column so the Files tab can list them alongside project
+  /// files. When null, the file is project-level.
+  taskId      Int?            @map("task_id")
+  /// Optional deliverable the file is attached to. When set, the file
+  /// is displayed on the deliverable's page. Independent of `taskId`
+  /// (a file can belong to a deliverable without a task).
+  deliverableId Int?          @map("deliverable_id")
   uploadedBy  Int             @map("uploaded_by")
   createdAt   DateTime        @default(now()) @map("created_at")
 
-  project  Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  uploader User    @relation(fields: [uploadedBy], references: [id])
+  project     Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task        Task?               @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  deliverable ProjectDeliverable? @relation(fields: [deliverableId], references: [id], onDelete: SetNull)
+  uploader    User                @relation(fields: [uploadedBy], references: [id])
 
   @@index([projectId])
+  @@index([taskId])
+  @@index([deliverableId])
   @@map("project_files")
 }
 
@@ -2488,4 +2516,64 @@ model UserIdentity {
   @@unique([provider, subject])
   @@index([userId])
   @@map("user_identities")
+}
+
+// ─── Google Drive Integration ──────────────────────────────────────
+//
+// OrgDriveConfig — one row per organization; holds the service-account
+// JSON key (AES-256-GCM via SecretCryptoService, never plaintext) and
+// the customer-provided Shared-Drive ID. Planwise CREATES + READS
+// folders/files inside this Shared Drive using the service account but
+// NEVER writes permissions — end-user access is governed by the
+// customer's own Shared-Drive membership in Google. See
+// modules/drive/drive.service.ts for the invariant and the enforced
+// call-shape (supportsAllDrives + Shared-Drive scoping).
+//
+// DriveFolderLink — cache of (entityType, entityId) → folderId so we
+// don't re-search the Shared Drive on every open. Unique index on the
+// pair makes ensureFolder idempotent.
+model OrgDriveConfig {
+  id             Int      @id @default(autoincrement())
+  /// Nullable — Planwise is single-company at P1; column exists so a
+  /// future multi-tenant model can add per-tenant configs without a
+  /// migration. Mirrors OrgAuthConfig.organizationId.
+  organizationId Int?     @map("organization_id")
+  enabled        Boolean  @default(false)
+  /// AES-256-GCM(saCiphertext | saIv | saTag | keyVersion) — the
+  /// service-account JSON key. Written and read EXCLUSIVELY through
+  /// SecretCryptoService; never touch the raw bytes elsewhere.
+  saCiphertext   Bytes    @map("sa_ciphertext")
+  saIv           Bytes    @map("sa_iv")
+  saTag          Bytes    @map("sa_tag")
+  keyVersion     Int      @map("key_version")
+  /// Google Shared-Drive ID (`0AGxxx...`) the customer's Workspace
+  /// admin gives us. ALL Drive operations are scoped to this id.
+  sharedDriveId  String   @map("shared_drive_id") @db.VarChar(191)
+  /// Optional folder INSIDE the Shared Drive to use as the root for
+  /// project folders. When null, project folders live at the top of
+  /// the Shared Drive itself.
+  rootFolderId   String?  @map("root_folder_id") @db.VarChar(191)
+  updatedBy      Int?     @map("updated_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([organizationId])
+  @@map("org_drive_configs")
+}
+
+model DriveFolderLink {
+  id          Int      @id @default(autoincrement())
+  /// 'project' | 'zone' | 'deliverable' — enforced by the service.
+  /// Kept as a plain string so we can add more entity types without
+  /// schema churn.
+  entityType  String   @map("entity_type") @db.VarChar(20)
+  entityId    Int      @map("entity_id")
+  /// Google Drive folder id (`1abcXYZ...`).
+  folderId    String   @map("folder_id") @db.VarChar(191)
+  /// The Drive `webViewLink` for the folder — user-facing URL.
+  webViewLink String?  @map("web_view_link") @db.VarChar(1000)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([entityType, entityId])
+  @@map("drive_folder_links")
 }

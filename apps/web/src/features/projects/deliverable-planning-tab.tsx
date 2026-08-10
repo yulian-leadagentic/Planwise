@@ -4,6 +4,7 @@ import { Calendar, Save, RefreshCcw, Layers, LayoutGrid, GanttChart, AlertTriang
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
+import { OpenInDriveButton } from '@/features/drive/open-in-drive-button';
 
 /**
  * Deliverable Planning tab (Tier E #10, revised 2026-08-02).
@@ -865,7 +866,14 @@ function TableView({
                   leak. (Client feedback 2026-08-02.) */}
               <tr className="bg-slate-50/70 dark:bg-slate-800/70">
                 <td colSpan={6} className="px-4 py-2 text-[12px] font-bold text-slate-700 dark:text-slate-200">
-                  {g.deliverableName}
+                  <div className="flex items-center justify-between gap-3">
+                    <span>{g.deliverableName}</span>
+                    {/* Open the deliverable's Drive folder (create-if-
+                        missing on click). Rate-limited backend; a
+                        graceful "not configured" toast fires if the
+                        admin hasn't set up Drive yet. */}
+                    <OpenInDriveButton entity="deliverable" id={g.deliverableId} />
+                  </div>
                 </td>
               </tr>
               {g.zones.map((r) => {

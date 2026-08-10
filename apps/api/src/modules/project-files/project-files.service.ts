@@ -61,12 +61,18 @@ export class ProjectFilesService {
         source: 'project' as const,
         kind: f.kind,
         name: f.name,
+        // For drive-kind rows `url` stores the fileId; the client
+        // prefers webViewLink for navigation but falls back to
+        // https://drive.google.com/file/d/${url}/view when it's null.
         url: f.url,
+        webViewLink: f.webViewLink ?? null,
         fileSize: f.fileSize,
         mimeType: f.mimeType,
         description: f.description,
         createdAt: f.createdAt,
         uploader: f.uploader,
+        taskId: f.taskId ?? null,
+        deliverableId: f.deliverableId ?? null,
       })),
       ...taskAttachments.map((a: any) => ({
         id: `t-${a.id}`,
