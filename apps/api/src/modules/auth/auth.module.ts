@@ -9,6 +9,9 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { LocalStrategy } from './strategies/local.strategy';
 import { RefreshStrategy } from './strategies/refresh.strategy';
 import { UsersModule } from '../users/users.module';
+import { OidcController } from './oidc/oidc.controller';
+import { OidcUserResolverService } from './oidc/oidc-user-resolver.service';
+import { SsoAdminModule } from '../sso-admin/sso-admin.module';
 
 @Module({
   imports: [
@@ -28,9 +31,13 @@ import { UsersModule } from '../users/users.module';
       },
     }),
     UsersModule,
+    // SsoAdminModule owns issuerUrlFor() — imported so the OIDC
+    // controller uses the SAME issuer-mapping the admin test-connection
+    // endpoint uses. One place to fix if a provider changes.
+    SsoAdminModule,
   ],
-  controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, LocalStrategy, RefreshStrategy],
+  controllers: [AuthController, OidcController],
+  providers: [AuthService, JwtStrategy, LocalStrategy, RefreshStrategy, OidcUserResolverService],
   exports: [AuthService, JwtModule],
 })
 export class AuthModule {}

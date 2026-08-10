@@ -64,6 +64,7 @@ const ImportHistoryPage = lazy(() => import('@/features/data-import/import-histo
 const ProjectStatusBoardPage = lazy(() => import('@/features/project-status-board/project-status-board-page').then(m => ({ default: m.ProjectStatusBoardPage })));
 const StageMilestonesPage = lazy(() => import('@/features/admin/stage-milestones-page').then(m => ({ default: m.StageMilestonesPage })));
 const OrganizationPage = lazy(() => import('@/features/admin/organization-page').then(m => ({ default: m.OrganizationPage })));
+const SsoPage = lazy(() => import('@/features/admin/sso-page').then(m => ({ default: m.SsoPage })));
 const ProfilePage = lazy(() => import('@/features/misc/profile-page').then(m => ({ default: m.ProfilePage })));
 const NotFoundPage = lazy(() => import('@/features/misc/not-found-page').then(m => ({ default: m.NotFoundPage })));
 
@@ -181,6 +182,7 @@ export function AppRouter() {
           <Route path="data-import/history" element={<L><ImportHistoryPage /></L>} />
           <Route path="project-stage-milestones" element={<L><StageMilestonesPage /></L>} />
           <Route path="organization" element={<L><OrganizationPage /></L>} />
+          <Route path="sso" element={<L><SsoPage /></L>} />
           <Route path="employees" element={<L><PeoplePage /></L>} />
         </Route>
 

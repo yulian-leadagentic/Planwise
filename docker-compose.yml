@@ -57,6 +57,8 @@ services:
       MAIL_FROM: ${MAIL_FROM:-noreply@example.com}
       UPLOAD_DIR: /app/uploads
       MAX_FILE_SIZE: ${MAX_FILE_SIZE:-10485760}
+      SSO_ENC_KEY: ${SSO_ENC_KEY:?SSO_ENC_KEY is required (32-byte base64)}
+      APP_POST_LOGIN_URL: ${APP_POST_LOGIN_URL:-http://localhost:5173/}
     volumes:
       - uploads:/app/uploads
 

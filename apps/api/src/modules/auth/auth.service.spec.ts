@@ -19,6 +19,12 @@ describe('AuthService', () => {
         update: jest.fn(),
         findUnique: jest.fn(),
       },
+      // SSO gate: validateUser now consults orgAuthConfig when the
+      // user has allowPasswordLogin=false. The default mock returns
+      // no enforced-SSO row so password-only tests continue to pass.
+      orgAuthConfig: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
     };
     jwtService = {
       sign: jest.fn().mockReturnValue('mock-token'),
@@ -53,14 +59,26 @@ describe('AuthService', () => {
 
     it('throws UnauthorizedException for wrong password', async () => {
       const hashed = await bcrypt.hash('correct', 10);
-      prisma.user.findFirst.mockResolvedValueOnce({ id: 1, password: hashed });
+      prisma.user.findFirst.mockResolvedValueOnce({ id: 1, password: hashed, allowPasswordLogin: true });
       await expect(service.validateUser('a@b.com', 'wrong')).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it('throws UnauthorizedException for SSO-only users (null password)', async () => {
+      prisma.user.findFirst.mockResolvedValueOnce({ id: 1, password: null, allowPasswordLogin: true });
+      await expect(service.validateUser('a@b.com', 'anything')).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it('blocks password login when ssoOnly is enforced and user has allowPasswordLogin=false', async () => {
+      const hashed = await bcrypt.hash('correct', 10);
+      prisma.user.findFirst.mockResolvedValueOnce({ id: 1, password: hashed, allowPasswordLogin: false });
+      prisma.orgAuthConfig.findFirst.mockResolvedValueOnce({ id: 1 });
+      await expect(service.validateUser('a@b.com', 'correct')).rejects.toBeInstanceOf(UnauthorizedException);
     });
 
     it('returns user without password on valid credentials', async () => {
       const hashed = await bcrypt.hash('correct', 10);
       prisma.user.findFirst
-        .mockResolvedValueOnce({ id: 1, password: hashed })
+        .mockResolvedValueOnce({ id: 1, password: hashed, allowPasswordLogin: true })
         .mockResolvedValueOnce({ id: 1, password: hashed, email: 'a@b.com', role: { roleModules: [] } });
 
       const result = await service.validateUser('a@b.com', 'correct');
