@@ -66,9 +66,9 @@ const card =
 // ─── Page shell ───────────────────────────────────────────────────
 
 export function SsoPage() {
-  const { can } = usePermissions();
-  const canRead = can('org', 'read');
-  const canWrite = can('org', 'write');
+  const { can, isAdmin } = usePermissions();
+  const canRead = isAdmin || can('org', 'read');
+  const canWrite = isAdmin || can('org', 'write');
 
   const { data: configs = [], isLoading } = useQuery<SsoConfigView[]>({
     queryKey: ['admin', 'sso'],

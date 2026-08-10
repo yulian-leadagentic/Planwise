@@ -18,6 +18,8 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
 
   // Admin sub-modules
   '/admin/roles': 'admin/roles',
+  '/admin/sso': 'org',
+  '/admin/organization': 'org',
   '/admin/activity-log': 'admin/activity-log',
   '/admin/work-schedules': 'admin/work-schedules',
   '/admin/calendar': 'admin/calendar',
