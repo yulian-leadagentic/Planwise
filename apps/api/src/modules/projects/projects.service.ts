@@ -8,7 +8,7 @@ import { ActivityLogService } from '../../common/services/activity-log.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { QueryProjectsDto } from './dto/query-projects.dto';
-import { BusinessPartnerRelationshipsService } from '../business-partner-relationships/business-partner-relationships.service';
+import { ProjectPartnerRolesService } from '../project-partner-roles/project-partner-roles.service';
 import { NumberRangesService } from '../number-ranges/number-ranges.service';
 
 /**
@@ -40,7 +40,7 @@ export class ProjectsService {
   constructor(
     private prisma: PrismaService,
     private access: ProjectAccessService,
-    private bpRelationships: BusinessPartnerRelationshipsService,
+    private projectPartnerRoles: ProjectPartnerRolesService,
     private numberRanges: NumberRangesService,
     private activityLog: ActivityLogService,
   ) {}
@@ -173,7 +173,7 @@ export class ProjectsService {
 
     // Wire the customer_of_project relationship.
     try {
-      await this.bpRelationships.setProjectCustomer(project.id, customerOrgId);
+      await this.projectPartnerRoles.setProjectCustomer(project.id, customerOrgId);
     } catch (err) {
       // Roll back the project to keep things consistent — a project without
       // a customer breaks our invariant.
@@ -216,7 +216,7 @@ export class ProjectsService {
         update: { role: 'Project Leader' },
       });
       try {
-        await this.bpRelationships.upsertProjectMemberRelationship({
+        await this.projectPartnerRoles.upsertProjectMemberRelationship({
           userId: dto.leaderId,
           projectId: project.id,
           roleInContext: 'Project Leader',
@@ -242,7 +242,7 @@ export class ProjectsService {
         });
         for (const m of memberData) {
           try {
-            await this.bpRelationships.upsertProjectMemberRelationship({
+            await this.projectPartnerRoles.upsertProjectMemberRelationship({
               userId: m.userId,
               projectId: project.id,
               roleInContext: null,
@@ -646,7 +646,7 @@ export class ProjectsService {
     // Best-effort — a failure here shouldn't block the legacy write that the
     // rest of the app still reads from.
     try {
-      await this.bpRelationships.upsertProjectMemberRelationship({
+      await this.projectPartnerRoles.upsertProjectMemberRelationship({
         userId,
         projectId,
         roleInContext: role ?? null,
@@ -1037,7 +1037,7 @@ export class ProjectsService {
       where: { projectId_userId: { projectId, userId } },
     });
     try {
-      await this.bpRelationships.removeProjectMemberRelationship({ userId, projectId });
+      await this.projectPartnerRoles.removeProjectMemberRelationship({ userId, projectId });
     } catch {
       // best-effort write-through
     }

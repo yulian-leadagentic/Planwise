@@ -20,7 +20,6 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { FilesModule } from './modules/files/files.module';
 import { ProjectFilesModule } from './modules/project-files/project-files.module';
 import { BusinessPartnersModule } from './modules/business-partners/business-partners.module';
-import { BusinessPartnerRelationshipsModule } from './modules/business-partner-relationships/business-partner-relationships.module';
 import { PartnerTypesModule } from './modules/partner-types/partner-types.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { OrgModule } from './modules/org/org.module';
@@ -104,7 +103,6 @@ import { DriveModule } from './modules/drive/drive.module';
     FilesModule,
     ProjectFilesModule,
     BusinessPartnersModule,
-    BusinessPartnerRelationshipsModule,
     PartnerTypesModule,
     AdminModule,
     OrgModule,
