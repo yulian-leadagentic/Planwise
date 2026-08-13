@@ -5462,6 +5462,25 @@ function PlanningView({ projectId }: { projectId: number }) {
             />
           </div>
 
+          {/* Bulk collapse / expand all groups (bm2 fix #3). Every
+              collapsible card (ZoneGroup, HierarchicalZoneGroup,
+              ProjectRootDeliverableGroup) listens on BulkCollapseContext
+              via useBulkCollapseSync and re-syncs on every version bump,
+              so a single click flips the whole grid. Icon flips to reflect
+              the NEXT action (down-up when everything is expanded so the
+              button reads "collapse next", up-down when everything is
+              collapsed so the button reads "expand next"). */}
+          <button
+            type="button"
+            onClick={toggleBulkCollapse}
+            title={bulkCollapsed ? 'Expand all groups' : 'Collapse all groups'}
+            aria-label={bulkCollapsed ? 'Expand all groups' : 'Collapse all groups'}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
+          >
+            {bulkCollapsed ? <ChevronsUpDown className="h-3.5 w-3.5" /> : <ChevronsDownUp className="h-3.5 w-3.5" />}
+            {bulkCollapsed ? 'Expand all' : 'Collapse all'}
+          </button>
+
           {/* Column-visibility picker — sits next to Filters so users
               can shape both the row set and the column set from the
               same spot. Persists per-browser via localStorage. */}
