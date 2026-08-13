@@ -43,7 +43,9 @@ const SOFT_DELETE_MODELS: Prisma.ModelName[] = [
   'Contract',
   'ContractItem',
   'LabelMilestone',
-  'Contact',
+  // BM2 Phase 5 (2026-08-13): `Contact` was retired — contract contacts
+  // are now person BPs (BusinessPartner is already covered by its own
+  // deletedAt handling in business-partners.service).
   'Expense',
   'Term',
 ];

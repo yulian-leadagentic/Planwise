@@ -286,7 +286,10 @@ model User {
   contractsCreated      Contract[]               @relation("ContractCreatedBy")
   milestonesAsPartner   LabelMilestone[]         @relation("MilestonePartner")
   milestonesCreated     LabelMilestone[]         @relation("MilestoneCreatedBy")
-  contacts              Contact[]
+  // BM2 Phase 5 (2026-08-13): `Contact` → User was retired. Contract
+  // "contacts" now live in `business_partners` (person BPs linked to
+  // the org via a `worker_of` party_relationships edge). See
+  // `contracts.service#createContact / getContacts / removeContact`.
   expensesCreated       Expense[]
   terms                 Term[]
   activityLogs          ActivityLog[]
@@ -862,22 +865,14 @@ model LabelMilestone {
   @@map("label_milestones")
 }
 
-model Contact {
-  id        Int       @id @default(autoincrement())
-  partnerId Int       @map("partner_id")
-  name      String
-  email     String?
-  phone     String?
-  role      String?
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  partner User @relation(fields: [partnerId], references: [id])
-
-  @@index([partnerId])
-  @@map("contacts")
-}
+// BM2 Phase 5 (2026-08-13): `Contact` was retired. Contract "contacts"
+// are person BPs (`BusinessPartner(partnerType='person')`) linked to
+// the organization via a `worker_of` edge in `partner_relationships`.
+// See `contracts.service.ts#createContact / getContacts / removeContact`
+// and migrations
+//   20260813500000_bp_phase5_contacts_migrate_to_bp — data-migrate
+//   20260813500010_bp_phase5_drop_contacts_table    — table drop
+// for the migration path.
 
 model Expense {
   id          Int         @id @default(autoincrement())
