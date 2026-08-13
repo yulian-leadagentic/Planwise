@@ -18,6 +18,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes, ApiBody } from '@nestjs/swagger';
 
 import { BusinessPartnersService } from './business-partners.service';
+import { BpImportService, validateBpImportMapping, BpImportDecision, BpImportRow } from './bp-import.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
@@ -34,7 +35,10 @@ import { ImportBusinessPartnersDto } from './dto/import-business-partners.dto';
 @UseInterceptors(AuditInterceptor)
 @Controller('business-partners')
 export class BusinessPartnersController {
-  constructor(private readonly service: BusinessPartnersService) {}
+  constructor(
+    private readonly service: BusinessPartnersService,
+    private readonly bpImport: BpImportService,
+  ) {}
 
   @Get()
   @RequirePermissions({ module: 'partners', action: 'read' })
@@ -174,6 +178,69 @@ export class BusinessPartnersController {
     return this.service.importFromCsv(file.buffer, {
       skipExisting: body.skipExisting,
       dryRun: body.dryRun,
+    });
+  }
+
+  // ─── BM2 Phase E — Excel BP + Contacts import wizard ─────────────────
+  // Three endpoints follow the wizard's four steps (upload+parse,
+  // column-map, preview, commit — commit accepts the mapping + rows +
+  // per-row decisions from the conflict-resolution step):
+  //
+  //   POST /business-partners/bp-import/parse     (multipart file)
+  //   POST /business-partners/bp-import/preview   (rows + mapping)
+  //   POST /business-partners/bp-import/commit    (rows + mapping + decisions)
+  //
+  // The heavier /data-import pipeline (job history, template
+  // generation, per-target Excel generation) is intentionally NOT
+  // reused — bp-contacts-design.md's wizard is stateless from the
+  // server's view: the client keeps the row set in state across steps
+  // and sends it back on preview / commit.
+
+  @Post('bp-import/parse')
+  @RequirePermissions({ module: 'partners', action: 'write' })
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Parse an xlsx and return headers + rows + auto-detected column mapping' })
+  async bpImportParse(@UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('No file uploaded');
+    return this.bpImport.parse(file.buffer);
+  }
+
+  @Post('bp-import/preview')
+  @RequirePermissions({ module: 'partners', action: 'write' })
+  @ApiOperation({ summary: 'Resolve org + contact per row against existing BPs; no writes' })
+  async bpImportPreview(
+    @Body() body: { headers: string[]; rows: BpImportRow[]; mapping: unknown },
+  ) {
+    if (!Array.isArray(body.rows)) throw new BadRequestException('rows must be an array');
+    if (!Array.isArray(body.headers)) throw new BadRequestException('headers must be an array');
+    return this.bpImport.preview({
+      headers: body.headers,
+      rows: body.rows,
+      mapping: validateBpImportMapping(body.mapping),
+    });
+  }
+
+  @Post('bp-import/commit')
+  @RequirePermissions({ module: 'partners', action: 'write' })
+  @ApiOperation({ summary: 'Persist the imported orgs + contacts (respects per-row decisions)' })
+  async bpImportCommit(
+    @Body() body: {
+      headers: string[];
+      rows: BpImportRow[];
+      mapping: unknown;
+      decisions?: BpImportDecision[];
+      stopOnError?: boolean;
+    },
+  ) {
+    if (!Array.isArray(body.rows)) throw new BadRequestException('rows must be an array');
+    if (!Array.isArray(body.headers)) throw new BadRequestException('headers must be an array');
+    return this.bpImport.commit({
+      headers: body.headers,
+      rows: body.rows,
+      mapping: validateBpImportMapping(body.mapping),
+      decisions: Array.isArray(body.decisions) ? body.decisions : undefined,
+      stopOnError: !!body.stopOnError,
     });
   }
 }
