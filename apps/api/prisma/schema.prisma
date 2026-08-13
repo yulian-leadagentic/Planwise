@@ -1778,6 +1778,23 @@ model BusinessPartnerDomain {
   @@map("business_partner_domains")
 }
 
+// BM2 Phase 4 (2026-08-13) — personal / free-email domains.
+// A tiny admin-managed catalog. When the import dedup sees an email
+// whose domain is in this list, the row does NOT bind an organization
+// (per rule 2 of bp-contacts-design §3). Seeded with 11 common free-mail
+// hosts (gmail, yahoo, …); admins can add site-specific ones.
+model PersonalEmailDomain {
+  id          Int      @id @default(autoincrement())
+  domain      String   @db.VarChar(255)
+  description String?  @db.VarChar(255)
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([domain])
+  @@map("personal_email_domains")
+}
+
 // Lookup table for what KIND of business roles a partner can hold.
 // Predefined seeds: employee, customer, supplier, consultant,
 // external_contact, subcontractor. Admins can add their own; system

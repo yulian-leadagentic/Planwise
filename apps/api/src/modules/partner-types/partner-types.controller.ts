@@ -507,4 +507,80 @@ export class PartnerTypesController {
     await this.prisma.partnerRelationshipType.delete({ where: { id } });
     return { message: 'Relationship type deleted' };
   }
+
+  // ─── BM2 Phase 4 · Personal-email domains ─────────────────────────────
+  // A tiny catalog of free-mail hosts the import dedup should NEVER treat
+  // as a company domain. Lives as a tab under the partner-types-page
+  // (per the spec). Seeded with 11 hosts (gmail/yahoo/…); admins can
+  // add site-specific ones. `isSystem=true` rows are protected from
+  // deletion but their description is editable.
+
+  @Get('personal-email-domains')
+  @RequirePermissions({ module: 'admin/partner-types', action: 'read' })
+  @ApiOperation({ summary: 'List personal / free-email domains (never bind an org)' })
+  listPersonalEmailDomains() {
+    return this.prisma.personalEmailDomain.findMany({
+      orderBy: [{ isSystem: 'desc' }, { domain: 'asc' }],
+    });
+  }
+
+  @Post('personal-email-domains')
+  @RequirePermissions({ module: 'admin/partner-types', action: 'write' })
+  @ApiOperation({ summary: 'Add a personal / free-email domain to the never-bind catalog' })
+  async createPersonalEmailDomain(@Body() body: { domain: string; description?: string }) {
+    const normalized = body.domain?.trim().toLowerCase();
+    if (!normalized) throw new BadRequestException('domain is required');
+    // Very light validation — a bare host with a dot. Full RFC compliance
+    // is overkill for this catalog; typos surface fast in the importer.
+    if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(normalized)) {
+      throw new BadRequestException(`"${body.domain}" is not a valid domain (e.g. "gmail.com").`);
+    }
+    const dup = await this.prisma.personalEmailDomain.findUnique({ where: { domain: normalized } });
+    if (dup) {
+      throw new BadRequestException(
+        `Domain "${normalized}" is already in the catalog (id=${dup.id}).`,
+      );
+    }
+    return this.prisma.personalEmailDomain.create({
+      data: {
+        domain: normalized,
+        description: body.description?.trim() || null,
+        isSystem: false,
+      },
+    });
+  }
+
+  @Patch('personal-email-domains/:id')
+  @RequirePermissions({ module: 'admin/partner-types', action: 'write' })
+  @ApiOperation({ summary: 'Update a personal-email domain (system rows: description only)' })
+  async updatePersonalEmailDomain(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { domain?: string; description?: string | null },
+  ) {
+    const existing = await this.prisma.personalEmailDomain.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Personal-email domain not found');
+    const data: any = {};
+    if (body.description !== undefined) data.description = body.description?.trim() || null;
+    if (!existing.isSystem && body.domain) {
+      const normalized = body.domain.trim().toLowerCase();
+      if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(normalized)) {
+        throw new BadRequestException(`"${body.domain}" is not a valid domain.`);
+      }
+      data.domain = normalized;
+    }
+    return this.prisma.personalEmailDomain.update({ where: { id }, data });
+  }
+
+  @Delete('personal-email-domains/:id')
+  @RequirePermissions({ module: 'admin/partner-types', action: 'delete' })
+  @ApiOperation({ summary: 'Delete a personal-email domain (system rows are protected)' })
+  async deletePersonalEmailDomain(@Param('id', ParseIntPipe) id: number) {
+    const existing = await this.prisma.personalEmailDomain.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Personal-email domain not found');
+    if (existing.isSystem) {
+      throw new BadRequestException('System personal-email domains cannot be deleted (they ship in code as a fallback).');
+    }
+    await this.prisma.personalEmailDomain.delete({ where: { id } });
+    return { message: 'Personal-email domain deleted' };
+  }
 }

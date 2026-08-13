@@ -766,11 +766,17 @@ export class BusinessPartnersService {
   }
 
   /**
-   * Phase 4 hook — overridden by the admin catalog when
-   * `personal_email_domains` exists. Phase 3 baseline: no DB lookup.
+   * BM2 Phase 4 (2026-08-13) — consults the admin-managed
+   * `personal_email_domains` catalog. Combined via OR with the
+   * hard-coded fallback set so removing a fallback entry from the
+   * catalog does not accidentally start binding gmail addresses to
+   * orgs.
    */
-  protected async isPersonalDomainDb(_domain: string): Promise<boolean> {
-    return false;
+  protected async isPersonalDomainDb(domain: string): Promise<boolean> {
+    const row = await this.prisma.personalEmailDomain.findUnique({
+      where: { domain },
+    });
+    return !!row;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
