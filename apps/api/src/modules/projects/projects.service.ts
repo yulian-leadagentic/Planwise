@@ -1005,6 +1005,15 @@ export class ProjectsService {
             phone: true,
           },
         },
+        // BM2 Phase 2 — representation surfaces on the team endpoint so
+        // the UI can render "Org X — contact: Person C" and
+        // "Person C (on behalf of Org X)" without a follow-up fetch.
+        contactParty: {
+          select: { id: true, displayName: true, partnerType: true },
+        },
+        onBehalfOfParty: {
+          select: { id: true, displayName: true, partnerType: true },
+        },
       },
       orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
     });
@@ -1028,6 +1037,8 @@ export class ProjectsService {
         validFrom: a.validFrom,
         validTo: a.validTo,
         status: a.status,
+        contactParty: a.contactParty,
+        onBehalfOfParty: a.onBehalfOfParty,
       })),
     };
   }

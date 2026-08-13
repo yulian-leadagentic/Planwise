@@ -56,6 +56,10 @@ export interface ProjectRoleTypeRow {
   // the backend rejects the POST with "must hold one of these job titles".
   requiredProfessionIds: number[] | null;
   isPrimaryRequired: boolean;
+  // BM2 Phase 6 flag — when true and the participant is an org, the
+  // add-participant flow must collect a contact person (a person BP).
+  // Drives ProjectPartnerRole.contactPartyId.
+  requiresContactPerson?: boolean;
   sortOrder: number;
   isSystem: boolean;
 }
@@ -77,6 +81,14 @@ export interface ProjectRoleAssignment {
   validFrom: string | null;
   validTo: string | null;
   status: string;
+  // BM2 Phase 2 — representation. `contactParty` is meaningful when
+  // `party.partnerType === 'organization'` (a person who serves as the
+  // contact for that org on this project). `onBehalfOfParty` is
+  // meaningful when `party.partnerType === 'person'` (the org that
+  // person represents on this project — pins the employer per-project
+  // for freelancers / multi-employer people).
+  contactParty?: { id: number; displayName: string; partnerType: string } | null;
+  onBehalfOfParty?: { id: number; displayName: string; partnerType: string } | null;
 }
 
 export interface ProjectTeamData {

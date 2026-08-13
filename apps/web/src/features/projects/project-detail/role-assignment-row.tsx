@@ -37,6 +37,21 @@ export function RoleAssignmentRow({
             <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">PRIMARY</span>
           )}
         </div>
+        {/* BM2 Phase 2 — representation. Renders as:
+              org row  : "contact: Person C"
+              person row: "on behalf of Org X"
+            Both lines are optional; the row falls back to the plain
+            title-in-project below when neither is set. */}
+        {assignment.contactParty && (
+          <p className="text-[11px] text-emerald-700 truncate">
+            contact: <button type="button" onClick={() => onOpenProfile?.(assignment.contactParty!.id)} className="hover:underline font-medium">{assignment.contactParty.displayName}</button>
+          </p>
+        )}
+        {assignment.onBehalfOfParty && (
+          <p className="text-[11px] text-emerald-700 truncate">
+            on behalf of <button type="button" onClick={() => onOpenProfile?.(assignment.onBehalfOfParty!.id)} className="hover:underline font-medium">{assignment.onBehalfOfParty.displayName}</button>
+          </p>
+        )}
         {assignment.titleInProject && <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{assignment.titleInProject}</p>}
         {(p.email || p.phone) && (
           <p className="text-[11px] text-slate-400 dark:text-slate-500 truncate">{p.email}{p.email && p.phone ? ' · ' : ''}{p.phone}</p>
