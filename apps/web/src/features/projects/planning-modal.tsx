@@ -13,6 +13,8 @@ import { useColumnVisibility, ColumnVisibilityPicker } from '@/components/shared
 import { STATUS_LABEL } from '@/lib/task-constants';
 import client from '@/api/client';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
+import { TaskDrawer } from '@/features/tasks/task-drawer';
+import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import {
   DndContext,
   DragOverlay,
@@ -475,6 +477,13 @@ function TaskAttachmentButton({ taskId, projectId }: { taskId: number; projectId
 // traced directly to this. Context shares the count map; the buttons
 // read keys from it.
 const TaskMessageCountsContext = createContext<Record<number, number>>({});
+
+// Opens the canonical task drawer (?task=N) for a task row. Set by
+// PlanningView; consumed by every task-row renderer so a row click
+// lands on the task drawer instead of the row's discussion side-panel
+// (bm2 fix #2). No-op when unset so unit tests / storybook can render
+// individual rows without providing the drawer route.
+const OpenTaskDrawerContext = createContext<((taskId: number) => void) | null>(null);
 
 // ─── Task Discussion Button — opens the side Discussion drawer ──────────────
 
@@ -956,6 +965,11 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
   // Project's first-class deliverables (for the inline Deliverable picker).
   const deliverableLookups = useContext(ProjectDeliverablesContext);
 
+  // Opens the canonical task drawer (?task=N) when the task name is
+  // clicked (bm2 fix #2). Set by PlanningView via OpenTaskDrawerContext;
+  // no-op if unset (defensive — rendered outside the planning view).
+  const openTaskDrawer = useContext(OpenTaskDrawerContext);
+
   // Dynamic grid columns (client feedback 2026-08-02 item 1). Reads
   // the current visibility set from the context; falls back to the
   // full-column view when rendered outside the provider (legacy).
@@ -1073,14 +1087,37 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       {cols.isVisible('code') && (
         <span className="font-mono text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate" title={task.code || ''}>{task.code || '-'}</span>
       )}
-      <span className="font-medium text-slate-900 dark:text-slate-100 min-w-0 truncate" title={task.name}>
-        {task.name}
-        {task.dependencies?.length > 0 && (
-          <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] text-amber-600" title={`Depends on: ${task.dependencies.map((d: any) => d.dependsOn?.name || d.dependsOn?.code).join(', ')}`}>
+      {/* Task name — clickable, opens the canonical task drawer
+          (?task=N). Especially important in grouping mode where the
+          name is the only entry point to the task's details (bm2
+          fix #2). Falls back to a plain span when the drawer opener
+          isn't wired (rendering the row outside PlanningView). */}
+      {(() => {
+        const depsBadge = task.dependencies?.length > 0 && (
+          <span
+            className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] text-amber-600"
+            title={`Depends on: ${task.dependencies.map((d: any) => d.dependsOn?.name || d.dependsOn?.code).join(', ')}`}
+          >
             ⛓ {task.dependencies.length}
           </span>
-        )}
-      </span>
+        );
+        return openTaskDrawer ? (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); openTaskDrawer(task.id); }}
+            title={task.name}
+            className="font-medium text-slate-900 dark:text-slate-100 min-w-0 truncate text-left hover:text-blue-700 hover:underline focus:outline-none focus:text-blue-700 focus:underline cursor-pointer"
+          >
+            {task.name}
+            {depsBadge}
+          </button>
+        ) : (
+          <span className="font-medium text-slate-900 dark:text-slate-100 min-w-0 truncate" title={task.name}>
+            {task.name}
+            {depsBadge}
+          </span>
+        );
+      })()}
       {/* Zone context — kept visible in every grouping mode so the user
           doesn't lose the zone when grouping by Deliverable/Service/None.
           Renders the FULL breadcrumb (e.g. "Building 1 › Typical floor")
@@ -4187,6 +4224,9 @@ function ProjectRootGroup({
 
 function PlanningView({ projectId }: { projectId: number }) {
   const queryClient = useQueryClient();
+  // Task drawer at the URL — a row click opens ?task=N (bm2 fix #2).
+  // Every task-row renderer reads openDrawer via OpenTaskDrawerContext.
+  const { drawerId: drawerTaskId, openDrawer: openTaskDrawer, closeDrawer: closeTaskDrawer } = useDrawerRoute('task');
 
   // Loaded planning data (zones + tasks) — used below for the group
   // builder. We also use it here to derive the list of task IDs that
@@ -5146,6 +5186,7 @@ function PlanningView({ projectId }: { projectId: number }) {
     <PlanningColumnsContext.Provider value={planningColumnsCtx}>
     <BulkCollapseContext.Provider value={{ desired: bulkCollapsed, version: bulkVersion }}>
     <TaskMessageCountsContext.Provider value={messageCounts as Record<number, number>}>
+    <OpenTaskDrawerContext.Provider value={openTaskDrawer}>
     <ProjectDeliverablesContext.Provider value={deliverableLookups}>
     <PlanningSubGroupContext.Provider value={subGroupCtx}>
     <TaskFilterContext.Provider value={{ filters: colFilters, setFilter: setColFilter, options: colFilterOptions }}>
@@ -5837,10 +5878,14 @@ function PlanningView({ projectId }: { projectId: number }) {
         onClear={clearSelection}
         onRequestDelete={requestTaskDelete}
       />
+      {/* Canonical task drawer — opens when a task row is clicked (bm2
+          fix #2). URL-driven via useDrawerRoute so back/refresh restore. */}
+      <TaskDrawer taskId={drawerTaskId} onClose={closeTaskDrawer} />
     </div>
     </TaskFilterContext.Provider>
     </PlanningSubGroupContext.Provider>
     </ProjectDeliverablesContext.Provider>
+    </OpenTaskDrawerContext.Provider>
     </TaskMessageCountsContext.Provider>
     </BulkCollapseContext.Provider>
     </PlanningColumnsContext.Provider>
