@@ -90,38 +90,47 @@ export function ProjectBpPicker({
 
   // Fetch worker_of relationships for the candidates so we can filter
   // persons to those actually employed by the right org.
+  // BM2 ops-surfaces Phase A: read `partnerRelationshipsA` (raw new-shape
+  // include on the BP list). partnerRelationshipsA carries every
+  // party↔party edge where THIS bp is party A — including `worker_of`.
   const filterEmployerOrgId = (config as any).filterEmployerOrgId as number | null | undefined;
   const filtered = bps.filter((bp: any) => {
     if (existingBpIds.includes(bp.id)) return false;
     if (config.partnerType === 'person' && filterEmployerOrgId) {
-      const employers = (bp.outgoingRelationships ?? [])
+      const employers = (bp.partnerRelationshipsA ?? [])
         .filter((r: any) =>
-          r.relationshipType?.code === 'worker_of' &&
-          r.targetType === 'organization' &&
+          r.type?.code === 'worker_of' &&
           (!r.validTo || new Date(r.validTo) > new Date()),
         )
-        .map((r: any) => r.targetId);
+        .map((r: any) => r.partyBId);
       return employers.includes(filterEmployerOrgId);
     }
     return true;
   });
 
-  // Resolve the relationship type id by code at submit time.
-  const { data: allRelTypes = [] } = useQuery<any[]>({
-    queryKey: ['partner-relationship-types'],
+  // BM2 ops-surfaces Phase A: project participation is a ProjectPartnerRole
+  // now (was PartnerRelationship with targetType='project'). We resolve
+  // the ProjectRoleType by mapping the legacy relationship-code to the
+  // canonical role code — the two catalogs were split when BM2 Phase 1
+  // consolidated relationships to party↔party only.
+  const projectRoleCode =
+    config.relationshipCode === 'supplier_of_project' ? 'supplier'
+    : config.relationshipCode === 'customer_of_project' ? 'customer'
+    : /* participates_in_project */ 'participant';
+  const { data: allRoleTypes = [] } = useQuery<any[]>({
+    queryKey: ['project-role-types'],
     staleTime: 10 * 60 * 1000,
-    queryFn: () => client.get('/admin/partner-types/relationship-types').then((r) => r.data?.data ?? r.data ?? []),
+    queryFn: () => client.get('/admin/project-role-types').then((r) => r.data?.data ?? r.data ?? []),
   });
-  const relType = allRelTypes.find((rt: any) => rt.code === config.relationshipCode);
+  const relType = allRoleTypes.find((rt: any) => rt.code === projectRoleCode);
 
   const create = useMutation({
     mutationFn: () =>
-      client.post('/business-partner-relationships', {
-        sourcePartnerId: selectedBpId,
-        targetType: 'project',
-        targetId: projectId,
-        relationshipTypeId: relType?.id,
-        roleInContext: roleInContext.trim() || undefined,
+      client.post('/project-partner-roles', {
+        projectId,
+        partyId: selectedBpId,
+        roleId: relType?.id,
+        titleInProject: roleInContext.trim() || undefined,
       }).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });

@@ -179,16 +179,20 @@ export function ProjectFormPage() {
     defaultValues: { status: 'draft', endDate: DEFAULT_OPEN_END_DATE },
   });
 
-  // For edit-mode: look up the project's current customer (relationship table).
+  // For edit-mode: look up the project's current customer.
+  // BM2 ops-surfaces Phase A: project participation lives on
+  // /project-partner-roles now, keyed by ProjectRoleType.code='customer'.
   const { data: existingCustomerRel } = useQuery<any>({
     queryKey: ['project-customer', projectId],
     enabled: isEdit && !!projectId,
-    queryFn: () => client.get('/business-partner-relationships', {
-      params: { targetType: 'project', targetId: projectId, relationshipTypeCode: 'customer_of_project', activeOnly: true },
+    queryFn: () => client.get('/project-partner-roles', {
+      params: { projectId, roleCode: 'customer', activeOnly: true },
     }).then((r) => {
       const list = r.data?.data ?? r.data;
       const arr = Array.isArray(list) ? list : (list?.data ?? []);
-      return arr[0] ?? null;
+      // Pick the primary customer (the write path marks the customer row
+      // isPrimary=true; there should be at most one active primary).
+      return arr.find((x: { isPrimary?: boolean }) => x.isPrimary) ?? arr[0] ?? null;
     }),
   });
 
@@ -202,7 +206,7 @@ export function ProjectFormPage() {
         description: project.description ?? '',
         projectTypeId: project.projectTypeId,
         departmentId: (project as any).departmentId ?? undefined,
-        customerOrgId: existingCustomerRel?.sourcePartnerId ?? existingCustomerRel?.source?.id ?? undefined,
+        customerOrgId: existingCustomerRel?.partyId ?? existingCustomerRel?.party?.id ?? undefined,
         status: project.status,
         budget: project.budget ?? undefined,
         startDate: toDateInput(project.startDate),
@@ -265,33 +269,34 @@ export function ProjectFormPage() {
       const newCustomerOrgId = payload.customerOrgId;
       delete payload.customerOrgId;
 
-      const oldCustomerOrgId = existingCustomerRel?.sourcePartnerId
-        ?? existingCustomerRel?.source?.id
+      const oldCustomerOrgId = existingCustomerRel?.partyId
+        ?? existingCustomerRel?.party?.id
         ?? null;
       const customerChanged =
         canChangeCustomer && newCustomerOrgId && newCustomerOrgId !== oldCustomerOrgId;
 
+      // BM2 ops-surfaces Phase A: project participation lives on
+      // /project-partner-roles, keyed by ProjectRoleType.code='customer'.
       const swapCustomerIfNeeded = async () => {
         if (!customerChanged) return;
-        // 1. End the current customer_of_project rel (soft-disconnect, preserves history).
+        // 1. End the current customer project-partner-role (soft-end, preserves history).
         if (existingCustomerRel?.id) {
-          await client.delete(`/business-partner-relationships/${existingCustomerRel.id}`)
+          await client.delete(`/project-partner-roles/${existingCustomerRel.id}`)
             .catch(() => undefined);
         }
-        // 2. Look up the relationship type id and create a new active rel.
-        const relTypes = await client.get('/admin/partner-types/relationship-types')
+        // 2. Look up the project-role-type id ('customer') and create the new row.
+        const roleTypes = await client.get('/admin/project-role-types')
           .then((r) => r.data?.data ?? r.data ?? []);
-        const customerOfProject = (Array.isArray(relTypes) ? relTypes : []).find(
-          (rt: any) => rt.code === 'customer_of_project',
+        const customerRole = (Array.isArray(roleTypes) ? roleTypes : []).find(
+          (rt: any) => rt.code === 'customer',
         );
-        if (!customerOfProject) {
-          throw new Error('customer_of_project relationship type missing');
+        if (!customerRole) {
+          throw new Error('project role type "customer" missing');
         }
-        await client.post('/business-partner-relationships', {
-          sourcePartnerId: newCustomerOrgId,
-          targetType: 'project',
-          targetId: projectId,
-          relationshipTypeId: customerOfProject.id,
+        await client.post('/project-partner-roles', {
+          projectId,
+          partyId: newCustomerOrgId,
+          roleId: customerRole.id,
           isPrimary: true,
         });
       };

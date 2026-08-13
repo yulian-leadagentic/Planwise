@@ -54,7 +54,11 @@ export interface BusinessPartner {
    */
   mainRoleTypeId: number | null;
   mainRoleType: { id: number; code: string; name: string; category?: string | null } | null;
-  outgoingRelationships: Array<{ targetType: string; targetId: number; relationshipType: { code: string; name: string } }>;
+  // BM2 ops-surfaces Phase A: kept only as a type-level declaration —
+  // this page renders no relationships, so it doesn't read either shape.
+  // The field is retained so downstream types that spread this interface
+  // remain compatible until they're pruned individually.
+  partnerRelationshipsA?: Array<{ id: number; partyBId: number; type: { code: string; name: string } }>;
   user: { id: number; isActive: boolean; lastLoginAt: string | null } | null;
   createdAt: string;
   updatedAt: string;

@@ -77,8 +77,10 @@ export function TeamTab({
   const otherRoles = dynamicRoles.filter((rt) => !rt.isPrimaryRequired);
 
   const softEnd = useMutation({
+    // BM2 ops-surfaces Phase A: customer-contact rows are party↔party
+    // edges (`worker_of` at the customer org) → /partner-relationships.
     mutationFn: (relationshipId: number) =>
-      client.delete(`/business-partner-relationships/${relationshipId}`).then((r) => r.data),
+      client.delete(`/partner-relationships/${relationshipId}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
       notify.success('Disconnected (soft-ended)', { code: 'PROJECT-TEAM-DELETE-200' });

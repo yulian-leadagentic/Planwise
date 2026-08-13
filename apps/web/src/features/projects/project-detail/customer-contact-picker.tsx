@@ -56,12 +56,12 @@ export function CustomerContactPicker({
       if (!selectedPersonId || !relType) {
         throw new Error('Missing person or relationship type');
       }
-      return client.post('/business-partner-relationships', {
-        sourcePartnerId: selectedPersonId,
-        targetType: 'organization',
-        targetId: customerOrgId,
-        relationshipTypeId: relType.id,
-        roleInContext: titleAtCustomer.trim() || undefined,
+      // BM2 ops-surfaces Phase A: party↔party edges live on /partner-relationships now.
+      return client.post('/partner-relationships', {
+        partyAId: selectedPersonId,
+        partyBId: customerOrgId,
+        typeId: relType.id,
+        titleAtB: titleAtCustomer.trim() || undefined,
       }).then((r) => r.data);
     },
     onSuccess: () => {
