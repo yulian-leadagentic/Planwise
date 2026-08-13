@@ -76,4 +76,96 @@ in-progress rewrite.
 
 ## Item 8 · "App throws the user out mid-work" (session / refresh / token)
 
-_(Filled in with the item 8 investigation.)_
+Setup for the current auth flow:
+
+- Access token — memory only in the frontend, JWT `expiresIn: '1h'`
+  (`apps/api/src/modules/auth/auth.module.ts:29`).
+- Refresh token — httpOnly cookie `refresh_token`, `expiresIn: '7d'`
+  (`apps/api/src/modules/auth/auth.service.ts:101-104`), set with
+  `sameSite: 'strict'` in three places
+  (`auth.controller.ts:43`, `auth.controller.ts:58`,
+  `oidc.controller.ts:254`).
+- Interceptor at `apps/web/src/api/client.ts:37-97` catches 401s, calls
+  `POST /auth/refresh`, retries the failed request. On refresh failure
+  it does `clearAuth()` + `window.location.href = '/login'`.
+
+Two concrete kick-out candidates, both worth eyeballing before the
+teammate's rewrite lands:
+
+### Candidate A · Interceptor kicks on ANY refresh failure
+
+`apps/web/src/api/client.ts:81-89`
+
+```ts
+} catch (refreshError: any) {
+  processQueue(refreshError, null);
+  console.warn('[auth] refresh failed → redirecting to /login', …);
+  useAuthStore.getState().clearAuth();
+  window.location.href = '/login';
+  return Promise.reject(refreshError);
+}
+```
+
+`refreshError` is caught regardless of its cause. That means a
+transient failure of `POST /auth/refresh` also boots the user:
+
+- API down / restart → axios throws → caught → redirect to /login.
+- CORS pre-flight failure (e.g. `Access-Control-Allow-Credentials`
+  briefly wrong after a deploy) → caught → redirect.
+- Any 5xx from the refresh endpoint (e.g. Prisma connection blip) →
+  caught → redirect.
+
+Only a 401 on refresh actually means "your session is invalid." A
+safer catch would narrow to `refreshError?.response?.status === 401`
+before clearing auth + redirecting; other errors should reject the
+original request but keep the session so the next attempt can succeed.
+
+**Recommended fix (small, safe to land alongside the permissions
+rewrite):** switch the `catch` to only clear + redirect on
+`status === 401` (and possibly 403). Other statuses → reject the
+in-flight request, leave auth alone, let react-query retry.
+
+### Candidate B · `sameSite: 'strict'` on the refresh cookie
+
+Every `res.cookie('refresh_token', …)` uses `sameSite: 'strict'`. The
+comment in `client.ts:62-69` — "The wrapping interceptor handles this
+server-side, but if it ever yields a different shape, the old
+`data.data.accessToken` line silently set the token to undefined and
+the user got 'logged out' without ever seeing /login — the most
+likely cause of the long-session kick-out reports." — points at a bug
+that's already been fixed in the same file, so this specific vector
+should be closed.
+
+`sameSite: 'strict'` still bites in one situation the app cares about:
+if the frontend and API are on different registrable domains (not just
+different subdomains), the browser refuses to send the cookie on
+cross-site XHR — including the `withCredentials: true` refresh call
+from `auth-bootstrap.tsx:53`. On production Railway that's
+`*.up.railway.app`, which lands on the Public Suffix List, so
+`api.up.railway.app` and `app.up.railway.app` are actually **cross-site**
+and the strict cookie will not fly. Same-origin dev
+(`localhost:5173` + `localhost:3000`) is fine; a custom-domain
+deploy (`app.planwise.co.il` + `api.planwise.co.il`) is fine
+(shared eTLD+1); Railway-preview URLs are not.
+
+**Recommended check:** confirm the production domain layout. If
+frontend and API live on separate registrable domains, either put both
+under one apex (same-site) or drop the refresh cookie to
+`sameSite: 'lax'` (still safe — `POST /auth/refresh` is not vulnerable
+to classic CSRF because the response is a token, not a state change,
+and the cookie isn't inspectable by JS).
+
+### Not the cause
+
+- Roles-guard 403 (`apps/api/src/common/guards/roles.guard.ts:27,85`)
+  is Forbidden, not Unauthorized — the interceptor does not react to
+  it, so a permission-check failure doesn't log the user out.
+- Refresh strategy validate() correctly re-checks
+  `isActive: true` — a user deactivated by an admin gets a real 401
+  on their next refresh, which is intended behavior.
+
+No code change committed for this item — the safe fix is candidate A's
+narrower catch (~4 lines), but per phase1-bugs.md guardrails item 8 is
+investigate-only and the permissions/session owner may want to bundle
+that with their in-progress work.
+
