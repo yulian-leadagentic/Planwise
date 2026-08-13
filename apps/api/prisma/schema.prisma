@@ -1726,10 +1726,14 @@ model BusinessPartner {
   // was removed with the legacy `business_partner_relationships` table.
   // party↔party edges live in `partnerRelationshipsA` / `partnerRelationshipsB`;
   // project participation lives in `projectPartnerRoles`.
-  partnerRelationshipsA PartnerRelationship[]       @relation("PartyAOnRel")
-  partnerRelationshipsB PartnerRelationship[]       @relation("PartyBOnRel")
-  projectPartnerRoles   ProjectPartnerRole[]        @relation("PartyOnProjectRole")
-  professions           BusinessPartnerProfession[]
+  partnerRelationshipsA         PartnerRelationship[]       @relation("PartyAOnRel")
+  partnerRelationshipsB         PartnerRelationship[]       @relation("PartyBOnRel")
+  projectPartnerRoles           ProjectPartnerRole[]        @relation("PartyOnProjectRole")
+  // BM2 Phase 2 (2026-08-13) — participation representation. Back-relations
+  // for the two optional self-FKs on `project_partner_roles`.
+  projectPartnerRolesAsContact  ProjectPartnerRole[]        @relation("ProjectPartnerRoleContactParty")
+  projectPartnerRolesOnBehalfOf ProjectPartnerRole[]        @relation("ProjectPartnerRoleOnBehalfOf")
+  professions                   BusinessPartnerProfession[]
 
   /// If this partner row was created by a bulk import, track which import.
   /// Used by the data-import rollback flow. NULL for partners created via
@@ -2141,6 +2145,20 @@ model ProjectPartnerRole {
   roleId         Int      @map("role_id")
   isPrimary      Boolean  @default(false) @map("is_primary")
   titleInProject String?  @map("title_in_project") @db.VarChar(255)
+  // BM2 Phase 2 (2026-08-13) — representation on project participation:
+  //   contactPartyId    → the PERSON who is the contact when this row's
+  //                       party is an ORG (SAP "partner + contact person"
+  //                       on a document).
+  //   onBehalfOfPartyId → the ORG a PERSON represents on THIS project.
+  //                       Pins the employer per-project for freelancers
+  //                       and multi-employer people; otherwise the global
+  //                       worker_of resolution is ambiguous.
+  // Both are optional self-relations to BusinessPartner. Named
+  // explicitly ("ProjectPartnerRoleContactParty" /
+  // "ProjectPartnerRoleOnBehalfOf") so Prisma doesn't collide with the
+  // existing PartyOnProjectRole relation on party_id.
+  contactPartyId    Int?     @map("contact_party_id")
+  onBehalfOfPartyId Int?     @map("on_behalf_of_party_id")
   validFrom      DateTime @default(now()) @map("valid_from")
   validTo        DateTime @default(dbgenerated("'9999-12-31 00:00:00'")) @map("valid_to")
   status         String   @default("active") @db.VarChar(20)
@@ -2148,14 +2166,18 @@ model ProjectPartnerRole {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  project Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  party   BusinessPartner @relation("PartyOnProjectRole", fields: [partyId], references: [id], onDelete: Cascade)
-  role    ProjectRoleType @relation(fields: [roleId], references: [id])
+  project        Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  party          BusinessPartner  @relation("PartyOnProjectRole", fields: [partyId], references: [id], onDelete: Cascade)
+  role           ProjectRoleType  @relation(fields: [roleId], references: [id])
+  contactParty   BusinessPartner? @relation("ProjectPartnerRoleContactParty", fields: [contactPartyId], references: [id], onDelete: SetNull)
+  onBehalfOfParty BusinessPartner? @relation("ProjectPartnerRoleOnBehalfOf", fields: [onBehalfOfPartyId], references: [id], onDelete: SetNull)
 
   @@unique([projectId, partyId, roleId, validFrom])
   @@index([projectId])
   @@index([partyId])
   @@index([roleId])
+  @@index([contactPartyId])
+  @@index([onBehalfOfPartyId])
   @@map("project_partner_roles")
 }
 

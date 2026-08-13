@@ -16,6 +16,9 @@ interface CreateProjectPartnerRoleDto {
   roleId: number;
   isPrimary?: boolean;
   titleInProject?: string | null;
+  // BM2 Phase 2 (2026-08-13) — participation representation.
+  contactPartyId?: number | null;
+  onBehalfOfPartyId?: number | null;
   validFrom?: string | Date;
   validTo?: string | Date;
   notes?: string | null;
@@ -24,6 +27,8 @@ interface CreateProjectPartnerRoleDto {
 interface UpdateProjectPartnerRoleDto {
   isPrimary?: boolean;
   titleInProject?: string | null;
+  contactPartyId?: number | null;
+  onBehalfOfPartyId?: number | null;
   validFrom?: string | Date;
   validTo?: string | Date;
   status?: string;
@@ -58,6 +63,11 @@ export class ProjectPartnerRolesService {
         role: true,
         party: { select: { id: true, partnerType: true, displayName: true } },
         project: { select: { id: true, name: true, number: true } },
+        // BM2 Phase 2 (2026-08-13): representation surfaces on read so
+        // the UI can render "Org X — contact: Person C" and
+        // "Person C (on behalf of Org X)".
+        contactParty: { select: { id: true, partnerType: true, displayName: true } },
+        onBehalfOfParty: { select: { id: true, partnerType: true, displayName: true } },
       },
       orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }],
     });
@@ -70,6 +80,11 @@ export class ProjectPartnerRolesService {
         role: true,
         party: { select: { id: true, partnerType: true, displayName: true } },
         project: { select: { id: true, name: true, number: true } },
+        // BM2 Phase 2 (2026-08-13): representation surfaces on read so
+        // the UI can render "Org X — contact: Person C" and
+        // "Person C (on behalf of Org X)".
+        contactParty: { select: { id: true, partnerType: true, displayName: true } },
+        onBehalfOfParty: { select: { id: true, partnerType: true, displayName: true } },
       },
     });
     if (!row) throw new NotFoundException('Project partner role not found');
@@ -124,6 +139,51 @@ export class ProjectPartnerRolesService {
         );
       }
     }
+    // BM2 Phase 2 (2026-08-13) — representation checks.
+    // Rules mirror the analysis: contactPartyId is only meaningful when
+    // the participant is an org (the contact is a person); onBehalfOfPartyId
+    // is only meaningful when the participant is a person (they represent
+    // an org). Both are soft-checked — invalid values throw 400, but
+    // omitting them is always fine (the flow they power is optional).
+    if (dto.contactPartyId != null) {
+      if (party.partnerType !== 'organization') {
+        throw new BadRequestException(
+          `contactPartyId is only valid when the participant is an organization; this one is a ${party.partnerType}.`,
+        );
+      }
+      const contact = await this.prisma.businessPartner.findFirst({
+        where: { id: dto.contactPartyId, deletedAt: null },
+        select: { id: true, partnerType: true },
+      });
+      if (!contact) {
+        throw new NotFoundException(`Contact party ${dto.contactPartyId} not found`);
+      }
+      if (contact.partnerType !== 'person') {
+        throw new BadRequestException(
+          `contactPartyId must reference a person, got a ${contact.partnerType}.`,
+        );
+      }
+    }
+    if (dto.onBehalfOfPartyId != null) {
+      if (party.partnerType !== 'person') {
+        throw new BadRequestException(
+          `onBehalfOfPartyId is only valid when the participant is a person; this one is a ${party.partnerType}.`,
+        );
+      }
+      const onBehalf = await this.prisma.businessPartner.findFirst({
+        where: { id: dto.onBehalfOfPartyId, deletedAt: null },
+        select: { id: true, partnerType: true },
+      });
+      if (!onBehalf) {
+        throw new NotFoundException(`On-behalf-of party ${dto.onBehalfOfPartyId} not found`);
+      }
+      if (onBehalf.partnerType !== 'organization') {
+        throw new BadRequestException(
+          `onBehalfOfPartyId must reference an organization, got a ${onBehalf.partnerType}.`,
+        );
+      }
+    }
+
     // isPrimaryRequired: when set, demote previous primary so a single primary
     // exists. This way the form can mark a new primary without manual cleanup.
     if (role.isPrimaryRequired && dto.isPrimary) {
@@ -138,9 +198,18 @@ export class ProjectPartnerRolesService {
           roleId: dto.roleId,
           isPrimary: dto.isPrimary ?? false,
           titleInProject: dto.titleInProject ?? null,
+          contactPartyId: dto.contactPartyId ?? null,
+          onBehalfOfPartyId: dto.onBehalfOfPartyId ?? null,
           validFrom: dto.validFrom ? new Date(dto.validFrom) : new Date(),
           validTo: dto.validTo ? new Date(dto.validTo) : FAR_FUTURE,
           notes: dto.notes ?? null,
+        },
+        include: {
+          role: true,
+          party: { select: { id: true, partnerType: true, displayName: true } },
+          project: { select: { id: true, name: true, number: true } },
+          contactParty: { select: { id: true, partnerType: true, displayName: true } },
+          onBehalfOfParty: { select: { id: true, partnerType: true, displayName: true } },
         },
       });
     } catch (e) {
@@ -169,10 +238,21 @@ export class ProjectPartnerRolesService {
       data: {
         isPrimary: dto.isPrimary,
         titleInProject: dto.titleInProject === undefined ? undefined : (dto.titleInProject ?? null),
+        // BM2 Phase 2 (2026-08-13) — representation edits. Explicit-null
+        // clears the link; undefined leaves the existing value alone.
+        contactPartyId: dto.contactPartyId === undefined ? undefined : (dto.contactPartyId ?? null),
+        onBehalfOfPartyId: dto.onBehalfOfPartyId === undefined ? undefined : (dto.onBehalfOfPartyId ?? null),
         validFrom: dto.validFrom ? new Date(dto.validFrom) : undefined,
         validTo: dto.validTo ? new Date(dto.validTo) : undefined,
         status: dto.status,
         notes: dto.notes === undefined ? undefined : (dto.notes ?? null),
+      },
+      include: {
+        role: true,
+        party: { select: { id: true, partnerType: true, displayName: true } },
+        project: { select: { id: true, name: true, number: true } },
+        contactParty: { select: { id: true, partnerType: true, displayName: true } },
+        onBehalfOfParty: { select: { id: true, partnerType: true, displayName: true } },
       },
     });
   }
