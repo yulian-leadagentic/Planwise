@@ -1693,7 +1693,11 @@ model BusinessPartner {
   companyName  String?       @map("company_name") @db.VarChar(255)
   taxId        String?       @map("tax_id") @db.VarChar(50)
   // Common contact info
-  email        String?       @unique @db.VarChar(255)
+  // BM2 Phase 3 (2026-08-13): dropped @unique on email. Real data has
+  // multiple contacts sharing an office inbox; identity for a BP is the
+  // row + its owned domains (see BusinessPartnerDomain) + normalized
+  // name, not the email. A non-unique index below still speeds lookups.
+  email        String?       @db.VarChar(255)
   phone        String?       @db.VarChar(50)
   mobile       String?       @db.VarChar(50)
   address      String?       @db.VarChar(500)
@@ -1733,6 +1737,9 @@ model BusinessPartner {
   // for the two optional self-FKs on `project_partner_roles`.
   projectPartnerRolesAsContact  ProjectPartnerRole[]        @relation("ProjectPartnerRoleContactParty")
   projectPartnerRolesOnBehalfOf ProjectPartnerRole[]        @relation("ProjectPartnerRoleOnBehalfOf")
+  // BM2 Phase 3 (2026-08-13) — multi-domain orgs. A BP (typically an
+  // organization) may own several domains (office + secondary).
+  domains                       BusinessPartnerDomain[]
   professions                   BusinessPartnerProfession[]
 
   /// If this partner row was created by a bulk import, track which import.
@@ -1747,7 +1754,28 @@ model BusinessPartner {
   @@index([deletedAt])
   @@index([mainRoleTypeId])
   @@index([createdByImportId])
+  // BM2 Phase 3 — non-unique lookup index on email (the @unique was
+  // dropped; the DB still needs fast lookups by email for import dedup
+  // and worker-of-user backfill).
+  @@index([email])
   @@map("business_partners")
+}
+
+// BM2 Phase 3 (2026-08-13) — multi-domain orgs.
+// A BP (typically an organization) may own multiple domains. Import
+// dedup matches company-by-domain first, then normalized name. Personal
+// / free-email domains never bind an org — that list is maintained via
+// PersonalEmailDomain (Phase 4).
+model BusinessPartnerDomain {
+  id        Int    @id @default(autoincrement())
+  partnerId Int    @map("partner_id")
+  domain    String @db.VarChar(255)
+
+  partner BusinessPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@unique([domain])
+  @@index([partnerId])
+  @@map("business_partner_domains")
 }
 
 // Lookup table for what KIND of business roles a partner can hold.

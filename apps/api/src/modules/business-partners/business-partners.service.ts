@@ -129,6 +129,38 @@ function attachLegacyOutgoing<T extends { partnerRelationshipsA?: any[]; project
   return { ...bp, outgoingRelationships: toLegacyOutgoing(bp) };
 }
 
+/**
+ * BM2 Phase 3 helper — extract the lower-cased domain from an email.
+ * Returns null when the email is empty or malformed.
+ */
+export function extractEmailDomain(email: string | null | undefined): string | null {
+  if (!email) return null;
+  const at = email.indexOf('@');
+  if (at < 0 || at === email.length - 1) return null;
+  return email.slice(at + 1).trim().toLowerCase();
+}
+
+/**
+ * Hard-coded personal / free-email domains (small, ships in code).
+ * The Phase 4 admin catalog `personal_email_domains` layers on top:
+ * anything in the DB is *also* treated as personal, but the fallback
+ * below guarantees the "gmail never binds an org" rule works even
+ * when the catalog is empty.
+ */
+export const PERSONAL_EMAIL_DOMAIN_FALLBACK: ReadonlySet<string> = new Set([
+  'gmail.com',
+  'yahoo.com',
+  'outlook.com',
+  'hotmail.com',
+  'icloud.com',
+  'walla.co.il',
+  'live.com',
+  'me.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
+]);
+
 function toDisplayName(dto: { partnerType: PartnerType; firstName?: string | null; lastName?: string | null; companyName?: string | null; displayName?: string | null }): string {
   if (dto.displayName?.trim()) return dto.displayName.trim();
   if (dto.partnerType === 'person') {
@@ -682,6 +714,66 @@ export class BusinessPartnersService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // BM2 Phase 3 — org dedup (domain-first)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Resolve an existing organization BP by (in order):
+   *   1. Any owned domain matching the email's domain — unless the domain
+   *      is a personal / free-email domain (see `isPersonalDomain`).
+   *   2. Normalized company name (case-insensitive, trimmed).
+   * Returns `null` if nothing matches. Used by the importer and by any
+   * future add-BP flow to prevent silent duplicates.
+   */
+  async resolveOrgByDomainOrName(input: {
+    email?: string;
+    companyName?: string;
+  }): Promise<{ id: number; reason: 'domain' | 'name' } | null> {
+    const emailDomain = input.email ? extractEmailDomain(input.email) : null;
+    if (emailDomain && !(await this.isPersonalDomain(emailDomain))) {
+      const domainRow = await this.prisma.businessPartnerDomain.findUnique({
+        where: { domain: emailDomain },
+        include: { partner: { select: { id: true, deletedAt: true } } },
+      });
+      if (domainRow?.partner && !domainRow.partner.deletedAt) {
+        return { id: domainRow.partner.id, reason: 'domain' };
+      }
+    }
+    const normalized = input.companyName?.trim();
+    if (normalized) {
+      const nameHit = await this.prisma.businessPartner.findFirst({
+        where: {
+          partnerType: 'organization',
+          deletedAt: null,
+          companyName: { equals: normalized },
+        },
+      });
+      if (nameHit) return { id: nameHit.id, reason: 'name' };
+    }
+    return null;
+  }
+
+  /**
+   * BM2 Phase 3 / Phase 4 — personal-email domain check.
+   * Phase 3 falls back to a small hard-coded set below.
+   * Phase 4 adds a `personal_email_domains` admin-managed table and
+   * `isPersonalDomain` is re-plumbed to consult it (see `isPersonalDomainDb`).
+   */
+  private async isPersonalDomain(domain: string): Promise<boolean> {
+    const normalized = domain.toLowerCase();
+    if (PERSONAL_EMAIL_DOMAIN_FALLBACK.has(normalized)) return true;
+    return this.isPersonalDomainDb(normalized);
+  }
+
+  /**
+   * Phase 4 hook — overridden by the admin catalog when
+   * `personal_email_domains` exists. Phase 3 baseline: no DB lookup.
+   */
+  protected async isPersonalDomainDb(_domain: string): Promise<boolean> {
+    return false;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // CSV import
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -765,17 +857,41 @@ export class BusinessPartnersService {
         continue;
       }
 
-      // Dedupe by email
-      if (email) {
+      // BM2 Phase 3 (2026-08-13) — dedup rules for import.
+      // Rule 1: for ORG rows, match by owned domain first, then by
+      //         normalized companyName (see `resolveOrgByDomainOrName`).
+      // Rule 2: for PERSON rows, we still dedupe by email — but the
+      //         email is not identity anymore (@unique dropped), so a
+      //         match here surfaces as "already exists" instead of a
+      //         hard DB constraint violation.
+      // Rule 3: personal-domain rows (Phase 4) never bind an org; the
+      //         importer skips domain resolution for those.
+      if (partnerType === 'organization' && (email || companyName)) {
+        const existing = await this.resolveOrgByDomainOrName({
+          email: email ?? undefined,
+          companyName: companyName ?? undefined,
+        });
+        if (existing) {
+          if (options.skipExisting) {
+            skipped++;
+            continue;
+          }
+          errors.push({
+            row: rowNum,
+            reason: `Organization "${companyName ?? email}" matches an existing BP (id=${existing.id}, ${existing.reason})`,
+          });
+          continue;
+        }
+      } else if (partnerType === 'person' && email) {
         const dup = await this.prisma.businessPartner.findFirst({
-          where: { email, deletedAt: null },
+          where: { email, deletedAt: null, partnerType: 'person' },
         });
         if (dup) {
           if (options.skipExisting) {
             skipped++;
             continue;
           }
-          errors.push({ row: rowNum, reason: `Email "${email}" already exists (id=${dup.id})` });
+          errors.push({ row: rowNum, reason: `Person with email "${email}" already exists (id=${dup.id})` });
           continue;
         }
       }
