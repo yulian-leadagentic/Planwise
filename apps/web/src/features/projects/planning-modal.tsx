@@ -13,6 +13,8 @@ import { useColumnVisibility, ColumnVisibilityPicker } from '@/components/shared
 import { STATUS_LABEL } from '@/lib/task-constants';
 import client from '@/api/client';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
+import { TaskDrawer } from '@/features/tasks/task-drawer';
+import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import {
   DndContext,
   DragOverlay,
@@ -476,6 +478,13 @@ function TaskAttachmentButton({ taskId, projectId }: { taskId: number; projectId
 // read keys from it.
 const TaskMessageCountsContext = createContext<Record<number, number>>({});
 
+// Opens the canonical task drawer (?task=N) for a task row. Set by
+// PlanningView; consumed by every task-row renderer so a row click
+// lands on the task drawer instead of the row's discussion side-panel
+// (bm2 fix #2). No-op when unset so unit tests / storybook can render
+// individual rows without providing the drawer route.
+const OpenTaskDrawerContext = createContext<((taskId: number) => void) | null>(null);
+
 // ─── Task Discussion Button — opens the side Discussion drawer ──────────────
 
 function TaskDiscussionButton({ taskId, taskName }: { taskId: number; taskName: string }) {
@@ -673,6 +682,12 @@ type SubGroupBucket = {
   tasks: any[];
   editableTemplateId: number | null;
   editableDeliverableId: number | null;
+  // Zone / phase context the bucket represents — carried down to each
+  // sub-group's Add-task button (bm2 fix #4) so the created task inherits
+  // the group's dimension. Null when the group doesn't map to a specific
+  // zone or service (e.g. a Deliverable sub-group has no zone context).
+  zoneId?: number | null;
+  phaseId?: number | null;
 };
 type PlanningSubGroupCtx = {
   dim: SubGroupDim;
@@ -956,6 +971,11 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
   // Project's first-class deliverables (for the inline Deliverable picker).
   const deliverableLookups = useContext(ProjectDeliverablesContext);
 
+  // Opens the canonical task drawer (?task=N) when the task name is
+  // clicked (bm2 fix #2). Set by PlanningView via OpenTaskDrawerContext;
+  // no-op if unset (defensive — rendered outside the planning view).
+  const openTaskDrawer = useContext(OpenTaskDrawerContext);
+
   // Dynamic grid columns (client feedback 2026-08-02 item 1). Reads
   // the current visibility set from the context; falls back to the
   // full-column view when rendered outside the provider (legacy).
@@ -1073,14 +1093,37 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
       {cols.isVisible('code') && (
         <span className="font-mono text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate" title={task.code || ''}>{task.code || '-'}</span>
       )}
-      <span className="font-medium text-slate-900 dark:text-slate-100 min-w-0 truncate" title={task.name}>
-        {task.name}
-        {task.dependencies?.length > 0 && (
-          <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] text-amber-600" title={`Depends on: ${task.dependencies.map((d: any) => d.dependsOn?.name || d.dependsOn?.code).join(', ')}`}>
+      {/* Task name — clickable, opens the canonical task drawer
+          (?task=N). Especially important in grouping mode where the
+          name is the only entry point to the task's details (bm2
+          fix #2). Falls back to a plain span when the drawer opener
+          isn't wired (rendering the row outside PlanningView). */}
+      {(() => {
+        const depsBadge = task.dependencies?.length > 0 && (
+          <span
+            className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] text-amber-600"
+            title={`Depends on: ${task.dependencies.map((d: any) => d.dependsOn?.name || d.dependsOn?.code).join(', ')}`}
+          >
             ⛓ {task.dependencies.length}
           </span>
-        )}
-      </span>
+        );
+        return openTaskDrawer ? (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); openTaskDrawer(task.id); }}
+            title={task.name}
+            className="font-medium text-slate-900 dark:text-slate-100 min-w-0 truncate text-left hover:text-blue-700 hover:underline focus:outline-none focus:text-blue-700 focus:underline cursor-pointer"
+          >
+            {task.name}
+            {depsBadge}
+          </button>
+        ) : (
+          <span className="font-medium text-slate-900 dark:text-slate-100 min-w-0 truncate" title={task.name}>
+            {task.name}
+            {depsBadge}
+          </span>
+        );
+      })()}
       {/* Zone context — kept visible in every grouping mode so the user
           doesn't lose the zone when grouping by Deliverable/Service/None.
           Renders the FULL breadcrumb (e.g. "Building 1 › Typical floor")
@@ -3582,6 +3625,12 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
                   kind={subCtx.dim === 'phase' ? 'service' : subCtx.dim === 'zone' ? 'zone' : 'deliverable'}
                   editableTemplateId={subCtx.dim === 'service' ? sg.editableTemplateId : null}
                   editableDeliverableId={subCtx.dim === 'service' ? sg.editableDeliverableId : null}
+                  // Sub-group inside a Zone primary: inherit the parent
+                  // zone's id so Add-task lands here. A Zone-dim sub-bucket
+                  // (rare — Zone-in-Zone is collapsed elsewhere) would
+                  // override with its own zoneId.
+                  contextZoneId={sg.zoneId ?? zone.id}
+                  contextPhaseId={sg.phaseId ?? null}
                 />
               ))}
             </div>
@@ -3701,6 +3750,7 @@ function ProjectRootDeliverableGroup({
   projectId, label, serviceLabel, color, tasks, members, onUpdate, onDeleteTask,
   selectedTaskIds, onToggleTask, onToggleMany,
   dndId, kind, editableTemplateId, editableDeliverableId, isSubGroup,
+  contextZoneId, contextPhaseId,
 }: {
   projectId: number;
   label: string;
@@ -3738,6 +3788,15 @@ function ProjectRootDeliverableGroup({
    *  (multi-level group-by). Disables further recursion so we don't try
    *  to sub-bucket an already-bucketed list. */
   isSubGroup?: boolean;
+  /** Zone this group represents — inherited from a parent Zone primary
+   *  group when we're a sub-group inside it, or set directly when this
+   *  card IS a zone bucket. Feeds the Add-task button so the created
+   *  task inherits the group's zone (bm2 fix #4). Null / undefined for
+   *  root-level groups (task lands at project root). */
+  contextZoneId?: number | null;
+  /** Phase (Service) this group represents — populated only when this
+   *  card is a Service bucket. Bm2 fix #4. */
+  contextPhaseId?: number | null;
 }) {
   const subCtx = useContext(PlanningSubGroupContext);
   const renderNested = !isSubGroup && subCtx != null && tasks.length > 0;
@@ -3785,6 +3844,66 @@ function ProjectRootDeliverableGroup({
   const commitRename = () => {
     setRenaming(false);
     if (draftName.trim() !== label) renameMutation.mutate(draftName);
+  };
+
+  // Inline "Add Task" — bm2 fix #4. Every group card gets an Add button
+  // (not just Zone-level), and the created task inherits the group's
+  // context so "Add" on a Deliverable group actually creates a task ON
+  // that deliverable (no prompt asking for a Service). Contexts:
+  //   • zone   ← contextZoneId (threaded down from a Zone primary or
+  //              from a Zone sub-bucket)
+  //   • deliv  ← editableDeliverableId (project-owned) or
+  //              editableTemplateId (catalog fallback)
+  //   • phase  ← contextPhaseId (Service groups)
+  const [showAddTask, setShowAddTask] = useState(false);
+  const [newTask, setNewTask] = useState({ code: '', name: '', budgetHours: '', budgetAmount: '' });
+  const createTask = useMutation({
+    // `as any` matches the pattern used throughout this file (see the
+    // sibling createTask mutations in HierarchicalZoneGroup / AddRoot…
+    // dialogs): CreateTaskPayload requires zoneId + doesn't declare
+    // projectDeliverableId / deliverableTemplateId / phaseId, but the
+    // backend DTO accepts them all. Keeping the untyped shape avoids a
+    // wider type change that isn't scoped to this fix.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mutationFn: (data: any) => tasksApi.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+      setShowAddTask(false);
+      setNewTask({ code: '', name: '', budgetHours: '', budgetAmount: '' });
+      notify.success('Task created', { code: 'TASK-CREATE-200' });
+      onUpdate?.();
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    onError: (err: any) => notify.apiError(err, 'Failed to create task'),
+  });
+  const submitAddTask = () => {
+    if (!newTask.code.trim() || !newTask.name.trim()) {
+      notify.warning('Code and Name required');
+      return;
+    }
+    createTask.mutate({
+      projectId,
+      code: newTask.code.trim(),
+      name: newTask.name.trim(),
+      budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined,
+      budgetAmount: newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined,
+      // Zone context — group's own zone bucket wins, then any parent
+      // Zone primary threaded through contextZoneId. Undefined ⇒ root.
+      zoneId: contextZoneId ?? undefined,
+      // Deliverable context — project-owned entity first, then catalog
+      // template fallback. When neither is set (Service / None groups)
+      // the task is created without a deliverable link.
+      projectDeliverableId: editableDeliverableId ?? undefined,
+      deliverableTemplateId: editableDeliverableId == null && editableTemplateId != null
+        ? editableTemplateId
+        : undefined,
+      // Phase context — only when this card IS a Service group and we
+      // have no deliverable to fall back to (deliverable already carries
+      // the phase via its serviceId FK).
+      phaseId: editableDeliverableId == null && editableTemplateId == null
+        ? contextPhaseId ?? undefined
+        : undefined,
+    });
   };
 
   const totalHours = tasks.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
@@ -3925,7 +4044,71 @@ function ProjectRootDeliverableGroup({
           </span>
           <span> · ₪{totalAmount.toLocaleString()}</span>
         </span>
+        {/* Add-task affordance — bm2 fix #4. Present on every group card
+            (previously only zone-level cards had one), and the created
+            task inherits the group's context (see submitAddTask above).
+            Stop-prop on the button so the header's collapse-toggle
+            doesn't fire underneath. */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setShowAddTask(true); setCollapsed(false); }}
+          title={kind === 'deliverable' ? 'Add task to this deliverable' : kind === 'service' ? 'Add task to this service' : kind === 'zone' ? 'Add task to this zone' : 'Add task to this group'}
+          className="ml-2 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1 shrink-0"
+        >
+          <Plus className="w-3 h-3" /> Add
+        </button>
       </div>
+      {/* Inline add-task form — bm2 fix #4. Mirrors the shape used by
+          HierarchicalZoneGroup's inline add row (code/name/hours/amount)
+          so the interaction is uniform across every group type. The
+          created task's zone / deliverable / service context comes from
+          the group itself (see submitAddTask). */}
+      {showAddTask && (
+        <div style={{ marginLeft: 28 }} className="flex items-center gap-2 py-2 px-4 border-b border-slate-100 dark:border-slate-800 bg-blue-50/20">
+          <input
+            autoFocus
+            value={newTask.code}
+            onChange={(e) => setNewTask((f) => ({ ...f, code: e.target.value }))}
+            placeholder="Code *"
+            className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none"
+          />
+          <input
+            value={newTask.name}
+            onChange={(e) => setNewTask((f) => ({ ...f, name: e.target.value }))}
+            onKeyDown={(e) => { if (e.key === 'Enter') submitAddTask(); if (e.key === 'Escape') setShowAddTask(false); }}
+            placeholder="Task name *"
+            className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none"
+          />
+          <input
+            value={newTask.budgetHours}
+            onChange={(e) => setNewTask((f) => ({ ...f, budgetHours: e.target.value }))}
+            placeholder="Hrs"
+            type="number"
+            className="w-14 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none"
+          />
+          <input
+            value={newTask.budgetAmount}
+            onChange={(e) => setNewTask((f) => ({ ...f, budgetAmount: e.target.value }))}
+            placeholder="Amt"
+            type="number"
+            className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none"
+          />
+          <button
+            onClick={submitAddTask}
+            disabled={createTask.isPending}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-3 py-1.5 rounded-md disabled:opacity-50"
+          >
+            {createTask.isPending ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            onClick={() => setShowAddTask(false)}
+            className="text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100 px-1"
+            aria-label="Cancel"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {!collapsed && (
         renderNested ? (
           // Multi-level group-by: render the sub-buckets as nested cards
@@ -3952,6 +4135,10 @@ function ProjectRootDeliverableGroup({
                 kind={subCtx!.dim === 'phase' ? 'service' : subCtx!.dim === 'zone' ? 'zone' : 'deliverable'}
                 editableTemplateId={subCtx!.dim === 'service' ? sg.editableTemplateId : null}
                 editableDeliverableId={subCtx!.dim === 'service' ? sg.editableDeliverableId : null}
+                // Inherit the parent card's zone / phase context when the
+                // sub-bucket doesn't carry its own dimension (bm2 fix #4).
+                contextZoneId={sg.zoneId ?? contextZoneId ?? null}
+                contextPhaseId={sg.phaseId ?? contextPhaseId ?? null}
               />
             ))}
           </div>
@@ -4142,6 +4329,10 @@ function ProjectRootGroup({
             kind={subCtx.dim === 'phase' ? 'service' : subCtx.dim === 'zone' ? 'zone' : 'deliverable'}
             editableTemplateId={subCtx.dim === 'service' ? sg.editableTemplateId : null}
             editableDeliverableId={subCtx.dim === 'service' ? sg.editableDeliverableId : null}
+            // Root path — no parent zone context; sub-buckets that map
+            // to a Zone or Phase supply their own via bucketize (bm2 fix #4).
+            contextZoneId={sg.zoneId ?? null}
+            contextPhaseId={sg.phaseId ?? null}
           />
         ))}
       </>
@@ -4177,6 +4368,10 @@ function ProjectRootGroup({
             ?? deliverableByTemplateId?.get(b.tasks[0]?.deliverableTemplateId)?.id
             ?? null
           }
+          // Project-root bucket — no parent zone. Add-task lands at
+          // project root with the deliverable prefilled (bm2 fix #4).
+          contextZoneId={null}
+          contextPhaseId={b.tasks[0]?.phaseId ?? null}
         />
       ))}
     </SortableContext>
@@ -4187,6 +4382,9 @@ function ProjectRootGroup({
 
 function PlanningView({ projectId }: { projectId: number }) {
   const queryClient = useQueryClient();
+  // Task drawer at the URL — a row click opens ?task=N (bm2 fix #2).
+  // Every task-row renderer reads openDrawer via OpenTaskDrawerContext.
+  const { drawerId: drawerTaskId, openDrawer: openTaskDrawer, closeDrawer: closeTaskDrawer } = useDrawerRoute('task');
 
   // Loaded planning data (zones + tasks) — used below for the group
   // builder. We also use it here to derive the list of task IDs that
@@ -5032,6 +5230,11 @@ function PlanningView({ projectId }: { projectId: number }) {
       let sortOrder = 0;
       let editableTemplateId: number | null = null;
       let editableDeliverableId: number | null = null;
+      // Zone / phase context so the sub-group's Add-task button can
+      // prefill the created task (bm2 fix #4). Populated only when the
+      // dim maps to that dimension.
+      let bucketZoneId: number | null = null;
+      let bucketPhaseId: number | null = null;
       if (dim === 'service') {
         const marker = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1];
         if (t.projectDeliverableId != null) {
@@ -5077,6 +5280,7 @@ function PlanningView({ projectId }: { projectId: number }) {
           color = '#F59E0B'; // amber-500 — matches the app's Zone accent
           sortOrder = Number(z?.sortOrder ?? 0);
           key = `zn-${t.zoneId}`;
+          bucketZoneId = t.zoneId;
         } else {
           label = 'No Zone';
           color = '#94a3b8';
@@ -5089,6 +5293,7 @@ function PlanningView({ projectId }: { projectId: number }) {
           color = t.phase?.color || '#8B5CF6';
           sortOrder = Number(t.phase?.sortOrder ?? 0);
           key = `ph-${t.phaseId}`;
+          bucketPhaseId = t.phaseId;
         } else {
           label = 'No Service';
           color = '#94a3b8';
@@ -5099,6 +5304,7 @@ function PlanningView({ projectId }: { projectId: number }) {
         map.set(key, {
           key, label, serviceLabel, color, tasks: [], sortOrder,
           editableTemplateId, editableDeliverableId,
+          zoneId: bucketZoneId, phaseId: bucketPhaseId,
         });
       }
       map.get(key)!.tasks.push(t);
@@ -5146,6 +5352,7 @@ function PlanningView({ projectId }: { projectId: number }) {
     <PlanningColumnsContext.Provider value={planningColumnsCtx}>
     <BulkCollapseContext.Provider value={{ desired: bulkCollapsed, version: bulkVersion }}>
     <TaskMessageCountsContext.Provider value={messageCounts as Record<number, number>}>
+    <OpenTaskDrawerContext.Provider value={openTaskDrawer}>
     <ProjectDeliverablesContext.Provider value={deliverableLookups}>
     <PlanningSubGroupContext.Provider value={subGroupCtx}>
     <TaskFilterContext.Provider value={{ filters: colFilters, setFilter: setColFilter, options: colFilterOptions }}>
@@ -5420,6 +5627,25 @@ function PlanningView({ projectId }: { projectId: number }) {
               className="w-44 pl-8 pr-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
             />
           </div>
+
+          {/* Bulk collapse / expand all groups (bm2 fix #3). Every
+              collapsible card (ZoneGroup, HierarchicalZoneGroup,
+              ProjectRootDeliverableGroup) listens on BulkCollapseContext
+              via useBulkCollapseSync and re-syncs on every version bump,
+              so a single click flips the whole grid. Icon flips to reflect
+              the NEXT action (down-up when everything is expanded so the
+              button reads "collapse next", up-down when everything is
+              collapsed so the button reads "expand next"). */}
+          <button
+            type="button"
+            onClick={toggleBulkCollapse}
+            title={bulkCollapsed ? 'Expand all groups' : 'Collapse all groups'}
+            aria-label={bulkCollapsed ? 'Expand all groups' : 'Collapse all groups'}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-slate-300 dark:hover:border-slate-600 transition-colors"
+          >
+            {bulkCollapsed ? <ChevronsUpDown className="h-3.5 w-3.5" /> : <ChevronsDownUp className="h-3.5 w-3.5" />}
+            {bulkCollapsed ? 'Expand all' : 'Collapse all'}
+          </button>
 
           {/* Column-visibility picker — sits next to Filters so users
               can shape both the row set and the column set from the
@@ -5768,6 +5994,15 @@ function PlanningView({ projectId }: { projectId: number }) {
                             ?? null)
                         : null
                     }
+                    // Non-zone primary group — Add-task inherits the
+                    // group's dimension. Deliverable-primary supplies
+                    // editableDeliverableId above; Service-primary
+                    // supplies the phase id via contextPhaseId (bm2
+                    // fix #4). No zone context here.
+                    contextZoneId={null}
+                    contextPhaseId={
+                      groupBy === 'phase' ? (g.tasks[0]?.phaseId ?? null) : null
+                    }
                   />
                 ))}
               </SortableContext>
@@ -5837,10 +6072,14 @@ function PlanningView({ projectId }: { projectId: number }) {
         onClear={clearSelection}
         onRequestDelete={requestTaskDelete}
       />
+      {/* Canonical task drawer — opens when a task row is clicked (bm2
+          fix #2). URL-driven via useDrawerRoute so back/refresh restore. */}
+      <TaskDrawer taskId={drawerTaskId} onClose={closeTaskDrawer} />
     </div>
     </TaskFilterContext.Provider>
     </PlanningSubGroupContext.Provider>
     </ProjectDeliverablesContext.Provider>
+    </OpenTaskDrawerContext.Provider>
     </TaskMessageCountsContext.Provider>
     </BulkCollapseContext.Provider>
     </PlanningColumnsContext.Provider>

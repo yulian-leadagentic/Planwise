@@ -345,11 +345,61 @@ export class BusinessPartnerRelationshipsService {
     projectId: number;
     roleInContext?: string | null;
   }) {
+    // We now auto-link a BusinessPartner when the user is missing one
+    // (bm2 fix #7). Legacy users seeded before the BP-per-user pattern
+    // had businessPartnerId=NULL, so this method used to silently
+    // return null and getTeam — which reads from ProjectPartnerRole,
+    // not ProjectMember — never showed the added person. Fetching a
+    // wider selection here lets us mint (or reuse-by-email) a BP for
+    // those legacy accounts on the fly.
     const user = await this.prisma.user.findUnique({
       where: { id: args.userId },
-      select: { businessPartnerId: true },
+      select: {
+        id: true,
+        businessPartnerId: true,
+        firstName: true,
+        lastName: true,
+        firstNameHe: true,
+        lastNameHe: true,
+        email: true,
+        phone: true,
+      },
     });
-    if (!user?.businessPartnerId) return null;
+    if (!user) return null;
+
+    let businessPartnerId = user.businessPartnerId;
+    if (!businessPartnerId) {
+      // Backfill on demand — match the pattern used by
+      // UsersService.create: first look for an existing BP with the
+      // same email so we don't fork a duplicate person record, then
+      // fall back to creating a fresh 'person' partner. Finally, link
+      // it onto the user row so subsequent adds hit the fast path.
+      const existingBp = await this.prisma.businessPartner.findFirst({
+        where: { email: user.email, deletedAt: null },
+      });
+      if (existingBp) {
+        businessPartnerId = existingBp.id;
+      } else {
+        const bp = await this.prisma.businessPartner.create({
+          data: {
+            partnerType: 'person',
+            displayName: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            firstNameHe: user.firstNameHe ?? null,
+            lastNameHe: user.lastNameHe ?? null,
+            email: user.email,
+            phone: user.phone ?? null,
+            source: 'manual',
+          },
+        });
+        businessPartnerId = bp.id;
+      }
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { businessPartnerId },
+      });
+    }
 
     const role = await this.prisma.projectRoleType.findUnique({
       where: { code: 'participant' },
@@ -360,7 +410,7 @@ export class BusinessPartnerRelationshipsService {
     // Look for any existing assignment regardless of validity. If active,
     // just touch it; if expired (soft-ended earlier), re-open it.
     const existing = await this.prisma.projectPartnerRole.findFirst({
-      where: { projectId: args.projectId, partyId: user.businessPartnerId, roleId: role.id },
+      where: { projectId: args.projectId, partyId: businessPartnerId, roleId: role.id },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -377,7 +427,7 @@ export class BusinessPartnerRelationshipsService {
     return this.prisma.projectPartnerRole.create({
       data: {
         projectId: args.projectId,
-        partyId: user.businessPartnerId,
+        partyId: businessPartnerId,
         roleId: role.id,
         titleInProject: args.roleInContext ?? null,
         validFrom: now,

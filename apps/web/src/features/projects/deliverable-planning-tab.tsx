@@ -67,12 +67,31 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     staleTime: 60 * 1000,
   });
   const tasks: any[] = Array.isArray(planningData?.tasks) ? planningData.tasks : [];
-  const zonesFlat: any[] = Array.isArray(planningData?.zones) ? planningData.zones : [];
+  // planningData.zones is a TREE of zone roots (see planning.service.ts).
+  // Flatten it so lookups + cross-product row generation see every zone,
+  // not just top-level roots (bm2 fix #1: brand-new projects had NO
+  // tasks yet, so tasks-driven rows produced an empty grid even with
+  // zones + deliverables present).
+  type ZoneNode = { id: number; name: string; children?: ZoneNode[] };
+  const zonesFlat: ZoneNode[] = useMemo(() => {
+    const roots: ZoneNode[] = Array.isArray(planningData?.zones) ? planningData.zones : [];
+    const out: ZoneNode[] = [];
+    const walk = (arr: ZoneNode[]) => {
+      for (const z of arr) {
+        out.push(z);
+        if (Array.isArray(z.children) && z.children.length) walk(z.children);
+      }
+    };
+    walk(roots);
+    return out;
+  }, [planningData?.zones]);
 
-  // Build (zone × deliverable) rows from the tasks — the source of
-  // truth for "which deliverables are used in which zones". Root-level
-  // deliverables (tasks with no zoneId) get a synthetic "Project Root"
-  // zone with id=null.
+  // Build (zone × deliverable) rows from the CROSS PRODUCT of the
+  // project's zones and its deliverables — so every combination shows
+  // even before any tasks exist (bm2 fix #1). Task counts still overlay
+  // when tasks are present; task-only rows referencing a deliverable
+  // that isn't in the deliverables list (or the synthetic root zone)
+  // still get emitted so nothing renders as a phantom "0 tasks" gap.
   type Row = {
     key: string;
     deliverableId: number;
@@ -96,8 +115,9 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     taskList: { id: number; code: string | null; name: string; endDate: string | null; status: string }[];
   };
   const rows: Row[] = useMemo(() => {
-    const seen = new Set<string>();
-    const list: Row[] = [];
+    // Group tasks by (deliverable, zone) so counts + endDate lists can
+    // overlay onto rows generated from the deliverable × zone cross
+    // product below.
     const grouped = new Map<string, any[]>();
     for (const t of tasks) {
       const dId = t.projectDeliverableId;
@@ -107,20 +127,19 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key)!.push(t);
     }
-    for (const [key, group] of grouped) {
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const first = group[0];
-      const dId: number = first.projectDeliverableId;
-      const zoneId: number | null = first.zoneId ?? null;
-      const zone = zonesFlat.find((z) => z.id === zoneId);
-      const deliverable = deliverables.find((d) => d.id === dId);
+
+    const list: Row[] = [];
+    const emitted = new Set<string>();
+    const emit = (dId: number, deliverable: any, zoneId: number | null, zoneName: string) => {
+      const key = `${dId}:${zoneId ?? 'root'}`;
+      if (emitted.has(key)) return;
+      emitted.add(key);
+      const group = grouped.get(key) ?? [];
       const zoneTargetRow = deliverable?.zoneTargets?.find((zt: any) => zt.zoneId === zoneId);
       const savedMonths = zoneTargetRow?.targetMonths ?? deliverable?.targetMonths ?? null;
       const savedDate = zoneTargetRow?.targetDate ?? deliverable?.targetDate ?? null;
       const savedDurationWeeks = zoneTargetRow?.estimatedDurationWeeks ?? deliverable?.estimatedDurationWeeks ?? null;
       const taskTotal = group.length;
-      // status vocabulary: 'to_do' | 'in_progress' | 'in_review' | 'done' | 'blocked'
       const taskDone = group.filter((t) => t.status === 'done').length;
       const taskStarted = group.filter((t) => t.status !== 'to_do' && t.status !== 'blocked').length;
       const taskList = group.map((t) => ({
@@ -135,7 +154,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         deliverableId: dId,
         deliverableName: deliverable?.name ?? `Deliverable #${dId}`,
         zoneId,
-        zoneName: zone?.name ?? (zoneId == null ? 'Project Root' : `Zone #${zoneId}`),
+        zoneName,
         serviceName: deliverable?.service?.name ?? null,
         savedMonths,
         savedDate: savedDate ? String(savedDate).slice(0, 10) : null,
@@ -145,6 +164,31 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         taskDone,
         taskList,
       });
+    };
+
+    // Cross product of deliverables × zones (bm2 fix #1). When the
+    // project has no zones, emit a single "Project Root" row per
+    // deliverable so the grid isn't empty.
+    for (const d of deliverables) {
+      if (zonesFlat.length === 0) {
+        emit(d.id, d, null, 'Project Root');
+      } else {
+        for (const z of zonesFlat) emit(d.id, d, z.id, z.name);
+      }
+    }
+
+    // Overlay any task-only groups that didn't match a known deliverable
+    // (e.g. deliverable was deleted but tasks still reference it) or
+    // that landed on the synthetic root zone even when zones exist —
+    // preserves the pre-fix behavior for those edge cases.
+    for (const [key, group] of grouped) {
+      if (emitted.has(key)) continue;
+      const first = group[0];
+      const dId: number = first.projectDeliverableId;
+      const zoneId: number | null = first.zoneId ?? null;
+      const zone = zonesFlat.find((z) => z.id === zoneId);
+      const deliverable = deliverables.find((d) => d.id === dId);
+      emit(dId, deliverable, zoneId, zone?.name ?? (zoneId == null ? 'Project Root' : `Zone #${zoneId}`));
     }
     // Sort: zone name first (Project Root last), then deliverable name.
     return list.sort((a, b) => {
@@ -390,7 +434,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     return (
       <div className="py-12 text-center">
         <Layers className="mx-auto h-12 w-12 text-slate-300 dark:text-slate-600" />
-        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">No zone × deliverable pairs found. Add tasks with a deliverable on the Planning tab first.</p>
+        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">This project has no deliverables yet. Add deliverables in Project Setup — the grid then fills in one row per zone × deliverable, even before any tasks exist.</p>
       </div>
     );
   }

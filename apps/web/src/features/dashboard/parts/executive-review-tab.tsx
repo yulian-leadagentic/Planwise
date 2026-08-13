@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ClipboardList, Download, ExternalLink, MessageSquare, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
+import { tasksApi } from '@/api/tasks.api';
+import { notify } from '@/lib/notify';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge } from '@/components/shared/status-badge';
@@ -140,6 +142,20 @@ export function ExecutiveReviewTab({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['dashboard', 'operations', 'executive-review'] });
     },
+  });
+
+  // Inline Due-date edit (bm2 fix #5). Persists via the same tasksApi
+  // endpoint used by the planning grid + task drawer, so any listener
+  // downstream (activity log, planning refetch) sees the change. Empty
+  // string clears the date. Refetches on success — the tab is server-
+  // capped at ~200 rows so a full invalidate is cheap.
+  const dueDateMutation = useMutation({
+    mutationFn: ({ taskId, endDate }: { taskId: number; endDate: string | null }) =>
+      tasksApi.update(taskId, { endDate }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['dashboard', 'operations', 'executive-review'] });
+    },
+    onError: (err: unknown) => notify.apiError(err, 'Failed to update due date'),
   });
 
   const tasks = data?.tasks ?? [];
@@ -338,12 +354,32 @@ export function ExecutiveReviewTab({
                             <td className="px-3 py-2 text-right font-mono tabular-nums font-semibold text-slate-700 dark:text-slate-200">
                               {t.hours || 0}h
                             </td>
+                            {/* Due date — inline-editable (bm2 fix #5).
+                                Change fires an onBlur PATCH via tasksApi.
+                                Empty string clears the date. Overdue
+                                pill still renders alongside so operators
+                                see the "d late" signal at a glance. */}
                             <td className="px-3 py-2 text-[11px] whitespace-nowrap">
-                              <div className={cn('font-mono tabular-nums', t.daysOverdue != null && t.daysOverdue > 0 ? 'text-red-600 font-bold' : 'text-slate-500 dark:text-slate-400')}>
-                                {fmtDate(t.endDate)}
-                              </div>
+                              <input
+                                type="date"
+                                defaultValue={t.endDate ? String(t.endDate).slice(0, 10) : ''}
+                                onBlur={(e) => {
+                                  const nextValue = e.target.value || null;
+                                  const currentValue = t.endDate ? String(t.endDate).slice(0, 10) : null;
+                                  if (nextValue === currentValue) return;
+                                  dueDateMutation.mutate({ taskId: t.id, endDate: nextValue });
+                                }}
+                                aria-label={`Due date for task ${t.code}`}
+                                disabled={dueDateMutation.isPending}
+                                className={cn(
+                                  'w-full px-1.5 py-1 rounded border font-mono tabular-nums text-[11px] bg-transparent focus:outline-none focus-visible:border-blue-500 disabled:opacity-50',
+                                  t.daysOverdue != null && t.daysOverdue > 0
+                                    ? 'border-red-200 text-red-600 font-bold'
+                                    : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300',
+                                )}
+                              />
                               {t.daysOverdue != null && t.daysOverdue > 0 && (
-                                <div className="text-[10px] font-bold text-red-600">{t.daysOverdue}d late</div>
+                                <div className="text-[10px] font-bold text-red-600 mt-0.5">{t.daysOverdue}d late</div>
                               )}
                             </td>
                             <td className="px-3 py-2">

@@ -18,7 +18,6 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
 
   // Admin sub-modules
   '/admin/roles': 'admin/roles',
-  '/admin/sso': 'org',
   '/admin/organization': 'org',
   '/admin/activity-log': 'admin/activity-log',
   '/admin/work-schedules': 'admin/work-schedules',
@@ -28,7 +27,10 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
   '/admin/partner-types': 'admin/partner-types',
   // SSO + Drive both live under the `org` module — the Access &
   // Security group. Matches the admin-layout entry so the sub-nav
-  // gate and route gate agree.
+  // gate and route gate agree. (Was defined twice — the earlier
+  // '/admin/sso': 'org' at the top of this block was left over from
+  // the SSO hotfix and got redefined here when Drive shipped; tsc
+  // surfaced the collision via TS1117.)
   '/admin/sso': 'org',
   '/admin/drive': 'org',
 
