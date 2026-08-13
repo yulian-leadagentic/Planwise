@@ -651,6 +651,15 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
           </div>
         )}
 
+        {/* BM2 Phase D — Domains. Orgs only. Feeds the import dedup
+            (`resolveOrgByDomainOrName` matches by owned domain first).
+            Add + delete against /business-partners/:id/domains. */}
+        {bp.partnerType === 'organization' && (
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+            <DomainsSection bpId={bp.id} canWrite={canWrite} canDelete={canDelete} />
+          </div>
+        )}
+
         <div className="text-[11px] text-slate-400 dark:text-slate-500 pt-3 border-t border-slate-100 dark:border-slate-800">
           Created {formatDate(bp.createdAt)} · Updated {formatDate(bp.updatedAt)}
         </div>
@@ -885,6 +894,126 @@ function JobTitlesSection({ bpId, canWrite }: { bpId: number; canWrite: boolean 
             /templates/types → Job Titles
           </a>.
         </p>
+      )}
+    </div>
+  );
+}
+
+// ─── Domains (BM2 Phase D) ──────────────────────────────────────────────────
+//
+// An organization BP can own multiple email domains. The import
+// dedup matches company-by-domain first (see resolveOrgByDomainOrName)
+// so keeping this list accurate directly improves import quality.
+//
+// Line editor — no modal. Type a domain, hit Add. Server enforces the
+// global-uniqueness constraint (a domain can only be owned by ONE org);
+// duplicate attempts surface as a friendly toast that names the org
+// that already owns it.
+
+interface BpDomain { id: number; partnerId: number; domain: string }
+
+function DomainsSection({ bpId, canWrite, canDelete }: { bpId: number; canWrite: boolean; canDelete: boolean }) {
+  const queryClient = useQueryClient();
+  const confirm = useConfirm();
+  const [input, setInput] = useState('');
+
+  const { data: domains = [], isLoading } = useQuery<BpDomain[]>({
+    queryKey: ['bp-domains', bpId],
+    queryFn: () =>
+      client.get(`/business-partners/${bpId}/domains`).then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+
+  const add = useMutation({
+    mutationFn: (domain: string) =>
+      client.post(`/business-partners/${bpId}/domains`, { domain }).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bp-domains', bpId] });
+      // Invalidate the BP list too — future import dedup calls may key
+      // off the changed domain list.
+      queryClient.invalidateQueries({ queryKey: ['business-partners'] });
+      setInput('');
+      notify.success('Domain added', { code: 'BP-DOMAIN-ADD-200' });
+    },
+    onError: (err: unknown) => notify.apiError(err, 'Failed to add domain'),
+  });
+
+  const remove = useMutation({
+    mutationFn: (domainId: number) =>
+      client.delete(`/business-partners/${bpId}/domains/${domainId}`).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bp-domains', bpId] });
+      queryClient.invalidateQueries({ queryKey: ['business-partners'] });
+      notify.success('Domain removed', { code: 'BP-DOMAIN-DEL-200' });
+    },
+    onError: (err: unknown) => notify.apiError(err, 'Failed to remove domain'),
+  });
+
+  const submitAdd = () => {
+    const v = input.trim().toLowerCase();
+    if (!v) return;
+    add.mutate(v);
+  };
+
+  return (
+    <div>
+      <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-2">Email domains</p>
+      <p className="text-[11px] text-slate-400 dark:text-slate-500 mb-2">
+        Import dedup matches this org by its owned domains. A domain can be owned by only one org.
+      </p>
+      {isLoading ? (
+        <p className="text-[11px] text-slate-400 dark:text-slate-500">Loading…</p>
+      ) : domains.length === 0 ? (
+        <p className="text-[12px] text-slate-400 dark:text-slate-500 italic mb-2">No domains yet.</p>
+      ) : (
+        <div className="space-y-1.5 mb-2">
+          {domains.map((d) => (
+            <div key={d.id} className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 px-3 py-2">
+              <span className="text-[13px] font-mono text-slate-800 dark:text-slate-100 flex-1 truncate">{d.domain}</span>
+              {canDelete && (
+                <button
+                  onClick={async () => {
+                    if (await confirm(`Detach domain "${d.domain}" from this organization?`)) {
+                      remove.mutate(d.id);
+                    }
+                  }}
+                  disabled={remove.isPending}
+                  className="p-1 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
+                  title="Remove domain"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {canWrite && (
+        <form
+          onSubmit={(e) => { e.preventDefault(); submitAdd(); }}
+          className="flex items-center gap-2"
+        >
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="example.com"
+            className={cn(inputClass, 'flex-1 font-mono text-[13px]')}
+            spellCheck={false}
+            autoComplete="off"
+            disabled={add.isPending}
+          />
+          <button
+            type="submit"
+            disabled={add.isPending || !input.trim()}
+            className="rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-2 flex items-center gap-1 disabled:opacity-50"
+          >
+            <Plus className="h-3 w-3" />
+            {add.isPending ? 'Adding…' : 'Add'}
+          </button>
+        </form>
       )}
     </div>
   );

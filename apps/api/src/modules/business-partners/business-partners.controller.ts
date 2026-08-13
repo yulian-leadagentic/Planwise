@@ -114,6 +114,36 @@ export class BusinessPartnersController {
     return this.service.setProfessions(id, body.professionIds ?? [], body.primaryProfessionId ?? null);
   }
 
+  // ─── BM2 Phase D — Domains ────────────────────────────────────────────
+  // Orgs may own multiple domains; the import dedup consults this list.
+  // The drawer surfaces list + add + delete against these endpoints.
+  @Get(':id/domains')
+  @RequirePermissions({ module: 'partners', action: 'read' })
+  @ApiOperation({ summary: 'List domains owned by this BP (orgs only)' })
+  listDomains(@Param('id', ParseIntPipe) id: number) {
+    return this.service.listDomains(id);
+  }
+
+  @Post(':id/domains')
+  @RequirePermissions({ module: 'partners', action: 'write' })
+  @ApiOperation({ summary: 'Attach a new domain to this BP' })
+  addDomain(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { domain: string },
+  ) {
+    return this.service.addDomain(id, body.domain);
+  }
+
+  @Delete(':id/domains/:domainId')
+  @RequirePermissions({ module: 'partners', action: 'delete' })
+  @ApiOperation({ summary: 'Detach a domain from this BP' })
+  removeDomain(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('domainId', ParseIntPipe) domainId: number,
+  ) {
+    return this.service.removeDomain(id, domainId);
+  }
+
   // ─── CSV import ───────────────────────────────────────────────────────
   @Post('import')
   @RequirePermissions({ module: 'partners', action: 'write' })

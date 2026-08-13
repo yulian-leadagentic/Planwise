@@ -628,6 +628,91 @@ export class BusinessPartnersService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // BM2 Phase D (2026-08-13) — org domain CRUD
+  // A BP (org) can own multiple domains; the import de-dup matches
+  // by-domain first. The drawer exposes list / add / delete via the
+  // endpoints below.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * List every domain owned by this BP. Ordered by domain asc so the
+   * drawer renders a stable list.
+   */
+  async listDomains(bpId: number) {
+    await this.findOne(bpId); // 404 + implicit soft-delete filter
+    return this.prisma.businessPartnerDomain.findMany({
+      where: { partnerId: bpId },
+      orderBy: { domain: 'asc' },
+    });
+  }
+
+  /**
+   * Add a domain to an ORG BP. Persons don't own domains — the drawer
+   * hides the section for them; we defend the endpoint anyway. Normalises
+   * to lowercase + trims whitespace so "  Example.COM  " collapses to
+   * "example.com" (matches the shape stored elsewhere and picked up by
+   * `resolveOrgByDomainOrName` / `extractEmailDomain`).
+   *
+   * The schema's `@@unique([domain])` (global — a domain can be owned
+   * by at most ONE org) surfaces as P2002; we translate it to a
+   * ConflictException with the message the frontend already knows how
+   * to render.
+   */
+  async addDomain(bpId: number, rawDomain: string) {
+    const bp = await this.findOne(bpId);
+    if (bp.partnerType !== 'organization') {
+      throw new BadRequestException(
+        `Domains can only be attached to organization BPs; this one is a ${bp.partnerType}.`,
+      );
+    }
+    const domain = (rawDomain ?? '').trim().toLowerCase();
+    if (!domain) {
+      throw new BadRequestException('Domain is required');
+    }
+    // Very light shape check — a strict RFC-compliant validator would
+    // reject too many legitimate short/long TLDs we see in the wild.
+    // The 255 cap matches the schema's VARCHAR(255) column.
+    if (domain.length > 255 || !/^[a-z0-9][a-z0-9-.]*\.[a-z]{2,}$/i.test(domain)) {
+      throw new BadRequestException(
+        `"${domain}" doesn't look like a domain (expected e.g. example.com).`,
+      );
+    }
+    try {
+      return await this.prisma.businessPartnerDomain.create({
+        data: { partnerId: bpId, domain },
+      });
+    } catch (err: unknown) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        // Report which BP owns it so the operator can go merge/reassign.
+        const existing = await this.prisma.businessPartnerDomain.findUnique({
+          where: { domain },
+          include: { partner: { select: { id: true, displayName: true } } },
+        });
+        if (existing) {
+          throw new ConflictException(
+            `Domain "${domain}" is already owned by ${existing.partner.displayName} (BP id=${existing.partner.id}).`,
+          );
+        }
+        throw new ConflictException(`Domain "${domain}" is already registered.`);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Remove a domain from a BP. 404 if the domain row isn't owned by
+   * this BP (defensive — prevents "detach any domain if you know its id").
+   */
+  async removeDomain(bpId: number, domainId: number) {
+    const row = await this.prisma.businessPartnerDomain.findFirst({
+      where: { id: domainId, partnerId: bpId },
+    });
+    if (!row) throw new NotFoundException('Domain not found on this partner');
+    await this.prisma.businessPartnerDomain.delete({ where: { id: domainId } });
+    return { message: 'Domain removed' };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // BM2 Phase 3 — org dedup (domain-first)
   // ─────────────────────────────────────────────────────────────────────────
 
