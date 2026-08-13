@@ -12,14 +12,13 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { RelationshipTarget } from '@prisma/client';
 
 import { BusinessPartnerRelationshipsService } from './business-partner-relationships.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { AuditInterceptor } from '../../common/interceptors/audit.interceptor';
-import { CreateRelationshipDto } from './dto/create-relationship.dto';
+import { CreateRelationshipDto, BprTargetType } from './dto/create-relationship.dto';
 import { UpdateRelationshipDto } from './dto/update-relationship.dto';
 import { QueryRelationshipsDto } from './dto/query-relationships.dto';
 
@@ -49,7 +48,7 @@ export class BusinessPartnerRelationshipsController {
   @RequirePermissions({ module: 'partners', action: 'read' })
   @ApiOperation({ summary: 'List active relationships pointing to a specific target (e.g. project=42)' })
   forTarget(
-    @Query('targetType') targetType: RelationshipTarget,
+    @Query('targetType') targetType: BprTargetType,
     @Query('targetId', ParseIntPipe) targetId: number,
   ) {
     return this.service.findForTarget(targetType, targetId);

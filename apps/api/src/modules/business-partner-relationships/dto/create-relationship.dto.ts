@@ -1,7 +1,14 @@
-import { IsEnum, IsInt, IsOptional, IsString, IsBoolean, IsDateString, MaxLength } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, IsBoolean, IsDateString, MaxLength } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { RelationshipTarget } from '@prisma/client';
+
+// BM2 Phase 1 (2026-08-13): the `RelationshipTarget` enum from
+// `@prisma/client` was retired with the legacy
+// `business_partner_relationships` table. The compat endpoint still
+// accepts the same shape, but only routes `organization` (→
+// partner_relationships) and `project` (→ project_partner_roles);
+// `department` and `team` are rejected with 400.
+export type BprTargetType = 'organization' | 'project' | 'department' | 'team';
 
 export class CreateRelationshipDto {
   @ApiProperty()
@@ -9,9 +16,9 @@ export class CreateRelationshipDto {
   @IsInt()
   sourcePartnerId: number;
 
-  @ApiProperty({ enum: RelationshipTarget })
-  @IsEnum(RelationshipTarget)
-  targetType: RelationshipTarget;
+  @ApiProperty({ enum: ['organization', 'project', 'department', 'team'] })
+  @IsIn(['organization', 'project', 'department', 'team'])
+  targetType: BprTargetType;
 
   @ApiProperty()
   @Type(() => Number)

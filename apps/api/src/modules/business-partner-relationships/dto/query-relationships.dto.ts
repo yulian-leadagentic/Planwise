@@ -1,7 +1,8 @@
-import { IsOptional, IsEnum, IsInt, IsString, IsBoolean } from 'class-validator';
+import { IsOptional, IsIn, IsInt, IsString, IsBoolean } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type, Transform } from 'class-transformer';
-import { RelationshipTarget } from '@prisma/client';
+
+import type { BprTargetType } from './create-relationship.dto';
 
 export class QueryRelationshipsDto {
   @ApiPropertyOptional()
@@ -10,10 +11,10 @@ export class QueryRelationshipsDto {
   @IsInt()
   sourcePartnerId?: number;
 
-  @ApiPropertyOptional({ enum: RelationshipTarget })
+  @ApiPropertyOptional({ enum: ['organization', 'project', 'department', 'team'] })
   @IsOptional()
-  @IsEnum(RelationshipTarget)
-  targetType?: RelationshipTarget;
+  @IsIn(['organization', 'project', 'department', 'team'])
+  targetType?: BprTargetType;
 
   @ApiPropertyOptional()
   @IsOptional()
