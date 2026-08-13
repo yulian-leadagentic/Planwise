@@ -2164,6 +2164,11 @@ model ProjectRoleType {
   // If true, exactly one party can hold this role as PRIMARY on a project
   // (e.g. one primary Customer per project). Enforced at the service layer.
   isPrimaryRequired       Boolean  @default(false) @map("is_primary_required")
+  // BM2 Phase 6 (2026-08-13): "org role" flag. When true, the operational
+  // add-participant flow prompts for a contact person (drives the
+  // ProjectPartnerRole.contactPartyId picker added in Phase 2). Purely a
+  // UI hint — the backend still accepts contactPartyId on any role.
+  requiresContactPerson   Boolean  @default(false) @map("requires_contact_person")
   sortOrder               Int      @default(0) @map("sort_order")
   isSystem                Boolean  @default(false) @map("is_system")
   createdAt               DateTime @default(now()) @map("created_at")

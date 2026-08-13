@@ -26,6 +26,10 @@ interface ProjectRoleType {
   /** M4a.3 — Multi-select of Profession ids ("Job Titles"). null/empty = no constraint. */
   requiredProfessionIds: number[] | null;
   isPrimaryRequired: boolean;
+  /** BM2 Phase 6 — UI hint that the operational add-participant flow
+   *  should prompt for a contact person when the participant is an org.
+   *  Drives ProjectPartnerRole.contactPartyId (added in Phase 2). */
+  requiresContactPerson: boolean;
   sortOrder: number;
   isSystem: boolean;
 }
@@ -246,6 +250,7 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
     requiredPartnerRoleCode: type?.requiredPartnerRoleCode ?? '',
     requiredProfessionIds: (type?.requiredProfessionIds ?? []) as number[],
     isPrimaryRequired: type?.isPrimaryRequired ?? false,
+    requiresContactPerson: type?.requiresContactPerson ?? false,
     sortOrder: type?.sortOrder ?? 0,
   });
 
@@ -285,6 +290,7 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
         requiredProfessionIds:
           form.requiredProfessionIds.length > 0 ? form.requiredProfessionIds : null,
         isPrimaryRequired: form.isPrimaryRequired,
+        requiresContactPerson: form.requiresContactPerson,
         sortOrder: form.sortOrder,
       };
       if (isNew) body.code = form.code.trim().toLowerCase();
@@ -419,6 +425,22 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
           />
           Required on every project — exactly one party must hold this role as primary
         </label>
+        {/* BM2 Phase 6 — "org role" flag. Drives the contact-person picker
+             in the operational add-participant flow when the participant
+             is an organization. Only useful for org-kind roles. */}
+        {form.allowedPartnerKind === 'organization' && (
+          <label
+            className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300 pt-1"
+            title="Org role (requires a contact person). When checked, the add-participant flow prompts for a contact person alongside the org. Persists as ProjectPartnerRole.contactPartyId."
+          >
+            <input
+              type="checkbox"
+              checked={form.requiresContactPerson}
+              onChange={(e) => setForm((f) => ({ ...f, requiresContactPerson: e.target.checked }))}
+            />
+            Org role — require a contact person on the participation
+          </label>
+        )}
         <input
           value={form.description}
           onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}

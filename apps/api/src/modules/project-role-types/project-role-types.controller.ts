@@ -31,6 +31,10 @@ interface UpsertProjectRoleTypeDto {
   // hold at least one of these professions ("Job Titles" in the UI).
   requiredProfessionIds?: number[] | null;
   isPrimaryRequired?: boolean;
+  // BM2 Phase 6 (2026-08-13) — UI hint that the operational
+  // add-participant flow should require a contact person when the
+  // participant is an org. Drives ProjectPartnerRole.contactPartyId.
+  requiresContactPerson?: boolean;
   sortOrder?: number;
 }
 
@@ -68,6 +72,7 @@ export class ProjectRoleTypesController {
             ? (body.requiredProfessionIds as Prisma.InputJsonValue)
             : Prisma.DbNull,
         isPrimaryRequired: body.isPrimaryRequired ?? false,
+        requiresContactPerson: body.requiresContactPerson ?? false,
         sortOrder: body.sortOrder ?? 0,
         isSystem: false,
       },
@@ -96,6 +101,7 @@ export class ProjectRoleTypesController {
             ? (body.requiredProfessionIds as Prisma.InputJsonValue)
             : Prisma.DbNull,
       isPrimaryRequired: body.isPrimaryRequired,
+      requiresContactPerson: body.requiresContactPerson,
       sortOrder: body.sortOrder,
     };
     // System rows: code is locked.
