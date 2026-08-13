@@ -44,49 +44,21 @@ interface UpsertTypeDto {
   // Role types only — restricts the role to a party kind. 'person',
   // 'organization', or 'any' (default — both).
   appliesToKind?: 'person' | 'organization' | 'any';
-  // M3a — display labels (free text). The kind/role constraints moved to
-  // sideATargets/sideBTargets in M3.5; these labels are now optional
-  // overrides for nicer display.
+  // M3a — display labels (free text). The kind/role constraints live in
+  // sideATargets/sideBTargets (M3.5); these labels are optional overrides
+  // for nicer display.
   sideALabel?: string;
   sideBLabel?: string;
   inverseLabel?: string;
   isSymmetric?: boolean;
   allowsMultiple?: boolean;
-  // M3.5 — structured side definitions (preferred). Each side is a list
-  // of (kind, optional roles/categories) targets. Null/empty falls back
-  // to legacy fields below for backward compat.
+  // Structured side definitions — the canonical constraint source since
+  // BM2 Phase 1 (the legacy single-shot columns were dropped alongside
+  // `business_partner_relationships`). Each side is a list of
+  // (kind, optional roles/categories) targets.
   sideATargets?: SideTarget[] | null;
   sideBTargets?: SideTarget[] | null;
-  // ── Legacy fields — kept until M7. Auto-derived from JSON when the
-  //    client writes JSON; auto-fallback for old clients.
-  sideAKind?: string;
-  sideBKind?: string;
-  applicableTargetTypes?: string;   // CSV
-  applicableSourceType?: string;    // CSV
-  requiredSourceRoleCode?: string;
-  requiredTargetRoleCode?: string;
   sortOrder?: number;
-}
-
-/**
- * Reduce a SideTarget[] back to (firstKind, firstRoleCode) so the legacy
- * sideAKind / required_source_role_code columns stay consistent. Picks
- * the first entry. Older clients reading just those columns will see a
- * representative slice of the JSON state.
- */
-function legacyShimFromTargets(targets: SideTarget[] | null | undefined): {
-  kind: string | null;
-  requiredRoleCode: string | null;
-  applicableKindsCsv: string | null;
-} {
-  if (!targets || targets.length === 0) return { kind: null, requiredRoleCode: null, applicableKindsCsv: null };
-  const first = targets[0];
-  const allKinds = Array.from(new Set(targets.map((t) => t.kind))).join(',');
-  return {
-    kind: first.kind ?? null,
-    requiredRoleCode: first.roleCodes?.[0] ?? null,
-    applicableKindsCsv: allKinds || null,
-  };
 }
 
 @ApiTags('Admin - Partner Types')
@@ -327,28 +299,29 @@ export class PartnerTypesController {
     // so we can exclude already-related parties from the candidate list.
     // - Side A view: partner is source, exclude rows where (source=partner, type) already
     // - Side B view: partner is target, exclude rows where (target=partner, type) already
+    // BM2 Phase 1 (2026-08-13): reads `partner_relationships` (BUT050 —
+    // organizations only). Project-side candidacy for this type is
+    // computed in a separate branch below.
     const now = new Date();
-    const existingWhere: Prisma.BusinessPartnerRelationshipWhereInput = {
-      relationshipTypeId: id,
+    const existingWhere: Prisma.PartnerRelationshipWhereInput = {
+      typeId: id,
       validFrom: { lte: now },
       validTo: { gt: now },
       status: 'active',
     };
     if (forSide === 'B') {
-      existingWhere.targetType = 'organization' as any; // legacy enum reused for BP targets
-      existingWhere.targetId = partnerId;
+      existingWhere.partyBId = partnerId;
     } else {
-      existingWhere.sourcePartnerId = partnerId;
+      existingWhere.partyAId = partnerId;
     }
-    const existingRels = await this.prisma.businessPartnerRelationship.findMany({
+    const existingRels = await this.prisma.partnerRelationship.findMany({
       where: existingWhere,
-      select: { sourcePartnerId: true, targetType: true, targetId: true },
+      select: { partyAId: true, partyBId: true },
     });
-    // From side A: blocked if (sourceMine, candidate=target). From side B:
-    // blocked if (candidate=source, targetMine). So we just track the "other"
-    // party id for each side.
+    // From side A: blocked if (partyA=mine, candidate=partyB). From side B:
+    // blocked if (candidate=partyA, partyB=mine).
     const blockedIds = new Set<number>(
-      existingRels.map((r) => (forSide === 'B' ? r.sourcePartnerId : r.targetId)),
+      existingRels.map((r) => (forSide === 'B' ? r.partyAId : r.partyBId)),
     );
 
     const result: Record<string, any[]> = {};
@@ -356,6 +329,22 @@ export class PartnerTypesController {
     for (const kind of kinds) {
       if (kind === 'project') {
         if (forSide === 'B') continue; // 'project' is never on Side A — skip safely
+        // BM2 Phase 1 (2026-08-13): after the split, project participation
+        // lives in `project_partner_roles`, not in `partner_relationships`.
+        // This branch is a compat leftover for admins who still have a
+        // sideTarget with kind='project' on some relationship type. The
+        // admin UI (relationship-types tab) drops that option after Phase 1.
+        const projectBlocked = new Set<number>();
+        const activePprs = await this.prisma.projectPartnerRole.findMany({
+          where: {
+            partyId: partnerId,
+            validFrom: { lte: now },
+            validTo: { gt: now },
+            status: 'active',
+          },
+          select: { projectId: true },
+        });
+        for (const p of activePprs) projectBlocked.add(p.projectId);
         const projects = await this.prisma.project.findMany({
           where: { deletedAt: null },
           select: { id: true, name: true, number: true },
@@ -363,7 +352,7 @@ export class PartnerTypesController {
           take: 500,
         });
         result.project = projects
-          .filter((p) => !blockedIds.has(p.id))
+          .filter((p) => !projectBlocked.has(p.id))
           .map((p) => ({ id: p.id, name: p.name, code: p.number }));
       } else if (kind === 'person' || kind === 'organization' || kind === 'any') {
         const matching = targets.filter((t: any) => t.kind === kind || kind === 'any');
@@ -436,11 +425,13 @@ export class PartnerTypesController {
       );
     }
 
-    // If the client passed structured targets, shim them back into the
-    // legacy single-kind columns so the existing relationship service
-    // continues to validate against them.
-    const aShim = legacyShimFromTargets(body.sideATargets);
-    const bShim = legacyShimFromTargets(body.sideBTargets);
+    // BM2 Phase 1 (2026-08-13): the legacy single-shot columns
+    // (sideAKind/sideBKind, applicable*, required*RoleCode) were dropped
+    // with the retired `business_partner_relationships` table. All side
+    // validation now flows through the structured `sideATargets` /
+    // `sideBTargets` JSON. The legacyShimFromTargets helper is kept for
+    // any older admin client that still POSTs the flat fields — we
+    // silently discard those to avoid a hard 400 breakage.
     return this.prisma.partnerRelationshipType.create({
       data: {
         code: body.code.trim().toLowerCase(),
@@ -448,17 +439,11 @@ export class PartnerTypesController {
         description: body.description?.trim() || null,
         sideALabel: body.sideALabel?.trim() || null,
         sideBLabel: body.sideBLabel?.trim() || null,
-        sideAKind: aShim.kind ?? body.sideAKind?.trim() ?? null,
-        sideBKind: bShim.kind ?? body.sideBKind?.trim() ?? null,
         sideATargets: (body.sideATargets as Prisma.InputJsonValue | undefined) ?? Prisma.DbNull,
         sideBTargets: (body.sideBTargets as Prisma.InputJsonValue | undefined) ?? Prisma.DbNull,
         inverseLabel: body.inverseLabel?.trim() || null,
         isSymmetric: body.isSymmetric ?? false,
         allowsMultiple: body.allowsMultiple ?? true,
-        applicableTargetTypes: bShim.applicableKindsCsv ?? body.applicableTargetTypes?.trim() ?? null,
-        applicableSourceType: aShim.applicableKindsCsv ?? body.applicableSourceType?.trim() ?? null,
-        requiredSourceRoleCode: aShim.requiredRoleCode ?? body.requiredSourceRoleCode?.trim() ?? null,
-        requiredTargetRoleCode: bShim.requiredRoleCode ?? body.requiredTargetRoleCode?.trim() ?? null,
         sortOrder: body.sortOrder ?? 0,
         isSystem: false,
       },
@@ -472,16 +457,14 @@ export class PartnerTypesController {
     const existing = await this.prisma.partnerRelationshipType.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Relationship type not found');
 
-    // If client passed targets, derive legacy single-kind cols from them.
-    const aShim = legacyShimFromTargets(body.sideATargets);
-    const bShim = legacyShimFromTargets(body.sideBTargets);
+    // BM2 Phase 1 (2026-08-13): the legacy single-shot columns were
+    // dropped alongside `business_partner_relationships`; only the
+    // structured `sideATargets` / `sideBTargets` JSON is persisted now.
     const data: any = {
       name: body.name?.trim(),
       description: body.description?.trim() ?? null,
       sideALabel: body.sideALabel?.trim() ?? null,
       sideBLabel: body.sideBLabel?.trim() ?? null,
-      sideAKind: body.sideATargets !== undefined ? aShim.kind : (body.sideAKind?.trim() ?? null),
-      sideBKind: body.sideBTargets !== undefined ? bShim.kind : (body.sideBKind?.trim() ?? null),
       sideATargets:
         body.sideATargets === undefined
           ? undefined
@@ -493,10 +476,6 @@ export class PartnerTypesController {
       inverseLabel: body.inverseLabel?.trim() ?? null,
       isSymmetric: body.isSymmetric,
       allowsMultiple: body.allowsMultiple,
-      applicableTargetTypes: body.sideBTargets !== undefined ? bShim.applicableKindsCsv : (body.applicableTargetTypes?.trim() ?? null),
-      applicableSourceType:  body.sideATargets !== undefined ? aShim.applicableKindsCsv : (body.applicableSourceType?.trim() ?? null),
-      requiredSourceRoleCode: body.sideATargets !== undefined ? aShim.requiredRoleCode : (body.requiredSourceRoleCode?.trim() ?? null),
-      requiredTargetRoleCode: body.sideBTargets !== undefined ? bShim.requiredRoleCode : (body.requiredTargetRoleCode?.trim() ?? null),
       sortOrder: body.sortOrder,
     };
     if (!existing.isSystem && body.code) {
@@ -511,18 +490,97 @@ export class PartnerTypesController {
   async deleteRelationshipType(@Param('id', ParseIntPipe) id: number) {
     const existing = await this.prisma.partnerRelationshipType.findUnique({
       where: { id },
-      include: { _count: { select: { relationships: true } } },
+      include: { _count: { select: { partnerRelationships: true } } },
     });
     if (!existing) throw new NotFoundException('Relationship type not found');
     if (existing.isSystem) {
       throw new BadRequestException('System relationship types cannot be deleted');
     }
-    if (existing._count.relationships > 0) {
+    // BM2 Phase 1 (2026-08-13): usage count now reads from
+    // `partner_relationships` (BUT050). The legacy `relationships` count
+    // was against the retired `business_partner_relationships` table.
+    if (existing._count.partnerRelationships > 0) {
       throw new BadRequestException(
-        `Cannot delete: ${existing._count.relationships} relationship(s) currently use this type.`,
+        `Cannot delete: ${existing._count.partnerRelationships} relationship(s) currently use this type.`,
       );
     }
     await this.prisma.partnerRelationshipType.delete({ where: { id } });
     return { message: 'Relationship type deleted' };
+  }
+
+  // ─── BM2 Phase 4 · Personal-email domains ─────────────────────────────
+  // A tiny catalog of free-mail hosts the import dedup should NEVER treat
+  // as a company domain. Lives as a tab under the partner-types-page
+  // (per the spec). Seeded with 11 hosts (gmail/yahoo/…); admins can
+  // add site-specific ones. `isSystem=true` rows are protected from
+  // deletion but their description is editable.
+
+  @Get('personal-email-domains')
+  @RequirePermissions({ module: 'admin/partner-types', action: 'read' })
+  @ApiOperation({ summary: 'List personal / free-email domains (never bind an org)' })
+  listPersonalEmailDomains() {
+    return this.prisma.personalEmailDomain.findMany({
+      orderBy: [{ isSystem: 'desc' }, { domain: 'asc' }],
+    });
+  }
+
+  @Post('personal-email-domains')
+  @RequirePermissions({ module: 'admin/partner-types', action: 'write' })
+  @ApiOperation({ summary: 'Add a personal / free-email domain to the never-bind catalog' })
+  async createPersonalEmailDomain(@Body() body: { domain: string; description?: string }) {
+    const normalized = body.domain?.trim().toLowerCase();
+    if (!normalized) throw new BadRequestException('domain is required');
+    // Very light validation — a bare host with a dot. Full RFC compliance
+    // is overkill for this catalog; typos surface fast in the importer.
+    if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(normalized)) {
+      throw new BadRequestException(`"${body.domain}" is not a valid domain (e.g. "gmail.com").`);
+    }
+    const dup = await this.prisma.personalEmailDomain.findUnique({ where: { domain: normalized } });
+    if (dup) {
+      throw new BadRequestException(
+        `Domain "${normalized}" is already in the catalog (id=${dup.id}).`,
+      );
+    }
+    return this.prisma.personalEmailDomain.create({
+      data: {
+        domain: normalized,
+        description: body.description?.trim() || null,
+        isSystem: false,
+      },
+    });
+  }
+
+  @Patch('personal-email-domains/:id')
+  @RequirePermissions({ module: 'admin/partner-types', action: 'write' })
+  @ApiOperation({ summary: 'Update a personal-email domain (system rows: description only)' })
+  async updatePersonalEmailDomain(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { domain?: string; description?: string | null },
+  ) {
+    const existing = await this.prisma.personalEmailDomain.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Personal-email domain not found');
+    const data: any = {};
+    if (body.description !== undefined) data.description = body.description?.trim() || null;
+    if (!existing.isSystem && body.domain) {
+      const normalized = body.domain.trim().toLowerCase();
+      if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(normalized)) {
+        throw new BadRequestException(`"${body.domain}" is not a valid domain.`);
+      }
+      data.domain = normalized;
+    }
+    return this.prisma.personalEmailDomain.update({ where: { id }, data });
+  }
+
+  @Delete('personal-email-domains/:id')
+  @RequirePermissions({ module: 'admin/partner-types', action: 'delete' })
+  @ApiOperation({ summary: 'Delete a personal-email domain (system rows are protected)' })
+  async deletePersonalEmailDomain(@Param('id', ParseIntPipe) id: number) {
+    const existing = await this.prisma.personalEmailDomain.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Personal-email domain not found');
+    if (existing.isSystem) {
+      throw new BadRequestException('System personal-email domains cannot be deleted (they ship in code as a fallback).');
+    }
+    await this.prisma.personalEmailDomain.delete({ where: { id } });
+    return { message: 'Personal-email domain deleted' };
   }
 }

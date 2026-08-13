@@ -129,33 +129,44 @@ export class UsersService implements OnModuleInit {
       }
     }
 
-    // 3) Wire the employee_of relationship to the chosen organization.
+    // 3) Wire the worker_of relationship to the chosen organization.
+    // BM2 Phase 1 (2026-08-13): writes to `partner_relationships` (BUT050).
+    // The legacy `employee_of` type was folded into `worker_of` by the
+    // 20260503 relationship_validity_and_rules migration; keeping only
+    // `worker_of` here matches what `business-partners.service` reads.
     if (employerOrgId) {
       const employerOrg = await this.prisma.businessPartner.findFirst({
         where: { id: employerOrgId, partnerType: 'organization', deletedAt: null },
       });
-      const employeeOfType = await this.prisma.partnerRelationshipType.findUnique({
-        where: { code: 'employee_of' },
+      const workerOfType = await this.prisma.partnerRelationshipType.findUnique({
+        where: { code: 'worker_of' },
       });
-      if (employerOrg && employeeOfType) {
-        await this.prisma.businessPartnerRelationship.upsert({
+      if (employerOrg && workerOfType) {
+        // Check for an existing active edge; if none, create.
+        const now = new Date();
+        const existing = await this.prisma.partnerRelationship.findFirst({
           where: {
-            sourcePartnerId_targetType_targetId_relationshipTypeId: {
-              sourcePartnerId: businessPartnerId,
-              targetType: 'organization',
-              targetId: employerOrg.id,
-              relationshipTypeId: employeeOfType.id,
-            },
+            partyAId: businessPartnerId,
+            partyBId: employerOrg.id,
+            typeId: workerOfType.id,
+            validTo: { gt: now },
           },
-          create: {
-            sourcePartnerId: businessPartnerId,
-            targetType: 'organization',
-            targetId: employerOrg.id,
-            relationshipTypeId: employeeOfType.id,
-            isPrimary: true,
-          },
-          update: { status: 'active' },
         });
+        if (!existing) {
+          await this.prisma.partnerRelationship.create({
+            data: {
+              partyAId: businessPartnerId,
+              partyBId: employerOrg.id,
+              typeId: workerOfType.id,
+              isPrimary: true,
+            },
+          });
+        } else if (existing.status !== 'active') {
+          await this.prisma.partnerRelationship.update({
+            where: { id: existing.id },
+            data: { status: 'active' },
+          });
+        }
       }
     }
 

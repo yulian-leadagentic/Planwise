@@ -91,8 +91,10 @@ function summarizeSide(targets: SideTarget[] | null, fallbackLabel: string | nul
     .join('  |  ');
 }
 
+type PartnerTypesTab = 'role-types' | 'relationship-types' | 'categories' | 'personal-domains';
+
 export function PartnerTypesPage() {
-  const [tab, setTab] = useState<'role-types' | 'relationship-types' | 'categories'>('role-types');
+  const [tab, setTab] = useState<PartnerTypesTab>('role-types');
   const { can, isAdmin } = usePermissions();
   const canWrite = isAdmin || can('admin/partner-types', 'write');
   const canDelete = isAdmin || can('admin/partner-types', 'delete');
@@ -109,6 +111,7 @@ export function PartnerTypesPage() {
           { key: 'role-types', label: 'BP Types' },
           { key: 'relationship-types', label: 'Relationship Types' },
           { key: 'categories', label: 'Categories' },
+          { key: 'personal-domains', label: 'Personal Email Domains' },
         ] as const).map((t) => (
           <button
             key={t.key}
@@ -126,6 +129,7 @@ export function PartnerTypesPage() {
       {tab === 'role-types' && <RoleTypesTab canWrite={canWrite} canDelete={canDelete} />}
       {tab === 'relationship-types' && <RelationshipTypesTab canWrite={canWrite} canDelete={canDelete} />}
       {tab === 'categories' && <CategoriesTab canWrite={canWrite} canDelete={canDelete} />}
+      {tab === 'personal-domains' && <PersonalEmailDomainsTab canWrite={canWrite} canDelete={canDelete} />}
     </div>
   );
 }
@@ -1222,6 +1226,247 @@ function TargetRow({
 
       {target.kind === 'project' && (
         <p className="text-[10px] italic text-slate-400 dark:text-slate-500">Projects don't have partner-roles — no further filtering.</p>
+      )}
+    </div>
+  );
+}
+
+// ─── BM2 Phase 4 · Personal / Free-Email Domains ────────────────────────────
+//
+// Small admin catalog. When the importer sees an email whose domain is
+// listed here, the row does NOT bind an organization (rule 2 in
+// bp-contacts-design §3). Seeded with 11 free-mail hosts; admins can
+// add site-specific ones. System rows are protected from deletion (they
+// ship in code as a fallback set, so a delete would only remove them
+// from the catalog — the fallback still enforces the rule).
+
+interface PersonalEmailDomain {
+  id: number;
+  domain: string;
+  description: string | null;
+  isSystem: boolean;
+}
+
+function PersonalEmailDomainsTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: boolean }) {
+  const confirm = useConfirm();
+  const queryClient = useQueryClient();
+  const scrollRef = useStickyHScroll();
+  const [adding, setAdding] = useState(false);
+  const [newDomain, setNewDomain] = useState('');
+  const [newDescription, setNewDescription] = useState('');
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editDescription, setEditDescription] = useState('');
+
+  const { data: domains = [], isLoading } = useQuery<PersonalEmailDomain[]>({
+    queryKey: ['personal-email-domains'],
+    queryFn: () =>
+      client.get('/admin/partner-types/personal-email-domains').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+
+  const create = useMutation({
+    mutationFn: () =>
+      client.post('/admin/partner-types/personal-email-domains', {
+        domain: newDomain.trim().toLowerCase(),
+        description: newDescription.trim() || undefined,
+      }).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['personal-email-domains'] });
+      notify.success('Domain added', { code: 'PERSONAL-DOMAIN-CREATE-200' });
+      setAdding(false);
+      setNewDomain('');
+      setNewDescription('');
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to add domain'),
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, description }: { id: number; description: string }) =>
+      client.patch(`/admin/partner-types/personal-email-domains/${id}`, {
+        description: description.trim() || null,
+      }).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['personal-email-domains'] });
+      notify.success('Domain updated', { code: 'PERSONAL-DOMAIN-UPDATE-200' });
+      setEditingId(null);
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update domain'),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: number) =>
+      client.delete(`/admin/partner-types/personal-email-domains/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['personal-email-domains'] });
+      notify.success('Domain deleted', { code: 'PERSONAL-DOMAIN-DELETE-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to delete domain'),
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[12px] text-slate-500 dark:text-slate-400 max-w-3xl">
+          Free-mail hosts the importer should never treat as a company domain (gmail, yahoo, …).
+          System rows ship in code as a fallback — even if deleted, the built-in list still enforces the rule.
+        </p>
+        {canWrite && !adding && (
+          <button
+            onClick={() => setAdding(true)}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1 shrink-0"
+          >
+            <Plus className="h-3 w-3" /> Add Domain
+          </button>
+        )}
+      </div>
+
+      {isLoading ? (
+        <TableSkeleton rows={5} cols={3} />
+      ) : (
+        <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                <th className="px-4 py-2 text-left font-semibold w-64">Domain</th>
+                <th className="px-4 py-2 text-left font-semibold">Description</th>
+                <th className="px-4 py-2 text-center font-semibold w-24">Origin</th>
+                <th className="px-4 py-2 text-right font-semibold w-32"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {adding && (
+                <tr className="border-t border-slate-100 dark:border-slate-800 bg-blue-50/30">
+                  <td className="px-4 py-2">
+                    <input
+                      className={inputClass}
+                      placeholder="e.g. example.com"
+                      value={newDomain}
+                      onChange={(e) => setNewDomain(e.target.value)}
+                      autoFocus
+                    />
+                  </td>
+                  <td className="px-4 py-2">
+                    <input
+                      className={inputClass}
+                      placeholder="Optional description"
+                      value={newDescription}
+                      onChange={(e) => setNewDescription(e.target.value)}
+                    />
+                  </td>
+                  <td className="px-4 py-2 text-center text-[10px] text-slate-400">User</td>
+                  <td className="px-4 py-2 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        onClick={() => create.mutate()}
+                        disabled={create.isPending || !newDomain.trim()}
+                        className="p-1 rounded hover:bg-emerald-50 text-slate-500 hover:text-emerald-600"
+                        title="Save"
+                      >
+                        <Save className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={() => { setAdding(false); setNewDomain(''); setNewDescription(''); }}
+                        className="p-1 rounded hover:bg-red-50 text-slate-500 hover:text-red-600"
+                        title="Cancel"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {domains.length === 0 && !adding && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-6">
+                    <EmptyState
+                      icon={Tags}
+                      title="No personal-email domains yet"
+                      description="Add the free-mail hosts your importer should never treat as company domains."
+                    />
+                  </td>
+                </tr>
+              )}
+
+              {domains.map((d) => (
+                <tr key={d.id} className="border-t border-slate-100 dark:border-slate-800">
+                  <td className="px-4 py-2 font-mono text-[12px] text-slate-700 dark:text-slate-200">{d.domain}</td>
+                  <td className="px-4 py-2">
+                    {editingId === d.id ? (
+                      <input
+                        className={inputClass}
+                        value={editDescription}
+                        onChange={(e) => setEditDescription(e.target.value)}
+                        autoFocus
+                      />
+                    ) : (
+                      <span className="text-[12px] text-slate-600 dark:text-slate-300">{d.description || <span className="italic text-slate-400">—</span>}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2 text-center">
+                    {d.isSystem ? (
+                      <span title="System row — protected from deletion (also ships in code as a fallback)" className="inline-flex items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400">
+                        <Lock className="h-3 w-3" /> System
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-slate-400">User</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      {editingId === d.id ? (
+                        <>
+                          <button
+                            onClick={() => update.mutate({ id: d.id, description: editDescription })}
+                            disabled={update.isPending}
+                            className="p-1 rounded hover:bg-emerald-50 text-slate-500 hover:text-emerald-600"
+                            title="Save"
+                          >
+                            <Save className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => setEditingId(null)}
+                            className="p-1 rounded hover:bg-red-50 text-slate-500 hover:text-red-600"
+                            title="Cancel"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          {canWrite && (
+                            <button
+                              onClick={() => { setEditingId(d.id); setEditDescription(d.description ?? ''); }}
+                              className="p-1 rounded hover:bg-blue-50 text-slate-500 hover:text-blue-600"
+                              title="Edit description"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {canDelete && !d.isSystem && (
+                            <button
+                              onClick={async () => {
+                                if (await confirm(`Remove "${d.domain}" from the personal-email catalog?`)) {
+                                  remove.mutate(d.id);
+                                }
+                              }}
+                              className="p-1 rounded hover:bg-red-50 text-slate-500 hover:text-red-600"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

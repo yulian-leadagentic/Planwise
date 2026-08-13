@@ -28,12 +28,12 @@ enum PartnerSource {
   system
 }
 
-enum RelationshipTarget {
-  project
-  organization
-  department
-  team
-}
+// RelationshipTarget enum retired in BM2 Phase 1 (2026-08-13).
+// The polymorphic `business_partner_relationships` table was split into
+// `partner_relationships` (party↔party) + `project_partner_roles`
+// (project × party × role); neither uses this enum. Kept the comment
+// as a bread-crumb — if a future migration needs the enum, resurrect
+// it explicitly rather than reintroducing polymorphism.
 
 enum ProjectStatus {
   draft
@@ -286,7 +286,10 @@ model User {
   contractsCreated      Contract[]               @relation("ContractCreatedBy")
   milestonesAsPartner   LabelMilestone[]         @relation("MilestonePartner")
   milestonesCreated     LabelMilestone[]         @relation("MilestoneCreatedBy")
-  contacts              Contact[]
+  // BM2 Phase 5 (2026-08-13): `Contact` → User was retired. Contract
+  // "contacts" now live in `business_partners` (person BPs linked to
+  // the org via a `worker_of` party_relationships edge). See
+  // `contracts.service#createContact / getContacts / removeContact`.
   expensesCreated       Expense[]
   terms                 Term[]
   activityLogs          ActivityLog[]
@@ -862,22 +865,14 @@ model LabelMilestone {
   @@map("label_milestones")
 }
 
-model Contact {
-  id        Int       @id @default(autoincrement())
-  partnerId Int       @map("partner_id")
-  name      String
-  email     String?
-  phone     String?
-  role      String?
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  partner User @relation(fields: [partnerId], references: [id])
-
-  @@index([partnerId])
-  @@map("contacts")
-}
+// BM2 Phase 5 (2026-08-13): `Contact` was retired. Contract "contacts"
+// are person BPs (`BusinessPartner(partnerType='person')`) linked to
+// the organization via a `worker_of` edge in `partner_relationships`.
+// See `contracts.service.ts#createContact / getContacts / removeContact`
+// and migrations
+//   20260813500000_bp_phase5_contacts_migrate_to_bp — data-migrate
+//   20260813500010_bp_phase5_drop_contacts_table    — table drop
+// for the migration path.
 
 model Expense {
   id          Int         @id @default(autoincrement())
@@ -1387,32 +1382,32 @@ enum ProjectFileKind {
 }
 
 model ProjectFile {
-  id          Int             @id @default(autoincrement())
-  projectId   Int             @map("project_id")
-  kind        ProjectFileKind
-  name        String          @db.VarChar(255)
-  url         String          @db.VarChar(1000)
-  fileSize    Int?            @map("file_size")
-  mimeType    String?         @map("mime_type") @db.VarChar(100)
-  description String?         @db.Text
+  id            Int             @id @default(autoincrement())
+  projectId     Int             @map("project_id")
+  kind          ProjectFileKind
+  name          String          @db.VarChar(255)
+  url           String          @db.VarChar(1000)
+  fileSize      Int?            @map("file_size")
+  mimeType      String?         @map("mime_type") @db.VarChar(100)
+  description   String?         @db.Text
   /// For `drive`-kind rows: the Drive `webViewLink` returned by
   /// files.get — the user-facing URL to open the file in Drive UI.
   /// Nullable because Drive occasionally omits it for shortcuts; the
   /// client falls back to `https://drive.google.com/file/d/{url}/view`
   /// (where `url` is the fileId).
-  webViewLink String?         @map("web_view_link") @db.VarChar(1000)
+  webViewLink   String?         @map("web_view_link") @db.VarChar(1000)
   /// Optional task the file is attached to (for `drive` / task-scope
   /// files). ProjectFile stays the union type — task attachments used
   /// to live only in TaskAttachment (uploads), but Drive links use
   /// this column so the Files tab can list them alongside project
   /// files. When null, the file is project-level.
-  taskId      Int?            @map("task_id")
+  taskId        Int?            @map("task_id")
   /// Optional deliverable the file is attached to. When set, the file
   /// is displayed on the deliverable's page. Independent of `taskId`
   /// (a file can belong to a deliverable without a task).
-  deliverableId Int?          @map("deliverable_id")
-  uploadedBy  Int             @map("uploaded_by")
-  createdAt   DateTime        @default(now()) @map("created_at")
+  deliverableId Int?            @map("deliverable_id")
+  uploadedBy    Int             @map("uploaded_by")
+  createdAt     DateTime        @default(now()) @map("created_at")
 
   project     Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
   task        Task?               @relation(fields: [taskId], references: [id], onDelete: SetNull)
@@ -1689,11 +1684,15 @@ model BusinessPartner {
   firstNameHe  String?       @map("first_name_he") @db.VarChar(100)
   lastNameHe   String?       @map("last_name_he") @db.VarChar(100)
   // Org-typically (nullable for persons; persons can also have an
-  // employer relationship — see BusinessPartnerRelationship)
+  // employer relationship — see PartnerRelationship)
   companyName  String?       @map("company_name") @db.VarChar(255)
   taxId        String?       @map("tax_id") @db.VarChar(50)
   // Common contact info
-  email        String?       @unique @db.VarChar(255)
+  // BM2 Phase 3 (2026-08-13): dropped @unique on email. Real data has
+  // multiple contacts sharing an office inbox; identity for a BP is the
+  // row + its owned domains (see BusinessPartnerDomain) + normalized
+  // name, not the email. A non-unique index below still speeds lookups.
+  email        String?       @db.VarChar(255)
   phone        String?       @db.VarChar(50)
   mobile       String?       @db.VarChar(50)
   address      String?       @db.VarChar(500)
@@ -1720,16 +1719,23 @@ model BusinessPartner {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  user                  User?                         @relation("UserBusinessPartner")
+  user                  User?                       @relation("UserBusinessPartner")
   roles                 BusinessPartnerRole[]
-  outgoingRelationships BusinessPartnerRelationship[] @relation("RelationshipSource")
-  // M3b — new party↔party + project-role tables. The FK column is named
-  // `party_id` so M2's swap from BusinessPartner → Party is a target-only
-  // change (no schema rename).
-  partnerRelationshipsA PartnerRelationship[]         @relation("PartyAOnRel")
-  partnerRelationshipsB PartnerRelationship[]         @relation("PartyBOnRel")
-  projectPartnerRoles   ProjectPartnerRole[]          @relation("PartyOnProjectRole")
-  professions           BusinessPartnerProfession[]
+  // BM2 Phase 1 (2026-08-13): `outgoingRelationships BusinessPartnerRelationship[]`
+  // was removed with the legacy `business_partner_relationships` table.
+  // party↔party edges live in `partnerRelationshipsA` / `partnerRelationshipsB`;
+  // project participation lives in `projectPartnerRoles`.
+  partnerRelationshipsA         PartnerRelationship[]       @relation("PartyAOnRel")
+  partnerRelationshipsB         PartnerRelationship[]       @relation("PartyBOnRel")
+  projectPartnerRoles           ProjectPartnerRole[]        @relation("PartyOnProjectRole")
+  // BM2 Phase 2 (2026-08-13) — participation representation. Back-relations
+  // for the two optional self-FKs on `project_partner_roles`.
+  projectPartnerRolesAsContact  ProjectPartnerRole[]        @relation("ProjectPartnerRoleContactParty")
+  projectPartnerRolesOnBehalfOf ProjectPartnerRole[]        @relation("ProjectPartnerRoleOnBehalfOf")
+  // BM2 Phase 3 (2026-08-13) — multi-domain orgs. A BP (typically an
+  // organization) may own several domains (office + secondary).
+  domains                       BusinessPartnerDomain[]
+  professions                   BusinessPartnerProfession[]
 
   /// If this partner row was created by a bulk import, track which import.
   /// Used by the data-import rollback flow. NULL for partners created via
@@ -1743,7 +1749,45 @@ model BusinessPartner {
   @@index([deletedAt])
   @@index([mainRoleTypeId])
   @@index([createdByImportId])
+  // BM2 Phase 3 — non-unique lookup index on email (the @unique was
+  // dropped; the DB still needs fast lookups by email for import dedup
+  // and worker-of-user backfill).
+  @@index([email])
   @@map("business_partners")
+}
+
+// BM2 Phase 3 (2026-08-13) — multi-domain orgs.
+// A BP (typically an organization) may own multiple domains. Import
+// dedup matches company-by-domain first, then normalized name. Personal
+// / free-email domains never bind an org — that list is maintained via
+// PersonalEmailDomain (Phase 4).
+model BusinessPartnerDomain {
+  id        Int    @id @default(autoincrement())
+  partnerId Int    @map("partner_id")
+  domain    String @db.VarChar(255)
+
+  partner BusinessPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@unique([domain])
+  @@index([partnerId])
+  @@map("business_partner_domains")
+}
+
+// BM2 Phase 4 (2026-08-13) — personal / free-email domains.
+// A tiny admin-managed catalog. When the import dedup sees an email
+// whose domain is in this list, the row does NOT bind an organization
+// (per rule 2 of bp-contacts-design §3). Seeded with 11 common free-mail
+// hosts (gmail, yahoo, …); admins can add site-specific ones.
+model PersonalEmailDomain {
+  id          Int      @id @default(autoincrement())
+  domain      String   @db.VarChar(255)
+  description String?  @db.VarChar(255)
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([domain])
+  @@map("personal_email_domains")
 }
 
 // Lookup table for what KIND of business roles a partner can hold.
@@ -1839,8 +1883,6 @@ model PartnerRelationshipType {
   //                  rel of this type (e.g. one primary employer at a time)
   sideALabel     String? @map("side_a_label") @db.VarChar(100)
   sideBLabel     String? @map("side_b_label") @db.VarChar(100)
-  sideAKind      String? @map("side_a_kind") @db.VarChar(20)
-  sideBKind      String? @map("side_b_kind") @db.VarChar(20)
   inverseLabel   String? @map("inverse_label") @db.VarChar(100)
   isSymmetric    Boolean @default(false) @map("is_symmetric")
   allowsMultiple Boolean @default(true) @map("allows_multiple")
@@ -1862,26 +1904,21 @@ model PartnerRelationshipType {
   //                   PartnerRoleType.category is in this list. Combined
   //                   with roleCodes via OR.
   //
-  // The single-shot sideAKind/sideBKind + required*RoleCode columns above
-  // are still backfilled and read by older clients; the API prefers the
-  // JSON when present. Old columns will be dropped in M7.
+  // BM2 Phase 1 (2026-08-13): the legacy single-shot columns
+  //   sideAKind, sideBKind, applicableTargetTypes, applicableSourceType,
+  //   requiredSourceRoleCode, requiredTargetRoleCode
+  // were dropped alongside `business_partner_relationships` (the "M7"
+  // cleanup). All validation now flows through sideATargets/sideBTargets.
   sideATargets Json? @map("side_a_targets")
   sideBTargets Json? @map("side_b_targets")
-
-  // ─── Legacy fields — kept until M3b migrates rows into the new tables.
-  // The relationship service still consults these for validation; the
-  // admin UI shows them in an "advanced" section.
-  applicableTargetTypes  String? @map("applicable_target_types") @db.VarChar(255)
-  applicableSourceType   String? @map("applicable_source_type") @db.VarChar(50)
-  requiredSourceRoleCode String? @map("required_source_role_code") @db.VarChar(50)
-  requiredTargetRoleCode String? @map("required_target_role_code") @db.VarChar(50)
 
   sortOrder Int      @default(0) @map("sort_order")
   isSystem  Boolean  @default(false) @map("is_system")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  relationships        BusinessPartnerRelationship[]
+  // BM2 Phase 1 (2026-08-13): back-relation to the retired
+  // BusinessPartnerRelationship model was removed with the table.
   partnerRelationships PartnerRelationship[]
 
   @@map("partner_relationship_types")
@@ -1905,33 +1942,15 @@ model BusinessPartnerRole {
   @@map("business_partner_roles")
 }
 
-model BusinessPartnerRelationship {
-  id                 Int                @id @default(autoincrement())
-  sourcePartnerId    Int                @map("source_partner_id")
-  targetType         RelationshipTarget @map("target_type")
-  targetId           Int                @map("target_id") // polymorphic — not a hard FK
-  relationshipTypeId Int                @map("relationship_type_id")
-  roleInContext      String?            @map("role_in_context") @db.VarChar(255)
-  isPrimary          Boolean            @default(false) @map("is_primary")
-  // BUT050-style time-bounded validity. valid_from defaults to now(),
-  // valid_to defaults to far-future (open-ended). On "disconnect", the
-  // service sets valid_to = now() instead of deleting — preserves history.
-  validFrom          DateTime           @default(now()) @map("valid_from")
-  validTo            DateTime           @default(dbgenerated("'9999-12-31 00:00:00'")) @map("valid_to")
-  status             String             @default("active") @db.VarChar(20)
-  notes              String?            @db.Text
-  createdAt          DateTime           @default(now()) @map("created_at")
-  updatedAt          DateTime           @updatedAt @map("updated_at")
-
-  source           BusinessPartner         @relation("RelationshipSource", fields: [sourcePartnerId], references: [id], onDelete: Cascade)
-  relationshipType PartnerRelationshipType @relation(fields: [relationshipTypeId], references: [id])
-
-  @@unique([sourcePartnerId, targetType, targetId, relationshipTypeId])
-  @@index([sourcePartnerId])
-  @@index([targetType, targetId])
-  @@index([relationshipTypeId])
-  @@map("business_partner_relationships")
-}
+// BM2 Phase 1 (2026-08-13): `BusinessPartnerRelationship` was retired.
+// The polymorphic table `business_partner_relationships` split into two
+// clean models:
+//   • `partner_relationships`   (party↔party — BUT050 in one table)
+//   • `project_partner_roles`   (project × party × role)
+// Data was migrated by `20260813100000_bp_phase1_relationships_topoff`,
+// the table + M7 legacy columns were dropped by
+// `20260813100010_bp_phase1_drop_legacy_relationships`. See
+// `docs/bm2/bp-model-refactor.md` for the migration plan.
 
 // ─── Numbering & Foundation Catalogs ────────────────────────────────────────
 //
@@ -2145,6 +2164,11 @@ model ProjectRoleType {
   // If true, exactly one party can hold this role as PRIMARY on a project
   // (e.g. one primary Customer per project). Enforced at the service layer.
   isPrimaryRequired       Boolean  @default(false) @map("is_primary_required")
+  // BM2 Phase 6 (2026-08-13): "org role" flag. When true, the operational
+  // add-participant flow prompts for a contact person (drives the
+  // ProjectPartnerRole.contactPartyId picker added in Phase 2). Purely a
+  // UI hint — the backend still accepts contactPartyId on any role.
+  requiresContactPerson   Boolean  @default(false) @map("requires_contact_person")
   sortOrder               Int      @default(0) @map("sort_order")
   isSystem                Boolean  @default(false) @map("is_system")
   createdAt               DateTime @default(now()) @map("created_at")
@@ -2166,6 +2190,20 @@ model ProjectPartnerRole {
   roleId         Int      @map("role_id")
   isPrimary      Boolean  @default(false) @map("is_primary")
   titleInProject String?  @map("title_in_project") @db.VarChar(255)
+  // BM2 Phase 2 (2026-08-13) — representation on project participation:
+  //   contactPartyId    → the PERSON who is the contact when this row's
+  //                       party is an ORG (SAP "partner + contact person"
+  //                       on a document).
+  //   onBehalfOfPartyId → the ORG a PERSON represents on THIS project.
+  //                       Pins the employer per-project for freelancers
+  //                       and multi-employer people; otherwise the global
+  //                       worker_of resolution is ambiguous.
+  // Both are optional self-relations to BusinessPartner. Named
+  // explicitly ("ProjectPartnerRoleContactParty" /
+  // "ProjectPartnerRoleOnBehalfOf") so Prisma doesn't collide with the
+  // existing PartyOnProjectRole relation on party_id.
+  contactPartyId    Int?     @map("contact_party_id")
+  onBehalfOfPartyId Int?     @map("on_behalf_of_party_id")
   validFrom      DateTime @default(now()) @map("valid_from")
   validTo        DateTime @default(dbgenerated("'9999-12-31 00:00:00'")) @map("valid_to")
   status         String   @default("active") @db.VarChar(20)
@@ -2173,14 +2211,18 @@ model ProjectPartnerRole {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  project Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  party   BusinessPartner @relation("PartyOnProjectRole", fields: [partyId], references: [id], onDelete: Cascade)
-  role    ProjectRoleType @relation(fields: [roleId], references: [id])
+  project        Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  party          BusinessPartner  @relation("PartyOnProjectRole", fields: [partyId], references: [id], onDelete: Cascade)
+  role           ProjectRoleType  @relation(fields: [roleId], references: [id])
+  contactParty   BusinessPartner? @relation("ProjectPartnerRoleContactParty", fields: [contactPartyId], references: [id], onDelete: SetNull)
+  onBehalfOfParty BusinessPartner? @relation("ProjectPartnerRoleOnBehalfOf", fields: [onBehalfOfPartyId], references: [id], onDelete: SetNull)
 
   @@unique([projectId, partyId, roleId, validFrom])
   @@index([projectId])
   @@index([partyId])
   @@index([roleId])
+  @@index([contactPartyId])
+  @@index([onBehalfOfPartyId])
   @@map("project_partner_roles")
 }
 
@@ -2456,42 +2498,42 @@ model OrgUnit {
 // looks up on every SSO login.
 
 model OrgAuthConfig {
-  id                Int      @id @default(autoincrement())
+  id               Int      @id @default(autoincrement())
   /// Nullable — Planwise is single-company at P1; the column exists
   /// so a future multi-tenant model can add a per-tenant configuration
   /// without another migration.
-  organizationId    Int?     @map("organization_id")
+  organizationId   Int?     @map("organization_id")
   /// 'microsoft' | 'google' (google gated to P2). Enforced by the DTO
   /// validator, not the DB, so a future provider can be added without
   /// schema churn.
-  provider          String   @db.VarChar(20)
-  enabled           Boolean  @default(false)
+  provider         String   @db.VarChar(20)
+  enabled          Boolean  @default(false)
   /// Entra tenant id (GUID). Nullable — Google doesn't use one.
-  tenantId          String?  @map("tenant_id") @db.VarChar(191)
-  clientId          String   @map("client_id") @db.VarChar(191)
+  tenantId         String?  @map("tenant_id") @db.VarChar(191)
+  clientId         String   @map("client_id") @db.VarChar(191)
   /// AES-256-GCM(ciphertext | iv | tag | keyVersion). Written and read
   /// EXCLUSIVELY through SecretCryptoService — never touch the raw
   /// bytes elsewhere.
-  secretCiphertext  Bytes    @map("secret_ciphertext")
-  secretIv          Bytes    @map("secret_iv")
-  secretTag         Bytes    @map("secret_tag")
-  keyVersion        Int      @map("key_version")
+  secretCiphertext Bytes    @map("secret_ciphertext")
+  secretIv         Bytes    @map("secret_iv")
+  secretTag        Bytes    @map("secret_tag")
+  keyVersion       Int      @map("key_version")
   /// CSV of allowed email domains for JIT provisioning. Enforced BEFORE
   /// any user create/link. Kept as a plain string (comma-separated) for
   /// admin ergonomics; the resolver splits and trims.
-  allowedDomains    String   @default("") @map("allowed_domains") @db.VarChar(500)
+  allowedDomains   String   @default("") @map("allowed_domains") @db.VarChar(500)
   /// Fallback role assigned when the resolver JIT-creates a new user
   /// from an SSO callback. FK so a role rename doesn't strand configs.
-  defaultRoleId     Int      @map("default_role_id")
+  defaultRoleId    Int      @map("default_role_id")
   /// When true, users with allowPasswordLogin=false are hard-blocked
   /// from the /auth/login path — even a valid bcrypt hash won't let
   /// them in. Enforced in AuthService.validateUser.
-  ssoOnly           Boolean  @default(false) @map("sso_only")
-  updatedBy         Int?     @map("updated_by")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  ssoOnly          Boolean  @default(false) @map("sso_only")
+  updatedBy        Int?     @map("updated_by")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
-  defaultRole       Role     @relation(fields: [defaultRoleId], references: [id])
+  defaultRole Role @relation(fields: [defaultRoleId], references: [id])
 
   @@unique([organizationId, provider])
   @@map("org_auth_configs")
@@ -2511,7 +2553,7 @@ model UserIdentity {
   email     String?  @db.VarChar(255)
   createdAt DateTime @default(now()) @map("created_at")
 
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, subject])
   @@index([userId])

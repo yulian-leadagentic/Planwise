@@ -11,9 +11,27 @@ import { CreateBusinessPartnerDto } from './dto/create-business-partner.dto';
 import { UpdateBusinessPartnerDto } from './dto/update-business-partner.dto';
 import { QueryBusinessPartnersDto } from './dto/query-business-partners.dto';
 
+// BM2 Phase 1 (2026-08-13): the legacy `outgoingRelationships`
+// (BusinessPartnerRelationship[]) include is gone with the table.
+// The drawer + list still expect an `outgoingRelationships` array on the
+// response, so we load the two replacement tables here and synthesize
+// the legacy shape in `toLegacyOutgoing()` below.
 const partnerInclude = {
   roles: { include: { roleType: true } },
-  outgoingRelationships: { include: { relationshipType: true } },
+  // party↔party edges where THIS bp is party A. BUT050 rows.
+  partnerRelationshipsA: {
+    include: {
+      type: true,
+      partyB: { select: { id: true, displayName: true, partnerType: true } },
+    },
+  },
+  // project-participation edges where THIS bp is the party.
+  projectPartnerRoles: {
+    include: {
+      role: true,
+      project: { select: { id: true, name: true, number: true } },
+    },
+  },
   user: { select: { id: true, isActive: true, lastLoginAt: true, roleId: true } },
   // Main Role — single primary categorization of the contact.
   // Surfaced in the drawer header + BP list badge + relationship pickers.
@@ -25,6 +43,123 @@ const partnerInclude = {
   // job titles".
   professions: { select: { professionId: true } },
 } as const;
+
+/**
+ * BM2 Phase 1 — compat shim. Rebuilds the legacy
+ * `outgoingRelationships: BusinessPartnerRelationship[]` shape from the
+ * two replacement tables. Frontend (partner-drawer, contacts-page, etc.)
+ * still consumes this shape; migrating those consumers to read the two
+ * new arrays lives on the ops-surfaces follow-up branch.
+ *
+ * Row id namespace (used by the /business-partner-relationships compat
+ * adapter for round-trip DELETE calls):
+ *   • id in [1, 999_999_999]      → partner_relationships row
+ *   • id in [1_000_000_000, …]    → project_partner_roles row (subtract offset)
+ */
+const PPR_ID_OFFSET = 1_000_000_000;
+
+function toLegacyOutgoing(bp: {
+  partnerRelationshipsA?: Array<{
+    id: number; typeId: number; type: { id: number; code: string; name: string; inverseLabel: string | null };
+    partyBId: number; partyB: { id: number; displayName: string; partnerType: string };
+    titleAtB: string | null; isPrimary: boolean; validFrom: Date; validTo: Date;
+    status: string; notes: string | null;
+  }>;
+  projectPartnerRoles?: Array<{
+    id: number; roleId: number; role: { id: number; code: string; name: string };
+    projectId: number; project: { id: number; name: string; number: string | null } | null;
+    titleInProject: string | null; isPrimary: boolean; validFrom: Date; validTo: Date;
+    status: string; notes: string | null;
+  }>;
+}): Array<{
+  id: number; targetType: 'organization' | 'project';
+  targetId: number; targetName?: string; targetCode?: string | null;
+  relationshipTypeId: number;
+  relationshipType: { id: number; code: string; name: string; inverseLabel: string | null };
+  roleInContext: string | null; isPrimary: boolean;
+  validFrom: Date; validTo: Date; status: string; notes: string | null;
+}> {
+  const out: any[] = [];
+  for (const r of bp.partnerRelationshipsA ?? []) {
+    out.push({
+      id: r.id,
+      targetType: 'organization',
+      targetId: r.partyBId,
+      targetName: r.partyB.displayName,
+      relationshipTypeId: r.typeId,
+      relationshipType: {
+        id: r.type.id, code: r.type.code, name: r.type.name,
+        inverseLabel: r.type.inverseLabel,
+      },
+      roleInContext: r.titleAtB,
+      isPrimary: r.isPrimary,
+      validFrom: r.validFrom,
+      validTo: r.validTo,
+      status: r.status,
+      notes: r.notes,
+    });
+  }
+  for (const r of bp.projectPartnerRoles ?? []) {
+    // Fake a `relationshipType` shape by borrowing the project-role's
+    // code/name. Frontend uses this to render "→ Project X" chips; the
+    // real party↔project domain lives in project_partner_roles.
+    out.push({
+      id: r.id + PPR_ID_OFFSET,
+      targetType: 'project',
+      targetId: r.projectId,
+      targetName: r.project?.name,
+      targetCode: r.project?.number ?? null,
+      relationshipTypeId: r.roleId,
+      relationshipType: {
+        id: r.roleId, code: r.role.code, name: r.role.name, inverseLabel: null,
+      },
+      roleInContext: r.titleInProject,
+      isPrimary: r.isPrimary,
+      validFrom: r.validFrom,
+      validTo: r.validTo,
+      status: r.status,
+      notes: r.notes,
+    });
+  }
+  return out;
+}
+
+/** Attach `outgoingRelationships` (legacy shape) onto a partner in place. */
+function attachLegacyOutgoing<T extends { partnerRelationshipsA?: any[]; projectPartnerRoles?: any[] }>(bp: T): T & { outgoingRelationships: any[] } {
+  return { ...bp, outgoingRelationships: toLegacyOutgoing(bp) };
+}
+
+/**
+ * BM2 Phase 3 helper — extract the lower-cased domain from an email.
+ * Returns null when the email is empty or malformed.
+ */
+export function extractEmailDomain(email: string | null | undefined): string | null {
+  if (!email) return null;
+  const at = email.indexOf('@');
+  if (at < 0 || at === email.length - 1) return null;
+  return email.slice(at + 1).trim().toLowerCase();
+}
+
+/**
+ * Hard-coded personal / free-email domains (small, ships in code).
+ * The Phase 4 admin catalog `personal_email_domains` layers on top:
+ * anything in the DB is *also* treated as personal, but the fallback
+ * below guarantees the "gmail never binds an org" rule works even
+ * when the catalog is empty.
+ */
+export const PERSONAL_EMAIL_DOMAIN_FALLBACK: ReadonlySet<string> = new Set([
+  'gmail.com',
+  'yahoo.com',
+  'outlook.com',
+  'hotmail.com',
+  'icloud.com',
+  'walla.co.il',
+  'live.com',
+  'me.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
+]);
 
 function toDisplayName(dto: { partnerType: PartnerType; firstName?: string | null; lastName?: string | null; companyName?: string | null; displayName?: string | null }): string {
   if (dto.displayName?.trim()) return dto.displayName.trim();
@@ -57,15 +192,15 @@ export class BusinessPartnersService {
     // Employer filter — matches persons whose active worker_of edge
     // targets the given organization id. Uses `some` so a person with
     // multiple employers (rare but allowed) still matches on any of
-    // them. `targetType: 'organization'` is redundant given the id
-    // but keeps the where-clause aligned with the polymorphic column
-    // pair the DB is actually indexed on.
+    // them.
+    // BM2 Phase 1 (2026-08-13): reads `partnerRelationshipsA` on the
+    // BUT050 table `partner_relationships` — same semantic edge as the
+    // pre-cleanup `outgoingRelationships` reader.
     if (query.employerId) {
-      where.outgoingRelationships = {
+      where.partnerRelationshipsA = {
         some: {
-          targetType: 'organization',
-          targetId: query.employerId,
-          relationshipType: { code: 'worker_of' },
+          partyBId: query.employerId,
+          type: { code: 'worker_of' },
           validTo: { gt: new Date() },
         },
       };
@@ -104,9 +239,13 @@ export class BusinessPartnersService {
       this.prisma.businessPartner.count({ where }),
     ]);
 
+    // Attach the legacy `outgoingRelationships` array so drawer / list
+    // frontends keep working during BM2 Phase 1 — see `attachLegacyOutgoing`.
+    const withCompat = (data as any[]).map(attachLegacyOutgoing);
+
     const enriched = query.withProjects
-      ? await this.attachProjectsForContacts(data as any[])
-      : data;
+      ? await this.attachProjectsForContacts(withCompat as any[])
+      : withCompat;
 
     return {
       data: enriched,
@@ -124,7 +263,7 @@ export class BusinessPartnersService {
    * Results are merged + de-duped per BP, split active vs archived using
    * project.status, and capped to keep the response light.
    */
-  private async attachProjectsForContacts<T extends { id: number; partnerType: string; outgoingRelationships?: any[] }>(
+  private async attachProjectsForContacts<T extends { id: number; partnerType: string; outgoingRelationships?: any[]; partnerRelationshipsA?: any[] }>(
     partners: T[],
   ): Promise<Array<T & { projectCount: { active: number; archived: number }; projects: Array<{ id: number; name: string; number: string | null; status: string; role: string | null; via: 'direct' | 'employer' }> }>> {
     if (partners.length === 0) return partners as any;
@@ -138,15 +277,18 @@ export class BusinessPartnersService {
 
     // For PERSONS — collect each one's worker_of employer org ids, so we can
     // look up "projects where this org is the customer" in one query.
+    // BM2 Phase 1: reads `partnerRelationshipsA` (the raw new-shape include)
+    // rather than the compat `outgoingRelationships`, since the compat mixes
+    // in project rows we don't want here.
     const employerByPerson = new Map<number, number[]>();
     const allEmployerIds = new Set<number>();
     for (const p of partners) {
       if (p.partnerType !== 'person') continue;
       const employers: number[] = [];
-      for (const r of p.outgoingRelationships ?? []) {
-        if (r?.relationshipType?.code === 'worker_of' && r?.targetType === 'organization') {
-          employers.push(r.targetId);
-          allEmployerIds.add(r.targetId);
+      for (const r of p.partnerRelationshipsA ?? []) {
+        if (r?.type?.code === 'worker_of') {
+          employers.push(r.partyBId);
+          allEmployerIds.add(r.partyBId);
         }
       }
       if (employers.length) employerByPerson.set(p.id, employers);
@@ -239,33 +381,32 @@ export class BusinessPartnersService {
       include: partnerInclude,
     });
     if (!bp) throw new NotFoundException('Business partner not found');
-    const withTargets = await this.attachRelationshipTargets(bp);
 
-    // M3 — also load incoming relationships: rows where this BP is the
-    // *target* (target_type='organization' AND target_id=this.id). Lets
-    // a customer org show its contacts; an employer show its workers; etc.
-    const incoming = await this.prisma.businessPartnerRelationship.findMany({
+    // BM2 Phase 1 (2026-08-13): incoming relationships now read from
+    // `partner_relationships` (BUT050 party↔party). "Incoming" = rows
+    // where THIS bp is party B; the caller (frontend) still sees the
+    // legacy `{ id, sourcePartnerId, sourceName, sourceKind, … }` shape.
+    const incoming = await this.prisma.partnerRelationship.findMany({
       where: {
-        targetType: 'organization' as any,
-        targetId: id,
+        partyBId: id,
         status: 'active',
       },
       include: {
-        relationshipType: true,
-        source: { select: { id: true, partnerType: true, displayName: true } },
+        type: true,
+        partyA: { select: { id: true, partnerType: true, displayName: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
 
     return {
-      ...withTargets,
+      ...attachLegacyOutgoing(bp),
       incomingRelationships: incoming.map((r) => ({
         id: r.id,
-        relationshipType: r.relationshipType,
-        sourcePartnerId: r.sourcePartnerId,
-        sourceName: r.source.displayName,
-        sourceKind: r.source.partnerType,
-        roleInContext: r.roleInContext,
+        relationshipType: r.type,
+        sourcePartnerId: r.partyAId,
+        sourceName: r.partyA.displayName,
+        sourceKind: r.partyA.partnerType,
+        roleInContext: r.titleAtB,
         isPrimary: r.isPrimary,
         validFrom: r.validFrom,
         validTo: r.validTo,
@@ -273,61 +414,6 @@ export class BusinessPartnersService {
         notes: r.notes,
       })),
     };
-  }
-
-  // ─── Relationship target hydration (interim — pre-M3) ─────────────────────
-  // Each BusinessPartnerRelationship row carries (targetType, targetId) as a
-  // polymorphic reference. The drawer's Relationships tab needs human-readable
-  // labels. Until M3 collapses targets into Party↔Party, this helper
-  // batch-fetches names per target type and decorates the in-memory rows
-  // with `targetName` and `targetCode` so the UI can render a sentence
-  // ("Customer of → Project Alpha (P-001)") instead of "project #1".
-  private async attachRelationshipTargets<
-    T extends { outgoingRelationships: Array<{ targetType: string; targetId: number }> },
-  >(bp: T): Promise<T> {
-    const rels = bp.outgoingRelationships;
-    if (rels.length === 0) return bp;
-
-    const idsByType: Record<string, Set<number>> = {};
-    for (const r of rels) {
-      (idsByType[r.targetType] ||= new Set()).add(r.targetId);
-    }
-
-    const nameMap: Record<string, Record<number, { name: string; code?: string | null }>> = {};
-
-    if (idsByType.project?.size) {
-      const rows = await this.prisma.project.findMany({
-        where: { id: { in: [...idsByType.project] } },
-        select: { id: true, name: true, number: true },
-      });
-      nameMap.project = Object.fromEntries(rows.map((p) => [p.id, { name: p.name, code: p.number }]));
-    }
-    if (idsByType.organization?.size) {
-      const rows = await this.prisma.businessPartner.findMany({
-        where: { id: { in: [...idsByType.organization] } },
-        select: { id: true, displayName: true },
-      });
-      nameMap.organization = Object.fromEntries(rows.map((o) => [o.id, { name: o.displayName }]));
-    }
-    if (idsByType.department?.size) {
-      const rows = await this.prisma.department.findMany({
-        where: { id: { in: [...idsByType.department] } },
-        select: { id: true, name: true, code: true },
-      });
-      nameMap.department = Object.fromEntries(rows.map((d) => [d.id, { name: d.name, code: d.code }]));
-    }
-    // 'team' has no backing model in the current schema — leave name unset
-    // and let the UI fall back to "team #N" gracefully.
-
-    for (const r of rels as Array<typeof rels[number] & { targetName?: string; targetCode?: string | null }>) {
-      const hit = nameMap[r.targetType]?.[r.targetId];
-      if (hit) {
-        r.targetName = hit.name;
-        r.targetCode = hit.code ?? null;
-      }
-    }
-
-    return bp;
   }
 
   async create(dto: CreateBusinessPartnerDto) {
@@ -394,12 +480,13 @@ export class BusinessPartnersService {
     // representations consistent going forward.
     if (dto.mainRoleTypeId) {
       await this.syncMainRoleIntoRoles(bp.id, dto.mainRoleTypeId);
-      return this.prisma.businessPartner.findUniqueOrThrow({
+      const refreshed = await this.prisma.businessPartner.findUniqueOrThrow({
         where: { id: bp.id },
         include: partnerInclude,
       });
+      return attachLegacyOutgoing(refreshed);
     }
-    return bp;
+    return attachLegacyOutgoing(bp);
   }
 
   /**
@@ -481,12 +568,13 @@ export class BusinessPartnersService {
     // the project Customer dropdown) see it.
     if (dto.mainRoleTypeId) {
       await this.syncMainRoleIntoRoles(id, dto.mainRoleTypeId);
-      return this.prisma.businessPartner.findUniqueOrThrow({
+      const refreshed = await this.prisma.businessPartner.findUniqueOrThrow({
         where: { id },
         include: partnerInclude,
       });
+      return attachLegacyOutgoing(refreshed);
     }
-    return updated;
+    return attachLegacyOutgoing(updated);
   }
 
   /**
@@ -626,6 +714,72 @@ export class BusinessPartnersService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // BM2 Phase 3 — org dedup (domain-first)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Resolve an existing organization BP by (in order):
+   *   1. Any owned domain matching the email's domain — unless the domain
+   *      is a personal / free-email domain (see `isPersonalDomain`).
+   *   2. Normalized company name (case-insensitive, trimmed).
+   * Returns `null` if nothing matches. Used by the importer and by any
+   * future add-BP flow to prevent silent duplicates.
+   */
+  async resolveOrgByDomainOrName(input: {
+    email?: string;
+    companyName?: string;
+  }): Promise<{ id: number; reason: 'domain' | 'name' } | null> {
+    const emailDomain = input.email ? extractEmailDomain(input.email) : null;
+    if (emailDomain && !(await this.isPersonalDomain(emailDomain))) {
+      const domainRow = await this.prisma.businessPartnerDomain.findUnique({
+        where: { domain: emailDomain },
+        include: { partner: { select: { id: true, deletedAt: true } } },
+      });
+      if (domainRow?.partner && !domainRow.partner.deletedAt) {
+        return { id: domainRow.partner.id, reason: 'domain' };
+      }
+    }
+    const normalized = input.companyName?.trim();
+    if (normalized) {
+      const nameHit = await this.prisma.businessPartner.findFirst({
+        where: {
+          partnerType: 'organization',
+          deletedAt: null,
+          companyName: { equals: normalized },
+        },
+      });
+      if (nameHit) return { id: nameHit.id, reason: 'name' };
+    }
+    return null;
+  }
+
+  /**
+   * BM2 Phase 3 / Phase 4 — personal-email domain check.
+   * Phase 3 falls back to a small hard-coded set below.
+   * Phase 4 adds a `personal_email_domains` admin-managed table and
+   * `isPersonalDomain` is re-plumbed to consult it (see `isPersonalDomainDb`).
+   */
+  private async isPersonalDomain(domain: string): Promise<boolean> {
+    const normalized = domain.toLowerCase();
+    if (PERSONAL_EMAIL_DOMAIN_FALLBACK.has(normalized)) return true;
+    return this.isPersonalDomainDb(normalized);
+  }
+
+  /**
+   * BM2 Phase 4 (2026-08-13) — consults the admin-managed
+   * `personal_email_domains` catalog. Combined via OR with the
+   * hard-coded fallback set so removing a fallback entry from the
+   * catalog does not accidentally start binding gmail addresses to
+   * orgs.
+   */
+  protected async isPersonalDomainDb(domain: string): Promise<boolean> {
+    const row = await this.prisma.personalEmailDomain.findUnique({
+      where: { domain },
+    });
+    return !!row;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // CSV import
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -709,17 +863,41 @@ export class BusinessPartnersService {
         continue;
       }
 
-      // Dedupe by email
-      if (email) {
+      // BM2 Phase 3 (2026-08-13) — dedup rules for import.
+      // Rule 1: for ORG rows, match by owned domain first, then by
+      //         normalized companyName (see `resolveOrgByDomainOrName`).
+      // Rule 2: for PERSON rows, we still dedupe by email — but the
+      //         email is not identity anymore (@unique dropped), so a
+      //         match here surfaces as "already exists" instead of a
+      //         hard DB constraint violation.
+      // Rule 3: personal-domain rows (Phase 4) never bind an org; the
+      //         importer skips domain resolution for those.
+      if (partnerType === 'organization' && (email || companyName)) {
+        const existing = await this.resolveOrgByDomainOrName({
+          email: email ?? undefined,
+          companyName: companyName ?? undefined,
+        });
+        if (existing) {
+          if (options.skipExisting) {
+            skipped++;
+            continue;
+          }
+          errors.push({
+            row: rowNum,
+            reason: `Organization "${companyName ?? email}" matches an existing BP (id=${existing.id}, ${existing.reason})`,
+          });
+          continue;
+        }
+      } else if (partnerType === 'person' && email) {
         const dup = await this.prisma.businessPartner.findFirst({
-          where: { email, deletedAt: null },
+          where: { email, deletedAt: null, partnerType: 'person' },
         });
         if (dup) {
           if (options.skipExisting) {
             skipped++;
             continue;
           }
-          errors.push({ row: rowNum, reason: `Email "${email}" already exists (id=${dup.id})` });
+          errors.push({ row: rowNum, reason: `Person with email "${email}" already exists (id=${dup.id})` });
           continue;
         }
       }

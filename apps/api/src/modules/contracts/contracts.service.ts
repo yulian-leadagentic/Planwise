@@ -183,27 +183,113 @@ export class ContractsService {
   }
 
   // Contacts
-  async createContact(data: any) {
-    return this.prisma.contact.create({
+  //
+  // BM2 Phase 5 (2026-08-13): repointed off the legacy `Contact` → User
+  // model onto `BusinessPartner(person)`. There is now exactly one
+  // "contact" concept — a person BP. The endpoint shape is unchanged
+  // so nothing in the UI breaks; `partnerId` on the request/query is
+  // interpreted as the OWNING organization's BusinessPartner.id, and
+  // the created contact is a person BP linked to it via a `worker_of`
+  // party↔party edge (BUT050). `getContacts` reads those edges back.
+  //
+  // Legacy semantic notes:
+  //   - Old `Contact.partnerId` referenced `users.id` (the user acting
+  //     as the "partner" on the contract). Post-Phase-1 party↔party
+  //     lives in `partner_relationships`, so a contact of an org is
+  //     any person BP with an active `worker_of` edge to that org.
+  //   - `createContact({ partnerId, name, email, phone, role })` now
+  //     expects `partnerId` = the organization BP's id.
+  async createContact(data: {
+    partnerId: number;      // organization BP.id
+    name: string;
+    email?: string | null;
+    phone?: string | null;
+    role?: string | null;   // becomes titleAtB on the worker_of edge
+  }) {
+    const org = await this.prisma.businessPartner.findFirst({
+      where: { id: data.partnerId, partnerType: 'organization', deletedAt: null },
+    });
+    if (!org) {
+      throw new NotFoundException(`Organization business partner ${data.partnerId} not found`);
+    }
+    const workerOf = await this.prisma.partnerRelationshipType.findUnique({
+      where: { code: 'worker_of' },
+    });
+    if (!workerOf) {
+      throw new NotFoundException('worker_of PartnerRelationshipType is missing — schema seed broken');
+    }
+    // Split the name into first / last so the person BP has structured
+    // fields the rest of the app can rely on.
+    const trimmed = (data.name ?? '').trim();
+    const parts = trimmed.split(/\s+/);
+    const firstName = parts.length > 1 ? parts.slice(0, -1).join(' ') : trimmed;
+    const lastName = parts.length > 1 ? parts[parts.length - 1] : null;
+
+    const person = await this.prisma.businessPartner.create({
       data: {
-        partnerId: data.partnerId,
-        name: data.name,
-        email: data.email,
-        phone: data.phone,
-        role: data.role,
+        partnerType: 'person',
+        displayName: trimmed || '(unnamed)',
+        firstName: firstName || null,
+        lastName,
+        email: data.email ?? null,
+        phone: data.phone ?? null,
+        source: 'manual',
       },
     });
+    // Link them via worker_of. `titleAtB` carries the free-text role.
+    await this.prisma.partnerRelationship.create({
+      data: {
+        partyAId: person.id,
+        partyBId: org.id,
+        typeId: workerOf.id,
+        titleAtB: data.role ?? null,
+      },
+    });
+    return person;
   }
 
   async getContacts(partnerId: number) {
-    return this.prisma.contact.findMany({
-      where: { partnerId },
-      orderBy: { name: 'asc' },
+    // Return person BPs linked to this organization via active worker_of.
+    const now = new Date();
+    const rows = await this.prisma.partnerRelationship.findMany({
+      where: {
+        partyBId: partnerId,
+        type: { code: 'worker_of' },
+        validFrom: { lte: now },
+        validTo: { gt: now },
+        partyA: { partnerType: 'person', deletedAt: null },
+      },
+      include: {
+        partyA: {
+          select: { id: true, displayName: true, firstName: true, lastName: true, email: true, phone: true },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
     });
+    return rows.map((r) => ({
+      id: r.partyA.id,
+      partnerId,
+      name: r.partyA.displayName,
+      email: r.partyA.email,
+      phone: r.partyA.phone,
+      role: r.titleAtB,
+    }));
   }
 
   async removeContact(id: number) {
-    await this.prisma.contact.delete({ where: { id } });
+    // `id` is now a BusinessPartner.id (person). Soft-delete the person
+    // rather than the edge — matches the pre-Phase-5 semantic ("delete
+    // the contact") more closely, since the frontend passes the person id.
+    // The @relation onDelete:Cascade on partner_relationships cleans the
+    // party↔party edges automatically.
+    const bp = await this.prisma.businessPartner.findFirst({
+      where: { id, partnerType: 'person', deletedAt: null },
+    });
+    if (!bp) throw new NotFoundException(`Contact ${id} not found`);
+    await this.prisma.businessPartner.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
     return { message: 'Contact deleted' };
   }
 

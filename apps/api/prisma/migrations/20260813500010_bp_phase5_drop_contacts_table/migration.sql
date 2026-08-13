@@ -1,0 +1,22 @@
+-- Migration: bp_phase5_drop_contacts_table
+--
+-- BM2 Phase 5 (2026-08-13) — schema drop.
+-- Pairs with the sibling migration
+-- `20260813500000_bp_phase5_contacts_migrate_to_bp` (data-migrate).
+--
+-- Retires the legacy `contacts` table + its FK to users. Nothing in
+-- apps/api or apps/web reads this table any more; the contract-contact
+-- endpoints (contracts.service.createContact/getContacts/removeContact)
+-- were rewritten to operate on `business_partners(person)` linked via
+-- worker_of in `partner_relationships`.
+--
+-- Pre-flight check (per the spec):
+--   $ grep -rn "prisma.contact" apps/api/src → 0
+--   $ grep -rn "prisma.contact" apps/web/src → 0 (frontend never
+--     consumed the contract-contacts endpoints — verified in the
+--     Phase 5 commit).
+--
+-- Written by hand — same shadow-DB constraint as the earlier BM2
+-- migrations.
+
+DROP TABLE IF EXISTS `contacts`;

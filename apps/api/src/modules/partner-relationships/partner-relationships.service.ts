@@ -10,6 +10,51 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 const FAR_FUTURE = new Date('9999-12-31T00:00:00Z');
 
+/** Shape of one entry inside `partner_relationship_types.side_*_targets`. */
+interface SideTarget {
+  kind: 'person' | 'organization' | 'project' | 'any';
+  roleCodes?: string[];
+  categoryCodes?: string[];
+}
+
+interface PartyForCheck {
+  partnerType: string;
+  roles: Array<{ roleType: { code: string; category: string | null } }>;
+}
+
+/**
+ * Validates a party against a SideTarget[]. Empty / null targets = accept
+ * any party. Otherwise the party matches if AT LEAST ONE target passes
+ * kind + roleCodes + categoryCodes.
+ */
+function checkSideTargets(
+  party: PartyForCheck,
+  targets: SideTarget[] | null | undefined,
+  actualKind: string,
+): { ok: boolean; reason: string } {
+  if (!targets || targets.length === 0) return { ok: true, reason: '' };
+  const codes = party.roles.map((r) => r.roleType.code);
+  const cats = Array.from(
+    new Set(party.roles.map((r) => r.roleType.category).filter((c): c is string => !!c)),
+  );
+  const kindOk = targets.filter((t) => t.kind === 'any' || t.kind === actualKind);
+  if (kindOk.length === 0) {
+    const allowed = Array.from(new Set(targets.map((t) => t.kind))).join(', ');
+    return { ok: false, reason: `party kind must be ∈ {${allowed}}, got ${actualKind}` };
+  }
+  for (const t of kindOk) {
+    const rolesOk = !t.roleCodes?.length || t.roleCodes.some((rc) => codes.includes(rc));
+    const catsOk = !t.categoryCodes?.length || t.categoryCodes.some((cc) => cats.includes(cc));
+    if (rolesOk && catsOk) return { ok: true, reason: '' };
+  }
+  const reasons: string[] = [];
+  const wantRoles = Array.from(new Set(kindOk.flatMap((t) => t.roleCodes ?? [])));
+  const wantCats = Array.from(new Set(kindOk.flatMap((t) => t.categoryCodes ?? [])));
+  if (wantRoles.length) reasons.push(`role ∈ {${wantRoles.join(', ')}}`);
+  if (wantCats.length) reasons.push(`category ∈ {${wantCats.join(', ')}}`);
+  return { ok: false, reason: reasons.join(' or ') || 'no matching side target' };
+}
+
 interface CreateDto {
   partyAId: number;
   partyBId: number;
@@ -85,30 +130,45 @@ export class PartnerRelationshipsService {
       throw new BadRequestException('Cannot relate a party to itself');
     }
     const [a, b, type] = await Promise.all([
-      this.prisma.businessPartner.findFirst({ where: { id: dto.partyAId, deletedAt: null } }),
-      this.prisma.businessPartner.findFirst({ where: { id: dto.partyBId, deletedAt: null } }),
+      this.prisma.businessPartner.findFirst({
+        where: { id: dto.partyAId, deletedAt: null },
+        include: { roles: { include: { roleType: true } } },
+      }),
+      this.prisma.businessPartner.findFirst({
+        where: { id: dto.partyBId, deletedAt: null },
+        include: { roles: { include: { roleType: true } } },
+      }),
       this.prisma.partnerRelationshipType.findUnique({ where: { id: dto.typeId } }),
     ]);
     if (!a)    throw new NotFoundException(`Party A (${dto.partyAId}) not found`);
     if (!b)    throw new NotFoundException(`Party B (${dto.partyBId}) not found`);
     if (!type) throw new NotFoundException(`Relationship type (${dto.typeId}) not found`);
 
-    // sideAKind / sideBKind validation
-    const okSide = (kind: string | null, partnerType: string) =>
-      !kind || kind === 'any' || kind === partnerType;
-    if (!okSide(type.sideAKind, a.partnerType)) {
-      throw new BadRequestException(
-        `Type '${type.name}' requires side A to be a ${type.sideAKind}, got ${a.partnerType}`,
-      );
-    }
-    if (!okSide(type.sideBKind, b.partnerType)) {
-      throw new BadRequestException(
-        `Type '${type.name}' requires side B to be a ${type.sideBKind}, got ${b.partnerType}`,
-      );
-    }
-    if (type.sideBKind === 'project') {
+    // Side-target validation.
+    // BM2 Phase 1 (2026-08-13): the legacy single-shot `sideAKind` /
+    // `sideBKind` columns were dropped alongside the retired
+    // `business_partner_relationships` table. All kind + role gating now
+    // reads the structured `sideATargets` / `sideBTargets` JSON. If a
+    // relationship type has no targets on a side, that side accepts any
+    // party — same behavior as the old "null kind = any" fallback.
+    const projectSideAny = (targets: SideTarget[] | null | undefined) =>
+      !!targets && targets.some((t) => t.kind === 'project');
+    if (projectSideAny(type.sideBTargets as SideTarget[] | null) ||
+        projectSideAny(type.sideATargets as SideTarget[] | null)) {
       throw new BadRequestException(
         `Type '${type.name}' targets a project — use /project-partner-roles instead`,
+      );
+    }
+    const sideACheck = checkSideTargets(a, type.sideATargets as SideTarget[] | null, a.partnerType);
+    if (!sideACheck.ok) {
+      throw new BadRequestException(
+        `Type '${type.name}' side A does not match party ${a.displayName}: ${sideACheck.reason}`,
+      );
+    }
+    const sideBCheck = checkSideTargets(b, type.sideBTargets as SideTarget[] | null, b.partnerType);
+    if (!sideBCheck.ok) {
+      throw new BadRequestException(
+        `Type '${type.name}' side B does not match party ${b.displayName}: ${sideBCheck.reason}`,
       );
     }
 

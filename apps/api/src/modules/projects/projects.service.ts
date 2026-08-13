@@ -919,23 +919,27 @@ export class ProjectsService {
         validTo: a.validTo,
       }));
 
-    // Customer Contacts — anyone with an active relationship pointing at
-    // the customer org (any rel type, source is a person). Org-level
-    // association: contacts surface on every project of that customer.
+    // Customer Contacts — anyone with an active party↔party relationship
+    // pointing at the customer org (any rel type, party A is a person).
+    // Org-level association: contacts surface on every project of that
+    // customer.
+    // BM2 Phase 1 (2026-08-13): reads from `partner_relationships`
+    // (BUT050 party↔party). The legacy `business_partner_relationships`
+    // reader was retired with the table; edges of type `worker_of` +
+    // `contact_of_customer` land here.
     let customerContacts: any[] = [];
     if (customerOrgId != null) {
-      const rows = await this.prisma.businessPartnerRelationship.findMany({
+      const rows = await this.prisma.partnerRelationship.findMany({
         where: {
-          targetType: 'organization' as any,
-          targetId: customerOrgId,
+          partyBId: customerOrgId,
           status: 'active',
           validFrom: { lte: now },
           validTo: { gt: now },
-          source: { partnerType: 'person', deletedAt: null },
+          partyA: { partnerType: 'person', deletedAt: null },
         },
         include: {
-          relationshipType: true,
-          source: {
+          type: true,
+          partyA: {
             select: {
               id: true,
               partnerType: true,
@@ -950,27 +954,27 @@ export class ProjectsService {
         },
         orderBy: { createdAt: 'asc' },
       });
-      // Dedupe by source — a person might have multiple rels to the
+      // Dedupe by party A — a person might have multiple rels to the
       // customer org (e.g. worker_of + contact_of_customer).
       const seen = new Set<number>();
       customerContacts = rows
         .filter((r) => {
-          if (seen.has(r.source.id)) return false;
-          seen.add(r.source.id);
+          if (seen.has(r.partyA.id)) return false;
+          seen.add(r.partyA.id);
           return true;
         })
         .map((r) => ({
           relationshipId: r.id,
-          relationshipTypeCode: r.relationshipType.code,
-          relationshipTypeName: r.relationshipType.name,
-          businessPartnerId: r.source.id,
-          userId: r.source.user?.id ?? null,
-          displayName: r.source.displayName,
-          firstName: r.source.firstName,
-          lastName: r.source.lastName,
-          email: r.source.email,
-          phone: r.source.phone,
-          position: r.source.user?.position ?? null,
+          relationshipTypeCode: r.type.code,
+          relationshipTypeName: r.type.name,
+          businessPartnerId: r.partyA.id,
+          userId: r.partyA.user?.id ?? null,
+          displayName: r.partyA.displayName,
+          firstName: r.partyA.firstName,
+          lastName: r.partyA.lastName,
+          email: r.partyA.email,
+          phone: r.partyA.phone,
+          position: r.partyA.user?.position ?? null,
           validFrom: r.validFrom,
           validTo: r.validTo,
         }));
