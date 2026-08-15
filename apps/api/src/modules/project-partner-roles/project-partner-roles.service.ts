@@ -280,4 +280,172 @@ export class ProjectPartnerRolesService {
       data: { isPrimary: false },
     });
   }
+
+  // ─── Cross-module helpers used by projects.service ───────────────────────
+  // BM2 ops-surfaces Phase B (2026-08-13): moved verbatim from the retired
+  // BusinessPartnerRelationshipsService — they always operated on
+  // project_partner_roles anyway. Public so ProjectsService can invoke
+  // them during project create / member add-remove.
+
+  /**
+   * Add (or re-activate) a user's participation in a project as a
+   * project_partner_role row with role.code='participant'.
+   * Auto-links a BusinessPartner when the user is missing one — legacy
+   * users seeded before the BP-per-user pattern had businessPartnerId=NULL
+   * and would silently vanish from getTeam (which reads project_partner_roles).
+   */
+  async upsertProjectMemberRelationship(args: {
+    userId: number;
+    projectId: number;
+    roleInContext?: string | null;
+  }) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: args.userId },
+      select: {
+        id: true,
+        businessPartnerId: true,
+        firstName: true,
+        lastName: true,
+        firstNameHe: true,
+        lastNameHe: true,
+        email: true,
+        phone: true,
+      },
+    });
+    if (!user) return null;
+
+    let businessPartnerId = user.businessPartnerId;
+    if (!businessPartnerId) {
+      const existingBp = await this.prisma.businessPartner.findFirst({
+        where: { email: user.email, deletedAt: null },
+      });
+      if (existingBp) {
+        businessPartnerId = existingBp.id;
+      } else {
+        const bp = await this.prisma.businessPartner.create({
+          data: {
+            partnerType: 'person',
+            displayName: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            firstNameHe: user.firstNameHe ?? null,
+            lastNameHe: user.lastNameHe ?? null,
+            email: user.email,
+            phone: user.phone ?? null,
+            source: 'manual',
+          },
+        });
+        businessPartnerId = bp.id;
+      }
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { businessPartnerId },
+      });
+    }
+
+    const role = await this.prisma.projectRoleType.findUnique({
+      where: { code: 'participant' },
+    });
+    if (!role) return null;
+
+    const existing = await this.prisma.projectPartnerRole.findFirst({
+      where: { projectId: args.projectId, partyId: businessPartnerId, roleId: role.id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (existing) {
+      return this.prisma.projectPartnerRole.update({
+        where: { id: existing.id },
+        data: {
+          titleInProject: args.roleInContext ?? undefined,
+          status: 'active',
+          validTo: FAR_FUTURE,
+        },
+      });
+    }
+    return this.prisma.projectPartnerRole.create({
+      data: {
+        projectId: args.projectId,
+        partyId: businessPartnerId,
+        roleId: role.id,
+        titleInProject: args.roleInContext ?? null,
+        validFrom: new Date(),
+      },
+    });
+  }
+
+  async removeProjectMemberRelationship(args: { userId: number; projectId: number }) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: args.userId },
+      select: { businessPartnerId: true },
+    });
+    if (!user?.businessPartnerId) return null;
+
+    const role = await this.prisma.projectRoleType.findUnique({
+      where: { code: 'participant' },
+    });
+    if (!role) return null;
+
+    const now = new Date();
+    await this.prisma.projectPartnerRole.updateMany({
+      where: {
+        projectId: args.projectId,
+        partyId: user.businessPartnerId,
+        roleId: role.id,
+        validFrom: { lte: now },
+        validTo: { gt: now },
+      },
+      data: { validTo: now, status: 'ended' },
+    });
+    return null;
+  }
+
+  /**
+   * Set the customer for a project. Creates a project_partner_role row
+   * with role.code='customer' marked isPrimary=true. Soft-ends any
+   * previous primary customer assignment on the same project (history
+   * preserved).
+   */
+  async setProjectCustomer(projectId: number, customerOrgId: number) {
+    const customer = await this.prisma.businessPartner.findFirst({
+      where: { id: customerOrgId, partnerType: 'organization', deletedAt: null },
+      include: { roles: { include: { roleType: true } } },
+    });
+    if (!customer) {
+      throw new BadRequestException(`Organization ${customerOrgId} not found`);
+    }
+    const hasCustomerRole = customer.roles.some((r) => r.roleType.code === 'customer');
+    if (!hasCustomerRole) {
+      throw new BadRequestException(
+        `Organization "${customer.displayName}" does not hold the "customer" partner-role.`,
+      );
+    }
+    const role = await this.prisma.projectRoleType.findUnique({
+      where: { code: 'customer' },
+    });
+    if (!role) {
+      throw new BadRequestException(
+        'project_role_types.code="customer" missing — schema seed is broken.',
+      );
+    }
+    const now = new Date();
+    await this.prisma.projectPartnerRole.updateMany({
+      where: {
+        projectId,
+        roleId: role.id,
+        isPrimary: true,
+        validFrom: { lte: now },
+        validTo: { gt: now },
+      },
+      data: { validTo: now, status: 'ended' },
+    });
+    return this.prisma.projectPartnerRole.create({
+      data: {
+        projectId,
+        partyId: customerOrgId,
+        roleId: role.id,
+        isPrimary: true,
+      },
+    });
+  }
 }

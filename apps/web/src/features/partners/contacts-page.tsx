@@ -47,10 +47,15 @@ type Contact = {
   linkedinUrl: string | null;
   status: string;
   mainRoleType: { id: number; code: string; name: string } | null;
-  outgoingRelationships: Array<{
-    targetType: string;
-    targetId: number;
-    relationshipType: { code: string; name: string } | null;
+  // BM2 ops-surfaces Phase A: shape from the new-shape include on the
+  // /business-partners response. `partnerRelationshipsA` = party↔party
+  // rows where THIS contact is party A (their worker_of employer lives here).
+  partnerRelationshipsA: Array<{
+    id: number;
+    partyBId: number;
+    type: { code: string; name: string } | null;
+    validTo?: string | null;
+    status?: string;
   }>;
   user: { id: number; isActive: boolean } | null;
   projectCount: { active: number; archived: number };
@@ -246,10 +251,10 @@ export function ContactsPage() {
       if (c.user) return false;
       // Secondary — explicitly working for the Internal org.
       if (internalOrgIds.size > 0) {
-        const workerOf = c.outgoingRelationships?.find(
-          (r) => r.relationshipType?.code === 'worker_of' && r.targetType === 'organization',
+        const workerOf = c.partnerRelationshipsA?.find(
+          (r) => r.type?.code === 'worker_of',
         );
-        if (workerOf && internalOrgIds.has(workerOf.targetId)) return false;
+        if (workerOf && internalOrgIds.has(workerOf.partyBId)) return false;
       }
       return true;
     }),
@@ -543,11 +548,11 @@ function ContactsListView({
   return (
     <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
       {contacts.map((c) => {
-        const workerOf = (c.outgoingRelationships ?? []).find(
-          (r) => r.relationshipType?.code === 'worker_of' && r.targetType === 'organization',
+        const workerOf = (c.partnerRelationshipsA ?? []).find(
+          (r) => r.type?.code === 'worker_of',
         );
         const employerName = workerOf
-          ? (orgNameById.get(workerOf.targetId) ?? `Organization #${workerOf.targetId}`)
+          ? (orgNameById.get(workerOf.partyBId) ?? `Organization #${workerOf.partyBId}`)
           : (c.companyName ?? null);
         const phone = c.phone || c.mobile || '';
 
@@ -706,11 +711,11 @@ function ByCustomerView({
   const byOrg = useMemo(() => {
     const m = new Map<number, Contact[]>();
     for (const c of contacts) {
-      for (const r of c.outgoingRelationships ?? []) {
-        if (r.relationshipType?.code === 'worker_of' && r.targetType === 'organization') {
-          const arr = m.get(r.targetId) ?? [];
+      for (const r of c.partnerRelationshipsA ?? []) {
+        if (r.type?.code === 'worker_of') {
+          const arr = m.get(r.partyBId) ?? [];
           if (!arr.some((x) => x.id === c.id)) arr.push(c);
-          m.set(r.targetId, arr);
+          m.set(r.partyBId, arr);
         }
       }
     }
@@ -722,11 +727,11 @@ function ByCustomerView({
   // contacts whose employer hasn't been tagged customer yet).
   const customerIds = new Set(customers.map((c) => c.id));
   const orphanContacts = contacts.filter((c) => {
-    const workerOf = (c.outgoingRelationships ?? []).find(
-      (r) => r.relationshipType?.code === 'worker_of' && r.targetType === 'organization',
+    const workerOf = (c.partnerRelationshipsA ?? []).find(
+      (r) => r.type?.code === 'worker_of',
     );
     if (!workerOf) return true; // contact with no employer
-    return !customerIds.has(workerOf.targetId); // employer isn't a customer
+    return !customerIds.has(workerOf.partyBId); // employer isn't a customer
   });
 
   const sortedCustomers = [...customers].sort((a, b) => {

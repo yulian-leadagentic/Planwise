@@ -11,11 +11,11 @@ import { CreateBusinessPartnerDto } from './dto/create-business-partner.dto';
 import { UpdateBusinessPartnerDto } from './dto/update-business-partner.dto';
 import { QueryBusinessPartnersDto } from './dto/query-business-partners.dto';
 
-// BM2 Phase 1 (2026-08-13): the legacy `outgoingRelationships`
-// (BusinessPartnerRelationship[]) include is gone with the table.
-// The drawer + list still expect an `outgoingRelationships` array on the
-// response, so we load the two replacement tables here and synthesize
-// the legacy shape in `toLegacyOutgoing()` below.
+// BM2 ops-surfaces Phase B (2026-08-13): the compat `toLegacyOutgoing()`
+// synth shim is gone. The include below returns the two real arrays
+// (`partnerRelationshipsA` + `projectPartnerRoles`) unchanged — every
+// consumer that used to read `outgoingRelationships` was migrated in
+// Phase A.
 const partnerInclude = {
   roles: { include: { roleType: true } },
   // party↔party edges where THIS bp is party A. BUT050 rows.
@@ -43,91 +43,6 @@ const partnerInclude = {
   // job titles".
   professions: { select: { professionId: true } },
 } as const;
-
-/**
- * BM2 Phase 1 — compat shim. Rebuilds the legacy
- * `outgoingRelationships: BusinessPartnerRelationship[]` shape from the
- * two replacement tables. Frontend (partner-drawer, contacts-page, etc.)
- * still consumes this shape; migrating those consumers to read the two
- * new arrays lives on the ops-surfaces follow-up branch.
- *
- * Row id namespace (used by the /business-partner-relationships compat
- * adapter for round-trip DELETE calls):
- *   • id in [1, 999_999_999]      → partner_relationships row
- *   • id in [1_000_000_000, …]    → project_partner_roles row (subtract offset)
- */
-const PPR_ID_OFFSET = 1_000_000_000;
-
-function toLegacyOutgoing(bp: {
-  partnerRelationshipsA?: Array<{
-    id: number; typeId: number; type: { id: number; code: string; name: string; inverseLabel: string | null };
-    partyBId: number; partyB: { id: number; displayName: string; partnerType: string };
-    titleAtB: string | null; isPrimary: boolean; validFrom: Date; validTo: Date;
-    status: string; notes: string | null;
-  }>;
-  projectPartnerRoles?: Array<{
-    id: number; roleId: number; role: { id: number; code: string; name: string };
-    projectId: number; project: { id: number; name: string; number: string | null } | null;
-    titleInProject: string | null; isPrimary: boolean; validFrom: Date; validTo: Date;
-    status: string; notes: string | null;
-  }>;
-}): Array<{
-  id: number; targetType: 'organization' | 'project';
-  targetId: number; targetName?: string; targetCode?: string | null;
-  relationshipTypeId: number;
-  relationshipType: { id: number; code: string; name: string; inverseLabel: string | null };
-  roleInContext: string | null; isPrimary: boolean;
-  validFrom: Date; validTo: Date; status: string; notes: string | null;
-}> {
-  const out: any[] = [];
-  for (const r of bp.partnerRelationshipsA ?? []) {
-    out.push({
-      id: r.id,
-      targetType: 'organization',
-      targetId: r.partyBId,
-      targetName: r.partyB.displayName,
-      relationshipTypeId: r.typeId,
-      relationshipType: {
-        id: r.type.id, code: r.type.code, name: r.type.name,
-        inverseLabel: r.type.inverseLabel,
-      },
-      roleInContext: r.titleAtB,
-      isPrimary: r.isPrimary,
-      validFrom: r.validFrom,
-      validTo: r.validTo,
-      status: r.status,
-      notes: r.notes,
-    });
-  }
-  for (const r of bp.projectPartnerRoles ?? []) {
-    // Fake a `relationshipType` shape by borrowing the project-role's
-    // code/name. Frontend uses this to render "→ Project X" chips; the
-    // real party↔project domain lives in project_partner_roles.
-    out.push({
-      id: r.id + PPR_ID_OFFSET,
-      targetType: 'project',
-      targetId: r.projectId,
-      targetName: r.project?.name,
-      targetCode: r.project?.number ?? null,
-      relationshipTypeId: r.roleId,
-      relationshipType: {
-        id: r.roleId, code: r.role.code, name: r.role.name, inverseLabel: null,
-      },
-      roleInContext: r.titleInProject,
-      isPrimary: r.isPrimary,
-      validFrom: r.validFrom,
-      validTo: r.validTo,
-      status: r.status,
-      notes: r.notes,
-    });
-  }
-  return out;
-}
-
-/** Attach `outgoingRelationships` (legacy shape) onto a partner in place. */
-function attachLegacyOutgoing<T extends { partnerRelationshipsA?: any[]; projectPartnerRoles?: any[] }>(bp: T): T & { outgoingRelationships: any[] } {
-  return { ...bp, outgoingRelationships: toLegacyOutgoing(bp) };
-}
 
 /**
  * BM2 Phase 3 helper — extract the lower-cased domain from an email.
@@ -239,13 +154,12 @@ export class BusinessPartnersService {
       this.prisma.businessPartner.count({ where }),
     ]);
 
-    // Attach the legacy `outgoingRelationships` array so drawer / list
-    // frontends keep working during BM2 Phase 1 — see `attachLegacyOutgoing`.
-    const withCompat = (data as any[]).map(attachLegacyOutgoing);
-
+    // BM2 ops-surfaces Phase B (2026-08-13): no more legacy shim — the
+    // include returns partnerRelationshipsA + projectPartnerRoles directly
+    // and the frontend consumers read those two arrays.
     const enriched = query.withProjects
-      ? await this.attachProjectsForContacts(withCompat as any[])
-      : withCompat;
+      ? await this.attachProjectsForContacts(data as any[])
+      : data;
 
     return {
       data: enriched,
@@ -263,7 +177,7 @@ export class BusinessPartnersService {
    * Results are merged + de-duped per BP, split active vs archived using
    * project.status, and capped to keep the response light.
    */
-  private async attachProjectsForContacts<T extends { id: number; partnerType: string; outgoingRelationships?: any[]; partnerRelationshipsA?: any[] }>(
+  private async attachProjectsForContacts<T extends { id: number; partnerType: string; partnerRelationshipsA?: any[] }>(
     partners: T[],
   ): Promise<Array<T & { projectCount: { active: number; archived: number }; projects: Array<{ id: number; name: string; number: string | null; status: string; role: string | null; via: 'direct' | 'employer' }> }>> {
     if (partners.length === 0) return partners as any;
@@ -399,7 +313,7 @@ export class BusinessPartnersService {
     });
 
     return {
-      ...attachLegacyOutgoing(bp),
+      ...bp,
       incomingRelationships: incoming.map((r) => ({
         id: r.id,
         relationshipType: r.type,
@@ -484,9 +398,9 @@ export class BusinessPartnersService {
         where: { id: bp.id },
         include: partnerInclude,
       });
-      return attachLegacyOutgoing(refreshed);
+      return refreshed;
     }
-    return attachLegacyOutgoing(bp);
+    return bp;
   }
 
   /**
@@ -572,9 +486,9 @@ export class BusinessPartnersService {
         where: { id },
         include: partnerInclude,
       });
-      return attachLegacyOutgoing(refreshed);
+      return refreshed;
     }
-    return attachLegacyOutgoing(updated);
+    return updated;
   }
 
   /**
@@ -711,6 +625,91 @@ export class BusinessPartnersService {
     });
 
     return this.listProfessions(bpId);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // BM2 Phase D (2026-08-13) — org domain CRUD
+  // A BP (org) can own multiple domains; the import de-dup matches
+  // by-domain first. The drawer exposes list / add / delete via the
+  // endpoints below.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * List every domain owned by this BP. Ordered by domain asc so the
+   * drawer renders a stable list.
+   */
+  async listDomains(bpId: number) {
+    await this.findOne(bpId); // 404 + implicit soft-delete filter
+    return this.prisma.businessPartnerDomain.findMany({
+      where: { partnerId: bpId },
+      orderBy: { domain: 'asc' },
+    });
+  }
+
+  /**
+   * Add a domain to an ORG BP. Persons don't own domains — the drawer
+   * hides the section for them; we defend the endpoint anyway. Normalises
+   * to lowercase + trims whitespace so "  Example.COM  " collapses to
+   * "example.com" (matches the shape stored elsewhere and picked up by
+   * `resolveOrgByDomainOrName` / `extractEmailDomain`).
+   *
+   * The schema's `@@unique([domain])` (global — a domain can be owned
+   * by at most ONE org) surfaces as P2002; we translate it to a
+   * ConflictException with the message the frontend already knows how
+   * to render.
+   */
+  async addDomain(bpId: number, rawDomain: string) {
+    const bp = await this.findOne(bpId);
+    if (bp.partnerType !== 'organization') {
+      throw new BadRequestException(
+        `Domains can only be attached to organization BPs; this one is a ${bp.partnerType}.`,
+      );
+    }
+    const domain = (rawDomain ?? '').trim().toLowerCase();
+    if (!domain) {
+      throw new BadRequestException('Domain is required');
+    }
+    // Very light shape check — a strict RFC-compliant validator would
+    // reject too many legitimate short/long TLDs we see in the wild.
+    // The 255 cap matches the schema's VARCHAR(255) column.
+    if (domain.length > 255 || !/^[a-z0-9][a-z0-9-.]*\.[a-z]{2,}$/i.test(domain)) {
+      throw new BadRequestException(
+        `"${domain}" doesn't look like a domain (expected e.g. example.com).`,
+      );
+    }
+    try {
+      return await this.prisma.businessPartnerDomain.create({
+        data: { partnerId: bpId, domain },
+      });
+    } catch (err: unknown) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        // Report which BP owns it so the operator can go merge/reassign.
+        const existing = await this.prisma.businessPartnerDomain.findUnique({
+          where: { domain },
+          include: { partner: { select: { id: true, displayName: true } } },
+        });
+        if (existing) {
+          throw new ConflictException(
+            `Domain "${domain}" is already owned by ${existing.partner.displayName} (BP id=${existing.partner.id}).`,
+          );
+        }
+        throw new ConflictException(`Domain "${domain}" is already registered.`);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Remove a domain from a BP. 404 if the domain row isn't owned by
+   * this BP (defensive — prevents "detach any domain if you know its id").
+   */
+  async removeDomain(bpId: number, domainId: number) {
+    const row = await this.prisma.businessPartnerDomain.findFirst({
+      where: { id: domainId, partnerId: bpId },
+    });
+    if (!row) throw new NotFoundException('Domain not found on this partner');
+    await this.prisma.businessPartnerDomain.delete({ where: { id: domainId } });
+    return { message: 'Domain removed' };
   }
 
   // ─────────────────────────────────────────────────────────────────────────

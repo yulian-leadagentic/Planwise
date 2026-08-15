@@ -66,9 +66,19 @@ interface IncomingRelationship {
   notes: string | null;
 }
 
+/**
+ * BM2 ops-surfaces Phase A: `outgoingRelationships` is a **client-side**
+ * merge of the two real shapes returned by /business-partners:
+ *   • `partnerRelationshipsA` — party↔party (BUT050) rows where this bp
+ *     is party A. `targetType` is always `'organization'` (party B).
+ *   • `projectPartnerRoles`   — project participation rows.
+ * Delete/create routing per row lives on `sourceTable`; the UI keeps its
+ * grouped rendering intact.
+ */
 interface Relationship extends RelationshipTarget {
   id: number;
-  targetType: 'project' | 'organization' | 'department' | 'team';
+  sourceTable: 'partner_relationship' | 'project_partner_role';
+  targetType: 'project' | 'organization';
   targetId: number;
   roleInContext: string | null;
   isPrimary: boolean;
@@ -77,6 +87,36 @@ interface Relationship extends RelationshipTarget {
   status: string;
   notes: string | null;
   relationshipType: RelationshipType;
+}
+
+/** Raw partner_relationships row where this bp is party A. */
+interface PartnerRelationshipARow {
+  id: number;
+  typeId: number;
+  type: RelationshipType;
+  partyBId: number;
+  partyB: { id: number; displayName: string; partnerType: string };
+  titleAtB: string | null;
+  isPrimary: boolean;
+  validFrom: string | null;
+  validTo: string | null;
+  status: string;
+  notes: string | null;
+}
+
+/** Raw project_partner_roles row where this bp is the party. */
+interface ProjectPartnerRoleRow {
+  id: number;
+  roleId: number;
+  role: { id: number; code: string; name: string };
+  projectId: number;
+  project: { id: number; name: string; number: string | null } | null;
+  titleInProject: string | null;
+  isPrimary: boolean;
+  validFrom: string | null;
+  validTo: string | null;
+  status: string;
+  notes: string | null;
 }
 
 interface BusinessPartnerFull {
@@ -102,7 +142,9 @@ interface BusinessPartnerFull {
   createdAt: string;
   updatedAt: string;
   roles: PartnerRole[];
-  outgoingRelationships: Relationship[];
+  // BM2 ops-surfaces Phase A — new shape from /business-partners.
+  partnerRelationshipsA: PartnerRelationshipARow[];
+  projectPartnerRoles: ProjectPartnerRoleRow[];
   incomingRelationships: IncomingRelationship[];
   user: { id: number; isActive: boolean; lastLoginAt: string | null } | null;
   /**
@@ -113,6 +155,67 @@ interface BusinessPartnerFull {
    */
   mainRoleTypeId: number | null;
   mainRoleType: RoleType | null;
+}
+
+/**
+ * Merge the two real backend arrays into the unified `Relationship[]`
+ * the drawer renders. Rows carry `sourceTable` so per-row delete routes
+ * to /partner-relationships vs /project-partner-roles correctly.
+ */
+function mergeOutgoing(bp: {
+  partnerRelationshipsA?: PartnerRelationshipARow[];
+  projectPartnerRoles?: ProjectPartnerRoleRow[];
+}): Relationship[] {
+  const out: Relationship[] = [];
+  for (const r of bp.partnerRelationshipsA ?? []) {
+    out.push({
+      id: r.id,
+      sourceTable: 'partner_relationship',
+      targetType: 'organization',
+      targetId: r.partyBId,
+      targetName: r.partyB?.displayName,
+      roleInContext: r.titleAtB,
+      isPrimary: r.isPrimary,
+      validFrom: r.validFrom,
+      validTo: r.validTo,
+      status: r.status,
+      notes: r.notes,
+      relationshipType: r.type,
+    });
+  }
+  for (const r of bp.projectPartnerRoles ?? []) {
+    // Project rows synthesize a `relationshipType` shape from the
+    // project-role's code/name so the existing renderer keeps working
+    // ("→ Project X" chips).
+    out.push({
+      id: r.id,
+      sourceTable: 'project_partner_role',
+      targetType: 'project',
+      targetId: r.projectId,
+      targetName: r.project?.name,
+      targetCode: r.project?.number ?? null,
+      roleInContext: r.titleInProject,
+      isPrimary: r.isPrimary,
+      validFrom: r.validFrom,
+      validTo: r.validTo,
+      status: r.status,
+      notes: r.notes,
+      relationshipType: {
+        id: r.roleId,
+        code: r.role.code,
+        name: r.role.name,
+        applicableTargetTypes: null,
+        sideALabel: null,
+        sideBLabel: null,
+        inverseLabel: null,
+        sideATargets: null,
+        sideBTargets: null,
+        sideAKind: null,
+        sideBKind: null,
+      },
+    });
+  }
+  return out;
 }
 
 export function PartnerDrawer({
@@ -172,7 +275,7 @@ export function PartnerDrawer({
         <div className="flex border-b border-slate-200 dark:border-slate-700 px-5">
           {([
             { key: 'details',      label: 'Details' },
-            { key: 'relationships',label: `Relationships${bp ? ` (${(bp.outgoingRelationships?.length ?? 0) + (bp.incomingRelationships?.length ?? 0)})` : ''}` },
+            { key: 'relationships',label: `Relationships${bp ? ` (${(bp.partnerRelationshipsA?.length ?? 0) + (bp.projectPartnerRoles?.length ?? 0) + (bp.incomingRelationships?.length ?? 0)})` : ''}` },
           ] as const).map((t) => (
             <button
               key={t.key}
@@ -325,13 +428,12 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
   const [editing, setEditing] = useState(false);
 
   // Active worker_of relationship (persons only) — defines the contact's employer.
+  // BM2 ops-surfaces Phase A: read from partnerRelationshipsA (party↔party).
   const employerRel = useMemo(
-    () => bp.outgoingRelationships.find(
-      (r) => r.relationshipType.code === 'worker_of'
-        && r.targetType === 'organization'
-        && r.status === 'active',
+    () => (bp.partnerRelationshipsA ?? []).find(
+      (r) => r.type.code === 'worker_of' && r.status === 'active',
     ),
-    [bp.outgoingRelationships],
+    [bp.partnerRelationshipsA],
   );
 
   // Fetch organizations for the employer dropdown (persons only, in edit mode).
@@ -346,8 +448,8 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
   });
 
   const employerOrg = useMemo(
-    () => orgs.find((o) => o.id === employerRel?.targetId)
-      ?? (employerRel ? { id: employerRel.targetId, displayName: bp.companyName ?? 'Unknown' } : null),
+    () => orgs.find((o) => o.id === employerRel?.partyBId)
+      ?? (employerRel ? { id: employerRel.partyBId, displayName: employerRel.partyB?.displayName ?? bp.companyName ?? 'Unknown' } : null),
     [orgs, employerRel, bp.companyName],
   );
 
@@ -368,13 +470,13 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
     notes: bp.notes ?? '',
     status: bp.status,
     // Persons-only — id of org chosen from the employer dropdown.
-    employerOrgId: employerRel?.targetId ?? null,
+    employerOrgId: employerRel?.partyBId ?? null,
   });
 
   // Re-sync employerOrgId when relationships load.
   useEffect(() => {
-    setForm((f) => ({ ...f, employerOrgId: employerRel?.targetId ?? null }));
-  }, [employerRel?.targetId]);
+    setForm((f) => ({ ...f, employerOrgId: employerRel?.partyBId ?? null }));
+  }, [employerRel?.partyBId]);
 
   const update = useMutation({
     mutationFn: async () => {
@@ -398,13 +500,14 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
       });
 
       // 2. For persons, sync the worker_of relationship to the chosen employer.
+      // BM2 ops-surfaces Phase A: party↔party edges live on /partner-relationships now.
       if (bp.partnerType === 'person') {
         const newEmployerId = form.employerOrgId;
-        const oldEmployerId = employerRel?.targetId ?? null;
+        const oldEmployerId = employerRel?.partyBId ?? null;
         if (newEmployerId !== oldEmployerId) {
           // End the old worker_of (soft-delete) if it existed.
           if (employerRel) {
-            await client.delete(`/business-partner-relationships/${employerRel.id}`).catch(() => undefined);
+            await client.delete(`/partner-relationships/${employerRel.id}`).catch(() => undefined);
           }
           // Create the new one if employer is set.
           if (newEmployerId) {
@@ -412,11 +515,10 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
               .then((r) => r.data?.data ?? r.data ?? []);
             const workerOf = (Array.isArray(relTypes) ? relTypes : []).find((rt: any) => rt.code === 'worker_of');
             if (workerOf) {
-              await client.post('/business-partner-relationships', {
-                sourcePartnerId: bp.id,
-                targetType: 'organization',
-                targetId: newEmployerId,
-                relationshipTypeId: workerOf.id,
+              await client.post('/partner-relationships', {
+                partyAId: bp.id,
+                partyBId: newEmployerId,
+                typeId: workerOf.id,
                 isPrimary: true,
               }).catch(() => undefined);
             }
@@ -480,9 +582,9 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
           ) : (
             <Field
               label="Employer"
-              value={employerRel ? (employerOrg?.displayName ?? bp.companyName ?? `#${employerRel.targetId}`) : null}
+              value={employerRel ? (employerOrg?.displayName ?? bp.companyName ?? `#${employerRel.partyBId}`) : null}
               render={() => employerRel
-                ? <span className="text-slate-700 dark:text-slate-200">{employerOrg?.displayName ?? bp.companyName ?? `#${employerRel.targetId}`}{employerRel.roleInContext ? <span className="text-slate-400 dark:text-slate-500"> · {employerRel.roleInContext}</span> : null}</span>
+                ? <span className="text-slate-700 dark:text-slate-200">{employerOrg?.displayName ?? bp.companyName ?? `#${employerRel.partyBId}`}{employerRel.titleAtB ? <span className="text-slate-400 dark:text-slate-500"> · {employerRel.titleAtB}</span> : null}</span>
                 : <span className="italic text-slate-400 dark:text-slate-500">—</span>
               }
             />
@@ -546,6 +648,15 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
         {bp.partnerType === 'person' && (
           <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
             <JobTitlesSection bpId={bp.id} canWrite={canWrite} />
+          </div>
+        )}
+
+        {/* BM2 Phase D — Domains. Orgs only. Feeds the import dedup
+            (`resolveOrgByDomainOrName` matches by owned domain first).
+            Add + delete against /business-partners/:id/domains. */}
+        {bp.partnerType === 'organization' && (
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+            <DomainsSection bpId={bp.id} canWrite={canWrite} canDelete={canDelete} />
           </div>
         )}
 
@@ -788,6 +899,126 @@ function JobTitlesSection({ bpId, canWrite }: { bpId: number; canWrite: boolean 
   );
 }
 
+// ─── Domains (BM2 Phase D) ──────────────────────────────────────────────────
+//
+// An organization BP can own multiple email domains. The import
+// dedup matches company-by-domain first (see resolveOrgByDomainOrName)
+// so keeping this list accurate directly improves import quality.
+//
+// Line editor — no modal. Type a domain, hit Add. Server enforces the
+// global-uniqueness constraint (a domain can only be owned by ONE org);
+// duplicate attempts surface as a friendly toast that names the org
+// that already owns it.
+
+interface BpDomain { id: number; partnerId: number; domain: string }
+
+function DomainsSection({ bpId, canWrite, canDelete }: { bpId: number; canWrite: boolean; canDelete: boolean }) {
+  const queryClient = useQueryClient();
+  const confirm = useConfirm();
+  const [input, setInput] = useState('');
+
+  const { data: domains = [], isLoading } = useQuery<BpDomain[]>({
+    queryKey: ['bp-domains', bpId],
+    queryFn: () =>
+      client.get(`/business-partners/${bpId}/domains`).then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+
+  const add = useMutation({
+    mutationFn: (domain: string) =>
+      client.post(`/business-partners/${bpId}/domains`, { domain }).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bp-domains', bpId] });
+      // Invalidate the BP list too — future import dedup calls may key
+      // off the changed domain list.
+      queryClient.invalidateQueries({ queryKey: ['business-partners'] });
+      setInput('');
+      notify.success('Domain added', { code: 'BP-DOMAIN-ADD-200' });
+    },
+    onError: (err: unknown) => notify.apiError(err, 'Failed to add domain'),
+  });
+
+  const remove = useMutation({
+    mutationFn: (domainId: number) =>
+      client.delete(`/business-partners/${bpId}/domains/${domainId}`).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bp-domains', bpId] });
+      queryClient.invalidateQueries({ queryKey: ['business-partners'] });
+      notify.success('Domain removed', { code: 'BP-DOMAIN-DEL-200' });
+    },
+    onError: (err: unknown) => notify.apiError(err, 'Failed to remove domain'),
+  });
+
+  const submitAdd = () => {
+    const v = input.trim().toLowerCase();
+    if (!v) return;
+    add.mutate(v);
+  };
+
+  return (
+    <div>
+      <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-2">Email domains</p>
+      <p className="text-[11px] text-slate-400 dark:text-slate-500 mb-2">
+        Import dedup matches this org by its owned domains. A domain can be owned by only one org.
+      </p>
+      {isLoading ? (
+        <p className="text-[11px] text-slate-400 dark:text-slate-500">Loading…</p>
+      ) : domains.length === 0 ? (
+        <p className="text-[12px] text-slate-400 dark:text-slate-500 italic mb-2">No domains yet.</p>
+      ) : (
+        <div className="space-y-1.5 mb-2">
+          {domains.map((d) => (
+            <div key={d.id} className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 px-3 py-2">
+              <span className="text-[13px] font-mono text-slate-800 dark:text-slate-100 flex-1 truncate">{d.domain}</span>
+              {canDelete && (
+                <button
+                  onClick={async () => {
+                    if (await confirm(`Detach domain "${d.domain}" from this organization?`)) {
+                      remove.mutate(d.id);
+                    }
+                  }}
+                  disabled={remove.isPending}
+                  className="p-1 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
+                  title="Remove domain"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {canWrite && (
+        <form
+          onSubmit={(e) => { e.preventDefault(); submitAdd(); }}
+          className="flex items-center gap-2"
+        >
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="example.com"
+            className={cn(inputClass, 'flex-1 font-mono text-[13px]')}
+            spellCheck={false}
+            autoComplete="off"
+            disabled={add.isPending}
+          />
+          <button
+            type="submit"
+            disabled={add.isPending || !input.trim()}
+            className="rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-2 flex items-center gap-1 disabled:opacity-50"
+          >
+            <Plus className="h-3 w-3" />
+            {add.isPending ? 'Adding…' : 'Add'}
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}
+
 // ─── Relationships ───────────────────────────────────────────────────────────
 
 function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull; canWrite: boolean; canDelete: boolean }) {
@@ -795,13 +1026,22 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
   const queryClient = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
 
-  const grouped = bp.outgoingRelationships.reduce<Record<string, Relationship[]>>((acc, r) => {
+  // BM2 ops-surfaces Phase A: merge the two new-shape arrays into the
+  // Relationship[] the renderer already knows how to group.
+  const outgoing = useMemo(() => mergeOutgoing(bp), [bp]);
+  const grouped = outgoing.reduce<Record<string, Relationship[]>>((acc, r) => {
     (acc[r.targetType] ||= []).push(r);
     return acc;
   }, {});
 
+  // Per-row delete routes by sourceTable (party↔party vs project participation).
   const remove = useMutation({
-    mutationFn: (id: number) => client.delete(`/business-partner-relationships/${id}`).then((r) => r.data),
+    mutationFn: (row: { id: number; sourceTable: Relationship['sourceTable'] }) => {
+      const path = row.sourceTable === 'project_partner_role'
+        ? `/project-partner-roles/${row.id}`
+        : `/partner-relationships/${row.id}`;
+      return client.delete(path).then((r) => r.data);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });
       notify.success('Relationship removed', { code: 'BP-REL-DELETE-200' });
@@ -842,7 +1082,7 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
               </div>
               {canDelete && (
                 <button
-                  onClick={async () => { if (await confirm('Remove this relationship?')) remove.mutate(r.id); }}
+                  onClick={async () => { if (await confirm('Remove this relationship?')) remove.mutate({ id: r.id, sourceTable: r.sourceTable }); }}
                   className="p-1 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600 shrink-0"
                   title="Remove"
                 >
@@ -861,8 +1101,11 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
   // from the receiving side.
   const incoming = bp.incomingRelationships ?? [];
 
+  // BM2 ops-surfaces Phase A: incoming rows are always party↔party
+  // (a project would appear as a *project participation* on the party's
+  // side, not as an incoming edge here), so route to /partner-relationships.
   const removeIncoming = useMutation({
-    mutationFn: (id: number) => client.delete(`/business-partner-relationships/${id}`).then((r) => r.data),
+    mutationFn: (id: number) => client.delete(`/partner-relationships/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });
       notify.success('Relationship removed', { code: 'BP-REL-DELETE-200' });
@@ -872,7 +1115,7 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
 
   return (
     <div className="space-y-4">
-      {bp.outgoingRelationships.length === 0 && incoming.length === 0 && (
+      {outgoing.length === 0 && incoming.length === 0 && (
         <p className="text-[12px] text-slate-400 dark:text-slate-500 italic text-center py-6">No relationships yet.</p>
       )}
 
@@ -1074,38 +1317,72 @@ function AddRelationshipModal({
     setChosenKind(null);
   }, [relationshipTypeId]);
 
-  // The legacy POST body uses (sourcePartnerId, targetType, targetId). For
-  // forSide='A' the current partner is the source; for 'B' they're the
-  // target and the picked candidate becomes the source.
-  const legacyTargetType =
-    chosenKind === 'person' ? 'organization' /* persons-as-targets piggy-back the BP-target column */
-    : (chosenKind as 'project' | 'organization' | null);
-
+  // BM2 ops-surfaces Phase A: this modal used to always POST to the
+  // legacy /business-partner-relationships facade; now it routes:
+  //   • chosenKind === 'project' → POST /project-partner-roles (participation)
+  //   • otherwise (person/organization) → POST /partner-relationships (party↔party)
+  // Note: the candidates endpoint filters out project-typed relationship
+  // types where the type still lists 'project' among its side targets,
+  // but the routing here is defensive in case a legacy config remains.
   const create = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (!chosenKind || !targetId) {
         throw new Error('Pick a target before saving');
       }
+      if (chosenKind === 'project') {
+        // Project participation lives on ProjectRoleType, not on
+        // PartnerRelationshipType. Map the legacy rel-type code to the
+        // project-role code and look it up.
+        const relTypes: Array<{ id: number; code: string }> = await client.get('/admin/partner-types/relationship-types')
+          .then((r) => r.data?.data ?? r.data ?? []);
+        const legacyType = (Array.isArray(relTypes) ? relTypes : []).find(
+          (rt) => rt.id === relationshipTypeId,
+        );
+        const projectRoleCode =
+          legacyType?.code === 'customer_of_project' ? 'customer'
+          : legacyType?.code === 'supplier_of_project' ? 'supplier'
+          : legacyType?.code === 'participates_in_project' ? 'participant'
+          : null;
+        if (!projectRoleCode) {
+          throw new Error(
+            `Cannot map relationship type '${legacyType?.code}' to a project role.`,
+          );
+        }
+        const roleTypes: Array<{ id: number; code: string }> = await client.get('/admin/project-role-types')
+          .then((r) => r.data?.data ?? r.data ?? []);
+        const role = (Array.isArray(roleTypes) ? roleTypes : []).find(
+          (rt) => rt.code === projectRoleCode,
+        );
+        if (!role) {
+          throw new Error(`project role type '${projectRoleCode}' missing`);
+        }
+        return client.post('/project-partner-roles', {
+          projectId: targetId,
+          partyId: partnerId,
+          roleId: role.id,
+          titleInProject: roleInContext.trim() || undefined,
+          isPrimary,
+        }).then((r) => r.data);
+      }
+      // party↔party (organization or person target)
       const body =
         forSide === 'A'
           ? {
-              sourcePartnerId: partnerId,
-              targetType: legacyTargetType,
-              targetId,
-              relationshipTypeId,
-              roleInContext: roleInContext.trim() || undefined,
+              partyAId: partnerId,
+              partyBId: targetId,
+              typeId: relationshipTypeId,
+              titleAtB: roleInContext.trim() || undefined,
               isPrimary,
             }
           : {
-              // Side B: the picked candidate is the source, current partner is target.
-              sourcePartnerId: targetId,
-              targetType: 'organization' as const,
-              targetId: partnerId,
-              relationshipTypeId,
-              roleInContext: roleInContext.trim() || undefined,
+              // Side B: the picked candidate is party A, current partner is party B.
+              partyAId: targetId,
+              partyBId: partnerId,
+              typeId: relationshipTypeId,
+              titleAtB: roleInContext.trim() || undefined,
               isPrimary,
             };
-      return client.post('/business-partner-relationships', body).then((r) => r.data);
+      return client.post('/partner-relationships', body).then((r) => r.data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });

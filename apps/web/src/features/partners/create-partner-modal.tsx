@@ -199,15 +199,15 @@ export function CreatePartnerModal({
       }
 
       // Wire the worker_of relationship to the chosen organization.
+      // BM2 ops-surfaces Phase A: party↔party edges live on /partner-relationships now.
       if (form.employerOrgId) {
         const workerOf = relTypes.find((rt) => rt.code === 'worker_of');
         if (workerOf) {
-          await client.post('/business-partner-relationships', {
-            sourcePartnerId: created.id,
-            targetType: 'organization',
-            targetId: Number(form.employerOrgId),
-            relationshipTypeId: workerOf.id,
-            roleInContext: form.roleInContext.trim() || undefined,
+          await client.post('/partner-relationships', {
+            partyAId: created.id,
+            partyBId: Number(form.employerOrgId),
+            typeId: workerOf.id,
+            titleAtB: form.roleInContext.trim() || undefined,
             isPrimary: true,
           }).catch(() => { warnings.push('employer link'); });
         } else {
