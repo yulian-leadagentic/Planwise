@@ -2,14 +2,49 @@ import { Module } from '@nestjs/common';
 import { DataImportController } from './data-import.controller';
 import { ExcelParserService } from './excel-parser.service';
 import { UsersImporterService } from './importers/users-importer.service';
+import {
+  ContactsImportController,
+  ContactsMappingPresetController,
+} from './contacts/contacts-import.controller';
+import { ContactsTriageService } from './contacts/triage.service';
+import { ContactsHeaderDetectionService } from './contacts/header-detection.service';
+import { ContactsMappingPresetService } from './contacts/mapping-preset.service';
+import { ContactsSplitMergeService } from './contacts/split-merge.service';
+import { ContactsDedupService } from './contacts/dedup.service';
+import { ContactsResolveService } from './contacts/resolve.service';
+import { ContactsCommitService } from './contacts/commit.service';
+import { BusinessPartnersModule } from '../business-partners/business-partners.module';
 
 /**
- * Bulk-import module. M1 ships the Employees (users) importer; partners
- * and contacts come in M2 + M3 and only need their importer service to
- * be added to providers + wired in DataImportController.getImporter().
+ * Bulk-import module. M1 ships the Employees (users) importer; the
+ * contacts sub-mode lives under `/data-import/contacts/*` and follows
+ * the 6-stage methodology in `docs/bm2/bp-import-methodology.md`.
+ * Each stage adds one service under `./contacts/` and one endpoint on
+ * `ContactsImportController` — the shared scaffolding (permission
+ * modules, DataImport job history) comes from the parent controller.
+ *
+ * BusinessPartnersModule is imported so the contacts wizard can reuse
+ * BusinessPartnersService (personal-domain catalog check + domain-first
+ * org resolution) — keeps the wizard's dedup rules in lockstep with the
+ * BP admin path.
  */
 @Module({
-  controllers: [DataImportController],
-  providers: [ExcelParserService, UsersImporterService],
+  imports: [BusinessPartnersModule],
+  controllers: [
+    DataImportController,
+    ContactsImportController,
+    ContactsMappingPresetController,
+  ],
+  providers: [
+    ExcelParserService,
+    UsersImporterService,
+    ContactsTriageService,
+    ContactsHeaderDetectionService,
+    ContactsMappingPresetService,
+    ContactsSplitMergeService,
+    ContactsDedupService,
+    ContactsResolveService,
+    ContactsCommitService,
+  ],
 })
 export class DataImportModule {}

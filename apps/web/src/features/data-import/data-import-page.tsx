@@ -22,6 +22,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { dataImportApi, type ImportTarget, type ImportMode, type ValidationResponse } from '@/api/data-import.api';
+import { ContactsImportWizard } from './contacts/contacts-import-wizard';
 
 type WizardStep = 'pick' | 'upload' | 'review' | 'done';
 
@@ -50,9 +51,10 @@ const TARGETS: Array<{
   {
     key: 'contacts',
     label: 'Customer Contacts',
-    description: 'Contact people attached to existing customers. Ships in M3.',
+    description:
+      'Six-stage wizard for real-world Excel / CSV / DOCX / PDF contact sheets — magic-byte triage, per-sheet header detection, split & forward-fill, dedup, idempotent commit.',
     icon: ContactIcon,
-    available: false,
+    available: true,
   },
 ];
 
@@ -151,7 +153,30 @@ export function DataImportPage() {
         />
       )}
 
-      {step === 'upload' && target && (
+      {/* Contacts target has its own 6-stage wizard per the methodology
+          in `docs/bm2/bp-import-methodology.md`. The users flow below
+          keeps its template-driven 4-step wizard. */}
+      {target === 'contacts' && step !== 'pick' && (
+        <div className="rounded-[14px] border border-slate-200 bg-white p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-[15px] font-bold text-slate-900">Customer Contacts import</h2>
+              <p className="text-[13px] text-slate-500 mt-0.5">
+                6-stage pipeline. See docs/bm2/bp-import-methodology.md for the rules.
+              </p>
+            </div>
+            <button
+              onClick={reset}
+              className="rounded-lg border border-slate-200 hover:border-slate-400 bg-white px-3 py-1.5 text-[12px] font-semibold text-slate-700"
+            >
+              Cancel
+            </button>
+          </div>
+          <ContactsImportWizard onDone={reset} />
+        </div>
+      )}
+
+      {target !== 'contacts' && step === 'upload' && target && (
         <UploadStep
           target={target}
           file={file}
@@ -165,7 +190,7 @@ export function DataImportPage() {
         />
       )}
 
-      {step === 'review' && target && validation && file && (
+      {target !== 'contacts' && step === 'review' && target && validation && file && (
         <ReviewStep
           target={target}
           validation={validation}
@@ -178,7 +203,7 @@ export function DataImportPage() {
         />
       )}
 
-      {step === 'done' && commitResult && target && (
+      {target !== 'contacts' && step === 'done' && commitResult && target && (
         <DoneStep
           target={target}
           result={commitResult}
