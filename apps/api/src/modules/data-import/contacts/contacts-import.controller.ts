@@ -16,6 +16,7 @@ import { RequirePermissions } from '../../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 
 import { ContactsTriageService, TriageResult } from './triage.service';
+import { ContactsHeaderDetectionService, SheetGrade } from './header-detection.service';
 
 /**
  * BM2 · Contacts import wizard — the "contacts" sub-mode of the existing
@@ -35,7 +36,10 @@ import { ContactsTriageService, TriageResult } from './triage.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('data-import/contacts')
 export class ContactsImportController {
-  constructor(private readonly triage: ContactsTriageService) {}
+  constructor(
+    private readonly triage: ContactsTriageService,
+    private readonly headers: ContactsHeaderDetectionService,
+  ) {}
 
   /** Extra defense — the guard covers `data-import/contacts`; make sure
    *  the caller specifically has WRITE on that path (not merely READ). */
@@ -90,4 +94,55 @@ export class ContactsImportController {
     }
     return this.triage.triage(file.buffer, filenameOverride ?? file.originalname);
   }
+
+  /**
+   * Stage 1 + Stage 2 combined — the wizard's real "upload" entry
+   * point. Triages the file, and for every accepted sheet returns the
+   * Stage 2 grade (header row + confidence + auto-suggested column
+   * mapping). Rejects still surface with a reason.
+   *
+   * We ship this as a single endpoint (vs. triage-then-grade) because
+   * the frontend needs both to render the picker in one paint — and
+   * Stage 2 is cheap once the buffer is already parsed.
+   */
+  @Post('upload')
+  @RequirePermissions({ module: 'data-import/contacts', action: 'write' })
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary:
+      'Stage 1 + Stage 2 — triage the upload, then per-sheet header detection with an auto-suggested column mapping. One round-trip; the client persists the returned sheets across the remaining wizard steps.',
+  })
+  async upload(
+    @CurrentUser() user: any,
+    @UploadedFile() file: { buffer: Buffer; originalname: string; size: number } | undefined,
+    @Body('filename') filenameOverride?: string,
+  ): Promise<UploadResponse> {
+    this.assertCanImport(user);
+    if (!file) {
+      return {
+        triage: { kind: 'reject', reason: 'no file was uploaded (use the "file" form field)' },
+        grades: [],
+      };
+    }
+    const MAX_BYTES = 5 * 1024 * 1024;
+    if (file.buffer.length > MAX_BYTES) {
+      return {
+        triage: {
+          kind: 'reject',
+          reason: `file is larger than ${Math.round(MAX_BYTES / (1024 * 1024))} MB — split it or contact support`,
+        },
+        grades: [],
+      };
+    }
+    const triage = await this.triage.triage(file.buffer, filenameOverride ?? file.originalname);
+    if (triage.kind === 'reject') return { triage, grades: [] };
+    const grades = this.headers.grade(triage.sheets);
+    return { triage, grades };
+  }
+}
+
+export interface UploadResponse {
+  triage: TriageResult;
+  grades: SheetGrade[];
 }

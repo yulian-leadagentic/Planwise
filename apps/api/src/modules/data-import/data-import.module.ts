@@ -4,6 +4,7 @@ import { ExcelParserService } from './excel-parser.service';
 import { UsersImporterService } from './importers/users-importer.service';
 import { ContactsImportController } from './contacts/contacts-import.controller';
 import { ContactsTriageService } from './contacts/triage.service';
+import { ContactsHeaderDetectionService } from './contacts/header-detection.service';
 
 /**
  * Bulk-import module. M1 ships the Employees (users) importer; the
@@ -15,6 +16,11 @@ import { ContactsTriageService } from './contacts/triage.service';
  */
 @Module({
   controllers: [DataImportController, ContactsImportController],
-  providers: [ExcelParserService, UsersImporterService, ContactsTriageService],
+  providers: [
+    ExcelParserService,
+    UsersImporterService,
+    ContactsTriageService,
+    ContactsHeaderDetectionService,
+  ],
 })
 export class DataImportModule {}
