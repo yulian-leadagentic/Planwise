@@ -207,6 +207,12 @@ export const contactsImportApi = {
   /**
    * Stage 6 — commit. Ships in the Stage 6 wiring; endpoint may 404
    * until then.
+   *
+   * `attachToProjectId` (optional) attaches each committed person to
+   * that project as a `project_partner_role`; `projectRoleId` (optional)
+   * pins the ProjectRoleType. If `projectRoleId` is omitted the backend
+   * falls back to a role type with code `contact` / `external_contact`
+   * / `consultant`, else the person is created without a project attach.
    */
   commit: async (input: {
     sheet: ExtractedSheet;
@@ -215,6 +221,7 @@ export const contactsImportApi = {
     decisions: RowDecision[];
     filename?: string;
     attachToProjectId?: number | null;
+    projectRoleId?: number | null;
     notes?: string;
   }): Promise<CommitSummary> => {
     const r = await client.post<CommitSummary>('/data-import/contacts/commit', input);
