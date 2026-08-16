@@ -12,6 +12,7 @@ import { ContactsMappingPresetService } from './contacts/mapping-preset.service'
 import { ContactsSplitMergeService } from './contacts/split-merge.service';
 import { ContactsDedupService } from './contacts/dedup.service';
 import { ContactsResolveService } from './contacts/resolve.service';
+import { ContactsCommitService } from './contacts/commit.service';
 import { BusinessPartnersModule } from '../business-partners/business-partners.module';
 
 /**
@@ -43,6 +44,7 @@ import { BusinessPartnersModule } from '../business-partners/business-partners.m
     ContactsSplitMergeService,
     ContactsDedupService,
     ContactsResolveService,
+    ContactsCommitService,
   ],
 })
 export class DataImportModule {}

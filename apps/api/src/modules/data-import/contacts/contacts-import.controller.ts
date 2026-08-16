@@ -26,6 +26,7 @@ import { ContactsMappingPresetService } from './mapping-preset.service';
 import { ContactsResolveService, SheetPreview } from './resolve.service';
 import { ExtractedSheet } from './triage.service';
 import { ColumnMapping } from './split-merge.service';
+import { ContactsCommitService, CommitResult, RowDecision } from './commit.service';
 
 /**
  * BM2 · Contacts import wizard — the "contacts" sub-mode of the existing
@@ -50,6 +51,7 @@ export class ContactsImportController {
     private readonly headers: ContactsHeaderDetectionService,
     private readonly presets: ContactsMappingPresetService,
     private readonly resolve: ContactsResolveService,
+    private readonly commitService: ContactsCommitService,
   ) {}
 
   /** Extra defense — the guard covers `data-import/contacts`; make sure
@@ -181,6 +183,54 @@ export class ContactsImportController {
       mapping: body.mapping,
       headerRowIndex: body.headerRowIndex,
     });
+  }
+
+  /**
+   * Stage 6 — commit. Persists org BPs + person BPs + worker_of edges,
+   * optionally attaching each person to a project via
+   * project-partner-roles with the row's discipline. Idempotent: re-
+   * running the same sheet with the same decisions is a no-op (org
+   * dedup re-runs on the server; person dedup re-checks email; both
+   * P2002 races are caught + skipped).
+   *
+   * Writes a DataImport history row + one DataImportRow per source
+   * row so the shared /admin/data-import/history page shows this run
+   * alongside the users importer.
+   */
+  @Post('commit')
+  @RequirePermissions({ module: 'data-import/contacts', action: 'write' })
+  @ApiOperation({
+    summary:
+      'Stage 6 — idempotent commit. Creates/links org BPs + person BPs + worker_of edges; optionally attaches each person to a project. Writes history + per-row telemetry.',
+  })
+  async commit(
+    @CurrentUser() user: any,
+    @Body()
+    body: {
+      sheet: ExtractedSheet;
+      mapping: ColumnMapping;
+      headerRowIndex?: number;
+      decisions?: RowDecision[];
+      filename?: string;
+      attachToProjectId?: number | null;
+      projectRoleId?: number | null;
+      notes?: string;
+    },
+  ): Promise<CommitResult> {
+    this.assertCanImport(user);
+    return this.commitService.commit(
+      {
+        sheet: body.sheet,
+        mapping: body.mapping,
+        headerRowIndex: body.headerRowIndex,
+        decisions: body.decisions,
+        filename: body.filename,
+        attachToProjectId: body.attachToProjectId,
+        projectRoleId: body.projectRoleId,
+        notes: body.notes,
+      },
+      user.id,
+    );
   }
 }
 
