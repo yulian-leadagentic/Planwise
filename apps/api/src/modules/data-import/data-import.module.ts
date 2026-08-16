@@ -9,6 +9,7 @@ import {
 import { ContactsTriageService } from './contacts/triage.service';
 import { ContactsHeaderDetectionService } from './contacts/header-detection.service';
 import { ContactsMappingPresetService } from './contacts/mapping-preset.service';
+import { ContactsSplitMergeService } from './contacts/split-merge.service';
 
 /**
  * Bulk-import module. M1 ships the Employees (users) importer; the
@@ -30,6 +31,7 @@ import { ContactsMappingPresetService } from './contacts/mapping-preset.service'
     ContactsTriageService,
     ContactsHeaderDetectionService,
     ContactsMappingPresetService,
+    ContactsSplitMergeService,
   ],
 })
 export class DataImportModule {}
