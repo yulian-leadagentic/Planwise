@@ -2,9 +2,13 @@ import { Module } from '@nestjs/common';
 import { DataImportController } from './data-import.controller';
 import { ExcelParserService } from './excel-parser.service';
 import { UsersImporterService } from './importers/users-importer.service';
-import { ContactsImportController } from './contacts/contacts-import.controller';
+import {
+  ContactsImportController,
+  ContactsMappingPresetController,
+} from './contacts/contacts-import.controller';
 import { ContactsTriageService } from './contacts/triage.service';
 import { ContactsHeaderDetectionService } from './contacts/header-detection.service';
+import { ContactsMappingPresetService } from './contacts/mapping-preset.service';
 
 /**
  * Bulk-import module. M1 ships the Employees (users) importer; the
@@ -15,12 +19,17 @@ import { ContactsHeaderDetectionService } from './contacts/header-detection.serv
  * modules, DataImport job history) comes from the parent controller.
  */
 @Module({
-  controllers: [DataImportController, ContactsImportController],
+  controllers: [
+    DataImportController,
+    ContactsImportController,
+    ContactsMappingPresetController,
+  ],
   providers: [
     ExcelParserService,
     UsersImporterService,
     ContactsTriageService,
     ContactsHeaderDetectionService,
+    ContactsMappingPresetService,
   ],
 })
 export class DataImportModule {}

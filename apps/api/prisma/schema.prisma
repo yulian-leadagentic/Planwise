@@ -318,6 +318,9 @@ model User {
   createdByImportId Int?         @map("created_by_import_id")
   createdByImport   DataImport?  @relation("UsersCreatedByImport", fields: [createdByImportId], references: [id], onDelete: SetNull)
   dataImportsRun    DataImport[] @relation("DataImportRunner")
+  /// BM2 · Contacts import wizard · Stage 3 — user-authored column-mapping
+  /// presets. SET NULL on user delete so the preset row survives.
+  importMappingPresets ImportMappingPreset[] @relation("ImportMappingPresetCreator")
 
   /// Home org unit — where this employee "sits" in the org chart. A
   /// user has exactly zero or one home unit (a single OrgUnit id).
@@ -2441,6 +2444,53 @@ model DataImportRow {
   @@index([importId])
   @@index([outcome])
   @@map("data_import_rows")
+}
+
+/// BM2 · Contacts import wizard · Stage 3 — saved column-mapping presets.
+///
+/// One row per named mapping the user (or the system, via seeds) has
+/// chosen to reuse. Presets are what makes the second and third file
+/// of the same vendor 0-click after the first one costs one mapping
+/// (§5 methodology: "first file of a shape costs one mapping; the
+/// rest reuse it"). Seed rows carry `isSystem=true` and cover the
+/// top ~12 shape signatures measured in the real folder.
+///
+/// `mapping` shape (JSON): `{ [canonicalField]: sourceHeaderText }`
+///   where canonicalField ∈ email | mobile | phone | contact |
+///   company | discipline | role | address | note.
+///
+/// `signature` shape (JSON): `{ fields: [...sortedCanonicalFields] }`.
+///   Used as a cheap "does this preset apply to this sheet?" check —
+///   Stage 3's frontend compares against Stage 2's detected field set.
+///
+/// `kind` is a free-form string so future importers (partners, projects,
+/// etc.) can reuse the same table.
+model ImportMappingPreset {
+  id          Int      @id @default(autoincrement())
+  /// Human-readable name — shown in the wizard's preset dropdown.
+  name        String   @db.VarChar(200)
+  /// Which importer this preset applies to. Today only 'contacts'; more
+  /// importers can add their own kind without a schema change.
+  kind        String   @db.VarChar(50)
+  /// Optional short description surfaced under the name in the dropdown.
+  description String?  @db.VarChar(500)
+  /// { [field]: headerText } — the user's saved mapping.
+  mapping     Json
+  /// { fields: [...sortedFields] } — for quick shape matching.
+  signature   Json
+  /// Seed rows carry isSystem=true; the UI protects them from delete.
+  isSystem    Boolean  @default(false) @map("is_system")
+  /// User who saved this preset. NULL for system seeds.
+  createdBy   Int?     @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  creator User? @relation("ImportMappingPresetCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@unique([kind, name])
+  @@index([kind])
+  @@index([createdBy])
+  @@map("import_mapping_presets")
 }
 
 /// Organizational hierarchy. Single-parent tree, one manager per unit,

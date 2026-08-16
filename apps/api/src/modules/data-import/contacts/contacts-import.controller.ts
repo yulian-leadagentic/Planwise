@@ -1,8 +1,13 @@
 import {
   Body,
   Controller,
+  Delete,
   ForbiddenException,
+  Get,
+  Param,
+  ParseIntPipe,
   Post,
+  Query,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -17,6 +22,7 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 
 import { ContactsTriageService, TriageResult } from './triage.service';
 import { ContactsHeaderDetectionService, SheetGrade } from './header-detection.service';
+import { ContactsMappingPresetService } from './mapping-preset.service';
 
 /**
  * BM2 · Contacts import wizard — the "contacts" sub-mode of the existing
@@ -39,6 +45,7 @@ export class ContactsImportController {
   constructor(
     private readonly triage: ContactsTriageService,
     private readonly headers: ContactsHeaderDetectionService,
+    private readonly presets: ContactsMappingPresetService,
   ) {}
 
   /** Extra defense — the guard covers `data-import/contacts`; make sure
@@ -145,4 +152,62 @@ export class ContactsImportController {
 export interface UploadResponse {
   triage: TriageResult;
   grades: SheetGrade[];
+}
+
+// ─── Stage 3 — mapping presets ────────────────────────────────────────
+// Mounted on a nested controller so the surface stays cohesive under
+// /data-import/contacts/*. Reads are read-gated; writes/deletes gated
+// like the rest of the wizard (write on data-import/contacts). The
+// wizard's "Save as preset" and "Apply preset" round-trip through these.
+
+@ApiTags('Data Import — Contacts')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Controller('data-import/contacts/mapping-presets')
+export class ContactsMappingPresetController {
+  constructor(private readonly presets: ContactsMappingPresetService) {}
+
+  @Get()
+  @RequirePermissions({ module: 'data-import/contacts', action: 'write' })
+  @ApiOperation({
+    summary:
+      'List mapping presets for the contacts importer. System presets pinned first, then the user\'s saved ones.',
+  })
+  async list(@Query('kind') kind = 'contacts') {
+    return this.presets.list(kind);
+  }
+
+  @Post()
+  @RequirePermissions({ module: 'data-import/contacts', action: 'write' })
+  @ApiOperation({
+    summary:
+      'Create or update a named mapping preset. (kind, name) is unique — re-saving with the same name replaces the mapping (idempotent "Save as preset").',
+  })
+  async upsert(
+    @CurrentUser() user: any,
+    @Body()
+    body: {
+      id?: number;
+      kind?: string;
+      name: string;
+      description?: string | null;
+      mapping: Record<string, string>;
+    },
+  ) {
+    return this.presets.upsert({
+      id: body.id,
+      kind: body.kind ?? 'contacts',
+      name: body.name,
+      description: body.description,
+      mapping: body.mapping,
+      userId: user.id,
+    });
+  }
+
+  @Delete(':id')
+  @RequirePermissions({ module: 'data-import/contacts', action: 'delete' })
+  @ApiOperation({ summary: 'Delete a preset. System presets are protected.' })
+  async remove(@Param('id', ParseIntPipe) id: number) {
+    return this.presets.remove(id);
+  }
 }
