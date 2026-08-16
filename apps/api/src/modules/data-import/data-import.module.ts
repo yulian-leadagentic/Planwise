@@ -10,6 +10,9 @@ import { ContactsTriageService } from './contacts/triage.service';
 import { ContactsHeaderDetectionService } from './contacts/header-detection.service';
 import { ContactsMappingPresetService } from './contacts/mapping-preset.service';
 import { ContactsSplitMergeService } from './contacts/split-merge.service';
+import { ContactsDedupService } from './contacts/dedup.service';
+import { ContactsResolveService } from './contacts/resolve.service';
+import { BusinessPartnersModule } from '../business-partners/business-partners.module';
 
 /**
  * Bulk-import module. M1 ships the Employees (users) importer; the
@@ -18,8 +21,14 @@ import { ContactsSplitMergeService } from './contacts/split-merge.service';
  * Each stage adds one service under `./contacts/` and one endpoint on
  * `ContactsImportController` — the shared scaffolding (permission
  * modules, DataImport job history) comes from the parent controller.
+ *
+ * BusinessPartnersModule is imported so the contacts wizard can reuse
+ * BusinessPartnersService (personal-domain catalog check + domain-first
+ * org resolution) — keeps the wizard's dedup rules in lockstep with the
+ * BP admin path.
  */
 @Module({
+  imports: [BusinessPartnersModule],
   controllers: [
     DataImportController,
     ContactsImportController,
@@ -32,6 +41,8 @@ import { ContactsSplitMergeService } from './contacts/split-merge.service';
     ContactsHeaderDetectionService,
     ContactsMappingPresetService,
     ContactsSplitMergeService,
+    ContactsDedupService,
+    ContactsResolveService,
   ],
 })
 export class DataImportModule {}

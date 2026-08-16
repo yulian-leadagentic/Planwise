@@ -23,6 +23,9 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { ContactsTriageService, TriageResult } from './triage.service';
 import { ContactsHeaderDetectionService, SheetGrade } from './header-detection.service';
 import { ContactsMappingPresetService } from './mapping-preset.service';
+import { ContactsResolveService, SheetPreview } from './resolve.service';
+import { ExtractedSheet } from './triage.service';
+import { ColumnMapping } from './split-merge.service';
 
 /**
  * BM2 · Contacts import wizard — the "contacts" sub-mode of the existing
@@ -46,6 +49,7 @@ export class ContactsImportController {
     private readonly triage: ContactsTriageService,
     private readonly headers: ContactsHeaderDetectionService,
     private readonly presets: ContactsMappingPresetService,
+    private readonly resolve: ContactsResolveService,
   ) {}
 
   /** Extra defense — the guard covers `data-import/contacts`; make sure
@@ -147,11 +151,48 @@ export class ContactsImportController {
     const grades = this.headers.grade(triage.sheets);
     return { triage, grades };
   }
+
+  /**
+   * Stage 5 — preview one sheet's resolved rows + dedup decisions.
+   *
+   * Input: the sheet from Stage 1 (client still has it in state) + the
+   * user's confirmed mapping (from Stage 3, dictionary auto-suggest or
+   * a preset). Output: every row with Stage 4 split/fill applied, every
+   * synthesized cell marked in `synthesis`, and Stage 5 dedup
+   * decisions attached (link vs create vs conflict vs skip).
+   *
+   * No writes. The wizard renders this and asks the user to override
+   * conflict rows before commit. The commit call (Stage 6) accepts the
+   * same body plus the decisions.
+   */
+  @Post('preview')
+  @RequirePermissions({ module: 'data-import/contacts', action: 'write' })
+  @ApiOperation({
+    summary:
+      'Stage 5 — resolve one sheet (split + fwd-fill) and return dedup decisions per row. No writes.',
+  })
+  async preview(
+    @CurrentUser() user: any,
+    @Body() body: PreviewRequestBody,
+  ): Promise<SheetPreview> {
+    this.assertCanImport(user);
+    return this.resolve.previewSheet({
+      sheet: body.sheet,
+      mapping: body.mapping,
+      headerRowIndex: body.headerRowIndex,
+    });
+  }
 }
 
 export interface UploadResponse {
   triage: TriageResult;
   grades: SheetGrade[];
+}
+
+interface PreviewRequestBody {
+  sheet: ExtractedSheet;
+  mapping: ColumnMapping;
+  headerRowIndex?: number;
 }
 
 // ─── Stage 3 — mapping presets ────────────────────────────────────────
