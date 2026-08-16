@@ -17,7 +17,7 @@
  * BM2 Phase E `bp-import-wizard.tsx` shape so a returning user sees
  * the same interaction model.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
@@ -30,10 +30,17 @@ import {
   Info,
   Save as SaveIcon,
   Sparkles,
+  FolderKanban,
+  Search,
+  ChevronDown,
+  X,
 } from 'lucide-react';
 
+import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
+import { useProject, useProjects } from '@/hooks/use-projects';
+import { useDebounce } from '@/hooks/use-debounce';
 import {
   contactsImportApi,
   CONTACT_FIELDS,
@@ -50,6 +57,22 @@ import {
   UploadResponse,
 } from '@/api/contacts-import.api';
 
+/** Subset of ProjectRoleType we render in the picker. */
+interface ProjectRoleTypeLite {
+  id: number;
+  code: string;
+  name: string;
+  allowedPartnerKind?: 'person' | 'organization' | 'any';
+  sortOrder?: number;
+}
+
+/**
+ * Backend fallback order — mirror the resolver in `commit.service.ts`
+ * `pickProjectRoleId()` so the dropdown's default matches what the
+ * server would pick if we sent `projectRoleId: null`.
+ */
+const FALLBACK_ROLE_CODES = ['contact', 'external_contact', 'consultant'] as const;
+
 type WizardStep = 'upload' | 'sheet' | 'map' | 'preview' | 'commit';
 
 const STEP_LABELS: Record<WizardStep, string> = {
@@ -60,7 +83,19 @@ const STEP_LABELS: Record<WizardStep, string> = {
   commit: '5 · Commit',
 };
 
-export function ContactsImportWizard({ onDone }: { onDone?: () => void }) {
+export function ContactsImportWizard({
+  onDone,
+  defaultProjectId = null,
+}: {
+  onDone?: () => void;
+  /**
+   * When the wizard is opened from a project context (e.g. deep-linked
+   * via `/admin/data-import?target=contacts&projectId=42`) preselect
+   * that project in the attach panel. Users can still clear it for a
+   * global import.
+   */
+  defaultProjectId?: number | null;
+}) {
   const queryClient = useQueryClient();
   const [step, setStep] = useState<WizardStep>('upload');
   const [file, setFile] = useState<File | null>(null);
@@ -71,6 +106,11 @@ export function ContactsImportWizard({ onDone }: { onDone?: () => void }) {
   const [headerRowIndex, setHeaderRowIndex] = useState<number | null>(null);
   const [preview, setPreview] = useState<SheetPreview | null>(null);
   const [decisions, setDecisions] = useState<Record<number, RowDecision>>({});
+  // Attach-to-project selection lives at the wizard level so it survives
+  // step navigation; both fields are optional end-to-end (null = today's
+  // "BPs + worker_of only" behaviour).
+  const [attachToProjectId, setAttachToProjectId] = useState<number | null>(defaultProjectId);
+  const [projectRoleId, setProjectRoleId] = useState<number | null>(null);
   const [commitResult, setCommitResult] = useState<
     | (Awaited<ReturnType<typeof contactsImportApi.commit>>)
     | null
@@ -86,6 +126,42 @@ export function ContactsImportWizard({ onDone }: { onDone?: () => void }) {
     queryKey: ['contacts-import', 'presets'],
     queryFn: () => contactsImportApi.listPresets(),
   });
+
+  // ─── Project role types (for the attach panel) ────────────────────
+  // Reused from `role-assignment-picker.tsx` — same endpoint, same
+  // wrapped/unwrapped tolerance. Query is safe to fire eagerly; results
+  // don't change often and the payload is tiny.
+  const roleTypesQuery = useQuery<ProjectRoleTypeLite[]>({
+    queryKey: ['project-role-types'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () =>
+      client
+        .get('/admin/project-role-types')
+        .then((r) => r.data?.data ?? r.data ?? []),
+  });
+
+  // When a project is first selected (or role types finally land after
+  // prefill), pick the fallback role that mirrors the backend resolver.
+  // Runs at most once per (project, role-types) combination — leaves an
+  // explicit user choice untouched.
+  const roleTypes = roleTypesQuery.data ?? [];
+  useEffect(() => {
+    if (attachToProjectId == null) return;
+    if (projectRoleId != null) return;
+    if (roleTypes.length === 0) return;
+    const fallback = FALLBACK_ROLE_CODES.map((code) =>
+      roleTypes.find((rt) => rt.code === code),
+    ).find(Boolean);
+    if (fallback) setProjectRoleId(fallback.id);
+  }, [attachToProjectId, projectRoleId, roleTypes]);
+
+  // Clear the role selection when the project is cleared — a role
+  // without a project makes no sense and would confuse the preview.
+  useEffect(() => {
+    if (attachToProjectId == null && projectRoleId != null) {
+      setProjectRoleId(null);
+    }
+  }, [attachToProjectId, projectRoleId]);
 
   // ─── Mutations ────────────────────────────────────────────────────
   const uploadMutation = useMutation({
@@ -138,6 +214,11 @@ export function ContactsImportWizard({ onDone }: { onDone?: () => void }) {
         headerRowIndex: headerRowIndex ?? undefined,
         decisions: Object.values(decisions),
         filename: (triage && triage.kind !== 'reject' && triage.filename) || file?.name,
+        // Both optional — omit `projectRoleId` when null so the backend
+        // runs its fallback resolver rather than treating `null` as an
+        // explicit "no role".
+        attachToProjectId: attachToProjectId ?? undefined,
+        projectRoleId: projectRoleId ?? undefined,
       });
     },
     onSuccess: (data) => {
@@ -174,6 +255,11 @@ export function ContactsImportWizard({ onDone }: { onDone?: () => void }) {
     setPreview(null);
     setDecisions({});
     setCommitResult(null);
+    // Re-apply prefill for "Import another file" — if the wizard was
+    // deep-linked from a project, that context still holds. The role
+    // effect above re-defaults after the project is re-set.
+    setAttachToProjectId(defaultProjectId);
+    setProjectRoleId(null);
     setStep('upload');
   };
 
@@ -238,6 +324,12 @@ export function ContactsImportWizard({ onDone }: { onDone?: () => void }) {
               [idx]: { ...prev[idx], ...patch, sourceRowIndex: idx },
             }))
           }
+          attachToProjectId={attachToProjectId}
+          onAttachProjectChange={setAttachToProjectId}
+          projectRoleId={projectRoleId}
+          onProjectRoleChange={setProjectRoleId}
+          roleTypes={roleTypes}
+          roleTypesLoading={roleTypesQuery.isLoading}
           onBack={() => setStep('map')}
           onCommit={() => commitMutation.mutate()}
           isBusy={commitMutation.isPending}
@@ -247,6 +339,7 @@ export function ContactsImportWizard({ onDone }: { onDone?: () => void }) {
       {step === 'commit' && commitResult && (
         <CommitStep
           result={commitResult}
+          attachToProjectId={attachToProjectId}
           onAnother={reset}
           onDone={onDone}
         />
@@ -643,6 +736,12 @@ function PreviewStep({
   preview,
   decisions,
   onDecide,
+  attachToProjectId,
+  onAttachProjectChange,
+  projectRoleId,
+  onProjectRoleChange,
+  roleTypes,
+  roleTypesLoading,
   onBack,
   onCommit,
   isBusy,
@@ -650,6 +749,12 @@ function PreviewStep({
   preview: SheetPreview;
   decisions: Record<number, RowDecision>;
   onDecide: (idx: number, patch: Partial<RowDecision>) => void;
+  attachToProjectId: number | null;
+  onAttachProjectChange: (id: number | null) => void;
+  projectRoleId: number | null;
+  onProjectRoleChange: (id: number | null) => void;
+  roleTypes: ProjectRoleTypeLite[];
+  roleTypesLoading: boolean;
   onBack: () => void;
   onCommit: () => void;
   isBusy: boolean;
@@ -731,6 +836,15 @@ function PreviewStep({
         </p>
       )}
 
+      <ProjectAttachPanel
+        attachToProjectId={attachToProjectId}
+        onAttachProjectChange={onAttachProjectChange}
+        projectRoleId={projectRoleId}
+        onProjectRoleChange={onProjectRoleChange}
+        roleTypes={roleTypes}
+        roleTypesLoading={roleTypesLoading}
+      />
+
       <div className="flex items-center justify-between pt-2">
         <button
           onClick={onBack}
@@ -746,6 +860,244 @@ function PreviewStep({
           {isBusy ? 'Committing…' : `Commit ${s.eligible} rows`} <ArrowRight className="h-3.5 w-3.5" />
         </button>
       </div>
+    </div>
+  );
+}
+
+// ─── Project-attach panel (renders on the Preview step) ──────────────
+/**
+ * Optional: pick a project + role-type so each committed person is
+ * attached to that project as a project_partner_role. Both fields are
+ * optional; leaving them empty falls back to today's behaviour (BPs +
+ * worker_of only). Spec: `docs/bm2/contacts-import-project-attach.md`
+ * §"Part 1".
+ */
+function ProjectAttachPanel({
+  attachToProjectId,
+  onAttachProjectChange,
+  projectRoleId,
+  onProjectRoleChange,
+  roleTypes,
+  roleTypesLoading,
+}: {
+  attachToProjectId: number | null;
+  onAttachProjectChange: (id: number | null) => void;
+  projectRoleId: number | null;
+  onProjectRoleChange: (id: number | null) => void;
+  roleTypes: ProjectRoleTypeLite[];
+  roleTypesLoading: boolean;
+}) {
+  const roleEnabled = attachToProjectId != null;
+  const fallbackDefault = useMemo(() => {
+    for (const code of FALLBACK_ROLE_CODES) {
+      const found = roleTypes.find((rt) => rt.code === code);
+      if (found) return found;
+    }
+    return null;
+  }, [roleTypes]);
+
+  return (
+    <div className="rounded-[14px] border border-slate-200 bg-white p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <FolderKanban className="h-4 w-4 text-indigo-500" />
+        <h3 className="text-[13px] font-semibold text-slate-700">
+          Attach to project <span className="font-normal text-slate-400">(optional)</span>
+        </h3>
+      </div>
+      <p className="text-[11px] text-slate-500">
+        Pick a project to add every committed person to its team. Each row's
+        <span className="font-mono px-1 text-slate-600">discipline</span> column becomes the
+        person's <em>title-in-project</em>; the role-type here is the participation role. Leave
+        both empty for a global import (creates BPs + worker_of only).
+      </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-1 block">
+            Project
+          </label>
+          <ProjectPickerInline
+            value={attachToProjectId}
+            onChange={onAttachProjectChange}
+          />
+        </div>
+        <div>
+          <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-1 block">
+            Role on project
+          </label>
+          <select
+            value={projectRoleId ?? ''}
+            onChange={(e) =>
+              onProjectRoleChange(e.target.value ? Number(e.target.value) : null)
+            }
+            disabled={!roleEnabled || roleTypesLoading}
+            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-[13px] text-slate-700 bg-white focus:border-blue-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed"
+          >
+            <option value="">
+              {roleTypesLoading
+                ? 'Loading roles…'
+                : fallbackDefault
+                  ? `— server fallback: ${fallbackDefault.name} —`
+                  : '— no role · attach will be skipped —'}
+            </option>
+            {roleTypes.map((rt) => (
+              <option key={rt.id} value={rt.id}>
+                {rt.name}
+                {rt.code === fallbackDefault?.code ? ' · default' : ''}
+              </option>
+            ))}
+          </select>
+          {!roleEnabled && (
+            <p className="mt-1 text-[11px] text-slate-400">Pick a project first.</p>
+          )}
+          {roleEnabled && projectRoleId == null && !fallbackDefault && (
+            <p className="mt-1 text-[11px] text-amber-600">
+              No fallback role-type seeded — pick one, or people will not be attached.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Inline typeahead for the attach-panel. Fetches on debounced search
+ * against `/projects`, and separately fetches the currently-selected
+ * project by id so a deep-linked prefill shows its real name even
+ * before the user opens the dropdown.
+ */
+function ProjectPickerInline({
+  value,
+  onChange,
+}: {
+  value: number | null;
+  onChange: (id: number | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 250);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const listQuery = useProjects({ search: debouncedSearch || undefined, perPage: 25 });
+  const projects = listQuery.data?.data ?? [];
+
+  // Prefill support — when a project is selected but not in the search
+  // results (e.g. deep-linked from a project we haven't typed the name
+  // of), fetch it by id so we can render its name in the trigger.
+  const selectedInList = projects.find((p) => p.id === value);
+  const separateQuery = useProject(value ?? 0);
+  const selected =
+    selectedInList ??
+    (value != null && separateQuery.data?.id === value ? separateQuery.data : null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-700 hover:border-slate-300 focus:border-blue-500 focus:outline-none"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <FolderKanban className="h-4 w-4 text-slate-400" aria-hidden="true" />
+        {selected ? (
+          <span className="truncate text-left">
+            {selected.name}
+            {selected.number && (
+              <span className="text-[11px] text-slate-400 ml-1 font-mono">
+                {selected.number}
+              </span>
+            )}
+          </span>
+        ) : value != null ? (
+          <span className="text-slate-400 truncate">
+            Project #{value}
+          </span>
+        ) : (
+          <span className="text-slate-400">Select project…</span>
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          {value != null && (
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label="Clear selected project"
+              className="rounded p-0.5 text-slate-400 hover:text-slate-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+              onClick={(e) => {
+                e.stopPropagation();
+                onChange(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  onChange(null);
+                }
+              }}
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </span>
+          )}
+          <ChevronDown className="h-4 w-4 text-slate-400" aria-hidden="true" />
+        </div>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-xl border border-slate-200 bg-white shadow-lg overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
+            <Search className="h-4 w-4 text-slate-400" aria-hidden="true" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search projects…"
+              className="flex-1 bg-transparent text-[13px] outline-none placeholder:text-slate-400"
+              autoFocus
+            />
+          </div>
+          <div className="max-h-60 overflow-y-auto py-1">
+            {listQuery.isLoading ? (
+              <p className="px-3 py-2 text-[12px] text-slate-400 italic">Loading…</p>
+            ) : projects.length === 0 ? (
+              <p className="px-3 py-2 text-[12px] text-slate-400 italic">No projects found</p>
+            ) : (
+              projects.map((project) => (
+                <button
+                  key={project.id}
+                  type="button"
+                  onClick={() => {
+                    onChange(project.id);
+                    setOpen(false);
+                    setSearch('');
+                  }}
+                  className={cn(
+                    'flex w-full items-center gap-2 px-3 py-2 text-[13px] text-left hover:bg-slate-50',
+                    project.id === value && 'bg-blue-50 text-blue-700',
+                  )}
+                >
+                  <span className="truncate">{project.name}</span>
+                  {project.number && (
+                    <span className="ml-auto text-[11px] font-mono text-slate-400">
+                      {project.number}
+                    </span>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -978,14 +1330,26 @@ function ActionBadge({ action }: { action: string }) {
 // ─── Step 5: Commit summary ──────────────────────────────────────────
 function CommitStep({
   result,
+  attachToProjectId,
   onAnother,
   onDone,
 }: {
   result: Awaited<ReturnType<typeof contactsImportApi.commit>>;
+  attachToProjectId: number | null;
   onAnother: () => void;
   onDone?: () => void;
 }) {
   const ok = result.errors === 0;
+  // Fetch the target project so we can name it in the summary — makes
+  // "24 people attached to Acme HQ" scan-in-one-glance vs. "24 attached
+  // to a project" (which the top banner also carries as a fallback).
+  const projectQuery = useProject(attachToProjectId ?? 0);
+  const projectName =
+    attachToProjectId != null && projectQuery.data?.id === attachToProjectId
+      ? projectQuery.data.name
+      : null;
+  const projectRequested = attachToProjectId != null;
+  const attachedNone = projectRequested && result.projectAttached === 0;
   return (
     <div className="space-y-4">
       <div
@@ -1007,11 +1371,24 @@ function CommitStep({
             {result.orgsCreated + result.orgsLinked} orgs ·{' '}
             {result.contactsCreated + result.contactsLinked} contacts ·{' '}
             {result.workerOfLinksCreated} worker-of links
-            {result.projectAttached > 0 && ` · ${result.projectAttached} attached to a project`}
+            {result.projectAttached > 0 &&
+              ` · ${result.projectAttached} attached to ${projectName ?? 'the project'}`}
             {result.errors > 0 && ` · ${result.errors} errors`}
           </div>
         </div>
       </div>
+
+      {attachedNone && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 flex items-start gap-2 text-[12px] text-amber-800">
+          <Info className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            <strong>0 people attached to {projectName ?? 'the project'}.</strong> Every row either
+            skipped (below-contract or user-marked "skip") or no role type was resolvable — pick
+            a role explicitly on the Preview step, or ensure the <code>contact</code>{' '}
+            / <code>external_contact</code> project-role type is seeded.
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <SummaryTile label="Orgs created" value={result.orgsCreated} tone="ok" />
@@ -1019,6 +1396,13 @@ function CommitStep({
         <SummaryTile label="Contacts created" value={result.contactsCreated} tone="ok" />
         <SummaryTile label="Contacts linked" value={result.contactsLinked} tone="info" />
         <SummaryTile label="worker_of links" value={result.workerOfLinksCreated} tone="info" />
+        {projectRequested && (
+          <SummaryTile
+            label={projectName ? `Attached · ${projectName}` : 'Attached to project'}
+            value={result.projectAttached}
+            tone={result.projectAttached > 0 ? 'ok' : 'warn'}
+          />
+        )}
         <SummaryTile label="Below contract" value={result.belowContract} tone="warn" />
         <SummaryTile label="Skipped" value={result.orgsSkipped + result.contactsSkipped} />
         <SummaryTile label="Errors" value={result.errors} tone={result.errors ? 'warn' : 'neutral'} />

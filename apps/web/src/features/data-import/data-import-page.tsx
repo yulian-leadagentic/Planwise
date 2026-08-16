@@ -13,8 +13,8 @@
  * employees — partners + contacts are visible but disabled with a "M2
  * coming soon" hint.
  */
-import { useState, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useMemo, useEffect } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, ArrowLeft, ArrowRight, Download, History as HistoryIcon, Users, Building2, Contact as ContactIcon } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
@@ -60,6 +60,7 @@ const TARGETS: Array<{
 
 export function DataImportPage() {
   const { can } = usePermissions();
+  const [searchParams] = useSearchParams();
   const [step, setStep] = useState<WizardStep>('pick');
   const [target, setTarget] = useState<ImportTarget | null>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -72,6 +73,24 @@ export function DataImportPage() {
     errorCount: number;
     importId: number;
   } | null>(null);
+
+  // Deep-link support: /admin/data-import?target=contacts&projectId=42
+  // Auto-jumps to the contacts wizard and prefills the project on the
+  // attach panel. Only fires when the URL actually names contacts to
+  // avoid hijacking the pick step. Runs once per URL — we intentionally
+  // don't reset if the user navigates back to /pick manually.
+  const urlTarget = searchParams.get('target');
+  const urlProjectId = searchParams.get('projectId');
+  const defaultProjectId = urlProjectId ? Number(urlProjectId) : null;
+  useEffect(() => {
+    // Deliberately ignore `target` in the dep list — this effect is the
+    // deep-link entry-once behaviour; re-firing on every state change
+    // (e.g. after `reset()`) would re-hijack the picker.
+    if (urlTarget === 'contacts') {
+      setTarget((prev) => (prev === null ? 'contacts' : prev));
+      setStep((prev) => (prev === 'pick' ? 'upload' : prev));
+    }
+  }, [urlTarget]);
 
   const validateMutation = useMutation({
     mutationFn: (args: { target: ImportTarget; file: File }) =>
@@ -172,7 +191,7 @@ export function DataImportPage() {
               Cancel
             </button>
           </div>
-          <ContactsImportWizard onDone={reset} />
+          <ContactsImportWizard onDone={reset} defaultProjectId={defaultProjectId} />
         </div>
       )}
 
