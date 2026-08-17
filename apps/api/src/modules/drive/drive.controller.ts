@@ -48,6 +48,25 @@ export class DriveController {
     private readonly prisma: PrismaService,
   ) {}
 
+  // ─── Status probe ──────────────────────────────────────────────────
+
+  /**
+   * Lightweight status endpoint so the client can gate Drive UI (buttons,
+   * attach dialogs) without needing admin permissions on the config
+   * route. Returns ONLY two booleans — no key, no Shared Drive id, no
+   * other secret. `enabled` = a config row exists AND its enabled
+   * toggle is on; `configured` = a config row exists at all. Any
+   * signed-in user with basic project-read access can call it.
+   */
+  @Get('drive/status')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Report whether Google Drive is configured and enabled.' })
+  async getStatus(): Promise<{ enabled: boolean; configured: boolean }> {
+    return this.drive.getStatus();
+  }
+
   // ─── Folder ensure ─────────────────────────────────────────────────
 
   @Post('projects/:id/drive/folder')

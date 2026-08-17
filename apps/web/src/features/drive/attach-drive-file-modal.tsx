@@ -14,12 +14,13 @@
  * can't see it.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Info, HardDrive } from 'lucide-react';
 import { Modal } from '@/components/shared/modal';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { useDriveStatus } from './use-drive-status';
 
 type Target = { kind: 'task'; taskId: number } | { kind: 'deliverable'; deliverableId: number };
 
@@ -34,6 +35,20 @@ interface Props {
 export function AttachDriveFileModal({ open, onClose, target, invalidateKeys }: Props) {
   const qc = useQueryClient();
   const [driveUrl, setDriveUrl] = useState('');
+  // If the caller opens this modal while Drive is off (a stale button
+  // that missed the status probe, an admin flip mid-session, ...), close
+  // it immediately and surface the same admin-facing message the button
+  // tooltip carries. Ties every Drive entry point to the same status.
+  const { enabled: driveEnabled, isLoading: driveStatusLoading } = useDriveStatus();
+  useEffect(() => {
+    if (open && !driveStatusLoading && !driveEnabled) {
+      notify.info(
+        "Google Drive isn't set up — ask your admin to enable it in Admin → Google Drive.",
+        { code: 'DRIVE-NOT-CONFIGURED' },
+      );
+      onClose();
+    }
+  }, [open, driveEnabled, driveStatusLoading, onClose]);
 
   const endpoint =
     target.kind === 'task'
