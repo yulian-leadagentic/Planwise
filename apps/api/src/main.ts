@@ -16,6 +16,17 @@ import { startWedgeKillswitch } from './common/wedge-killswitch';
 import { startVitalsLogger } from './common/vitals';
 
 async function bootstrap() {
+  // Global BigInt-to-JSON serializer. Nest/Express can't stringify a
+  // BigInt (JSON has no 64-bit int type), so any response that includes
+  // one — e.g. ActivityLog.id — 500s the request. Stringifying via
+  // .toString() is the standard workaround. Installed before app init
+  // so every controller — new or old — is safe by default; the
+  // per-endpoint id.toString() mapping still stays where it is as a
+  // belt-and-suspenders guard.
+  (BigInt.prototype as unknown as { toJSON(): string }).toJSON = function () {
+    return this.toString();
+  };
+
   // bufferLogs: true so early-boot logs go through pino once it's wired
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
