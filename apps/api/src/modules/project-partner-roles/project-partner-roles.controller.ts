@@ -14,6 +14,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { ProjectPartnerRolesService } from './project-partner-roles.service';
@@ -50,8 +51,8 @@ export class ProjectPartnerRolesController {
 
   @Post()
   @RequirePermissions({ module: 'partners', action: 'write' })
-  create(@Body() body: any) {
-    return this.service.create(body);
+  create(@CurrentUser() user: any, @Body() body: any) {
+    return this.service.create(body, user.id);
   }
 
   @Patch(':id')
@@ -63,7 +64,7 @@ export class ProjectPartnerRolesController {
   @Delete(':id')
   @RequirePermissions({ module: 'partners', action: 'delete' })
   @ApiOperation({ summary: 'Soft-end a project-partner-role (sets valid_to=now)' })
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.remove(id);
+  remove(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    return this.service.remove(id, user.id);
   }
 }

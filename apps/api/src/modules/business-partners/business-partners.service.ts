@@ -7,6 +7,7 @@ import {
 import { Prisma, PartnerType } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivityLogService } from '../../common/services/activity-log.service';
 import { CreateBusinessPartnerDto } from './dto/create-business-partner.dto';
 import { UpdateBusinessPartnerDto } from './dto/update-business-partner.dto';
 import { QueryBusinessPartnersDto } from './dto/query-business-partners.dto';
@@ -86,7 +87,10 @@ function toDisplayName(dto: { partnerType: PartnerType; firstName?: string | nul
 
 @Injectable()
 export class BusinessPartnersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly activityLog: ActivityLogService,
+  ) {}
 
   // ─────────────────────────────────────────────────────────────────────────
   // CRUD
@@ -330,7 +334,7 @@ export class BusinessPartnersService {
     };
   }
 
-  async create(dto: CreateBusinessPartnerDto) {
+  async create(dto: CreateBusinessPartnerDto, userId?: number) {
     if (dto.email) {
       // Global uniqueness across all partner_types — caught by DB unique
       // index too, but we want a friendly error.
@@ -392,15 +396,29 @@ export class BusinessPartnersService {
     // `roleType=customer`) won't find it. The Partners UI's Main Role picker
     // used to write only `main_role_type_id`; this sync makes the two
     // representations consistent going forward.
+    let finalBp = bp;
     if (dto.mainRoleTypeId) {
       await this.syncMainRoleIntoRoles(bp.id, dto.mainRoleTypeId);
-      const refreshed = await this.prisma.businessPartner.findUniqueOrThrow({
+      finalBp = await this.prisma.businessPartner.findUniqueOrThrow({
         where: { id: bp.id },
         include: partnerInclude,
       });
-      return refreshed;
     }
-    return bp;
+
+    try {
+      await this.activityLog.write({
+        category: 'partner',
+        action: 'partner.created',
+        actorUserId: userId ?? null,
+        projectId: null,
+        entityType: 'business_partner',
+        entityId: finalBp.id,
+        entityName: finalBp.displayName,
+        description: `Created ${finalBp.partnerType} partner "${finalBp.displayName}"`,
+      });
+    } catch { /* swallow */ }
+
+    return finalBp;
   }
 
   /**
@@ -422,7 +440,7 @@ export class BusinessPartnersService {
     });
   }
 
-  async update(id: number, dto: UpdateBusinessPartnerDto) {
+  async update(id: number, dto: UpdateBusinessPartnerDto, userId?: number) {
     const existing = await this.findOne(id);
 
     if (dto.email && dto.email !== existing.email) {
@@ -480,15 +498,31 @@ export class BusinessPartnersService {
     // Keep the Main Role / roles-list invariant in sync — a BP's main role
     // must also live in business_partner_roles so role-based filters (e.g.
     // the project Customer dropdown) see it.
+    let finalBp = updated;
     if (dto.mainRoleTypeId) {
       await this.syncMainRoleIntoRoles(id, dto.mainRoleTypeId);
-      const refreshed = await this.prisma.businessPartner.findUniqueOrThrow({
+      finalBp = await this.prisma.businessPartner.findUniqueOrThrow({
         where: { id },
         include: partnerInclude,
       });
-      return refreshed;
     }
-    return updated;
+
+    try {
+      const changedFields = Object.keys(dto).filter((k) => k in dto);
+      await this.activityLog.write({
+        category: 'partner',
+        action: 'partner.updated',
+        actorUserId: userId ?? null,
+        projectId: null,
+        entityType: 'business_partner',
+        entityId: finalBp.id,
+        entityName: finalBp.displayName,
+        description: `Updated partner "${finalBp.displayName}"` +
+          (changedFields.length ? ` — ${changedFields.join(', ')}` : ''),
+      });
+    } catch { /* swallow */ }
+
+    return finalBp;
   }
 
   /**
@@ -497,7 +531,7 @@ export class BusinessPartnersService {
    * a live login user orphaned. The user can be deleted first via
    * /users/:id, which nulls business_partner_id on the User side.
    */
-  async remove(id: number) {
+  async remove(id: number, userId?: number) {
     const bp = await this.prisma.businessPartner.findFirst({
       where: { id, deletedAt: null },
       include: { user: { select: { id: true, isActive: true } } },
@@ -512,6 +546,21 @@ export class BusinessPartnersService {
       where: { id },
       data: { deletedAt: new Date() },
     });
+
+    try {
+      await this.activityLog.write({
+        category: 'partner',
+        action: 'partner.deleted',
+        actorUserId: userId ?? null,
+        projectId: null,
+        entityType: 'business_partner',
+        entityId: id,
+        entityName: bp.displayName,
+        description: `Deleted ${bp.partnerType} partner "${bp.displayName}"`,
+        severity: 'warn',
+      });
+    } catch { /* swallow */ }
+
     return { message: 'Business partner removed' };
   }
 
@@ -658,7 +707,7 @@ export class BusinessPartnersService {
    * ConflictException with the message the frontend already knows how
    * to render.
    */
-  async addDomain(bpId: number, rawDomain: string) {
+  async addDomain(bpId: number, rawDomain: string, userId?: number) {
     const bp = await this.findOne(bpId);
     if (bp.partnerType !== 'organization') {
       throw new BadRequestException(
@@ -678,9 +727,23 @@ export class BusinessPartnersService {
       );
     }
     try {
-      return await this.prisma.businessPartnerDomain.create({
+      const created = await this.prisma.businessPartnerDomain.create({
         data: { partnerId: bpId, domain },
       });
+      try {
+        await this.activityLog.write({
+          category: 'partner',
+          action: 'partner.domain.added',
+          actorUserId: userId ?? null,
+          projectId: null,
+          entityType: 'business_partner_domain',
+          entityId: created.id,
+          entityName: domain,
+          description: `Attached domain "${domain}" to partner "${bp.displayName}"`,
+          metadata: { partnerId: bpId, domain },
+        });
+      } catch { /* swallow */ }
+      return created;
     } catch (err: unknown) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         // Report which BP owns it so the operator can go merge/reassign.
@@ -703,12 +766,28 @@ export class BusinessPartnersService {
    * Remove a domain from a BP. 404 if the domain row isn't owned by
    * this BP (defensive — prevents "detach any domain if you know its id").
    */
-  async removeDomain(bpId: number, domainId: number) {
+  async removeDomain(bpId: number, domainId: number, userId?: number) {
     const row = await this.prisma.businessPartnerDomain.findFirst({
       where: { id: domainId, partnerId: bpId },
+      include: { partner: { select: { displayName: true } } },
     });
     if (!row) throw new NotFoundException('Domain not found on this partner');
     await this.prisma.businessPartnerDomain.delete({ where: { id: domainId } });
+
+    try {
+      await this.activityLog.write({
+        category: 'partner',
+        action: 'partner.domain.removed',
+        actorUserId: userId ?? null,
+        projectId: null,
+        entityType: 'business_partner_domain',
+        entityId: domainId,
+        entityName: row.domain,
+        description: `Detached domain "${row.domain}" from partner "${row.partner.displayName}"`,
+        metadata: { partnerId: bpId, domain: row.domain },
+      });
+    } catch { /* swallow */ }
+
     return { message: 'Domain removed' };
   }
 

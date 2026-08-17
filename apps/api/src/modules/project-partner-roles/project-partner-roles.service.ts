@@ -7,6 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivityLogService } from '../../common/services/activity-log.service';
 
 const FAR_FUTURE = new Date('9999-12-31T00:00:00Z');
 
@@ -44,7 +45,10 @@ interface QueryDto {
 
 @Injectable()
 export class ProjectPartnerRolesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly activityLog: ActivityLogService,
+  ) {}
 
   async list(q: QueryDto) {
     const now = new Date();
@@ -91,7 +95,7 @@ export class ProjectPartnerRolesService {
     return row;
   }
 
-  async create(dto: CreateProjectPartnerRoleDto) {
+  async create(dto: CreateProjectPartnerRoleDto, userId?: number) {
     // Validate FKs + business rules.
     const [project, party, role] = await Promise.all([
       this.prisma.project.findUnique({ where: { id: dto.projectId } }),
@@ -190,8 +194,9 @@ export class ProjectPartnerRolesService {
       await this.demoteExistingPrimary(dto.projectId, dto.roleId);
     }
 
+    let created;
     try {
-      return await this.prisma.projectPartnerRole.create({
+      created = await this.prisma.projectPartnerRole.create({
         data: {
           projectId: dto.projectId,
           partyId: dto.partyId,
@@ -220,6 +225,25 @@ export class ProjectPartnerRolesService {
       }
       throw e;
     }
+
+    // Audit — project-scoped participation. THIS is the whole reason for
+    // logging this surface: the per-project Activity tab should show
+    // "X was added as Y on this project", not just faceless writes.
+    try {
+      await this.activityLog.write({
+        category: 'partner',
+        action: 'partner.role.added',
+        actorUserId: userId ?? null,
+        projectId: created.projectId,
+        entityType: 'project_partner_role',
+        entityId: created.id,
+        entityName: created.party.displayName,
+        description: `Assigned ${created.party.displayName} as ${created.role.name}` +
+          (created.titleInProject ? ` (${created.titleInProject})` : ''),
+      });
+    } catch { /* swallow */ }
+
+    return created;
   }
 
   async update(id: number, dto: UpdateProjectPartnerRoleDto) {
@@ -258,11 +282,35 @@ export class ProjectPartnerRolesService {
   }
 
   /** Soft-end (set valid_to = now). Preserves history; for hard delete, use forceRemove. */
-  async remove(id: number) {
+  async remove(id: number, userId?: number) {
+    const existing = await this.prisma.projectPartnerRole.findUnique({
+      where: { id },
+      include: {
+        role: true,
+        party: { select: { displayName: true } },
+      },
+    });
+    if (!existing) throw new NotFoundException('Project partner role not found');
+
     await this.prisma.projectPartnerRole.update({
       where: { id },
       data: { validTo: new Date(), status: 'ended' },
     });
+
+    try {
+      await this.activityLog.write({
+        category: 'partner',
+        action: 'partner.role.removed',
+        actorUserId: userId ?? null,
+        projectId: existing.projectId,
+        entityType: 'project_partner_role',
+        entityId: id,
+        entityName: existing.party.displayName,
+        description: `Ended ${existing.role.name} assignment for ${existing.party.displayName}`,
+        severity: 'warn',
+      });
+    } catch { /* swallow */ }
+
     return { message: 'Project partner role ended' };
   }
 

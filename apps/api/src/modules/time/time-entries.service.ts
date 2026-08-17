@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { startOfDay, endOfDay, addDays, parseISO, format } from 'date-fns';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivityLogService } from '../../common/services/activity-log.service';
 import { minutesOverlap } from '../../common/overlap';
 import { CreateTimeEntryDto } from './dto/create-time-entry.dto';
 
@@ -115,7 +116,10 @@ async function assertNoTimeOverlap(
 
 @Injectable()
 export class TimeEntriesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly activityLog: ActivityLogService,
+  ) {}
 
   async create(userId: number, dto: CreateTimeEntryDto) {
     // Parse date as local midnight (not UTC) to avoid timezone issues
@@ -174,6 +178,24 @@ export class TimeEntriesService {
     if (dto.taskId) {
       await this.syncTaskCompletion(dto.taskId);
     }
+
+    // Audit trail — time entries roll up to the project via projectId (or
+    // via the task's projectId when the caller didn't pass one). Kept
+    // defensive so a log failure never breaks the write.
+    try {
+      const hours = entry.minutes / 60;
+      await this.activityLog.write({
+        category: 'time',
+        action: 'time.entry.created',
+        actorUserId: userId,
+        projectId: entry.projectId ?? null,
+        entityType: 'time_entry',
+        entityId: entry.id,
+        entityName: entry.task?.name ?? null,
+        description: `Logged ${hours.toFixed(2)}h` +
+          (entry.task?.name ? ` on "${entry.task.name}"` : ''),
+      });
+    } catch { /* swallow */ }
 
     return entry;
   }
@@ -322,7 +344,7 @@ export class TimeEntriesService {
     return entry;
   }
 
-  async update(id: number, dto: Partial<CreateTimeEntryDto>) {
+  async update(id: number, dto: Partial<CreateTimeEntryDto>, userId?: number) {
     const existing = await this.findOne(id);
 
     // Re-run the overlap check on the patched view (caller may have
@@ -345,7 +367,7 @@ export class TimeEntriesService {
       excludeId: id,
     });
 
-    return this.prisma.timeEntry.update({
+    const updated = await this.prisma.timeEntry.update({
       where: { id },
       data: {
         ...dto,
@@ -356,11 +378,46 @@ export class TimeEntriesService {
         task: { select: { id: true, name: true } },
       },
     });
+
+    try {
+      const changedFields = Object.keys(dto);
+      await this.activityLog.write({
+        category: 'time',
+        action: 'time.entry.updated',
+        actorUserId: userId ?? existing.userId,
+        projectId: updated.projectId ?? existing.projectId ?? null,
+        entityType: 'time_entry',
+        entityId: updated.id,
+        entityName: updated.task?.name ?? existing.task?.name ?? null,
+        description: `Updated time entry` +
+          (updated.task?.name ? ` on "${updated.task.name}"` : '') +
+          (changedFields.length ? ` — ${changedFields.join(', ')}` : ''),
+      });
+    } catch { /* swallow */ }
+
+    return updated;
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, userId?: number) {
+    const existing = await this.findOne(id);
     await this.prisma.timeEntry.delete({ where: { id } });
+
+    try {
+      const hours = existing.minutes / 60;
+      await this.activityLog.write({
+        category: 'time',
+        action: 'time.entry.deleted',
+        actorUserId: userId ?? existing.userId,
+        projectId: existing.projectId ?? null,
+        entityType: 'time_entry',
+        entityId: id,
+        entityName: existing.task?.name ?? null,
+        description: `Deleted ${hours.toFixed(2)}h time entry` +
+          (existing.task?.name ? ` from "${existing.task.name}"` : ''),
+        severity: 'warn',
+      });
+    } catch { /* swallow */ }
+
     return { message: 'Time entry deleted' };
   }
 

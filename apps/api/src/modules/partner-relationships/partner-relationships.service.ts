@@ -7,6 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivityLogService } from '../../common/services/activity-log.service';
 
 const FAR_FUTURE = new Date('9999-12-31T00:00:00Z');
 
@@ -86,7 +87,10 @@ interface QueryDto {
 
 @Injectable()
 export class PartnerRelationshipsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly activityLog: ActivityLogService,
+  ) {}
 
   async list(q: QueryDto) {
     const now = new Date();
@@ -125,7 +129,7 @@ export class PartnerRelationshipsService {
     return row;
   }
 
-  async create(dto: CreateDto) {
+  async create(dto: CreateDto, userId?: number) {
     if (dto.partyAId === dto.partyBId) {
       throw new BadRequestException('Cannot relate a party to itself');
     }
@@ -186,8 +190,9 @@ export class PartnerRelationshipsService {
       });
     }
 
+    let created;
     try {
-      return await this.prisma.partnerRelationship.create({
+      created = await this.prisma.partnerRelationship.create({
         data: {
           partyAId: dto.partyAId,
           partyBId: dto.partyBId,
@@ -207,6 +212,27 @@ export class PartnerRelationshipsService {
       }
       throw e;
     }
+
+    // Audit — party↔party edge; NOT project-scoped, so projectId stays
+    // null. Shows up on the admin Activity Log for a "who linked X to Y"
+    // trail (the per-project tab doesn't display these because they
+    // aren't tied to a project).
+    try {
+      await this.activityLog.write({
+        category: 'partner',
+        action: 'partner.relationship.created',
+        actorUserId: userId ?? null,
+        projectId: null,
+        entityType: 'partner_relationship',
+        entityId: created.id,
+        entityName: `${a.displayName} → ${b.displayName}`,
+        description: `Created "${type.name}" relationship: ${a.displayName} → ${b.displayName}` +
+          (dto.titleAtB ? ` (${dto.titleAtB})` : ''),
+        metadata: { typeCode: type.code, partyAId: dto.partyAId, partyBId: dto.partyBId },
+      });
+    } catch { /* swallow */ }
+
+    return created;
   }
 
   async update(id: number, dto: UpdateDto) {
@@ -226,11 +252,36 @@ export class PartnerRelationshipsService {
   }
 
   /** Soft-end (BUT050-style). For hard delete, an admin would do it via SQL. */
-  async remove(id: number) {
+  async remove(id: number, userId?: number) {
+    const existing = await this.prisma.partnerRelationship.findUnique({
+      where: { id },
+      include: {
+        type: true,
+        partyA: { select: { displayName: true } },
+        partyB: { select: { displayName: true } },
+      },
+    });
+    if (!existing) throw new NotFoundException('Partner relationship not found');
+
     await this.prisma.partnerRelationship.update({
       where: { id },
       data: { validTo: new Date(), status: 'ended' },
     });
+
+    try {
+      await this.activityLog.write({
+        category: 'partner',
+        action: 'partner.relationship.ended',
+        actorUserId: userId ?? null,
+        projectId: null,
+        entityType: 'partner_relationship',
+        entityId: id,
+        entityName: `${existing.partyA.displayName} → ${existing.partyB.displayName}`,
+        description: `Ended "${existing.type.name}" relationship: ${existing.partyA.displayName} → ${existing.partyB.displayName}`,
+        severity: 'warn',
+      });
+    } catch { /* swallow */ }
+
     return { message: 'Partner relationship ended' };
   }
 }

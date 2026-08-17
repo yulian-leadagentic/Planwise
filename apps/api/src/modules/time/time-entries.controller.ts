@@ -114,15 +114,19 @@ export class TimeEntriesController {
   @OwnData()
   @RequirePermissions({ module: 'time', action: 'write' })
   @ApiOperation({ summary: 'Update a time entry' })
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: Partial<CreateTimeEntryDto>) {
-    return this.timeEntriesService.update(id, dto);
+  update(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: Partial<CreateTimeEntryDto>,
+  ) {
+    return this.timeEntriesService.update(id, dto, user.id);
   }
 
   @Delete(':id')
   @OwnData()
   @RequirePermissions({ module: 'time', action: 'delete' })
   @ApiOperation({ summary: 'Delete a time entry' })
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.timeEntriesService.remove(id);
+  remove(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    return this.timeEntriesService.remove(id, user.id);
   }
 }

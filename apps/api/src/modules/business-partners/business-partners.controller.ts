@@ -24,6 +24,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { ApiPaginated } from '../../common/decorators/api-paginated.decorator';
 import { AuditInterceptor } from '../../common/interceptors/audit.interceptor';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CreateBusinessPartnerDto } from './dto/create-business-partner.dto';
 import { UpdateBusinessPartnerDto } from './dto/update-business-partner.dto';
 import { QueryBusinessPartnersDto } from './dto/query-business-partners.dto';
@@ -51,8 +52,8 @@ export class BusinessPartnersController {
   @Post()
   @RequirePermissions({ module: 'partners', action: 'write' })
   @ApiOperation({ summary: 'Create a business partner' })
-  create(@Body() dto: CreateBusinessPartnerDto) {
-    return this.service.create(dto);
+  create(@CurrentUser() user: any, @Body() dto: CreateBusinessPartnerDto) {
+    return this.service.create(dto, user.id);
   }
 
   @Get(':id')
@@ -65,15 +66,19 @@ export class BusinessPartnersController {
   @Patch(':id')
   @RequirePermissions({ module: 'partners', action: 'write' })
   @ApiOperation({ summary: 'Update a business partner' })
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateBusinessPartnerDto) {
-    return this.service.update(id, dto);
+  update(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateBusinessPartnerDto,
+  ) {
+    return this.service.update(id, dto, user.id);
   }
 
   @Delete(':id')
   @RequirePermissions({ module: 'partners', action: 'delete' })
   @ApiOperation({ summary: 'Soft-delete a business partner (blocked if a login user is attached)' })
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.remove(id);
+  remove(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    return this.service.remove(id, user.id);
   }
 
   // ─── Role management ──────────────────────────────────────────────────
@@ -132,20 +137,22 @@ export class BusinessPartnersController {
   @RequirePermissions({ module: 'partners', action: 'write' })
   @ApiOperation({ summary: 'Attach a new domain to this BP' })
   addDomain(
+    @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { domain: string },
   ) {
-    return this.service.addDomain(id, body.domain);
+    return this.service.addDomain(id, body.domain, user.id);
   }
 
   @Delete(':id/domains/:domainId')
   @RequirePermissions({ module: 'partners', action: 'delete' })
   @ApiOperation({ summary: 'Detach a domain from this BP' })
   removeDomain(
+    @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
     @Param('domainId', ParseIntPipe) domainId: number,
   ) {
-    return this.service.removeDomain(id, domainId);
+    return this.service.removeDomain(id, domainId, user.id);
   }
 
   // ─── CSV import ───────────────────────────────────────────────────────

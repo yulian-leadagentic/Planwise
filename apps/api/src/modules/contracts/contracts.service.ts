@@ -2,15 +2,19 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivityLogService } from '../../common/services/activity-log.service';
 import { CreateContractDto } from './dto/create-contract.dto';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 
 @Injectable()
 export class ContractsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly activityLog: ActivityLogService,
+  ) {}
 
   async create(userId: number, dto: CreateContractDto) {
-    return this.prisma.contract.create({
+    const contract = await this.prisma.contract.create({
       data: {
         name: dto.name,
         projectId: dto.projectId,
@@ -27,6 +31,26 @@ export class ContractsService {
         partner: { select: { id: true, firstName: true, lastName: true, companyName: true } },
       },
     });
+
+    // Audit trail — contract create is a high-value event; project-scoped
+    // so the per-project Activity tab picks it up via the (project_id,
+    // created_at) composite index. Wrapped defensively — logging must
+    // never break the underlying write (the service already swallows on
+    // fail internally; this is belt-and-suspenders).
+    try {
+      await this.activityLog.write({
+        category: 'contract',
+        action: 'contract.created',
+        actorUserId: userId,
+        projectId: contract.projectId ?? null,
+        entityType: 'contract',
+        entityId: contract.id,
+        entityName: contract.name,
+        description: `Created contract "${contract.name}"`,
+      });
+    } catch { /* swallow — audit failure never fails the write */ }
+
+    return contract;
   }
 
   async findAll(query: any) {
@@ -85,10 +109,10 @@ export class ContractsService {
     return contract;
   }
 
-  async update(id: number, dto: Partial<CreateContractDto>) {
-    await this.findOne(id);
+  async update(id: number, dto: Partial<CreateContractDto>, userId?: number) {
+    const existing = await this.findOne(id);
 
-    return this.prisma.contract.update({
+    const updated = await this.prisma.contract.update({
       where: { id },
       data: {
         ...dto,
@@ -100,11 +124,43 @@ export class ContractsService {
         partner: { select: { id: true, firstName: true, lastName: true, companyName: true } },
       },
     });
+
+    try {
+      const changedFields = Object.keys(dto).filter((k) => k in dto);
+      await this.activityLog.write({
+        category: 'contract',
+        action: 'contract.updated',
+        actorUserId: userId ?? null,
+        projectId: updated.projectId ?? existing.projectId ?? null,
+        entityType: 'contract',
+        entityId: updated.id,
+        entityName: updated.name,
+        description: `Updated contract "${updated.name}"` +
+          (changedFields.length ? ` — ${changedFields.join(', ')}` : ''),
+      });
+    } catch { /* swallow */ }
+
+    return updated;
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, userId?: number) {
+    const existing = await this.findOne(id);
     await this.prisma.contract.delete({ where: { id } });
+
+    try {
+      await this.activityLog.write({
+        category: 'contract',
+        action: 'contract.deleted',
+        actorUserId: userId ?? null,
+        projectId: existing.projectId ?? null,
+        entityType: 'contract',
+        entityId: id,
+        entityName: existing.name,
+        description: `Deleted contract "${existing.name}"`,
+        severity: 'warn',
+      });
+    } catch { /* swallow */ }
+
     return { message: 'Contract deleted' };
   }
 
