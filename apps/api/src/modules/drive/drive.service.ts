@@ -90,6 +90,33 @@ export class DriveService {
 
   // ─── Config ────────────────────────────────────────────────────────
 
+  /**
+   * Return `{ enabled, configured }` for the current Drive config without
+   * throwing. `configured` = a row exists; `enabled` = row exists AND its
+   * `enabled` toggle is true. Reads through the same short-lived cache
+   * `loadConfig()` populates so a hot page render doesn't hammer the DB.
+   *
+   * Never returns the SA key, Shared Drive id, or any other secret — the
+   * point of the public status endpoint is a boolean the client can gate
+   * UI on, not enough to reconstruct any config field.
+   */
+  async getStatus(): Promise<{ enabled: boolean; configured: boolean }> {
+    // Fast path: hot cache says config is loaded + enabled.
+    const now = Date.now();
+    if (this.configCache && now - this.configCache.loadedAt < CONFIG_CACHE_MS) {
+      return { enabled: this.configCache.config.enabled, configured: true };
+    }
+    // Slow path: cache miss. Read only the tiny row shape we need — do
+    // NOT touch saCiphertext / iv / tag; there's no reason to pull
+    // encrypted secrets across the wire for a status probe.
+    const row = await this.prisma.orgDriveConfig.findFirst({
+      where: { organizationId: null },
+      select: { enabled: true },
+    });
+    if (!row) return { enabled: false, configured: false };
+    return { enabled: row.enabled, configured: true };
+  }
+
   /** Load + decrypt the config. Throws DriveNotConfiguredException
    *  when nothing is set up OR `enabled` is false. Caching keeps the
    *  hot path off the DB during a request burst. */

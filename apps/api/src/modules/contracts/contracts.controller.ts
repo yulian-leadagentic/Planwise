@@ -59,15 +59,19 @@ export class ContractsController {
   @Patch(':id')
   @RequirePermissions({ module: 'contracts', action: 'write' })
   @ApiOperation({ summary: 'Update a contract' })
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: Partial<CreateContractDto>) {
-    return this.contractsService.update(id, dto);
+  update(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: Partial<CreateContractDto>,
+  ) {
+    return this.contractsService.update(id, dto, user.id);
   }
 
   @Delete(':id')
   @RequirePermissions({ module: 'contracts', action: 'delete' })
   @ApiOperation({ summary: 'Soft delete a contract' })
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.contractsService.remove(id);
+  remove(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    return this.contractsService.remove(id, user.id);
   }
 
   // Contract Items

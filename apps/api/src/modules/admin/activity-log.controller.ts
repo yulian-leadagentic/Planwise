@@ -40,7 +40,7 @@ export class ActivityLogController {
       if (to) where.createdAt.lte = new Date(to);
     }
 
-    const [data, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       this.prisma.activityLog.findMany({
         where,
         skip,
@@ -52,6 +52,14 @@ export class ActivityLogController {
       }),
       this.prisma.activityLog.count({ where }),
     ]);
+
+    // ActivityLog.id is a BigInt (JSON can't represent 64-bit ints),
+    // so stringify to match the per-project endpoint's shape (see
+    // projects.service.getActivityLogs). This is redundant with the
+    // global BigInt.prototype.toJSON patch in main.ts but stays as a
+    // belt-and-suspenders guard: if the global patch is ever removed
+    // for isolation reasons, this endpoint still returns 200.
+    const data = rows.map((r) => ({ ...r, id: r.id.toString() }));
 
     return {
       data,

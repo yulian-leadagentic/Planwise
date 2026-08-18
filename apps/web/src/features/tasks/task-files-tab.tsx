@@ -11,6 +11,7 @@ import { useProjectFileFavorites } from '@/features/projects/use-project-file-fa
 import { cn } from '@/lib/utils';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { AttachDriveFileModal } from '@/features/drive/attach-drive-file-modal';
+import { useDriveStatus } from '@/features/drive/use-drive-status';
 
 /**
  * Task-scoped files view inside the task drawer. Two panels:
@@ -84,6 +85,11 @@ export function TaskFilesTab({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [showDriveAttach, setShowDriveAttach] = useState(false);
+  // Gate the "Attach Drive file" button on the same shared status probe
+  // the modal uses — no point offering an action that would 503 or
+  // bounce right back out of the modal.
+  const { enabled: driveEnabled, isLoading: driveStatusLoading } = useDriveStatus();
+  const driveOff = !driveStatusLoading && !driveEnabled;
 
   const { data: attachments = [], isLoading } = useQuery<TaskAttachment[]>({
     queryKey: ['task-attachments', taskId],
@@ -286,8 +292,12 @@ export function TaskFilesTab({
             <button
               type="button"
               onClick={() => setShowDriveAttach(true)}
-              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-md flex items-center gap-1.5"
-              title="Paste a Google Drive share link — the file must live in your organization's Shared Drive."
+              disabled={driveOff}
+              aria-disabled={driveOff || undefined}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-md flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-slate-200 dark:disabled:hover:border-slate-700"
+              title={driveOff
+                ? "Google Drive isn't set up — ask your admin"
+                : "Paste a Google Drive share link — the file must live in your organization's Shared Drive."}
             >
               <HardDrive className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
               Attach Drive file

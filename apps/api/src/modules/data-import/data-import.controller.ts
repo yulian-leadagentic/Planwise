@@ -24,6 +24,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivityLogService } from '../../common/services/activity-log.service';
 
 import { ExcelParserService } from './excel-parser.service';
 import { UsersImporterService } from './importers/users-importer.service';
@@ -46,6 +47,7 @@ export class DataImportController {
     private readonly prisma: PrismaService,
     private readonly parser: ExcelParserService,
     private readonly usersImporter: UsersImporterService,
+    private readonly activityLog: ActivityLogService,
   ) {}
 
   /**
@@ -255,6 +257,35 @@ export class DataImportController {
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       },
     });
+
+    // Audit trail — ONE summary row per generic-importer commit (users
+    // and any future non-project-scoped target). projectId stays null:
+    // these imports write global rows (users, partners) that don't
+    // belong to a specific project's Activity tab. Uses `admin`
+    // category — no `import` enum value; matches sso-admin /
+    // drive-admin convention.
+    try {
+      await this.activityLog.write({
+        category: 'admin',
+        action: `import.${target}.committed`,
+        actorUserId: user.id,
+        projectId: null,
+        entityType: 'data_import',
+        entityId: updated.id,
+        entityName: file.originalname,
+        description: `Imported ${target} "${file.originalname}": ${result.createdCount} created, ${result.updatedCount} updated, ${result.skippedCount} skipped` +
+          (result.errorCount > 0 ? `, ${result.errorCount} errors` : ''),
+        metadata: {
+          importId: updated.id,
+          target,
+          mode,
+          created: result.createdCount,
+          linked: result.updatedCount,
+          skipped: result.skippedCount,
+          errors: result.errorCount,
+        },
+      });
+    } catch { /* swallow — audit failure never fails the commit */ }
 
     return { import: updated, summary: result };
   }

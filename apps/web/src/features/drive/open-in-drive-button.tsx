@@ -22,6 +22,7 @@ import { useMutation } from '@tanstack/react-query';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
+import { useDriveStatus } from './use-drive-status';
 
 type Entity = 'project' | 'zone' | 'deliverable';
 
@@ -44,6 +45,11 @@ const ENDPOINT: Record<Entity, (id: number) => string> = {
 
 export function OpenInDriveButton({ entity, id, size = 'sm', className, label }: Props) {
   const [pending, setPending] = useState(false);
+  // Cheap shared status probe — cached 5 min. When Drive is off, the
+  // button renders disabled with an explanatory tooltip instead of
+  // firing a POST the backend would 503 (that toast still fires as a
+  // mid-session fallback via the mutation's onError below).
+  const { enabled: driveEnabled, isLoading: driveStatusLoading } = useDriveStatus();
 
   const ensureAndOpen = useMutation({
     mutationFn: () =>
@@ -83,17 +89,27 @@ export function OpenInDriveButton({ entity, id, size = 'sm', className, label }:
       ? 'text-[13px] font-semibold px-3.5 py-2'
       : 'text-[12px] font-semibold px-2.5 py-1.5';
 
+  // While the status probe is still resolving, treat Drive as enabled
+  // (optimistic) — a first-time viewer of a fresh session shouldn't see
+  // the button flicker to a disabled state and back.
+  const driveOff = !driveStatusLoading && !driveEnabled;
+  const isDisabled = pending || driveOff;
+  const title = driveOff
+    ? "Google Drive isn't set up — ask your admin"
+    : 'Open the Google Drive folder for this in a new tab';
+
   return (
     <button
       type="button"
       onClick={() => ensureAndOpen.mutate()}
-      disabled={pending}
+      disabled={isDisabled}
+      aria-disabled={isDisabled || undefined}
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 disabled:opacity-50',
+        'inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-slate-200 dark:disabled:hover:border-slate-700',
         sizeCls,
         className,
       )}
-      title="Open the Google Drive folder for this in a new tab"
+      title={title}
     >
       {pending ? (
         <Loader2 className="h-3.5 w-3.5 animate-spin" />

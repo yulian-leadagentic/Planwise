@@ -3,12 +3,16 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { differenceInMinutes, startOfDay, endOfDay, format, parseISO } from 'date-fns';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivityLogService } from '../../common/services/activity-log.service';
 import { ClockInDto } from './dto/clock-in.dto';
 import { ClockOutDto } from './dto/clock-out.dto';
 
 @Injectable()
 export class TimeClockService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly activityLog: ActivityLogService,
+  ) {}
 
   async clockIn(userId: number, dto: ClockInDto) {
     const today = startOfDay(new Date());
@@ -67,7 +71,7 @@ export class TimeClockService {
       }
     }
 
-    return this.prisma.timeClock.create({
+    const record = await this.prisma.timeClock.create({
       data: {
         userId,
         date: today,
@@ -80,6 +84,20 @@ export class TimeClockService {
         expectedMinutes,
       },
     });
+
+    try {
+      await this.activityLog.write({
+        category: 'time',
+        action: 'time.clock.in',
+        actorUserId: userId,
+        projectId: null,
+        entityType: 'time_clock',
+        entityId: record.id,
+        description: `Clocked in` + (isLate ? ` (${lateMinutes} min late)` : ''),
+      });
+    } catch { /* swallow */ }
+
+    return record;
   }
 
   async clockOut(userId: number, dto: ClockOutDto) {
@@ -101,7 +119,7 @@ export class TimeClockService {
       ? Math.max(0, totalMinutes - record.expectedMinutes)
       : 0;
 
-    return this.prisma.timeClock.update({
+    const closed = await this.prisma.timeClock.update({
       where: { id: record.id },
       data: {
         clockOut: now,
@@ -112,6 +130,22 @@ export class TimeClockService {
         overtimeMinutes,
       },
     });
+
+    try {
+      const hours = Math.max(0, totalMinutes) / 60;
+      await this.activityLog.write({
+        category: 'time',
+        action: 'time.clock.out',
+        actorUserId: userId,
+        projectId: null,
+        entityType: 'time_clock',
+        entityId: closed.id,
+        description: `Clocked out — ${hours.toFixed(2)}h` +
+          (overtimeMinutes > 0 ? ` (+${(overtimeMinutes / 60).toFixed(2)}h overtime)` : ''),
+      });
+    } catch { /* swallow */ }
+
+    return closed;
   }
 
   async getStatus(userId: number) {

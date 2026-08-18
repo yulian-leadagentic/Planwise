@@ -3,6 +3,7 @@ import * as crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../../prisma/prisma.service';
+import { ActivityLogService } from '../../../common/services/activity-log.service';
 import { ContactsResolveService } from './resolve.service';
 import { DedupDecision, ContactAction, OrgAction } from './dedup.service';
 import { ContactField } from './header-dictionary';
@@ -45,6 +46,7 @@ export class ContactsCommitService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly resolveService: ContactsResolveService,
+    private readonly activityLog: ActivityLogService,
   ) {}
 
   async commit(input: CommitInput, userId: number): Promise<CommitResult> {
@@ -345,6 +347,42 @@ export class ContactsCommitService {
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       },
     });
+
+    // Audit trail — ONE summary row per commit so the admin Activity Log
+    // shows "who imported what, when, and how many rows landed" without
+    // spamming a row per contact. `projectId` is set only when the
+    // wizard attached rows to a project (that's the whole reason to
+    // scope this to a project's Activity tab). Category is 'admin' —
+    // there's no 'import' enum value; imports are admin-triggered
+    // ingest events, matching the sso-admin / drive-admin convention.
+    try {
+      const created = result.orgsCreated + result.contactsCreated;
+      const linked = result.orgsLinked + result.contactsLinked + result.workerOfLinksCreated;
+      const skipped = result.orgsSkipped + result.contactsSkipped + result.belowContract;
+      await this.activityLog.write({
+        category: 'admin',
+        action: 'import.contacts.committed',
+        actorUserId: userId,
+        projectId: input.attachToProjectId ?? null,
+        entityType: 'data_import',
+        entityId: importRecord.id,
+        entityName: importRecord.filename,
+        description: `Imported contacts "${importRecord.filename}": ${created} created, ${linked} linked, ${skipped} skipped` +
+          (result.errors > 0 ? `, ${result.errors} errors` : ''),
+        metadata: {
+          importId: importRecord.id,
+          created,
+          linked,
+          skipped,
+          errors: result.errors,
+          projectAttached: result.projectAttached,
+          orgsCreated: result.orgsCreated,
+          orgsLinked: result.orgsLinked,
+          contactsCreated: result.contactsCreated,
+          contactsLinked: result.contactsLinked,
+        },
+      });
+    } catch { /* swallow */ }
 
     return result;
   }
