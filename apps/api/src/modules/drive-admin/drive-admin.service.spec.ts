@@ -74,7 +74,11 @@ function makeService() {
     fingerprint: jest.fn(() => 'abcd'),
   };
 
-  const activity = { write: jest.fn(async () => undefined) };
+  // Give write a param type so mock.calls has usable indexing —
+  // without it TS infers Parameters<T> = [] (empty tuple) and every
+  // `mock.calls[0][0]` inspection below throws TS2493 "no element at
+  // index 0" as a CI annotation.
+  const activity = { write: jest.fn(async (_entry: any) => undefined) };
 
   const svc = new DriveAdminService(prisma as any, crypto as any, activity as any);
 
