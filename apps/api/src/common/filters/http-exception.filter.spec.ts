@@ -18,8 +18,11 @@ describe('HttpExceptionFilter', () => {
 
   beforeEach(() => {
     filter = new HttpExceptionFilter();
-    // silence the logger — we're testing the response not logs
-    (filter as any).logger = { error: jest.fn() };
+    // silence the logger — we're testing the response not logs.
+    // warn was added when the filter started logging 4xx (Fix 2 of
+    // fix/project-planning-pack); include it here so 4xx tests don't
+    // TypeError on `this.logger.warn is not a function`.
+    (filter as any).logger = { error: jest.fn(), warn: jest.fn() };
   });
 
   afterEach(() => {
