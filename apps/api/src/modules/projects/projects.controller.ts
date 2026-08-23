@@ -20,6 +20,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ApiPaginated } from '../../common/decorators/api-paginated.decorator';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { QueryProjectsDto } from './dto/query-projects.dto';
@@ -29,7 +30,14 @@ import { QueryProjectsDto } from './dto/query-projects.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('projects')
 export class ProjectsController {
-  constructor(private readonly projectsService: ProjectsService) {}
+  constructor(
+    private readonly projectsService: ProjectsService,
+    // Branch 2 (fix/assignee-source) — the new assignee-candidates route
+    // walks project-partner-roles, so it MUST gate on project access to
+    // avoid IDOR (an authenticated user with projects:read could
+    // otherwise enumerate any project's role holders by id).
+    private readonly access: ProjectAccessService,
+  ) {}
 
   @Post()
   @RequirePermissions({ module: 'projects', action: 'write' })
@@ -156,8 +164,35 @@ export class ProjectsController {
   @Get(':id/team')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Unified project team — internal members + external partners' })
-  getTeam(@Param('id', ParseIntPipe) projectId: number) {
+  async getTeam(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) projectId: number,
+  ) {
+    // Branch 2 (fix/assignee-source) — matched to /assignee-candidates
+    // below so both project-scoped participation reads apply the same
+    // access gate. `getTeam` previously relied on findOne's 404-only
+    // check and would leak team composition to any authenticated user.
+    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
     return this.projectsService.getTeam(projectId);
+  }
+
+  /**
+   * Unified assignee candidate list for the task-tree assignee picker
+   * and bulk-assign popover. Combines legacy ProjectMember rows with
+   * every active ProjectPartnerRole (participant + role holders), deduped
+   * by BusinessPartner id. Rows without a linked User are surfaced with
+   * `canAssign: false` so the picker disables them with an explanation
+   * rather than silently dropping them. (Branch 2 · fix/assignee-source.)
+   */
+  @Get(':id/assignee-candidates')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'Unified assignable-candidate list (internal members + role holders)' })
+  async getAssigneeCandidates(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) projectId: number,
+  ) {
+    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    return this.projectsService.getAssigneeCandidates(projectId);
   }
 
   /** Excel export of every task on the project as a FLAT list — no

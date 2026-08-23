@@ -1043,6 +1043,275 @@ export class ProjectsService {
     };
   }
 
+  /**
+   * Unified candidate list for the task-tree / bulk assignee picker.
+   *
+   * Post-BP-refactor, project participation lives in three places:
+   *   1. `ProjectMember` (legacy internal-team table — still authoritative
+   *      for older projects that predate the refactor).
+   *   2. `ProjectPartnerRole` with role.code = 'participant' — internal
+   *      project team as party↔project rows (write-through of #1).
+   *   3. `ProjectPartnerRole` with any other role (BIM Leader, Architect,
+   *      coordinator, model manager, …) — the person may be internal
+   *      (User row linked via BusinessPartner) or an external contact.
+   *
+   * The previous /planning-data endpoint fed the picker `pd.members`
+   * sourced ONLY from #1, which post-refactor was often near-empty on
+   * projects staffed via #3 → operators saw a single stray legacy
+   * member (Daniel Malka on QA STG) and no real role-holders.
+   *
+   * This method walks all three, dedupes by BusinessPartner id (falling
+   * back to userId), and returns one row per person with their role +
+   * discipline resolved. `canAssign` reflects whether the person has a
+   * User account — TaskAssignee.userId still writes to User.id, so an
+   * external contact is surfaced but disabled at the picker level with
+   * a reason. (Branch 2 · fix/assignee-source, PR-001/009.)
+   */
+  async getAssigneeCandidates(projectId: number): Promise<
+    Array<{
+      userId: number | null;
+      partyId: number | null;
+      firstName: string | null;
+      lastName: string | null;
+      displayName: string;
+      email: string | null;
+      avatarUrl: string | null;
+      role: string | null;
+      discipline: string | null;
+      canAssign: boolean;
+    }>
+  > {
+    // Bail early on a missing / soft-deleted project. Callers reach this
+    // via the controller after assertProjectAccess, so a 404 here is the
+    // "project no longer exists" case, not an authz miss.
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!project) throw new NotFoundException('Project not found');
+
+    const now = new Date();
+
+    // [1] Legacy internal ProjectMember rows. Kept for pre-refactor
+    // projects whose team never got a participant-role write-through.
+    const legacyMembers = await this.prisma.projectMember.findMany({
+      where: { projectId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            avatarUrl: true,
+            position: true,
+            department: true,
+            businessPartnerId: true,
+          },
+        },
+      },
+    });
+
+    // [2 + 3] Every active ProjectPartnerRole on the project. Excluding
+    // 'customer' since the customer is the org buying the project, not
+    // someone task-assignable. Including 'participant' — those persons
+    // ARE the internal team surfaced by the Team tab and are the right
+    // set for task assignment.
+    const roleAssignments = await this.prisma.projectPartnerRole.findMany({
+      where: {
+        projectId,
+        status: 'active',
+        validFrom: { lte: now },
+        validTo: { gt: now },
+        role: { code: { not: 'customer' } },
+      },
+      include: {
+        role: { select: { id: true, code: true, name: true } },
+        party: {
+          select: {
+            id: true,
+            partnerType: true,
+            displayName: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                avatarUrl: true,
+                position: true,
+                department: true,
+              },
+            },
+          },
+        },
+        // When the role's party is an organization, contactParty is the
+        // person representing that org on the project. That person is
+        // the assignable individual (an org can't hold a task itself),
+        // so we surface the contact — not the org — in the picker.
+        contactParty: {
+          select: {
+            id: true,
+            partnerType: true,
+            displayName: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                avatarUrl: true,
+                position: true,
+                department: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+    });
+
+    // Dedupe by BP id where present, else by userId. When the same
+    // person shows up under multiple roles (e.g. also holds "BIM
+    // Leader") we join the role names with " / " and prefer the most
+    // specific titleInProject we've seen. Internal members from [1]
+    // are folded into the same row if their BP/userId matches a
+    // participant/role entry so no one appears twice.
+    type Candidate = {
+      userId: number | null;
+      partyId: number | null;
+      firstName: string | null;
+      lastName: string | null;
+      displayName: string;
+      email: string | null;
+      avatarUrl: string | null;
+      roles: string[];
+      titles: string[];
+      position: string | null;
+      department: string | null;
+    };
+    const byKey = new Map<string, Candidate>();
+    const keyFor = (partyId: number | null, userId: number | null) =>
+      partyId != null ? `p:${partyId}` : userId != null ? `u:${userId}` : null;
+
+    const upsert = (
+      seed: Omit<Candidate, 'roles' | 'titles'> & { role?: string | null; title?: string | null },
+    ) => {
+      const key = keyFor(seed.partyId, seed.userId);
+      if (!key) return;
+      const existing = byKey.get(key);
+      if (existing) {
+        // Prefer the entry with a resolved userId (assignable) — the row
+        // that carries the real User wins even if the first sighting
+        // was via a role assignment with no user linkage.
+        if (existing.userId == null && seed.userId != null) {
+          existing.userId = seed.userId;
+          existing.firstName = seed.firstName ?? existing.firstName;
+          existing.lastName = seed.lastName ?? existing.lastName;
+          existing.email = seed.email ?? existing.email;
+          existing.avatarUrl = seed.avatarUrl ?? existing.avatarUrl;
+          existing.position = seed.position ?? existing.position;
+          existing.department = seed.department ?? existing.department;
+        }
+        if (seed.role && !existing.roles.includes(seed.role)) existing.roles.push(seed.role);
+        if (seed.title && !existing.titles.includes(seed.title)) existing.titles.push(seed.title);
+      } else {
+        byKey.set(key, {
+          userId: seed.userId,
+          partyId: seed.partyId,
+          firstName: seed.firstName,
+          lastName: seed.lastName,
+          displayName: seed.displayName,
+          email: seed.email,
+          avatarUrl: seed.avatarUrl,
+          position: seed.position,
+          department: seed.department,
+          roles: seed.role ? [seed.role] : [],
+          titles: seed.title ? [seed.title] : [],
+        });
+      }
+    };
+
+    // Fold in legacy internal members first — their role label defaults
+    // to "Team Member" so they surface with SOME context even when the
+    // person doesn't hold a formal ProjectPartnerRole entry yet.
+    for (const m of legacyMembers) {
+      if (!m.user) continue;
+      const fullName = `${m.user.firstName ?? ''} ${m.user.lastName ?? ''}`.trim() || m.user.email || `User #${m.user.id}`;
+      upsert({
+        userId: m.user.id,
+        partyId: m.user.businessPartnerId ?? null,
+        firstName: m.user.firstName ?? null,
+        lastName: m.user.lastName ?? null,
+        displayName: fullName,
+        email: m.user.email ?? null,
+        avatarUrl: m.user.avatarUrl ?? null,
+        position: m.user.position ?? null,
+        department: m.user.department ?? null,
+        role: m.role ?? 'Team Member',
+        title: null,
+      });
+    }
+
+    // Now the role assignments — for each one, pick the person we want
+    // in the picker: org rows contribute their contactParty; person rows
+    // contribute the party itself. Skip rows that produce neither.
+    for (const a of roleAssignments) {
+      const partyIsPerson = a.party.partnerType === 'person';
+      const candidate = partyIsPerson ? a.party : a.contactParty;
+      if (!candidate) continue; // org role with no contact person → nothing to assign
+      const user = candidate.user;
+      const fullName = `${candidate.firstName ?? ''} ${candidate.lastName ?? ''}`.trim()
+        || candidate.displayName
+        || candidate.email
+        || `Partner #${candidate.id}`;
+      upsert({
+        userId: user?.id ?? null,
+        partyId: candidate.id,
+        firstName: candidate.firstName ?? user?.firstName ?? null,
+        lastName: candidate.lastName ?? user?.lastName ?? null,
+        displayName: fullName,
+        email: candidate.email ?? user?.email ?? null,
+        avatarUrl: user?.avatarUrl ?? null,
+        position: user?.position ?? null,
+        department: user?.department ?? null,
+        role: a.role.name,
+        title: a.titleInProject,
+      });
+    }
+
+    // Stable sort — assignable rows first (so the common case is at the
+    // top of the picker), then alphabetically by display name so the
+    // list reads naturally.
+    const rows = Array.from(byKey.values())
+      .map((c) => ({
+        userId: c.userId,
+        partyId: c.partyId,
+        firstName: c.firstName,
+        lastName: c.lastName,
+        displayName: c.displayName,
+        email: c.email,
+        avatarUrl: c.avatarUrl,
+        role: c.roles.length > 0 ? c.roles.join(' / ') : null,
+        discipline: c.titles.length > 0
+          ? c.titles.join(' / ')
+          : (c.position ?? c.department ?? null),
+        canAssign: c.userId != null,
+      }))
+      .sort((a, b) => {
+        if (a.canAssign !== b.canAssign) return a.canAssign ? -1 : 1;
+        return a.displayName.localeCompare(b.displayName);
+      });
+
+    return rows;
+  }
+
   async removeMember(projectId: number, userId: number) {
     await this.prisma.projectMember.delete({
       where: { projectId_userId: { projectId, userId } },
