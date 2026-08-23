@@ -124,7 +124,14 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
         await client.patch(`/tasks/${effectiveTaskId}`, { status: taskStatus });
         queryClient.invalidateQueries({ queryKey: ['tasks'] });
         queryClient.invalidateQueries({ queryKey: ['planning'] });
-      } catch { /* ignore status update failure */ }
+      } catch (err) {
+        // Surface the status-update failure but keep going — the time
+        // entry save below is independent of the status write and must
+        // still succeed. The old silent swallow here hid PR-008 (the
+        // core-fields guardrail 400 from tasks.service was invisible to
+        // the user). Any future failure — 400/403/500 — now toasts.
+        notify.apiError(err, 'Failed to update task status');
+      }
     }
 
     const payloadBase: TimeEntryPayload = {
