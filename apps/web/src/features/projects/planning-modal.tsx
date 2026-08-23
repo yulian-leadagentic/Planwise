@@ -1331,10 +1331,67 @@ function SortableTaskList({ tasks, zoneId, projectId, members, selectedTaskIds, 
   );
 }
 
-// ─── Catalog Picker for Zone — pick tasks from catalog and create in a zone ──
+// ─── Task-add context ───────────────────────────────────────────────────────
+//
+// PR-013: template / catalog pickers now live on every group card, not just
+// zone headers. The picker no longer knows which grouping mode called it,
+// so we hand it a small context bag that captures whichever fields the
+// calling group can pre-fill (zone / deliverable / service / phase). Any
+// field the group can't pre-fill from its own dimension we leave undefined
+// and the template task's own value wins (see buildTaskAddPayload below).
+type TaskAddContext = {
+  zoneId?: number | null;
+  projectDeliverableId?: number | null;
+  deliverableTemplateId?: number | null;
+  phaseId?: number | null;
+  serviceTypeId?: number | null;
+};
 
-function CatalogPickerForZone({ zoneId, projectId, onClose, onDone }: {
-  zoneId: number; projectId: number; onClose: () => void; onDone: () => void;
+// Build the create-task payload for a template / catalog add. Merge order
+// (matches the spec): template task's own field wins → group context fills
+// the rest. `requiresReview` is defaulted to true on create so the
+// core-fields guardrail in tasks.service#create is satisfied (guardrail
+// treats an undefined requiresReview as missing — see bm2 Branch 3).
+function buildTaskAddPayload(
+  tplTask: {
+    code: string; name: string; description?: string | null;
+    defaultBudgetHours?: number | string | null;
+    defaultBudgetAmount?: number | string | null;
+    serviceTypeId?: number | null;
+    phaseId?: number | null;
+  },
+  ctx: TaskAddContext,
+  extras: { projectId?: number; description?: string } = {},
+) {
+  const payload: Record<string, unknown> = {
+    code: tplTask.code,
+    name: tplTask.name,
+    description: extras.description ?? tplTask.description ?? undefined,
+    budgetHours: tplTask.defaultBudgetHours != null ? Number(tplTask.defaultBudgetHours) : undefined,
+    budgetAmount: tplTask.defaultBudgetAmount != null ? Number(tplTask.defaultBudgetAmount) : undefined,
+    // Prefer the template task's own service; fall back to the group's.
+    serviceTypeId: tplTask.serviceTypeId ?? ctx.serviceTypeId ?? undefined,
+    // Same for phase.
+    phaseId: tplTask.phaseId ?? ctx.phaseId ?? undefined,
+    // Deliverable + zone are group-scoped only.
+    zoneId: ctx.zoneId ?? undefined,
+    projectDeliverableId: ctx.projectDeliverableId ?? undefined,
+    deliverableTemplateId: ctx.deliverableTemplateId ?? undefined,
+    // Explicit true so the guardrail's requiresReview check passes on
+    // create. Individual pickers can override.
+    requiresReview: true,
+  };
+  // zoneId=null (project-root) — send projectId so the API knows where.
+  if ((ctx.zoneId == null) && extras.projectId != null) {
+    payload.projectId = extras.projectId;
+  }
+  return payload;
+}
+
+// ─── Catalog Picker — pick tasks from catalog and create with context ────────
+
+function CatalogPickerForZone({ context, projectId, onClose, onDone }: {
+  context: TaskAddContext; projectId: number; onClose: () => void; onDone: () => void;
 }) {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -1362,18 +1419,16 @@ function CatalogPickerForZone({ zoneId, projectId, onClose, onDone }: {
     if (tasks.length === 0) return;
     setAdding(true);
     try {
-      for (const t of tasks) {
-        await tasksApi.create({
-          zoneId,
-          code: t.code,
-          name: t.name,
-          description: t.description,
-          budgetHours: t.defaultBudgetHours ? Number(t.defaultBudgetHours) : undefined,
-          budgetAmount: t.defaultBudgetAmount ? Number(t.defaultBudgetAmount) : undefined,
-        });
-      }
+      const results = await Promise.allSettled(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        tasks.map((t: any) => tasksApi.create(buildTaskAddPayload(t, context, { projectId }) as never)),
+      );
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
-      notify.success(`Added ${tasks.length} task${tasks.length !== 1 ? 's' : ''} from catalog`, { code: 'TASK-ADD-200' });
+      const ok = results.filter((r) => r.status === 'fulfilled').length;
+      const fail = results.length - ok;
+      if (fail === 0) notify.success(`Added ${ok} task${ok !== 1 ? 's' : ''} from catalog`, { code: 'TASK-ADD-200' });
+      else if (ok > 0) notify.warning(`Added ${ok}, ${fail} failed`, { code: 'TASK-ADD-207' });
+      else notify.error('Failed to add tasks', { code: 'TASK-ADD-500' });
       onDone();
     } catch (err: any) {
       notify.apiError(err, 'Failed to add tasks');
@@ -1435,10 +1490,19 @@ function CatalogPickerForZone({ zoneId, projectId, onClose, onDone }: {
   );
 }
 
-// ─── Deliverable Template Picker (applies a task_list template's tasks to a zone) ─
+// ─── Deliverable Template Picker (applies a task_list template's tasks) ────
+//
+// PR-013: accepts a TaskAddContext so the picker is usable from every
+// group card, not just Zone headers. The template task's own service /
+// phase win; the group context supplies whichever of zone / deliverable /
+// service the group represents. When the picker is opened from a
+// Deliverable group we treat the picked template as tasks belonging to
+// THAT deliverable, so the template's own name is used as the
+// [SERVICE:xxx] marker (legacy grouping) only when no deliverable context
+// is already set.
 
-function PhaseTemplatePickerForZone({ zoneId, projectId, onClose, onDone }: {
-  zoneId: number; projectId: number; onClose: () => void; onDone: () => void;
+function PhaseTemplatePickerForZone({ context, projectId, onClose, onDone }: {
+  context: TaskAddContext; projectId: number; onClose: () => void; onDone: () => void;
 }) {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -1460,21 +1524,42 @@ function PhaseTemplatePickerForZone({ zoneId, projectId, onClose, onDone }: {
     if (toAdd.length === 0) return;
     setAdding(true);
     try {
+      let ok = 0;
+      let fail = 0;
       for (const tpl of toAdd) {
         const detail = await client.get(`/templates/${tpl.id}`).then((r) => r.data.data ?? r.data);
-        for (const task of (detail?.templateTasks ?? [])) {
-          await tasksApi.create({
-            zoneId,
-            code: task.code,
-            name: task.name,
-            description: `[SERVICE:${tpl.name}]`,
-            budgetHours: task.defaultBudgetHours ? Number(task.defaultBudgetHours) : undefined,
-            budgetAmount: task.defaultBudgetAmount ? Number(task.defaultBudgetAmount) : undefined,
-          });
-        }
+        // Skip [SERVICE:xxx] marker rows (synthetic) — we want real tasks.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const tplTasks = ((detail?.templateTasks ?? []) as any[]).filter(
+          (t) => !(t.description?.match?.(/^\[SERVICE:.+\]$/)),
+        );
+        // If the caller has no deliverable/phase context, treat this
+        // picked template AS the deliverable (matches the classic
+        // AddRootDeliverableDialog behaviour) so the tasks land under a
+        // real deliverable in the tree.
+        const perTemplateCtx: TaskAddContext = {
+          ...context,
+          deliverableTemplateId: context.deliverableTemplateId ?? tpl.id,
+          phaseId: context.phaseId ?? tpl.phaseId ?? undefined,
+        };
+        // Keep the legacy [SERVICE:xxx] description marker only when we
+        // don't have a deliverable link (older zone-mode fallback);
+        // otherwise the deliverable link is enough.
+        const description = perTemplateCtx.projectDeliverableId == null
+          && perTemplateCtx.deliverableTemplateId == null
+          ? `[SERVICE:${tpl.name}]` : undefined;
+        const results = await Promise.allSettled(
+          tplTasks.map((task) => tasksApi.create(
+            buildTaskAddPayload(task, perTemplateCtx, { projectId, description }) as never,
+          )),
+        );
+        ok += results.filter((r) => r.status === 'fulfilled').length;
+        fail += results.filter((r) => r.status === 'rejected').length;
       }
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
-      notify.success(`Added ${toAdd.length} deliverable template${toAdd.length !== 1 ? 's' : ''}`, { code: 'TPL-APPLY-200' });
+      if (fail === 0) notify.success(`Added ${ok} task${ok !== 1 ? 's' : ''} from ${toAdd.length} template${toAdd.length !== 1 ? 's' : ''}`, { code: 'TPL-APPLY-200' });
+      else if (ok > 0) notify.warning(`Added ${ok}, ${fail} failed`, { code: 'TPL-APPLY-207' });
+      else notify.error('Failed to apply template', { code: 'TPL-APPLY-500' });
       onDone();
     } catch (err: any) {
       notify.apiError(err, 'Failed to apply template');
@@ -3076,24 +3161,30 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
       // ServiceType workaround is gone — we still send `serviceTypeId`
       // when the TemplateTask had its own, but it's no longer the
       // Deliverable identity.
+      // PR-013: routed through the shared buildTaskAddPayload helper so
+      // requiresReview is set explicitly (core-fields guardrail on
+      // tasks.service#create treats undefined requiresReview as missing).
       const results = await Promise.allSettled(
-        tasks.map((t: any) => tasksApi.create({
-          projectId,
-          code: t.code,
-          name: t.name,
-          description: t.description,
-          budgetHours: t.defaultBudgetHours ? Number(t.defaultBudgetHours) : undefined,
-          budgetAmount: t.defaultBudgetAmount ? Number(t.defaultBudgetAmount) : undefined,
-          // Direct FK to the source Deliverable (Template).
-          deliverableTemplateId: template.id,
-          // Pass through the per-task service type if the template
-          // had one — purely informational, not the Deliverable
-          // identity any more.
-          serviceTypeId: t.serviceTypeId ?? undefined,
-          // Service the Deliverable belongs to. Falls back to the
-          // template-task's own phase if the template isn't linked.
-          phaseId: template.phaseId ?? t.phaseId ?? undefined,
-        } as any)),
+        tasks.map((t: any) => tasksApi.create(
+          buildTaskAddPayload(
+            {
+              code: t.code,
+              name: t.name,
+              description: t.description,
+              defaultBudgetHours: t.defaultBudgetHours,
+              defaultBudgetAmount: t.defaultBudgetAmount,
+              serviceTypeId: t.serviceTypeId ?? undefined,
+              // Service the Deliverable belongs to. Falls back to the
+              // template-task's own phase if the template isn't linked.
+              phaseId: template.phaseId ?? t.phaseId ?? undefined,
+            },
+            {
+              zoneId: null,
+              deliverableTemplateId: template.id,
+            },
+            { projectId },
+          ) as never,
+        )),
       );
       const ok = results.filter((r) => r.status === 'fulfilled').length;
       const fail = results.length - ok;
@@ -3408,7 +3499,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
 
           {showCatalogPicker && (
             <CatalogPickerForZone
-              zoneId={zone.id}
+              context={{ zoneId: zone.id }}
               projectId={projectId}
               onClose={() => setShowCatalogPicker(false)}
               onDone={() => { setShowCatalogPicker(false); onUpdate(); }}
@@ -3755,7 +3846,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
 
       {showCatalogPicker && (
         <CatalogPickerForZone
-          zoneId={zone.id}
+          context={{ zoneId: zone.id }}
           projectId={projectId}
           onClose={() => setShowCatalogPicker(false)}
           onDone={() => { setShowCatalogPicker(false); onUpdate(); }}
@@ -3764,7 +3855,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
 
       {showPhasePicker && (
         <PhaseTemplatePickerForZone
-          zoneId={zone.id}
+          context={{ zoneId: zone.id }}
           projectId={projectId}
           onClose={() => setShowPhasePicker(false)}
           onDone={() => { setShowPhasePicker(false); onUpdate(); }}
@@ -3918,8 +4009,30 @@ function ProjectRootDeliverableGroup({
   //   • deliv  ← editableDeliverableId (project-owned) or
   //              editableTemplateId (catalog fallback)
   //   • phase  ← contextPhaseId (Service groups)
+  // PR-013 (bm2 Branch 3): the Add button is now a menu that also
+  // exposes "From Catalog" + "From Template", mirroring the
+  // HierarchicalZoneGroup menu so a task template can be added into the
+  // tree from every grouping mode, not just Zone. Both pickers receive
+  // the same group context above so the created tasks inherit whatever
+  // dimension the group represents.
   const [showAddTask, setShowAddTask] = useState(false);
+  const [showAddMenuLocal, setShowAddMenuLocal] = useState(false);
+  const [showCatalogPicker, setShowCatalogPicker] = useState(false);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [newTask, setNewTask] = useState({ code: '', name: '', budgetHours: '', budgetAmount: '' });
+  // Context bag handed to the pickers — matches the same fields the
+  // inline Add-task submit uses so both entry points land tasks on the
+  // same slot in the tree.
+  const groupAddContext: TaskAddContext = {
+    zoneId: contextZoneId ?? null,
+    projectDeliverableId: editableDeliverableId ?? null,
+    deliverableTemplateId: editableDeliverableId == null && editableTemplateId != null
+      ? editableTemplateId : null,
+    // Phase context only when the group IS a Service bucket (the
+    // deliverable already carries the phase via its serviceId FK).
+    phaseId: editableDeliverableId == null && editableTemplateId == null
+      ? (contextPhaseId ?? null) : null,
+  };
   const createTask = useMutation({
     // `as any` matches the pattern used throughout this file (see the
     // sibling createTask mutations in HierarchicalZoneGroup / AddRoot…
@@ -4107,19 +4220,45 @@ function ProjectRootDeliverableGroup({
           </span>
           <span> · ₪{totalAmount.toLocaleString()}</span>
         </span>
-        {/* Add-task affordance — bm2 fix #4. Present on every group card
-            (previously only zone-level cards had one), and the created
-            task inherits the group's context (see submitAddTask above).
-            Stop-prop on the button so the header's collapse-toggle
+        {/* Add-task affordance — bm2 fix #4 + PR-013. The button opens a
+            small menu with "Create New Task" (inline form, unchanged) and
+            two template-add paths ("From Catalog" / "From Template"). All
+            three paths use the same groupAddContext so the created tasks
+            inherit the group's zone / deliverable / service dimension.
+            Stop-prop on the wrapper so the header's collapse-toggle
             doesn't fire underneath. */}
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); setShowAddTask(true); setCollapsed(false); }}
-          title={kind === 'deliverable' ? 'Add task to this deliverable' : kind === 'service' ? 'Add task to this service' : kind === 'zone' ? 'Add task to this zone' : 'Add task to this group'}
-          className="ml-2 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1 shrink-0"
-        >
-          <Plus className="w-3 h-3" /> Add
-        </button>
+        <div className="relative ml-2" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            onClick={() => { setShowAddMenuLocal((v) => !v); setCollapsed(false); }}
+            title={kind === 'deliverable' ? 'Add task to this deliverable' : kind === 'service' ? 'Add task to this service' : kind === 'zone' ? 'Add task to this zone' : 'Add task to this group'}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1 shrink-0"
+          >
+            <Plus className="w-3 h-3" /> Add
+          </button>
+          {showAddMenuLocal && (
+            <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white dark:bg-slate-900 p-1.5">
+              <button
+                onClick={() => { setShowAddTask(true); setShowAddMenuLocal(false); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-left"
+              >
+                Create New Task
+              </button>
+              <button
+                onClick={() => { setShowCatalogPicker(true); setShowAddMenuLocal(false); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-left"
+              >
+                Task from Catalog
+              </button>
+              <button
+                onClick={() => { setShowTemplatePicker(true); setShowAddMenuLocal(false); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-left"
+              >
+                From Template
+              </button>
+            </div>
+          )}
+        </div>
       </div>
       {/* Inline add-task form — bm2 fix #4. Mirrors the shape used by
           HierarchicalZoneGroup's inline add row (code/name/hours/amount)
@@ -4171,6 +4310,26 @@ function ProjectRootDeliverableGroup({
             ✕
           </button>
         </div>
+      )}
+      {/* Catalog + template pickers — PR-013. Mounted once per group card;
+          the group's context (zone / deliverable / service) is handed to
+          the picker so the created tasks land on the same slot as the
+          group they were added from. */}
+      {showCatalogPicker && (
+        <CatalogPickerForZone
+          context={groupAddContext}
+          projectId={projectId}
+          onClose={() => setShowCatalogPicker(false)}
+          onDone={() => { setShowCatalogPicker(false); onUpdate?.(); }}
+        />
+      )}
+      {showTemplatePicker && (
+        <PhaseTemplatePickerForZone
+          context={groupAddContext}
+          projectId={projectId}
+          onClose={() => setShowTemplatePicker(false)}
+          onDone={() => { setShowTemplatePicker(false); onUpdate?.(); }}
+        />
       )}
       {!collapsed && (
         renderNested ? (
