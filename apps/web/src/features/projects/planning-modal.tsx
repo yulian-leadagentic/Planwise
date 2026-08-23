@@ -7,6 +7,7 @@ import { notify } from '@/lib/notify';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { planningApi, zonesApi, templatesApi } from '@/api/zones.api';
+import { projectsApi, type AssigneeCandidate } from '@/api/projects.api';
 import { tasksApi } from '@/api/tasks.api';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { useColumnVisibility, ColumnVisibilityPicker } from '@/components/shared/column-visibility';
@@ -1545,7 +1546,7 @@ function BulkActionBar({
 }: {
   selectedCount: number;
   selectedTaskIds: Set<number>;
-  members: any[];
+  members: AssigneeCandidate[];
   projectId: number;
   onClear: () => void;
   /** Open the styled confirm modal for the given task ids. The bar
@@ -1582,11 +1583,12 @@ function BulkActionBar({
 
   const filteredMembers = useMemo(() => {
     const q = search.toLowerCase().trim();
-    return members.filter((m: any) => {
+    return members.filter((m) => {
       if (!q) return true;
-      const u = m.user ?? m;
-      const full = `${u.firstName ?? ''} ${u.lastName ?? ''}`.toLowerCase();
-      return full.includes(q);
+      const full = `${m.firstName ?? ''} ${m.lastName ?? ''} ${m.displayName ?? ''}`.toLowerCase();
+      const role = (m.role ?? '').toLowerCase();
+      const disc = (m.discipline ?? '').toLowerCase();
+      return full.includes(q) || role.includes(q) || disc.includes(q);
     });
   }, [members, search]);
 
@@ -1609,9 +1611,10 @@ function BulkActionBar({
     setAssignOpen(false);
     setSearch('');
 
-    const user = members.find((m: any) => (m.user?.id ?? m.id) === userId);
-    const u = user?.user ?? user ?? {};
-    const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || 'user';
+    const user = members.find((m) => m.userId === userId);
+    const name = user
+      ? `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || user.displayName || 'user'
+      : 'user';
 
     if (succeeded > 0 && failed === 0 && alreadyAssigned === 0) {
       notify.success(`Assigned ${name} to ${succeeded} task${succeeded !== 1 ? 's' : ''}`, {
@@ -1784,7 +1787,7 @@ function AssigneePicker({
   selectedTaskIds,
 }: {
   task: any;
-  members: any[];
+  members: AssigneeCandidate[];
   projectId: number;
   onUpdate: () => void;
   selectedTaskIds?: Set<number>;
@@ -1882,11 +1885,17 @@ function AssigneePicker({
     }
   };
 
-  // Filter available members — exclude ones already assigned
-  const available = members.filter((m: any) => {
-    const uid = m.user?.id ?? m.id;
-    return typeof uid === 'number' && !assignedUserIds.has(uid);
+  // Show every candidate that isn't already assigned — including rows
+  // with `canAssign === false` (external contacts). Rendering them
+  // disabled with a reason is a hard requirement (Branch 2 DoD): the
+  // previous behaviour silently omitted anyone without a User, which
+  // is exactly what made real role holders disappear from the picker.
+  const available = members.filter((m) => {
+    const uid = m.userId;
+    if (typeof uid === 'number' && assignedUserIds.has(uid)) return false;
+    return true;
   });
+  const anyAssignable = available.some((m) => m.canAssign && m.userId != null);
 
   return (
     <div ref={ref} className="relative inline-flex items-center gap-1">
@@ -1916,13 +1925,16 @@ function AssigneePicker({
         </div>
       )}
 
-      {/* Add button (only if there are available members) */}
+      {/* Add button — always visible when there's ANY row to show
+          (assignable or not) so the user can see the reason a person
+          isn't clickable. `Plus` when at least one assignable candidate
+          remains, dashed circle when only disabled ones remain. */}
       {available.length > 0 && (
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
           className="w-5 h-5 rounded-full border border-dashed border-slate-300 dark:border-slate-600 text-slate-400 dark:text-slate-500 flex items-center justify-center hover:border-blue-500 hover:text-blue-600"
-          title="Assign people"
+          title={anyAssignable ? 'Assign people' : 'External contacts only — invite them as users to assign'}
         >
           <Plus className="h-3 w-3" />
         </button>
@@ -1930,32 +1942,69 @@ function AssigneePicker({
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-20 w-52 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg">
+        <div className="absolute left-0 top-full mt-1 z-20 w-64 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg">
           <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
             Assign People
           </div>
-          <div className="max-h-48 overflow-y-auto py-1">
+          <div className="max-h-56 overflow-y-auto py-1">
             {available.length === 0 ? (
               <p className="px-3 py-2 text-[11px] text-slate-400 dark:text-slate-500">
                 {members.length === 0 ? 'No project members' : 'Everyone is already assigned'}
               </p>
             ) : (
-              available.map((m: any) => {
-                const u = m.user ?? m;
-                const uid = u.id;
-                const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || 'Unknown';
+              available.map((m) => {
+                const uid = m.userId;
+                const name = `${m.firstName ?? ''} ${m.lastName ?? ''}`.trim() || m.displayName || 'Unknown';
+                const disabled = !m.canAssign || uid == null;
+                // Compose the tooltip so a disabled row explains itself
+                // — matches Branch 2 DoD: external contacts appear
+                // and are clearly non-assignable, not silently hidden.
+                const title = disabled
+                  ? 'External contact — no user account, cannot be task-assigned. Ask an admin to invite them.'
+                  : (m.role || m.discipline || name);
+                const initials = (m.firstName?.[0] ?? '') + (m.lastName?.[0] ?? '')
+                  || (m.displayName ? m.displayName[0] : '') || '?';
                 return (
                   <button
-                    key={uid}
+                    key={`${m.partyId ?? 'u'}:${uid ?? 'x'}`}
                     type="button"
-                    disabled={busy}
-                    onClick={(e) => { e.stopPropagation(); addOne(uid); }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-slate-50 dark:hover:bg-slate-800/50 disabled:opacity-50"
+                    disabled={busy || disabled}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (disabled || uid == null) return;
+                      addOne(uid);
+                    }}
+                    title={title}
+                    className={cn(
+                      'w-full flex items-start gap-2 px-3 py-1.5 text-left text-[12px]',
+                      disabled
+                        ? 'opacity-60 cursor-not-allowed'
+                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/50',
+                    )}
                   >
-                    <span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-semibold flex items-center justify-center shrink-0">
-                      {(u.firstName?.[0] ?? '') + (u.lastName?.[0] ?? '')}
+                    <span className={cn(
+                      'mt-0.5 w-5 h-5 rounded-full text-[9px] font-semibold flex items-center justify-center shrink-0',
+                      disabled
+                        ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'
+                        : 'bg-violet-100 text-violet-600',
+                    )}>
+                      {initials}
                     </span>
-                    <span className="truncate text-slate-700 dark:text-slate-200">{name}</span>
+                    <span className="flex-1 min-w-0">
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate text-slate-700 dark:text-slate-200">{name}</span>
+                        {disabled && (
+                          <span className="rounded bg-amber-100 text-amber-700 text-[9px] font-semibold px-1 py-[1px] shrink-0">
+                            External
+                          </span>
+                        )}
+                      </span>
+                      {(m.role || m.discipline) && (
+                        <span className="block truncate text-[10px] text-slate-500 dark:text-slate-400">
+                          {[m.role, m.discipline].filter(Boolean).join(' · ')}
+                        </span>
+                      )}
+                    </span>
                   </button>
                 );
               })
@@ -4708,7 +4757,22 @@ function PlanningView({ projectId }: { projectId: number }) {
       return enriched;
     });
   }, [rawTasks, servicePhaseMap]);
-  const members = pd?.members ?? [];
+  // Branch 2 · fix/assignee-source (PR-001/009). Legacy `pd?.members`
+  // read only ProjectMember, missing the project's role holders
+  // (coordinator / model manager / BIM Leader) — the picker showed a
+  // stray legacy member (Daniel Malka on STG) and nothing else. The
+  // unified `/projects/:id/assignee-candidates` endpoint walks legacy
+  // members AND active project_partner_roles, deduped, with per-row
+  // role/discipline + a `canAssign` flag for external contacts (BPs
+  // with no linked User). Same query key powers the task-tree picker
+  // AND the bulk-assign popover so both surfaces stay in lockstep.
+  const { data: assigneeCandidates = [] } = useQuery<AssigneeCandidate[]>({
+    queryKey: ['assignee-candidates', projectId],
+    queryFn: () => projectsApi.listAssigneeCandidates(projectId),
+    enabled: !!projectId,
+    staleTime: 60 * 1000,
+  });
+  const members: AssigneeCandidate[] = assigneeCandidates;
   const budget = pd?.budgetSummary;
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
