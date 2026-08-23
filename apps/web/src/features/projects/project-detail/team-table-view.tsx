@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { Filter } from 'lucide-react';
+import { EmptyState } from '@/components/shared/empty-state';
 import type { ProjectTeamData } from './types';
 
 /**
@@ -10,8 +12,19 @@ import type { ProjectTeamData } from './types';
  *
  * Dedupes by businessPartnerId so a person assigned to multiple
  * role-types appears once with all roles listed in one cell.
+ *
+ * PR-007 · `roleFilterNames` — when non-empty, only rows whose `roles`
+ * set intersects the selection (OR-within-filter) survive. Composes
+ * with the per-column text filters already on the table (AND across
+ * filters). Empty set = no role filter.
  */
-export function TeamTableView({ team }: { team: ProjectTeamData }) {
+export function TeamTableView({
+  team,
+  roleFilterNames,
+}: {
+  team: ProjectTeamData;
+  roleFilterNames?: Set<string>;
+}) {
   // Build a single deduped row list keyed by businessPartnerId.
   const rows = (() => {
     const byId = new Map<number, {
@@ -95,7 +108,17 @@ export function TeamTableView({ team }: { team: ProjectTeamData }) {
     if (key === 'phone') return r.phone ?? '';
     return '';
   };
+  // PR-007 — top-level role-type filter (multi-select). OR within the
+  // filter (row survives if ANY of its role names is selected); AND with
+  // the per-column text filters below.
+  const roleFilterActive = !!roleFilterNames && roleFilterNames.size > 0;
+  const passesRoleFilter = (r: typeof rows[0]) => {
+    if (!roleFilterActive) return true;
+    for (const rn of r.roles) if (roleFilterNames!.has(rn)) return true;
+    return false;
+  };
   const filtered = rows.filter((r) =>
+    passesRoleFilter(r) &&
     (Object.keys(filters) as ColKey[]).every((k) => {
       const f = filters[k].trim().toLowerCase();
       if (!f) return true;
@@ -112,6 +135,25 @@ export function TeamTableView({ team }: { team: ProjectTeamData }) {
 
   if (rows.length === 0) {
     return <p className="py-12 text-center text-sm text-slate-400 dark:text-slate-500 italic">No people on this project yet.</p>;
+  }
+
+  // Role-filter empty state — if the top-level filter is what's hiding
+  // every row (i.e. the underlying dataset would otherwise be non-empty
+  // and no per-column text filter is set), render the shared EmptyState
+  // instead of the inline "no rows match" placeholder, so the user gets
+  // a clear "clear the filter" affordance. Composes with per-column
+  // filters: if a column filter is what's excluding rows, the existing
+  // placeholder still shows since roleFilterNames alone wouldn't have
+  // dropped them.
+  const noColFilterActive = (Object.keys(filters) as ColKey[]).every((k) => !filters[k].trim());
+  if (roleFilterActive && filtered.length === 0 && noColFilterActive) {
+    return (
+      <EmptyState
+        icon={Filter}
+        title="No people match the selected roles"
+        description="Clear the role filter or pick different roles to see participants on this project."
+      />
+    );
   }
 
   const SortHeader = ({ k, label }: { k: ColKey; label: string }) => (

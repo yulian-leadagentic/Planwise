@@ -5,6 +5,8 @@ import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { OpenInDriveButton } from '@/features/drive/open-in-drive-button';
+import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
+import { EmptyState } from '@/components/shared/empty-state';
 
 /**
  * Deliverable Planning tab (Tier E #10, revised 2026-08-02).
@@ -32,6 +34,16 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   const [baseDate, setBaseDate] = useState<string>(todayStr);
   const [viewMode, setViewMode] = useState<'table' | 'gantt'>('table');
   const [filterHasDue, setFilterHasDue] = useState<'' | 'yes' | 'no'>('');
+  // PR-012 · Service (aka Phase) multi-select filter for the Deliverable
+  // view. Options are the unique service names present on the current
+  // rows — sourced from `deliverable.service.name` (ProjectDeliverable →
+  // Phase), same lookup the row's "Service" cell already renders.
+  // Empty set = no filter (all rows). OR-within-filter; ANDs with the
+  // due-date select above and the per-column text filters inside
+  // TableView. Local state (not URL-backed) to match the other filters
+  // on this tab. UI-only: the save/PERT/date-shift pipeline sees ALL
+  // rows (this filter never enters the save payload).
+  const [serviceFilter, setServiceFilter] = useState<Set<string>>(new Set());
   // Once at least one deliverable has a saved target, default to
   // Gantt view (client feedback 2026-08-02, item 6). Only flips once
   // per mount — the user can still switch back to Table manually.
@@ -421,13 +433,40 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     setTargetDateDrafts({});
   };
 
+  // Available service options for the PR-012 multi-select. Unique
+  // deliverable service names present on the current rows, in stable
+  // order. Rows with no service name go through a synthetic "— No
+  // service" bucket so the user can still narrow to them.
+  const NO_SERVICE_KEY = '__no_service__';
+  const NO_SERVICE_LABEL = '— No service';
+  const availableServices = useMemo(() => {
+    const seen = new Map<string, string>(); // key → label
+    for (const r of rows) {
+      const key = r.serviceName ?? NO_SERVICE_KEY;
+      const label = r.serviceName ?? NO_SERVICE_LABEL;
+      if (!seen.has(key)) seen.set(key, label);
+    }
+    return Array.from(seen.entries()).map(([value, label]) => ({ value, label }));
+  }, [rows]);
+
   // Filtered rows for display (only affects the visible view; save
   // still writes all rows).
+  //
+  // Filter chain (all AND-composed): due-date select → PR-012 service
+  // multi-select (OR-within). PR-012 never touches the save payload —
+  // TableView/GanttView receive the filtered list only.
   const visibleRows = useMemo(() => {
-    if (filterHasDue === '') return rows;
-    if (filterHasDue === 'yes') return rows.filter((r) => (drafts[r.key] ?? r.savedMonths ?? '') !== '' && (drafts[r.key] ?? r.savedMonths ?? '') !== null);
-    return rows.filter((r) => (drafts[r.key] ?? r.savedMonths ?? '') === '' || (drafts[r.key] ?? r.savedMonths ?? '') == null);
-  }, [rows, drafts, filterHasDue]);
+    let out = rows;
+    if (filterHasDue === 'yes') {
+      out = out.filter((r) => (drafts[r.key] ?? r.savedMonths ?? '') !== '' && (drafts[r.key] ?? r.savedMonths ?? '') !== null);
+    } else if (filterHasDue === 'no') {
+      out = out.filter((r) => (drafts[r.key] ?? r.savedMonths ?? '') === '' || (drafts[r.key] ?? r.savedMonths ?? '') == null);
+    }
+    if (serviceFilter.size > 0) {
+      out = out.filter((r) => serviceFilter.has(r.serviceName ?? NO_SERVICE_KEY));
+    }
+    return out;
+  }, [rows, drafts, filterHasDue, serviceFilter]);
 
   if (isLoading) return <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading deliverables...</div>;
   if (rows.length === 0) {
@@ -606,6 +645,22 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           </p>
         </div>
         <div className="ml-auto flex items-end gap-2">
+          {/* PR-012 · Service (Phase) multi-select. Sourced from the
+              service names appearing on the current rows so options
+              never surface something with zero matches. Composes with
+              the Due-date select on the right and the per-column text
+              filters inside the table. */}
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Service</label>
+            <MultiSelectFilter
+              options={availableServices}
+              selected={serviceFilter}
+              onChange={setServiceFilter}
+              placeholder="Services"
+              title="Filter by service"
+              triggerClassName="w-52"
+            />
+          </div>
           <div>
             <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Due date</label>
             <select
@@ -667,7 +722,18 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         </div>
       </div>
 
-      {viewMode === 'table' ? (
+      {/* PR-012 · when the tab-level filters (service + due-date) hide
+          every row, fall through to the shared EmptyState so the user
+          knows nothing matched and can clear the picks. `rows.length
+          > 0` guards this — the "no deliverables yet" path is handled
+          earlier and returns before the header renders. */}
+      {visibleRows.length === 0 ? (
+        <EmptyState
+          icon={Filter}
+          title="No deliverables match the active filters"
+          description="Adjust the Service or Due-date filter above to see more rows, or clear both to see everything."
+        />
+      ) : viewMode === 'table' ? (
         <TableView rows={visibleRows} drafts={drafts} setDrafts={setDrafts} durationDrafts={durationDrafts} setDurationDrafts={setDurationDrafts} computePreview={computePreview} />
       ) : (
         <GanttView projectId={projectId} rows={visibleRows} drafts={drafts} durationDrafts={durationDrafts} targetDateDrafts={targetDateDrafts} setDrafts={setDrafts} setDurationDrafts={setDurationDrafts} setTargetDateDrafts={setTargetDateDrafts} computePreview={computePreview} baseDate={baseDate} />
