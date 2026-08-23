@@ -5,6 +5,7 @@ import { timeApi } from '@/api/time.api';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useOverlapConfirm } from './overlap-confirm';
+import { invalidateAfterTimeEntry } from './invalidate-after-time-entry';
 
 interface TimeEntryFormProps {
   taskId: number;
@@ -73,10 +74,13 @@ export function TimeEntryForm({
         }),
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: ['time'] });
-          queryClient.invalidateQueries({ queryKey: ['tasks', 'mine'] });
-          queryClient.invalidateQueries({ queryKey: ['tasks', taskId] });
-          queryClient.invalidateQueries({ queryKey: ['execution-board'] });
+          // Shared invalidator — covers time / tasks / progress /
+          // feasibility / planning / execution-board / project detail,
+          // scoped to this project + task. Fixes PR-004/005/006: before,
+          // this form invalidated only ['time'] + ['tasks', 'mine'] +
+          // ['tasks', taskId] + ['execution-board'], so the project
+          // screen's Hours / Actual ₪ / % stayed stale after logging.
+          invalidateAfterTimeEntry(queryClient, { projectId: projectId ?? null, taskId });
           notify.success(`Logged ${totalHours}h`, { code: 'TIME-LOG-200' });
           setNote('');
           onLogged?.();

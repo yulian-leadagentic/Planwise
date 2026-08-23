@@ -9,6 +9,7 @@ import { notify } from '@/lib/notify';
 import { timeApi, type TimeEntryPayload } from '@/api/time.api';
 import { useClockStatus, useClockIn, useClockOut, useWeeklyGrid, useDeleteTimeEntry } from '@/hooks/use-time';
 import { useOverlapConfirm } from './overlap-confirm';
+import { invalidateAfterTimeEntry } from './invalidate-after-time-entry';
 import { format, addDays, startOfWeek } from '@/lib/date-utils';
 import { minutesToDisplay } from '@/types';
 import client from '@/api/client';
@@ -113,7 +114,11 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
 
     const effectiveTaskId = overrideTaskId ?? taskId;
 
-    // Update task status if a task is selected
+    // Update task status if a task is selected. Full invalidation runs
+    // after the time-entry save below (see onSuccess); here we still
+    // refresh tasks + planning immediately because the status change
+    // itself needs to render even if the time entry is later cancelled
+    // by the overlap dialog.
     if (effectiveTaskId && taskStatus) {
       try {
         await client.patch(`/tasks/${effectiveTaskId}`, { status: taskStatus });
@@ -140,7 +145,15 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
       {
         onSuccess: () => {
           notify.success('Time entry created', { code: 'TIME-CREATE-200' });
-          queryClient.invalidateQueries({ queryKey: ['time'] });
+          // Shared invalidator so project Hours / task Actual ₪ /
+          // completion % refresh in every screen without a manual
+          // reload. Previously only ['time'] was invalidated here,
+          // which is why logging from this popup sometimes-refreshed
+          // the tree and never refreshed the project KPIs.
+          invalidateAfterTimeEntry(queryClient, {
+            projectId: payloadBase.projectId ?? null,
+            taskId: payloadBase.taskId ?? null,
+          });
           onSaved();
           onClose();
         },
@@ -210,6 +223,8 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
       setTaskStatus(newTask.status || 'in_progress');
       setShowQuickTask(false);
       setQuickTaskName('');
+      // Refresh /tasks/mine so the new task shows in the dropdown; the
+      // full time-entry invalidation runs inside doSubmit below.
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
 
       // 5. Log the time entry immediately, passing the new task id
@@ -490,7 +505,6 @@ const ISRAELI_HOLIDAYS_2026 = [
 
 function WeekView() {
   const confirm = useConfirm();
-  const queryClient = useQueryClient();
   const [weekOffset, setWeekOffset] = useState(0);
   const [showEntryForm, setShowEntryForm] = useState<{ date: string; startTime: string; endTime: string } | null>(null);
   // Drag-select state. `anchor` is the hour the pointer went down on;
@@ -737,9 +751,10 @@ function WeekView() {
     return () => document.removeEventListener('mouseup', up);
   }, [selection, commitSelection]);
 
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ['time'] });
-  };
+  // TimeEntryFormPopup already runs the shared invalidator on save; this
+  // callback is a legacy no-op kept for backwards compat with the
+  // {onSaved} prop shape. Extra invalidations here would double-fetch.
+  const invalidate = () => {};
 
   return (
     <div className="space-y-4">

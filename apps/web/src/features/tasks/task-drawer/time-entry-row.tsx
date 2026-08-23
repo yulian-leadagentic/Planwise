@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { notify } from '@/lib/notify';
 import { timeApi } from '@/api/time.api';
 import { formatDate } from '@/lib/date-utils';
-import { queryKeys } from '@/lib/query-keys';
+import { invalidateAfterTimeEntry } from '@/features/time/invalidate-after-time-entry';
 
 /**
  * Single time-entry row with inline edit + delete. Edit replaces the
@@ -25,6 +25,11 @@ export function TimeEntryRow({ entry, taskId }: { entry: any; taskId: number }) 
   const [eh, em] = end.split(':').map(Number);
   const editingMinutes = Math.max(0, (eh * 60 + em) - (sh * 60 + sm));
 
+  // The entry carries its projectId (loaded with the row); pass it to
+  // the shared invalidator so per-project rollups (/progress /feasibility
+  // /projects/:id) refetch scoped instead of prefix-flushing.
+  const projectId: number | null = entry.projectId ?? entry.project?.id ?? null;
+
   const updateMutation = useMutation({
     mutationFn: () => timeApi.updateEntry(entry.id, {
       date,
@@ -34,10 +39,11 @@ export function TimeEntryRow({ entry, taskId }: { entry: any; taskId: number }) 
       note: note.trim() || undefined,
     }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.time.all });
-      queryClient.invalidateQueries({ queryKey: queryKeys.time.entriesByTask(taskId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.mine() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.detail(taskId) });
+      // Shared invalidator: time / tasks / progress / feasibility /
+      // planning / execution-board / project detail. Fixes the
+      // "editing a time entry doesn't refresh the project KPIs"
+      // half of PR-004/005/006.
+      invalidateAfterTimeEntry(queryClient, { projectId, taskId });
       notify.success('Entry updated', { code: 'TIME-EDIT-200' });
       setEditing(false);
     },
@@ -47,10 +53,7 @@ export function TimeEntryRow({ entry, taskId }: { entry: any; taskId: number }) 
   const deleteMutation = useMutation({
     mutationFn: () => timeApi.deleteEntry(entry.id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.time.all });
-      queryClient.invalidateQueries({ queryKey: queryKeys.time.entriesByTask(taskId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.mine() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.detail(taskId) });
+      invalidateAfterTimeEntry(queryClient, { projectId, taskId });
       notify.success('Entry deleted', { code: 'TIME-DEL-200' });
     },
     onError: (err: any) => notify.apiError(err, 'Failed to delete entry'),
