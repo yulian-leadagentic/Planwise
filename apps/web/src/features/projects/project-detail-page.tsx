@@ -38,6 +38,8 @@ import { ProjectCloseControl } from './project-detail/project-close-control';
 import { ProjectPrevNext } from './project-detail/project-prev-next';
 import { ProjectInfoTab } from './project-detail/project-info-tab';
 import { TeamTab } from './project-detail/team-tab';
+import { ProjectStatusEditor } from './project-detail/project-status-editor';
+import { ProjectCategoryEditor } from './project-detail/project-category-editor';
 import { OpenInDriveButton } from '@/features/drive/open-in-drive-button';
 
 export function ProjectDetailPage() {
@@ -120,9 +122,22 @@ export function ProjectDetailPage() {
               <button onClick={() => navigate(`/projects/${projectId}/edit`)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100" aria-label="Edit project">
                 <Pencil className="h-3.5 w-3.5" />
               </button>
-              <span className="rounded-[5px] bg-blue-50 px-2.5 py-1 text-[11px] font-bold tracking-wide text-blue-600 uppercase">
-                {project.status}
-              </span>
+              {/* Inline status editor (PR-002). Replaces the previous
+                  read-only pill. Backend accepts `status` on PATCH via
+                  UpdateProjectDto — see projects.controller#update. */}
+              <ProjectStatusEditor projectId={projectId} status={project.status} />
+              {/* Inline category (project-type) editor (PR-003). Same
+                  contract — PATCH `/projects/:id` with `projectTypeId`.
+                  `projectType` is eager-loaded by projects.service#findOne
+                  but the shared Project type doesn't yet declare it — so
+                  we structurally narrow just this one prop here. */}
+              <ProjectCategoryEditor
+                projectId={projectId}
+                projectType={
+                  (project as unknown as { projectType?: { id: number; name: string; color: string | null } | null })
+                    .projectType ?? null
+                }
+              />
               {project.number && (
                 <span className="text-[13px] text-slate-400 dark:text-slate-500 font-mono">
                   {project.number}

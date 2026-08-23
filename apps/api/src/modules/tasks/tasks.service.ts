@@ -522,26 +522,53 @@ export class TasksService {
   async update(id: number, dto: UpdateTaskDto, userId?: number) {
     const existing = await this.findOne(id);
 
-    // Core-task guardrail (Ops backlog #2, 2026-08-08): the merged
-    // post-update state of a non-personal task MUST still carry
-    // Service, Zone, Deliverable, and an explicit Review flag. Merge
-    // DTO on top of the persisted row before validating so a partial
-    // update that leaves fields untouched still passes.
-    const existingCore = {
-      zoneId: (existing as any).zoneId ?? null,
-      serviceTypeId: (existing as any).serviceTypeId ?? null,
-      projectDeliverableId: (existing as any).projectDeliverableId ?? null,
-      deliverableTemplateId: (existing as any).deliverableTemplateId ?? null,
-      requiresReview: (existing as any).requiresReview ?? null,
-      isPersonal: (existing as any).isPersonal ?? false,
-    };
-    const missing = this.missingCoreFields(dto, existingCore);
-    if (missing.length > 0) {
-      throw new BadRequestException({
-        error: 'missing_required_fields',
-        message: 'Core tasks require Service, Zone, Deliverable, and an explicit Review flag.',
-        missing,
-      });
+    // Core-task guardrail (Ops backlog #2, 2026-08-08 · refined
+    // 2026-08-19 for PR-010/011): the invariant is that a non-personal
+    // task must always carry Service, Zone, Deliverable, and an
+    // explicit Review flag. But re-running the check on *every* PATCH
+    // regressed a common workflow — a legacy task that predates the
+    // guardrail (or was created incomplete) could not have its status
+    // or dates changed, because a partial update let the missing
+    // fields fall through and the check refused to save. Neither the
+    // status nor the date field caused the failure; the check would
+    // block a `dueDate: '2026-09-01'` PATCH the same as it would
+    // block clearing a required column.
+    //
+    // Gate: only re-validate when the DTO actually touches one of the
+    // core fields. `undefined` = key not sent = leave alone; `null` =
+    // key sent as null = clearing (still validated). Status-only,
+    // date-only, priority-only, assignee, description edits proceed.
+    // Editing that clears a required column still 400s (invariant
+    // intact). Create-path enforcement in `create()` is unchanged.
+    const CORE_FIELD_KEYS = [
+      'serviceTypeId',
+      'zoneId',
+      'projectDeliverableId',
+      'deliverableTemplateId',
+      'requiresReview',
+      'isPersonal',
+    ] as const;
+    const touchesCoreField = CORE_FIELD_KEYS.some((k) =>
+      Object.prototype.hasOwnProperty.call(dto, k),
+    );
+
+    if (touchesCoreField) {
+      const existingCore = {
+        zoneId: (existing as any).zoneId ?? null,
+        serviceTypeId: (existing as any).serviceTypeId ?? null,
+        projectDeliverableId: (existing as any).projectDeliverableId ?? null,
+        deliverableTemplateId: (existing as any).deliverableTemplateId ?? null,
+        requiresReview: (existing as any).requiresReview ?? null,
+        isPersonal: (existing as any).isPersonal ?? false,
+      };
+      const missing = this.missingCoreFields(dto, existingCore);
+      if (missing.length > 0) {
+        throw new BadRequestException({
+          error: 'missing_required_fields',
+          message: 'Core tasks require Service, Zone, Deliverable, and an explicit Review flag.',
+          missing,
+        });
+      }
     }
 
     // Pull date fields out so we can either set them, clear them, or leave
