@@ -12,6 +12,7 @@ import { tasksApi } from '@/api/tasks.api';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { useColumnVisibility, ColumnVisibilityPicker } from '@/components/shared/column-visibility';
 import { STATUS_LABEL } from '@/lib/task-constants';
+import { rollupCompletion } from '@/lib/completion-rollup';
 import client from '@/api/client';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
@@ -3649,23 +3650,12 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
         <div className="ml-auto flex items-center gap-3 shrink-0">
           {/* Mini progress bar */}
           {(() => {
-            // PR-014: mirror the server-side fallback in
-            // execution-planning.service#getProjectProgress — when a zone
-            // has zero total budget hours (every task Done but nobody
-            // filled in a budget), fall back to a simple average of
-            // completionPct so Done tasks aren't silently dropped to 0%.
-            let weightedSum = 0;
-            let pctSum = 0;
-            for (const t of allZoneTasks as Array<{ completionPct?: number; budgetHours?: number | string | null }>) {
-              const pct = Number(t.completionPct || 0);
-              weightedSum += pct * Number(t.budgetHours || 0);
-              pctSum += pct;
-            }
-            const zoneProgress = allZoneTasks.length === 0
-              ? 0
-              : totalHours > 0
-                ? Math.round(weightedSum / totalHours)
-                : Math.round(pctSum / allZoneTasks.length);
+            // Canonical rollup: budget-hours-weighted average of
+            // completionPct with a simple-mean fallback when total budget
+            // hours = 0 (PR-014). Shared with the Execution Board's
+            // CellSummary via `@/lib/completion-rollup` so the two
+            // surfaces cannot drift.
+            const zoneProgress = rollupCompletion(allZoneTasks);
             return (
               <div className="flex items-center gap-1.5">
                 <div className="w-16 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">

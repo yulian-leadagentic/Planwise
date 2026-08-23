@@ -1,5 +1,6 @@
 import { ChevronRight } from 'lucide-react';
 import { aggregateHealth, type TaskHealth } from '@/lib/task-health';
+import { rollupCompletion } from '@/lib/completion-rollup';
 import { cn } from '@/lib/utils';
 import { HealthBadge } from './health-badge';
 import type { Task } from './types';
@@ -19,23 +20,21 @@ export function CellSummary({
 }: { tasks: Task[]; healths: TaskHealth[]; isAggregate: boolean; expanded: boolean; onToggle: () => void; showBar?: boolean }) {
   if (tasks.length === 0) return null;
 
-  // Completion = sum of estimated hours for COMPLETED tasks / sum of all
-  // estimated hours. A task is only "done" when its status is 'completed' —
-  // logged hours alone do not count as 100%.
-  let completedHours = 0;
+  // Canonical completion rollup shared with the Planning tree — see
+  // `@/lib/completion-rollup`. Uses the status-aware per-task
+  // `completionPct` (100 for completed/cancelled, 90 for in_review, else
+  // capped time-based partial credit) and rolls up as a budget-hours-
+  // weighted average with a simple-mean fallback when the bucket's total
+  // budget = 0. This replaces the old exec-board-only binary calc
+  // (Σ hours of tasks with status==='completed' / Σ hours) so the two
+  // surfaces agree on a single number.
   let totalHours = 0;
-  let completedCount = 0;
+  let doneCount = 0;
   for (const task of tasks) {
-    const est = Number(task.budgetHours) || 0;
-    totalHours += est;
-    if (task.status === 'completed') {
-      completedHours += est;
-      completedCount++;
-    }
+    totalHours += Number(task.budgetHours) || 0;
+    if (task.status === 'completed') doneCount++;
   }
-  const pct = totalHours > 0
-    ? Math.round((completedHours / totalHours) * 100)
-    : Math.round((completedCount / tasks.length) * 100);
+  const pct = rollupCompletion(tasks);
 
   const agg = aggregateHealth(healths);
   const color =
@@ -74,7 +73,7 @@ export function CellSummary({
         <HealthBadge agg={agg} />
       </div>
       <div className="flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 pl-4">
-        <span>{completedCount}/{tasks.length} done</span>
+        <span>{doneCount}/{tasks.length} done</span>
         {totalHours > 0 && <span>· {totalHours}h est.</span>}
       </div>
     </button>
