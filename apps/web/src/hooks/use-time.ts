@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { notify } from '@/lib/notify';
 import { timeApi } from '@/api/time.api';
 import type { ClockInPayload, ClockOutPayload, TimeEntryPayload, WeeklyGridQuery } from '@/api/time.api';
+import { invalidateAfterTimeEntry } from '@/features/time/invalidate-after-time-entry';
 
 export function useClockStatus() {
   return useQuery({
@@ -55,8 +56,15 @@ export function useCreateTimeEntry() {
 
   return useMutation({
     mutationFn: (payload: TimeEntryPayload) => timeApi.createEntry(payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['time'] });
+    onSuccess: (_data, payload) => {
+      // Route every mutation through the shared invalidator so project
+      // Hours / task Actual ₪ / completion % update in every screen
+      // without a manual refresh. See invalidateAfterTimeEntry doc for
+      // the full rationale.
+      invalidateAfterTimeEntry(queryClient, {
+        projectId: payload.projectId ?? null,
+        taskId: payload.taskId ?? null,
+      });
       notify.success('Time entry created', { code: 'TIME-CREATE-200' });
     },
     onError: (err: any) => {
@@ -71,8 +79,11 @@ export function useUpdateTimeEntry() {
   return useMutation({
     mutationFn: ({ id, ...payload }: Partial<TimeEntryPayload> & { id: number }) =>
       timeApi.updateEntry(id, payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['time'] });
+    onSuccess: (_data, variables) => {
+      invalidateAfterTimeEntry(queryClient, {
+        projectId: variables.projectId ?? null,
+        taskId: variables.taskId ?? null,
+      });
       notify.success('Time entry updated', { code: 'TIME-UPDATE-200' });
     },
     onError: (err: any) => {
@@ -87,7 +98,11 @@ export function useDeleteTimeEntry() {
   return useMutation({
     mutationFn: (id: number) => timeApi.deleteEntry(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['time'] });
+      // Delete-by-id: no projectId/taskId in the payload, so the helper
+      // falls back to prefix-invalidating ['progress'] / ['feasibility']
+      // / ['projects'] — every project's rollup refetches. Cost is
+      // acceptable given how rare delete is versus the correctness win.
+      invalidateAfterTimeEntry(queryClient);
       notify.success('Time entry deleted', { code: 'TIME-DELETE-200' });
     },
     onError: (err: any) => {

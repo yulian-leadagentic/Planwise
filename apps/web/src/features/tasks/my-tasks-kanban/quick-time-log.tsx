@@ -6,6 +6,7 @@ import { timeApi } from '@/api/time.api';
 import { formatShortDate } from '@/lib/task-constants';
 import { queryKeys } from '@/lib/query-keys';
 import { useOverlapConfirm } from '@/features/time/overlap-confirm';
+import { invalidateAfterTimeEntry } from '@/features/time/invalidate-after-time-entry';
 import { TimeDropdown } from './time-dropdown';
 
 /**
@@ -80,9 +81,10 @@ export function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskPr
       }),
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: queryKeys.time.all });
-          queryClient.invalidateQueries({ queryKey: queryKeys.tasks.mine() });
-          queryClient.invalidateQueries({ queryKey: queryKeys.time.entriesByTask(taskId) });
+          // Shared invalidator — replaces the narrow (time / tasks.mine
+          // / time-by-task) set so project Hours / Actual ₪ / % refresh
+          // in every screen after a kanban-inline log.
+          invalidateAfterTimeEntry(queryClient, { projectId: taskProjectId ?? null, taskId });
           notify.success(`Logged ${totalHours}h`, { code: 'TIME-LOG-200' });
           setNote('');
         },

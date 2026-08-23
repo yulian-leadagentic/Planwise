@@ -7,6 +7,7 @@ import { timeApi } from '@/api/time.api';
 import { formatShortDate } from '@/lib/task-constants';
 import { queryKeys } from '@/lib/query-keys';
 import { useOverlapConfirm } from '@/features/time/overlap-confirm';
+import { invalidateAfterTimeEntry } from '@/features/time/invalidate-after-time-entry';
 import { TimeDropdown } from './time-dropdown';
 import { RowStatusSelect } from './row-status-select';
 
@@ -77,10 +78,13 @@ export function TimeReportingRow({ task, onOpenDrawer }: { task: any; onOpenDraw
       }),
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: queryKeys.time.all });
-          queryClient.invalidateQueries({ queryKey: queryKeys.tasks.mine() });
-          // Force the per-task history below to refresh with the new entry
-          queryClient.invalidateQueries({ queryKey: queryKeys.time.entriesByTask(task.id) });
+          // Shared invalidator: covers project rollups
+          // (/progress /feasibility /projects/:id) that the per-task
+          // narrow invalidation used to miss.
+          invalidateAfterTimeEntry(queryClient, {
+            projectId: task.projectId ?? null,
+            taskId: task.id,
+          });
           notify.success(`Logged ${totalHours}h for ${task.name}`);
           setNote('');
         },
