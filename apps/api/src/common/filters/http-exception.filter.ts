@@ -15,6 +15,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
+    const request = ctx.getRequest<{ method?: string; url?: string }>();
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'Internal server error';
@@ -47,6 +48,20 @@ export class HttpExceptionFilter implements ExceptionFilter {
         message = exception.message;
       }
       // In production, message stays as the generic "Internal server error"
+    }
+
+    // Symmetric 4xx logging (project-fixes-pack Fix 2). Client-side
+    // validation and permission failures used to slip past the log
+    // entirely, so diagnosing user-reported errors needed the client
+    // to reproduce. One warn line per 4xx makes the API service log
+    // self-serve — method + path + status + message, nothing else.
+    // Deliberately never logs request bodies or headers: they carry
+    // credentials and PII. `req.url` includes the query string but
+    // not the host, matching what pino-http already writes.
+    if (status >= 400 && status < 500) {
+      const method = request?.method ?? '?';
+      const url = request?.url ?? '?';
+      this.logger.warn(`${status} ${method} ${url} — ${message}`);
     }
 
     response.status(status).json({
