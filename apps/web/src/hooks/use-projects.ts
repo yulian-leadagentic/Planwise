@@ -88,6 +88,11 @@ export function useAddProjectMember() {
       // shows up immediately after add (write-through into the
       // participates_in_project relationship feeds this view).
       queryClient.invalidateQueries({ queryKey: ['project-team', variables.projectId] });
+      // Task-tree / task-drawer AssigneePicker reads
+      // /projects/:id/assignee-candidates under the 'assignee-candidates'
+      // key. Invalidate so a fresh member surfaces without a manual
+      // reload. (Branch 2 · fix/assignee-source.)
+      queryClient.invalidateQueries({ queryKey: ['assignee-candidates', variables.projectId] });
       notify.success('Member added', { code: 'PROJECT-UPDATE-200' });
     },
     onError: (err: any) => {
@@ -106,6 +111,7 @@ export function useRemoveProjectMember() {
       queryClient.invalidateQueries({ queryKey: ['projects', variables.projectId, 'members'] });
       queryClient.invalidateQueries({ queryKey: ['planning', variables.projectId] });
       queryClient.invalidateQueries({ queryKey: ['project-team', variables.projectId] });
+      queryClient.invalidateQueries({ queryKey: ['assignee-candidates', variables.projectId] });
       notify.success('Member removed', { code: 'PROJECT-UPDATE-200' });
     },
     onError: (err: any) => {

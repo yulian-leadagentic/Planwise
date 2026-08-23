@@ -83,6 +83,9 @@ export function TeamTab({
       client.delete(`/partner-relationships/${relationshipId}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
+      // Branch 2 · fix/assignee-source — the task-tree picker reads
+      // the unified candidate list; keep it in sync on Team tab edits.
+      queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
       notify.success('Disconnected (soft-ended)', { code: 'PROJECT-TEAM-DELETE-200' });
     },
     onError: (err: any) => notify.apiError(err, 'Failed to disconnect'),
@@ -93,6 +96,7 @@ export function TeamTab({
       client.delete(`/project-partner-roles/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
       notify.success('Disconnected', { code: 'PROJECT-PPR-DELETE-200' });
     },
     onError: (err: any) => notify.apiError(err, 'Failed to disconnect'),

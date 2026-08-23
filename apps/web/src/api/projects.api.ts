@@ -1,6 +1,30 @@
 import client from './client';
 import type { ApiResponse, Project, ProjectMember, ProjectType, PaginationQuery } from '@/types';
 
+/**
+ * One entry in the unified assignee-candidate list — the task-tree
+ * picker's data source post-BP-refactor. `canAssign` is false for
+ * external contacts (BusinessPartner with no linked User row); the
+ * picker still renders them so the user knows the person exists on
+ * the project, but disables the click with a clear tooltip.
+ * (Branch 2 · fix/assignee-source.)
+ */
+export interface AssigneeCandidate {
+  userId: number | null;
+  partyId: number | null;
+  firstName: string | null;
+  lastName: string | null;
+  displayName: string;
+  email: string | null;
+  avatarUrl: string | null;
+  /** Role name from ProjectRoleType — comma-joined when the person holds several. */
+  role: string | null;
+  /** titleInProject from the role assignment, or User.position/department. */
+  discipline: string | null;
+  /** True iff `userId` is set (TaskAssignee.userId writes require a User). */
+  canAssign: boolean;
+}
+
 export interface ProjectQuery extends PaginationQuery {
   status?: string;
   search?: string;
@@ -75,6 +99,18 @@ export const projectsApi = {
 
   removeMember: (projectId: number, memberId: number) =>
     client.delete(`/projects/${projectId}/members/${memberId}`).then((r) => r.data),
+
+  /**
+   * Unified assignable-candidate list — internal Users on the project
+   * PLUS project-partner-role holders (person parties + contact
+   * persons on org roles), deduped. The task-tree AssigneePicker and
+   * task-drawer AssigneeManager both read this so the picker's set
+   * matches the Team tab. External contacts appear with
+   * `canAssign: false`. (Branch 2 · fix/assignee-source.)
+   */
+  listAssigneeCandidates: (projectId: number) =>
+    client.get<ApiResponse<AssigneeCandidate[]>>(`/projects/${projectId}/assignee-candidates`)
+      .then((r) => r.data.data ?? (r.data as unknown as AssigneeCandidate[])),
 
   // Project types
   listTypes: () =>

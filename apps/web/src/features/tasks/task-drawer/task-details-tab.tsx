@@ -123,7 +123,11 @@ export function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field
         </FieldRow>
       </div>
 
-      <AssigneeManager taskId={task.id} assignees={task.assignees} />
+      <AssigneeManager
+        taskId={task.id}
+        projectId={task.projectId ?? null}
+        assignees={task.assignees}
+      />
 
       {/* Checklist (todo) — added per the BM mapping meeting decision that
           personal-task style items belong INSIDE the task, not as separate

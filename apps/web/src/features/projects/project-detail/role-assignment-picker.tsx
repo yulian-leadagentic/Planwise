@@ -169,6 +169,10 @@ export function RoleAssignmentPicker({
       }).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
+      // Branch 2 · fix/assignee-source — new role holders must surface
+      // in the task-tree/task-drawer picker on the next open, not on
+      // the next page reload.
+      queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
       notify.success(`Added ${role.name}`, { code: 'PPR-ADD-201' });
       onClose();
     },
