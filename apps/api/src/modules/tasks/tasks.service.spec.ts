@@ -32,6 +32,7 @@ describe('TasksService', () => {
       task: {
         findFirst: jest.fn(),
         findUnique: jest.fn(),
+        update: jest.fn(),
       },
       taskAssignee: {
         findFirst: jest.fn(),
@@ -223,6 +224,60 @@ describe('TasksService', () => {
 
       expect(prisma.taskAttachment.create).toHaveBeenCalledTimes(1);
       expect(result).toHaveProperty('fileUrl', '/attachments/a.pdf');
+    });
+  });
+
+  describe('update — core-fields guardrail gating (PR-010/011)', () => {
+    // The guardrail is now scoped to updates that actually touch a
+    // core field. Two representative scenarios:
+    //   1) A status-only PATCH on an incomplete legacy task (missing
+    //      serviceTypeId) must SUCCEED — historically this 400'd.
+    //   2) A PATCH that clears a required core column (serviceTypeId
+    //      set to null explicitly) on a non-personal task must STILL
+    //      400 — the invariant on real core-field edits is intact.
+    const TASK_ID = 77;
+    const incompleteTask = {
+      id: TASK_ID,
+      projectId: 1,
+      code: 'T-1',
+      name: 'Legacy Task',
+      status: 'not_started',
+      isPersonal: false,
+      // Missing serviceTypeId — the exact case that used to throw on
+      // a harmless status change.
+      serviceTypeId: null,
+      zoneId: 10,
+      projectDeliverableId: 5,
+      deliverableTemplateId: null,
+      requiresReview: false,
+      endDate: null,
+      budgetHours: 8,
+    };
+
+    it('lets a status-only update on an incomplete task pass (does not run missingCoreFields)', async () => {
+      prisma.task.findFirst.mockResolvedValue(incompleteTask);
+      prisma.task.update.mockResolvedValue({ ...incompleteTask, status: 'in_progress' });
+      prisma.task.findUnique.mockResolvedValue({ budgetHours: 8, status: 'in_progress' });
+
+      const result = await service.update(TASK_ID, { status: 'in_progress' } as any);
+
+      expect(result).toBeDefined();
+      // The PATCH went through — no BadRequestException was thrown.
+      expect(prisma.task.update).toHaveBeenCalled();
+    });
+
+    it('still throws when a core field is being cleared on a non-personal task', async () => {
+      prisma.task.findFirst.mockResolvedValue(incompleteTask);
+
+      // Explicit null = "clearing" — the DTO touches serviceTypeId, so
+      // the gate opens and the guardrail runs on the merged state.
+      // The merged state has no service (existing null + clearing), no
+      // template, so missingCoreFields returns entries → 400.
+      await expect(
+        service.update(TASK_ID, { serviceTypeId: null } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(prisma.task.update).not.toHaveBeenCalled();
     });
   });
 
