@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, Building2, Search, X, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { useSearchParams, Navigate } from 'react-router-dom';
+import { useSearchParams, Navigate, useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -13,7 +13,6 @@ import client from '@/api/client';
 import { PartnerDrawer } from './partner-drawer';
 import { CreateOrganizationModal } from './create-organization-modal';
 import { ImportCsvModal } from './import-csv-modal';
-import { BpImportWizard } from './bp-import-wizard';
 
 // Page size for the paginated organizations list. Matches the pattern
 // /contacts uses (see ux/contacts) — server-driven page + meta.total so
@@ -67,10 +66,10 @@ export interface BusinessPartner {
 
 export function PartnersPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
-  const [showBpWizard, setShowBpWizard] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const debouncedSearch = useDebounce(search, 300);
   const { can, isAdmin } = usePermissions();
@@ -181,12 +180,16 @@ export function PartnersPage() {
                 <Upload className="h-4 w-4" aria-hidden="true" />
                 Import CSV
               </button>
-              {/* BM2 Phase E — Excel wizard for BPs + Contacts (with
-                  column mapping + dedup preview per bp-contacts-design.md).
-                  The CSV path stays for the simpler "already-formatted"
-                  case. */}
+              {/* Contacts / BP Excel wizard: the old BP-admin wizard
+                  was retired in favour of the shared
+                  /admin/data-import contacts flow so both entry points
+                  drive the same 6-stage pipeline (triage, per-sheet
+                  header detection, mapping presets, split & fill, dedup
+                  preview, idempotent commit, project attach, history).
+                  The CSV path above stays for the simpler
+                  "already-formatted" case. */}
               <button
-                onClick={() => setShowBpWizard(true)}
+                onClick={() => navigate('/admin/data-import?target=contacts')}
                 className="flex items-center gap-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 px-4 py-2 text-[13px] font-semibold text-slate-700 dark:text-slate-200"
               >
                 <Upload className="h-4 w-4" aria-hidden="true" />
@@ -295,8 +298,6 @@ export function PartnersPage() {
       )}
 
       {showImport && <ImportCsvModal onClose={() => setShowImport(false)} />}
-
-      {showBpWizard && <BpImportWizard onClose={() => setShowBpWizard(false)} />}
 
       {selectedId !== null && (
         <PartnerDrawer

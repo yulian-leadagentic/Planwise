@@ -14,8 +14,8 @@
  *
  * The wizard state (uploaded sheets, mapping, decisions) lives in this
  * component — the server is stateless across stages. This matches the
- * BM2 Phase E `bp-import-wizard.tsx` shape so a returning user sees
- * the same interaction model.
+ * shape of the retired BM2 Phase E BP-admin importer so a returning
+ * user sees the same interaction model.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
