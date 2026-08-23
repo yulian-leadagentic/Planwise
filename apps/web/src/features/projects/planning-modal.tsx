@@ -3509,9 +3509,23 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
         <div className="ml-auto flex items-center gap-3 shrink-0">
           {/* Mini progress bar */}
           {(() => {
-            const zoneProgress = totalHours > 0
-              ? Math.round(allZoneTasks.reduce((s: number, t: any) => s + (t.completionPct || 0) * Number(t.budgetHours || 0), 0) / totalHours)
-              : 0;
+            // PR-014: mirror the server-side fallback in
+            // execution-planning.service#getProjectProgress — when a zone
+            // has zero total budget hours (every task Done but nobody
+            // filled in a budget), fall back to a simple average of
+            // completionPct so Done tasks aren't silently dropped to 0%.
+            let weightedSum = 0;
+            let pctSum = 0;
+            for (const t of allZoneTasks as Array<{ completionPct?: number; budgetHours?: number | string | null }>) {
+              const pct = Number(t.completionPct || 0);
+              weightedSum += pct * Number(t.budgetHours || 0);
+              pctSum += pct;
+            }
+            const zoneProgress = allZoneTasks.length === 0
+              ? 0
+              : totalHours > 0
+                ? Math.round(weightedSum / totalHours)
+                : Math.round(pctSum / allZoneTasks.length);
             return (
               <div className="flex items-center gap-1.5">
                 <div className="w-16 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">

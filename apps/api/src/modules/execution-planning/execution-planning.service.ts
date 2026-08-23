@@ -335,11 +335,25 @@ export class ExecutionPlanningService {
       },
     });
 
-    // Weighted progress: SUM(completionPct * budgetHours) / SUM(budgetHours)
-    const totalHours = tasks.reduce((s, t) => s + Number(t.budgetHours || 0), 0);
-    const weightedProgress = totalHours > 0
-      ? Math.round(tasks.reduce((s, t) => s + (t.completionPct * Number(t.budgetHours || 0)), 0) / totalHours)
-      : 0;
+    // Weighted progress: SUM(completionPct * budgetHours) / SUM(budgetHours).
+    // Fallback (PR-014): when a bucket has zero total budget hours — e.g.
+    // every task is Done but nobody filled in a budget — the weighted
+    // formula collapses to 0/0 and silently drops the whole bucket to 0.
+    // Fall back to a simple average of completionPct across those tasks
+    // so a bucket of Done tasks reads 100%, not 0%. task.completionPct is
+    // already status-aware (completed/cancelled → 100 per
+    // time-entries.service#syncTaskCompletion), so this preserves the
+    // "Done contributes 100" rule the spec requires.
+    const rollup = (list: Array<{ completionPct: number; budgetHours: unknown }>) => {
+      if (list.length === 0) return 0;
+      const totalH = list.reduce((s, t) => s + Number(t.budgetHours || 0), 0);
+      if (totalH > 0) {
+        return Math.round(list.reduce((s, t) => s + t.completionPct * Number(t.budgetHours || 0), 0) / totalH);
+      }
+      return Math.round(list.reduce((s, t) => s + t.completionPct, 0) / list.length);
+    };
+
+    const weightedProgress = rollup(tasks);
 
     // Status breakdown
     const statusCounts: Record<string, number> = {};
@@ -349,22 +363,19 @@ export class ExecutionPlanningService {
 
     // Per-zone progress. Project-root tasks (zoneId null, no zone) are
     // skipped — they aren't part of any zone's rollup.
-    const zoneMap = new Map<number, { name: string; totalHours: number; weightedSum: number; count: number }>();
+    const zoneMap = new Map<number, { name: string; tasks: Array<{ completionPct: number; budgetHours: unknown }> }>();
     for (const t of tasks) {
       if (!t.zone || t.zoneId == null) continue;
       const zid = t.zoneId;
-      if (!zoneMap.has(zid)) zoneMap.set(zid, { name: t.zone.name, totalHours: 0, weightedSum: 0, count: 0 });
-      const z = zoneMap.get(zid)!;
-      z.totalHours += Number(t.budgetHours || 0);
-      z.weightedSum += t.completionPct * Number(t.budgetHours || 0);
-      z.count++;
+      if (!zoneMap.has(zid)) zoneMap.set(zid, { name: t.zone.name, tasks: [] });
+      zoneMap.get(zid)!.tasks.push(t);
     }
 
     const zoneProgress = [...zoneMap.entries()].map(([id, z]) => ({
       zoneId: id,
       zoneName: z.name,
-      taskCount: z.count,
-      progress: z.totalHours > 0 ? Math.round(z.weightedSum / z.totalHours) : 0,
+      taskCount: z.tasks.length,
+      progress: rollup(z.tasks),
     }));
 
     return {
