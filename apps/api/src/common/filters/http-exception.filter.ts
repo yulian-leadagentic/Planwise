@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import * as Sentry from '@sentry/node';
 import { Response } from 'express';
 
 @Catch()
@@ -48,6 +49,21 @@ export class HttpExceptionFilter implements ExceptionFilter {
         message = exception.message;
       }
       // In production, message stays as the generic "Internal server error"
+    }
+
+    // Ship 5xx to Sentry with the request-scoped user/route tags that
+    // SentryContextInterceptor already pinned. 4xx stays out — those are
+    // validation / permission / not-found noise; we already `logger.warn`
+    // them below (see the "Symmetric 4xx logging" block). Sentry alert rules
+    // catch 4xx *spikes* separately if we ever want them.
+    //
+    // getClient() gate is defensive — `captureException` is a safe no-op when
+    // Sentry never inited, but the explicit check makes the intent obvious to
+    // the next reader and skips constructing the event object.
+    if (status >= 500 && Sentry.getClient()) {
+      Sentry.captureException(exception, {
+        tags: { source: 'HttpExceptionFilter', status: String(status) },
+      });
     }
 
     // Symmetric 4xx logging (project-fixes-pack Fix 2). Client-side

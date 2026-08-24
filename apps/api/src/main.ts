@@ -11,11 +11,20 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor';
 import { SlowRequestInterceptor } from './common/interceptors/slow-request.interceptor';
+import { SentryContextInterceptor } from './common/interceptors/sentry-context.interceptor';
 import { startWatchdog } from './common/watchdog';
 import { startWedgeKillswitch } from './common/wedge-killswitch';
 import { startVitalsLogger } from './common/vitals';
+import { initSentry } from './observability/sentry';
 
 async function bootstrap() {
+  // Sentry init BEFORE anything else — same rationale as the BigInt patch
+  // below: any error thrown during app-module evaluation (mis-wired provider,
+  // env-var miss on boot) should still be captured. Guarded on SENTRY_DSN
+  // internally, so an unset DSN is a silent no-op — an absent observability
+  // env var must NEVER crash a build or a deploy (the SSO_ENC_KEY lesson).
+  initSentry();
+
   // Global BigInt-to-JSON serializer. Nest/Express can't stringify a
   // BigInt (JSON has no 64-bit int type), so any response that includes
   // one — e.g. ActivityLog.id — 500s the request. Stringifying via
@@ -68,8 +77,13 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionFilter());
   // SlowRequestInterceptor goes FIRST so its timer measures the full
   // request including TimeoutInterceptor's 30s budget and Response wrap.
+  // SentryContextInterceptor attaches user/route tags to the request's
+  // isolation scope — placed early so anything captured downstream (by a
+  // service's Sentry.captureException or by HttpExceptionFilter) has the
+  // request context already pinned.
   app.useGlobalInterceptors(
     new SlowRequestInterceptor(app.get(Logger)),
+    new SentryContextInterceptor(),
     new ResponseInterceptor(),
     new TimeoutInterceptor(),
   );
