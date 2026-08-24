@@ -1,54 +1,44 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import * as Sentry from '@sentry/react';
+
 import { App } from './App';
+import { initSentryWeb } from './observability/sentry';
+import { ErrorFallback } from './observability/error-fallback';
 import './styles/globals.css';
 
-// Error Boundary to catch runtime errors and show them instead of white page
-class ErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { hasError: boolean; error: Error | null }
-> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
+// Sentry init BEFORE anything else — fail-open, silently no-ops when
+// VITE_SENTRY_DSN is unset so a missing observability var can never break a
+// Vite build or the page load (SSO_ENC_KEY-crash lesson, see
+// docs/bm2/observability-sentry-spec.md).
+initSentryWeb();
 
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('Application Error:', error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif', maxWidth: '800px', margin: '0 auto' }}>
-          <h1 style={{ color: '#dc2626', fontSize: '24px', marginBottom: '16px' }}>Something went wrong</h1>
-          <p style={{ color: '#64748b', marginBottom: '16px' }}>The application encountered an error. Please try refreshing the page.</p>
-          <pre style={{ background: '#f1f5f9', padding: '16px', borderRadius: '8px', overflow: 'auto', fontSize: '13px', color: '#334155', border: '1px solid #e2e8f0' }}>
-            {this.state.error?.message}
-            {'\n\n'}
-            {this.state.error?.stack}
-          </pre>
-          <button
-            onClick={() => { this.setState({ hasError: false, error: null }); window.location.href = '/'; }}
-            style={{ marginTop: '16px', padding: '8px 24px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '14px' }}
-          >
-            Reload Application
-          </button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
+// Unhandled promise rejections (uncaught `throw` inside an async that has no
+// `.catch`) don't hit React's error boundary. Ship them to Sentry with a
+// clear tag so they don't get lost among render errors. Safe when Sentry
+// wasn't inited — `captureException` on the no-op client is a no-op.
+if (typeof window !== 'undefined') {
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = (event as PromiseRejectionEvent).reason;
+    Sentry.captureException(reason, { tags: { source: 'unhandledrejection' } });
+  });
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ErrorBoundary>
+    {/*
+     * Sentry.ErrorBoundary catches render-time crashes anywhere below and
+     * reports them (with component-stack) to Sentry when it's inited. When
+     * Sentry is disabled the boundary still catches and shows the fallback —
+     * so we always kill the white-screen / infinite-"Loading…" class of bug,
+     * even without observability wired.
+     *
+     * `showDialog={false}` because Sentry's built-in report dialog is a modal
+     * with an email/name capture we don't want (PII). Users get our own
+     * fallback with a Reload button.
+     */}
+    <Sentry.ErrorBoundary fallback={({ error }) => <ErrorFallback error={error} />}>
       <App />
-    </ErrorBoundary>
+    </Sentry.ErrorBoundary>
   </React.StrictMode>,
 );

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import * as Sentry from '@sentry/react';
 import { useAuthStore } from '@/stores/auth.store';
 import { notify, getErrorCode, getErrorMessage } from '@/lib/notify';
 import { API_BASE } from '@/lib/runtime-config';
@@ -90,6 +91,35 @@ client.interceptors.response.use(
       } finally {
         isRefreshing = false;
       }
+    }
+
+    // Observability: leave a breadcrumb on every response error, and
+    // capture 5xx / network failures to Sentry. 4xx stays out — those are
+    // validation / permission / not-found signals we already surface to the
+    // user through notify.tsx and would be pure Sentry noise.
+    try {
+      const status: number | undefined = error?.response?.status;
+      const method: string | undefined = (error?.config?.method ?? '').toUpperCase();
+      const url: string | undefined = error?.config?.url;
+
+      Sentry.addBreadcrumb({
+        category: 'http',
+        level: status && status >= 500 ? 'error' : 'warning',
+        message: `${method || '?'} ${url ?? '?'} → ${status ?? error?.code ?? 'ERR'}`,
+        data: { method, url, status, code: error?.code },
+      });
+
+      const isNetworkError = error?.code === 'ERR_NETWORK' || !error?.response;
+      const isServerError = typeof status === 'number' && status >= 500;
+      if (isServerError || isNetworkError) {
+        Sentry.captureException(error, {
+          tags: { source: 'axios', method, status: status ? String(status) : 'network' },
+          extra: { method, url, status },
+        });
+      }
+    } catch {
+      // Never let observability itself throw inside the interceptor —
+      // that would swallow the underlying request error.
     }
 
     return Promise.reject(error);
