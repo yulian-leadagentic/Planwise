@@ -8,6 +8,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
+import * as Sentry from '@sentry/node';
 
 @Injectable()
 export class TasksService {
@@ -59,7 +60,8 @@ export class TasksService {
           title,
           data: { taskId, projectId: task.projectId, fileName },
         });
-      } catch {
+      } catch (e) {
+        Sentry.captureException(e);
         // Best-effort — one failed notification mustn't take down the
         // attach/delete write that already succeeded.
       }

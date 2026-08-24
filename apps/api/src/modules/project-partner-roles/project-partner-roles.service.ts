@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
+import * as Sentry from '@sentry/node';
 
 const FAR_FUTURE = new Date('9999-12-31T00:00:00Z');
 
@@ -241,7 +242,7 @@ export class ProjectPartnerRolesService {
         description: `Assigned ${created.party.displayName} as ${created.role.name}` +
           (created.titleInProject ? ` (${created.titleInProject})` : ''),
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return created;
   }
@@ -309,7 +310,7 @@ export class ProjectPartnerRolesService {
         description: `Ended ${existing.role.name} assignment for ${existing.party.displayName}`,
         severity: 'warn',
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return { message: 'Project partner role ended' };
   }

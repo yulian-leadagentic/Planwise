@@ -29,6 +29,7 @@ import { ActivityLogService } from '../../common/services/activity-log.service';
 import { ExcelParserService } from './excel-parser.service';
 import { UsersImporterService } from './importers/users-importer.service';
 import { EntityImporter } from './importers/importer.types';
+import * as Sentry from '@sentry/node';
 
 /**
  * REST surface for the bulk data-import feature. Wraps three importers
@@ -285,7 +286,7 @@ export class DataImportController {
           errors: result.errorCount,
         },
       });
-    } catch { /* swallow — audit failure never fails the commit */ }
+    } catch (e) { Sentry.captureException(e); /* swallow — audit failure never fails the commit */ }
 
     return { import: updated, summary: result };
   }

@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
+import * as Sentry from '@sentry/node';
 
 const FAR_FUTURE = new Date('9999-12-31T00:00:00Z');
 
@@ -230,7 +231,7 @@ export class PartnerRelationshipsService {
           (dto.titleAtB ? ` (${dto.titleAtB})` : ''),
         metadata: { typeCode: type.code, partyAId: dto.partyAId, partyBId: dto.partyBId },
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return created;
   }
@@ -280,7 +281,7 @@ export class PartnerRelationshipsService {
         description: `Ended "${existing.type.name}" relationship: ${existing.partyA.displayName} → ${existing.partyB.displayName}`,
         severity: 'warn',
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return { message: 'Partner relationship ended' };
   }

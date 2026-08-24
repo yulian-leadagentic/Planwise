@@ -3,6 +3,7 @@ import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import * as Sentry from '@sentry/node';
 
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {
@@ -43,7 +44,8 @@ export class AuditInterceptor implements NestInterceptor {
               ipAddress: request.ip || null,
             },
           });
-        } catch {
+        } catch (e) {
+          Sentry.captureException(e);
           // Silently fail - audit should not break the request
         }
       }),

@@ -6,6 +6,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { ClockInDto } from './dto/clock-in.dto';
 import { ClockOutDto } from './dto/clock-out.dto';
+import * as Sentry from '@sentry/node';
 
 @Injectable()
 export class TimeClockService {
@@ -95,7 +96,7 @@ export class TimeClockService {
         entityId: record.id,
         description: `Clocked in` + (isLate ? ` (${lateMinutes} min late)` : ''),
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return record;
   }
@@ -143,7 +144,7 @@ export class TimeClockService {
         description: `Clocked out — ${hours.toFixed(2)}h` +
           (overtimeMinutes > 0 ? ` (+${(overtimeMinutes / 60).toFixed(2)}h overtime)` : ''),
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return closed;
   }
