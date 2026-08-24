@@ -7,6 +7,7 @@ import { NumberRangesService } from '../number-ranges/number-ranges.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
+import * as Sentry from '@sentry/node';
 
 @Injectable()
 export class UsersService implements OnModuleInit {
@@ -210,7 +211,7 @@ export class UsersService implements OnModuleInit {
     // committed; a failed mirror just delays role-picker visibility.
     if (dto.position) {
       try { await this.syncPositionToProfession(user.id, dto.position); }
-      catch { /* swallow */ }
+      catch (e) { Sentry.captureException(e); /* swallow */ }
     }
 
     return user;
@@ -419,7 +420,7 @@ export class UsersService implements OnModuleInit {
     // pre-list them yet, no data loss.
     if ('position' in data) {
       try { await this.syncPositionToProfession(id, data.position); }
-      catch { /* swallow — user.update already committed */ }
+      catch (e) { Sentry.captureException(e); /* swallow — user.update already committed */ }
     }
 
     return updated;

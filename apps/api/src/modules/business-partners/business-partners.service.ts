@@ -11,6 +11,7 @@ import { ActivityLogService } from '../../common/services/activity-log.service';
 import { CreateBusinessPartnerDto } from './dto/create-business-partner.dto';
 import { UpdateBusinessPartnerDto } from './dto/update-business-partner.dto';
 import { QueryBusinessPartnersDto } from './dto/query-business-partners.dto';
+import * as Sentry from '@sentry/node';
 
 // BM2 ops-surfaces Phase B (2026-08-13): the compat `toLegacyOutgoing()`
 // synth shim is gone. The include below returns the two real arrays
@@ -416,7 +417,7 @@ export class BusinessPartnersService {
         entityName: finalBp.displayName,
         description: `Created ${finalBp.partnerType} partner "${finalBp.displayName}"`,
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return finalBp;
   }
@@ -520,7 +521,7 @@ export class BusinessPartnersService {
         description: `Updated partner "${finalBp.displayName}"` +
           (changedFields.length ? ` — ${changedFields.join(', ')}` : ''),
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return finalBp;
   }
@@ -559,7 +560,7 @@ export class BusinessPartnersService {
         description: `Deleted ${bp.partnerType} partner "${bp.displayName}"`,
         severity: 'warn',
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return { message: 'Business partner removed' };
   }
@@ -742,7 +743,7 @@ export class BusinessPartnersService {
           description: `Attached domain "${domain}" to partner "${bp.displayName}"`,
           metadata: { partnerId: bpId, domain },
         });
-      } catch { /* swallow */ }
+      } catch (e) { Sentry.captureException(e); /* swallow */ }
       return created;
     } catch (err: unknown) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -786,7 +787,7 @@ export class BusinessPartnersService {
         description: `Detached domain "${row.domain}" from partner "${row.partner.displayName}"`,
         metadata: { partnerId: bpId, domain: row.domain },
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return { message: 'Domain removed' };
   }

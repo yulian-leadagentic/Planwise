@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { minutesOverlap } from '../../common/overlap';
 import { CreateTimeEntryDto } from './dto/create-time-entry.dto';
+import * as Sentry from '@sentry/node';
 
 /** Minutes since midnight from an HH:MM string (rejects undefined). */
 function hhmmToMinutes(s?: string | null): number | null {
@@ -195,7 +196,7 @@ export class TimeEntriesService {
         description: `Logged ${hours.toFixed(2)}h` +
           (entry.task?.name ? ` on "${entry.task.name}"` : ''),
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return entry;
   }
@@ -393,7 +394,7 @@ export class TimeEntriesService {
           (updated.task?.name ? ` on "${updated.task.name}"` : '') +
           (changedFields.length ? ` — ${changedFields.join(', ')}` : ''),
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return updated;
   }
@@ -416,7 +417,7 @@ export class TimeEntriesService {
           (existing.task?.name ? ` from "${existing.task.name}"` : ''),
         severity: 'warn',
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return { message: 'Time entry deleted' };
   }

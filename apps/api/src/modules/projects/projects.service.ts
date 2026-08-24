@@ -10,6 +10,7 @@ import { UpdateProjectDto } from './dto/update-project.dto';
 import { QueryProjectsDto } from './dto/query-projects.dto';
 import { ProjectPartnerRolesService } from '../project-partner-roles/project-partner-roles.service';
 import { NumberRangesService } from '../number-ranges/number-ranges.service';
+import * as Sentry from '@sentry/node';
 
 /**
  * True when the caller can see financial data. Mirrors the frontend's
@@ -221,7 +222,7 @@ export class ProjectsService {
           projectId: project.id,
           roleInContext: 'Project Leader',
         });
-      } catch { /* best-effort write-through */ }
+      } catch (e) { Sentry.captureException(e); /* best-effort write-through */ }
       // Also sync the team_leader Project Role assignment — the new
       // relation-based model that replaces Project.leaderId. Dual-write
       // keeps old read paths (which still consult leaderId) working
@@ -247,7 +248,7 @@ export class ProjectsService {
               projectId: project.id,
               roleInContext: null,
             });
-          } catch { /* best-effort */ }
+          } catch (e) { Sentry.captureException(e); /* best-effort */ }
         }
       }
     }
@@ -651,7 +652,8 @@ export class ProjectsService {
         projectId,
         roleInContext: role ?? null,
       });
-    } catch {
+    } catch (e) {
+      Sentry.captureException(e);
       // swallow — see comment above
     }
 
@@ -1318,7 +1320,8 @@ export class ProjectsService {
     });
     try {
       await this.projectPartnerRoles.removeProjectMemberRelationship({ userId, projectId });
-    } catch {
+    } catch (e) {
+      Sentry.captureException(e);
       // best-effort write-through
     }
     return { message: 'Member removed' };

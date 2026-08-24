@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { CreateContractDto } from './dto/create-contract.dto';
 import { CreateExpenseDto } from './dto/create-expense.dto';
+import * as Sentry from '@sentry/node';
 
 @Injectable()
 export class ContractsService {
@@ -48,7 +49,7 @@ export class ContractsService {
         entityName: contract.name,
         description: `Created contract "${contract.name}"`,
       });
-    } catch { /* swallow — audit failure never fails the write */ }
+    } catch (e) { Sentry.captureException(e); /* swallow — audit failure never fails the write */ }
 
     return contract;
   }
@@ -138,7 +139,7 @@ export class ContractsService {
         description: `Updated contract "${updated.name}"` +
           (changedFields.length ? ` — ${changedFields.join(', ')}` : ''),
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return updated;
   }
@@ -159,7 +160,7 @@ export class ContractsService {
         description: `Deleted contract "${existing.name}"`,
         severity: 'warn',
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return { message: 'Contract deleted' };
   }

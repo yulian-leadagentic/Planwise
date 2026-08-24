@@ -9,6 +9,7 @@ import { DedupDecision, ContactAction, OrgAction } from './dedup.service';
 import { ContactField } from './header-dictionary';
 import { ColumnMapping } from './split-merge.service';
 import { ExtractedSheet } from './triage.service';
+import * as Sentry from '@sentry/node';
 
 /**
  * BM2 · Contacts import wizard · Stage 6 — idempotent commit.
@@ -382,7 +383,7 @@ export class ContactsCommitService {
           contactsLinked: result.contactsLinked,
         },
       });
-    } catch { /* swallow */ }
+    } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return result;
   }
