@@ -668,15 +668,26 @@ const ProjectDeliverablesContext = createContext<ProjectDeliverableLookups>({
 });
 
 /**
- * Multi-level group-by — secondary dimension applied inside each primary
- * group's task list. When `dim` is set, every leaf task-table renders is
- * replaced by nested deliverable/service cards via `bucketize(tasks)`.
- * Wrapping component (PlanningView) supplies the dim + the bucketing
- * closure; cards consume both from this context so the new prop doesn't
- * have to thread through SortableZone → HierarchicalZoneGroup → ... .
- * (T2.fix3, 2026-06-28.)
+ * Multi-level group-by — the ordered list of dimensions the user picked
+ * (`order`) and a `bucketize(tasks, dim)` closure that returns one level's
+ * worth of sub-groups. Wrapping component (PlanningView) supplies both;
+ * cards consume them from this context so the props don't have to thread
+ * through SortableZone → HierarchicalZoneGroup → ... .
+ *
+ * `order` is the full grouping stack including the primary at [0]. Cards
+ * know their own group-depth (0 for primary, 1 for secondary, 2 for
+ * tertiary) and look up `order[depth + 1]` to decide whether to nest one
+ * more level of sub-buckets or fall through to the leaf task table.
+ *
+ * Legacy history: this context started as a `{ dim, bucketize }` pair when
+ * we added a single secondary sub-group (T2.fix3, 2026-06-28). Lifted to
+ * an ordered stack when the third level shipped
+ * (feat/planning-3level-group, 2026-08).
  */
-type SubGroupDim = 'service' | 'phase' | 'zone';
+type GroupDim = 'service' | 'phase' | 'zone';
+// SubGroupDim kept as an alias so the older bucketizer signature reads the
+// same. It's the same set of dims — no behavioural difference.
+type SubGroupDim = GroupDim;
 type SubGroupBucket = {
   key: string;
   label: string;
@@ -693,8 +704,11 @@ type SubGroupBucket = {
   phaseId?: number | null;
 };
 type PlanningSubGroupCtx = {
-  dim: SubGroupDim;
-  bucketize: (tasks: any[]) => SubGroupBucket[];
+  /** Full ordered grouping stack including the primary at index 0. Length
+   *  ranges from 1 (primary only) to 3 (primary + secondary + tertiary).
+   *  Empty stack means "no sub-grouping active" and the context is null. */
+  order: GroupDim[];
+  bucketize: (tasks: any[], dim: GroupDim) => SubGroupBucket[];
 };
 const PlanningSubGroupContext = createContext<PlanningSubGroupCtx | null>(null);
 
@@ -3755,36 +3769,46 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           )}
 
           {/* Task column header row — border-l-[3px] transparent to match body rows' colored left border */}
-          {subCtx && directTasks.length > 0 ? (
+          {/* Zone groups always sit at group-order depth 0 (Zone is the
+              primary), so the next dim — if any — is subCtx.order[1]. When
+              order[1] is undefined the direct tasks fall through to the
+              leaf table. */}
+          {subCtx && subCtx.order[1] && directTasks.length > 0 ? (
             // Multi-level: render direct tasks as nested deliverable / service
             // cards (the chosen sub-dimension) instead of a flat task table.
             <div style={{ marginLeft: 28 }} className="px-3 py-2 space-y-1.5 bg-slate-50/40 dark:bg-slate-800/40">
-              {subCtx.bucketize(directTasks).map((sg) => (
-                <ProjectRootDeliverableGroup
-                  key={sg.key}
-                  isSubGroup
-                  projectId={projectId}
-                  label={sg.label}
-                  serviceLabel={sg.serviceLabel}
-                  color={sg.color}
-                  tasks={sg.tasks}
-                  members={members}
-                  onUpdate={onUpdate}
-                  onDeleteTask={onDeleteTask}
-                  selectedTaskIds={selectedTaskIds}
-                  onToggleTask={onToggleTask}
-                  onToggleMany={onToggleMany}
-                  kind={subCtx.dim === 'phase' ? 'service' : subCtx.dim === 'zone' ? 'zone' : 'deliverable'}
-                  editableTemplateId={subCtx.dim === 'service' ? sg.editableTemplateId : null}
-                  editableDeliverableId={subCtx.dim === 'service' ? sg.editableDeliverableId : null}
-                  // Sub-group inside a Zone primary: inherit the parent
-                  // zone's id so Add-task lands here. A Zone-dim sub-bucket
-                  // (rare — Zone-in-Zone is collapsed elsewhere) would
-                  // override with its own zoneId.
-                  contextZoneId={sg.zoneId ?? zone.id}
-                  contextPhaseId={sg.phaseId ?? null}
-                />
-              ))}
+              {subCtx.bucketize(directTasks, subCtx.order[1]).map((sg) => {
+                const nextDim = subCtx.order[1]!;
+                return (
+                  <ProjectRootDeliverableGroup
+                    key={sg.key}
+                    // Zone group is at group-depth 0 → its children sit at
+                    // group-depth 1. The child card decides whether to keep
+                    // recursing (order[2]) or render leaves.
+                    groupDepth={1}
+                    projectId={projectId}
+                    label={sg.label}
+                    serviceLabel={sg.serviceLabel}
+                    color={sg.color}
+                    tasks={sg.tasks}
+                    members={members}
+                    onUpdate={onUpdate}
+                    onDeleteTask={onDeleteTask}
+                    selectedTaskIds={selectedTaskIds}
+                    onToggleTask={onToggleTask}
+                    onToggleMany={onToggleMany}
+                    kind={nextDim === 'phase' ? 'service' : nextDim === 'zone' ? 'zone' : 'deliverable'}
+                    editableTemplateId={nextDim === 'service' ? sg.editableTemplateId : null}
+                    editableDeliverableId={nextDim === 'service' ? sg.editableDeliverableId : null}
+                    // Sub-group inside a Zone primary: inherit the parent
+                    // zone's id so Add-task lands here. A Zone-dim sub-bucket
+                    // (rare — Zone-in-Zone is collapsed elsewhere) would
+                    // override with its own zoneId.
+                    contextZoneId={sg.zoneId ?? zone.id}
+                    contextPhaseId={sg.phaseId ?? null}
+                  />
+                );
+              })}
             </div>
           ) : (
             <>
@@ -3901,7 +3925,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
 function ProjectRootDeliverableGroup({
   projectId, label, serviceLabel, color, tasks, members, onUpdate, onDeleteTask,
   selectedTaskIds, onToggleTask, onToggleMany,
-  dndId, kind, editableTemplateId, editableDeliverableId, isSubGroup,
+  dndId, kind, editableTemplateId, editableDeliverableId, groupDepth = 0,
   contextZoneId, contextPhaseId,
 }: {
   projectId: number;
@@ -3936,10 +3960,14 @@ function ProjectRootDeliverableGroup({
    *  (board, reports, customer-facing). Falls back to creating an entity from
    *  editableTemplateId if none exists yet. */
   editableDeliverableId?: number | null;
-  /** True when this card is already nested inside another primary group
-   *  (multi-level group-by). Disables further recursion so we don't try
-   *  to sub-bucket an already-bucketed list. */
-  isSubGroup?: boolean;
+  /** Position of this card in the group-by stack: 0 = primary card
+   *  (top-level render), 1 = secondary card (rendered as a child of a
+   *  primary), 2 = tertiary card, etc. Consulted alongside the
+   *  PlanningSubGroupContext's `order` array to decide whether to keep
+   *  nesting one more level of sub-buckets or fall through to the leaf
+   *  task table. Replaced the boolean `isSubGroup` flag when the third
+   *  level shipped (feat/planning-3level-group). */
+  groupDepth?: number;
   /** Zone this group represents — inherited from a parent Zone primary
    *  group when we're a sub-group inside it, or set directly when this
    *  card IS a zone bucket. Feeds the Add-task button so the created
@@ -3951,7 +3979,12 @@ function ProjectRootDeliverableGroup({
   contextPhaseId?: number | null;
 }) {
   const subCtx = useContext(PlanningSubGroupContext);
-  const renderNested = !isSubGroup && subCtx != null && tasks.length > 0;
+  // Consult the group-by stack for the dim ONE level below us. When it
+  // exists, this card renders nested sub-cards for that dim instead of
+  // the leaf task table. `nestedDim` is null when we're the deepest level
+  // (or when no sub-context is active) — fall through to leaves.
+  const nestedDim: GroupDim | null = subCtx?.order[groupDepth + 1] ?? null;
+  const renderNested = nestedDim != null && tasks.length > 0;
   const [collapsed, setCollapsed] = useState(false);
   useBulkCollapseSync(setCollapsed);
   // useSortable is always called (hooks must be unconditional) but we
@@ -4333,14 +4366,15 @@ function ProjectRootDeliverableGroup({
         renderNested ? (
           // Multi-level group-by: render the sub-buckets as nested cards
           // instead of the leaf task table. Each nested card recurses into
-          // ProjectRootDeliverableGroup with isSubGroup=true so it falls
-          // through to the leaf rendering. dndId is intentionally omitted
+          // ProjectRootDeliverableGroup at groupDepth+1 so it decides for
+          // itself whether ANOTHER level exists (order[groupDepth+2]) or
+          // it should render the leaves. dndId is intentionally omitted
           // for sub-cards — reorder DnD stays scoped to the top level.
           <div className="px-3 py-2 space-y-1.5 bg-slate-50/40 dark:bg-slate-800/40">
-            {subCtx!.bucketize(tasks).map((sg) => (
+            {subCtx!.bucketize(tasks, nestedDim!).map((sg) => (
               <ProjectRootDeliverableGroup
                 key={sg.key}
-                isSubGroup
+                groupDepth={groupDepth + 1}
                 projectId={projectId}
                 label={sg.label}
                 serviceLabel={sg.serviceLabel}
@@ -4352,9 +4386,9 @@ function ProjectRootDeliverableGroup({
                 selectedTaskIds={selectedTaskIds}
                 onToggleTask={onToggleTask}
                 onToggleMany={onToggleMany}
-                kind={subCtx!.dim === 'phase' ? 'service' : subCtx!.dim === 'zone' ? 'zone' : 'deliverable'}
-                editableTemplateId={subCtx!.dim === 'service' ? sg.editableTemplateId : null}
-                editableDeliverableId={subCtx!.dim === 'service' ? sg.editableDeliverableId : null}
+                kind={nestedDim === 'phase' ? 'service' : nestedDim === 'zone' ? 'zone' : 'deliverable'}
+                editableTemplateId={nestedDim === 'service' ? sg.editableTemplateId : null}
+                editableDeliverableId={nestedDim === 'service' ? sg.editableDeliverableId : null}
                 // Inherit the parent card's zone / phase context when the
                 // sub-bucket doesn't carry its own dimension (bm2 fix #4).
                 contextZoneId={sg.zoneId ?? contextZoneId ?? null}
@@ -4525,12 +4559,20 @@ function ProjectRootGroup({
 
   // Sub-grouping override — route through the shared bucketizer so the
   // chip / kind / label match the dimension the user picked in the toolbar.
-  if (subCtx) {
+  // ProjectRootGroup is invoked only when Zone is the primary group
+  // (groupOrder[0] === 'zone'), so its orphan tasks (zoneId == null) sit at
+  // "no zone" — group-order depth 0. The next dim (if any) is order[1].
+  if (subCtx && subCtx.order[1]) {
+    const nextDim = subCtx.order[1];
     return (
       <>
-        {subCtx.bucketize(tasks).map((sg) => (
+        {subCtx.bucketize(tasks, nextDim).map((sg) => (
           <ProjectRootDeliverableGroup
             key={sg.key}
+            // Root orphan cards live at group-depth 1 (Zone is the primary
+            // but these tasks have no Zone) so their nested-recursion
+            // check consults order[2] for the tertiary level.
+            groupDepth={1}
             projectId={projectId}
             label={sg.label}
             serviceLabel={sg.serviceLabel}
@@ -4546,9 +4588,9 @@ function ProjectRootGroup({
             // the ProjectRootGroup path was missing 'zone' in the kind
             // switch, so grouping root tasks by Zone as a sub-dim
             // labelled the header chip "deliverable" (the fallback).
-            kind={subCtx.dim === 'phase' ? 'service' : subCtx.dim === 'zone' ? 'zone' : 'deliverable'}
-            editableTemplateId={subCtx.dim === 'service' ? sg.editableTemplateId : null}
-            editableDeliverableId={subCtx.dim === 'service' ? sg.editableDeliverableId : null}
+            kind={nextDim === 'phase' ? 'service' : nextDim === 'zone' ? 'zone' : 'deliverable'}
+            editableTemplateId={nextDim === 'service' ? sg.editableTemplateId : null}
+            editableDeliverableId={nextDim === 'service' ? sg.editableDeliverableId : null}
             // Root path — no parent zone context; sub-buckets that map
             // to a Zone or Phase supply their own via bucketize (bm2 fix #4).
             contextZoneId={sg.zoneId ?? null}
@@ -4717,13 +4759,31 @@ function PlanningView({ projectId }: { projectId: number }) {
         execute: () => Promise<void>;
       }
   >(null);
-  const [groupBy, setGroupBy] = useState<'zone' | 'service' | 'phase' | 'none'>('zone');
-  // Optional secondary dimension applied inside each primary group's task
-  // list — Zone → Deliverable, Zone → Service, Deliverable → Service,
-  // Service → Deliverable. '' means single-level grouping. The dropdown
-  // excludes whatever the primary level is set to; flipping the primary
-  // clears the secondary if they would collide. (T2.fix3, 2026-06-28.)
-  const [subGroupBy, setSubGroupBy] = useState<'' | 'service' | 'phase' | 'zone'>('');
+  // Group-by stack — up to three dimensions applied in order (e.g.
+  // ['zone', 'service', 'phase'] renders Zone → Deliverable → Service).
+  // Empty array is the "None" primary. Each level in the toolbar filters
+  // out dimensions already used at an outer level; flipping an outer level
+  // to a colliding value trims the inner levels off.
+  //
+  // History: this replaced the earlier `groupBy` / `subGroupBy` scalar +
+  // scalar pair (T2.fix3, 2026-06-28) when the third level shipped
+  // (feat/planning-3level-group, 2026-08). The scalars are derived below
+  // for backwards-compat with the (unchanged) hiddenByGrouping / kind /
+  // rename-eligibility branches at the top-level render — the branch
+  // predicates stayed the same; only the state shape changed.
+  const [groupOrder, setGroupOrder] = useState<GroupDim[]>(['zone']);
+  // Derived scalar alias — every consumer below reads `groupBy` the
+  // same way the old scalar state was read (top-level render branches
+  // on 'zone', kind switch on 'phase'/'service', etc.). Keeps the diff
+  // scoped to the mechanism, not the call sites. The explicit cast on
+  // the RHS widens the union past what `?? 'none'` would infer
+  // (TS strips the 'none' branch when the LHS is a non-nullable
+  // GroupDim without `noUncheckedIndexedAccess`).
+  //
+  // The old `subGroupBy` scalar is intentionally not aliased — all its
+  // former call sites (hiddenByGrouping / effective-order / toolbar)
+  // now read `groupOrder` directly so tertiary picks are covered.
+  const groupBy = (groupOrder[0] ?? 'none') as 'zone' | 'service' | 'phase' | 'none';
   // Bulk collapse/expand. `bulkCollapsed` tracks the last toolbar state
   // so the button label flips between "Collapse all" / "Expand all".
   // `bulkVersion` is bumped on every click so cards re-sync even when
@@ -4779,13 +4839,17 @@ function PlanningView({ projectId }: { projectId: number }) {
   // turned off. `hiddenByGrouping` powers the picker tooltip.
   const hiddenByGrouping = useMemo(() => {
     const set = new Set<string>();
-    for (const dim of [groupBy, subGroupBy]) {
+    // Iterate every level in the stack so the tertiary dim also folds
+    // its duplicate column away — the two-level version only knew about
+    // primary + sub, so a tertiary Service would leave the "Service"
+    // column redundantly visible.
+    for (const dim of groupOrder) {
       if (dim === 'zone') set.add('zone');
       if (dim === 'service') { set.add('deliverable'); set.add('delivDate'); }
       if (dim === 'phase') set.add('service');
     }
     return set;
-  }, [groupBy, subGroupBy]);
+  }, [groupOrder]);
   const planningColumnsCtx = useMemo<PlanningColumnsCtx>(() => {
     const isVisibleWithGrouping = (k: string) =>
       !hiddenByGrouping.has(k) && columnVis.isVisible(k);
@@ -5562,27 +5626,35 @@ function PlanningView({ projectId }: { projectId: number }) {
     });
   }, [deliverableById, deliverableByTemplateId, flatZones]);
 
-  // Effective sub-dimension. A primary collision (e.g. user picked
-  // Deliverable as primary AND Deliverable as sub) collapses to no
-  // sub-grouping — the dropdown filter prevents it from being set, but
-  // we guard here too so a stale value never leaks through.
-  const effectiveSubDim: SubGroupDim | null = (() => {
-    if (!subGroupBy) return null;
-    if (groupBy === 'none') return null;
-    // Primary/sub collision — same dimension on both levels makes no
-    // sense (Zone × Zone, Deliverable × Deliverable, Service × Service).
-    // Collapse to no sub-group in that case; the dropdown filter also
-    // prevents it, but this guards stale state from a primary flip.
-    if (groupBy === 'zone' && subGroupBy === 'zone') return null;
-    if (groupBy === 'service' && subGroupBy === 'service') return null;
-    if (groupBy === 'phase' && subGroupBy === 'phase') return null;
-    return subGroupBy;
-  })();
+  // Effective grouping stack. The toolbar's cascade filter prevents a
+  // duplicate dim from being picked, but we still de-dupe here so a stale
+  // value never leaks through (e.g. after flipping the primary to what
+  // the tertiary already was). The stack is stripped down to only the
+  // levels that actually exist AND aren't duplicates. Length 0 = the
+  // primary is "None" → no grouping at all.
+  const effectiveGroupOrder: GroupDim[] = useMemo(() => {
+    const seen = new Set<GroupDim>();
+    const out: GroupDim[] = [];
+    for (const dim of groupOrder) {
+      if (seen.has(dim)) continue;
+      seen.add(dim);
+      out.push(dim);
+    }
+    return out;
+  }, [groupOrder]);
+  // Only expose a sub-context when the stack has at least a secondary
+  // level — the primary is rendered by the top-level branch below, so a
+  // primary-only stack doesn't need it. This mirrors the previous shape
+  // (where subCtx was null in single-level mode) so downstream
+  // null-checks in ProjectRootGroup / HierarchicalZoneGroup keep working.
   const subGroupCtx: PlanningSubGroupCtx | null = useMemo(
-    () => effectiveSubDim
-      ? { dim: effectiveSubDim, bucketize: (t: any[]) => bucketizeForSub(t, effectiveSubDim) }
+    () => effectiveGroupOrder.length >= 2
+      ? {
+          order: effectiveGroupOrder,
+          bucketize: (t: any[], dim: GroupDim) => bucketizeForSub(t, dim),
+        }
       : null,
-    [effectiveSubDim, bucketizeForSub],
+    [effectiveGroupOrder, bucketizeForSub],
   );
 
   const totalHours = sorted.reduce((s: number, t: any) => s + Number(t.budgetHours || 0), 0);
@@ -5815,23 +5887,32 @@ function PlanningView({ projectId }: { projectId: number }) {
 
           <span className="mx-1 h-5 w-px bg-slate-200 dark:bg-slate-700" />
 
-          {/* Group controls — primary + optional secondary dimension. */}
+          {/* Group controls — primary + optional secondary + optional
+              tertiary dimension. Each level only offers dimensions not
+              already picked at an outer level, plus "None" to stop
+              nesting. Changing an outer level trims (or clears) the
+              inner ones — same guard the earlier two-level version
+              applied when the primary flipped. */}
           <div className="flex items-center gap-1.5">
             <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500">Group</span>
+            {/* Level 1 — Primary. "None" here empties the whole stack. */}
             <select
-              value={groupBy}
+              value={groupOrder[0] ?? 'none'}
               onChange={(e) => {
-                const next = e.target.value as 'zone' | 'service' | 'phase' | 'none';
-                setGroupBy(next);
-                // Clear sub-group when primary would collide with it.
-                if (
-                  next === 'none'
-                  || (next === 'zone' && subGroupBy === 'zone')
-                  || (next === 'service' && subGroupBy === 'service')
-                  || (next === 'phase' && subGroupBy === 'phase')
-                ) {
-                  setSubGroupBy('');
-                }
+                const raw = e.target.value;
+                if (raw === 'none') { setGroupOrder([]); return; }
+                const next = raw as GroupDim;
+                setGroupOrder((prev) => {
+                  // Trim any inner level that would now duplicate the
+                  // new primary. Preserves the user's other picks when
+                  // they don't collide (e.g. Zone→Deliv→Service and the
+                  // user flips primary to Deliverable → new order is
+                  // [Deliverable, Service], the leftover Zone was
+                  // implicitly dropped by the "no dup" pass in
+                  // effectiveGroupOrder anyway).
+                  const kept = prev.slice(1).filter((d) => d !== next);
+                  return [next, ...kept];
+                });
               }}
               className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
             >
@@ -5840,20 +5921,62 @@ function PlanningView({ projectId }: { projectId: number }) {
               <option value="phase">Service</option>
               <option value="none">No Grouping</option>
             </select>
-            {groupBy !== 'none' && (
+            {/* Level 2 — Secondary. Hidden when Primary is None. */}
+            {groupOrder[0] && (
               <>
                 <span className="text-slate-300 dark:text-slate-600 text-[11px]">/</span>
                 <select
-                  value={subGroupBy}
-                  onChange={(e) => setSubGroupBy(e.target.value as '' | 'service' | 'phase' | 'zone')}
+                  value={groupOrder[1] ?? ''}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setGroupOrder((prev) => {
+                      const primary = prev[0]!;
+                      if (raw === '') return [primary]; // stop nesting; drop tertiary too
+                      const next = raw as GroupDim;
+                      // Drop any tertiary that would now duplicate the
+                      // new secondary — the tertiary <select> filter
+                      // would prevent the user from picking a dup, but
+                      // this guards stale state.
+                      const tertiary = prev[2] && prev[2] !== next && prev[2] !== primary ? prev[2] : undefined;
+                      return tertiary ? [primary, next, tertiary] : [primary, next];
+                    });
+                  }}
                   className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                   title="Optional secondary grouping inside each primary group"
                 >
                   <option value="">No sub-group</option>
-                  {/* Only show options that differ from the primary Group. */}
-                  {groupBy !== 'zone' && <option value="zone">Zone</option>}
-                  {groupBy !== 'service' && <option value="service">Deliverable</option>}
-                  {groupBy !== 'phase' && <option value="phase">Service</option>}
+                  {/* Only show dimensions not already used at the primary. */}
+                  {groupOrder[0] !== 'zone' && <option value="zone">Zone</option>}
+                  {groupOrder[0] !== 'service' && <option value="service">Deliverable</option>}
+                  {groupOrder[0] !== 'phase' && <option value="phase">Service</option>}
+                </select>
+              </>
+            )}
+            {/* Level 3 — Tertiary. Hidden when Secondary is None (or the
+                stack has no secondary). Only offers dimensions not used
+                at either outer level. */}
+            {groupOrder[0] && groupOrder[1] && (
+              <>
+                <span className="text-slate-300 dark:text-slate-600 text-[11px]">/</span>
+                <select
+                  value={groupOrder[2] ?? ''}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setGroupOrder((prev) => {
+                      const primary = prev[0]!;
+                      const secondary = prev[1]!;
+                      if (raw === '') return [primary, secondary];
+                      return [primary, secondary, raw as GroupDim];
+                    });
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+                  title="Optional tertiary grouping inside each secondary group"
+                >
+                  <option value="">No tri-group</option>
+                  {/* Only show dimensions unused at the two outer levels. */}
+                  {groupOrder[0] !== 'zone' && groupOrder[1] !== 'zone' && <option value="zone">Zone</option>}
+                  {groupOrder[0] !== 'service' && groupOrder[1] !== 'service' && <option value="service">Deliverable</option>}
+                  {groupOrder[0] !== 'phase' && groupOrder[1] !== 'phase' && <option value="phase">Service</option>}
                 </select>
               </>
             )}
