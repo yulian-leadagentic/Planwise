@@ -1,6 +1,6 @@
-import { IsOptional, IsEnum, IsString, IsInt, IsBoolean } from 'class-validator';
+import { IsOptional, IsEnum, IsString, IsInt, IsBoolean, IsArray } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { ProjectStatus } from '@prisma/client';
 
 import { PaginationQueryDto } from '../../../common/dto/pagination.dto';
@@ -32,12 +32,51 @@ export class QueryProjectsDto extends PaginationQueryDto {
    * Filter to projects where the given user is either the leader OR an
    * active member. Used by the Projects list "Team member" filter — and
    * by the per-person workload tools that ask "what's on this person?".
+   *
+   * DEPRECATED (fix/people-filter, 2026-08-25). The single-value form
+   * only walked `projectMember.userId` and `leaderId`, which missed the
+   * BIM Manager / BIM Coordinator / other ProjectPartnerRole holders
+   * whose team membership lives on the party↔project edge (Alex Isakov
+   * on 3 projects, filter returned 2). Keep as a backwards-compat
+   * alias — the service maps `memberId` → `memberIds=[memberId]` so
+   * existing callers keep working.
    */
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'DEPRECATED — use memberIds[] instead. Kept as an alias.' })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   memberId?: number;
+
+  /**
+   * Filter to projects where ANY of the given users is on the project
+   * via ANY of the paths we consider "on the team":
+   *   • project.leaderId
+   *   • ProjectMember row (legacy internal-team join)
+   *   • ProjectPartnerRole where the party is the person, OR
+   *     the party is an org and the contactParty is the person
+   * UNION semantics — matches the "OR" the user expects from a
+   * multi-select filter chip stack. (fix/people-filter, 2026-08-25.)
+   *
+   * Query-string shape accepts both repeated `memberIds=1&memberIds=2`
+   * and comma-joined `memberIds=1,2` — the Transform below normalizes
+   * both to `number[]` and drops NaN.
+   */
+  @ApiPropertyOptional({
+    type: [Number],
+    description: 'UNION filter across leader / legacy member / project-partner-role paths.',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const raw: unknown[] = Array.isArray(value) ? value : String(value).split(',');
+    const nums = raw
+      .map((v) => (typeof v === 'number' ? v : parseInt(String(v).trim(), 10)))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    return nums.length ? nums : undefined;
+  })
+  @IsArray()
+  @IsInt({ each: true })
+  memberIds?: number[];
 
   /**
    * Include CLOSED projects in the result set. By default the list
