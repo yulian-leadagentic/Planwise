@@ -37,6 +37,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { PeopleMultiSelect } from '@/components/shared/people-multi-select';
 
 // ─── Feasibility Badge ───────────────────────────────────────────────────────
 
@@ -802,17 +803,24 @@ function ColHeader({
               className="w-full rounded border border-slate-200 dark:border-slate-700 px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none"
             />
           ) : kind === 'assignee' ? (
-            <select
-              autoFocus
-              value={cur}
-              onChange={(e) => ctx.setFilter(filterKey, e.target.value)}
-              className="w-full rounded border border-slate-200 dark:border-slate-700 px-2 py-1 text-[12px] focus:border-blue-400 focus:outline-none"
-            >
-              <option value="">All</option>
-              {ctx.options.assignee.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
+            // Per-column assignee narrower. The outer ColFilters.assignee
+            // shape is a single user-id string (Excel-style single-value
+            // quick filter); we render PeopleMultiSelect anyway so the
+            // user gets typeahead + alpha sort + avatars — the same
+            // ergonomics as the top-level filter — and hop the selected
+            // id in/out of the string setter. Only the first selected
+            // person applies so the "quick narrow" contract stays intact.
+            <PeopleMultiSelect
+              people={ctx.options.assignee.map((a) => ({
+                userId: Number(a.id),
+                displayName: a.name,
+              }))}
+              value={cur ? [Number(cur)] : []}
+              onChange={(ids) => ctx.setFilter(filterKey, ids.length > 0 ? String(ids[ids.length - 1]) : '')}
+              placeholder="All"
+              title={`Filter by ${label}`}
+              triggerClassName="w-full"
+            />
           ) : (
             <select
               autoFocus
@@ -4738,7 +4746,11 @@ function PlanningView({ projectId }: { projectId: number }) {
   // filters. Assignee filter is a single user-id; switches the row to
   // "tasks where assignee X is on the team for this task".
   const [filterPriority, setFilterPriority] = useState<string>('');
-  const [filterAssigneeId, setFilterAssigneeId] = useState<string>('');
+  // Assignee filter — set of userIds. UNION semantics (matches a task
+  // if ANY selected person is on it). Was a single-value <select>;
+  // widened to a chip-based PeopleMultiSelect for consistency with
+  // the Projects list / Kanban. (fix/people-filter.)
+  const [filterAssigneeIds, setFilterAssigneeIds] = useState<number[]>([]);
   const [filterStartFrom, setFilterStartFrom] = useState<string>('');
   const [filterStartTo, setFilterStartTo] = useState<string>('');
   const [filterDueFrom, setFilterDueFrom] = useState<string>('');
@@ -4811,7 +4823,7 @@ function PlanningView({ projectId }: { projectId: number }) {
   const activeFilterCount =
     (filterStatus ? 1 : 0) +
     (filterPriority ? 1 : 0) +
-    (filterAssigneeId ? 1 : 0) +
+    (filterAssigneeIds.length > 0 ? 1 : 0) +
     (filterStartFrom || filterStartTo ? 1 : 0) +
     (filterDueFrom || filterDueTo ? 1 : 0) +
     (filterHasDue ? 1 : 0);
@@ -5223,11 +5235,16 @@ function PlanningView({ projectId }: { projectId: number }) {
       if (filterStatus && t.status !== filterStatus) return false;
       // Priority (must be exact enum match if set) — V7
       if (filterPriority && t.priority !== filterPriority) return false;
-      // Assignee — match if the user is on the task's assignees list.
-      if (filterAssigneeId) {
-        const aid = Number(filterAssigneeId);
+      // Assignee — match if ANY of the selected people is on the task.
+      // UNION semantics matches the chip stack the user sees. Empty
+      // set = no assignee filter.
+      if (filterAssigneeIds.length > 0) {
+        const filterSet = new Set(filterAssigneeIds);
         const hasAssignee = Array.isArray(t.assignees)
-          && t.assignees.some((a: any) => a.userId === aid || a.user?.id === aid);
+          && t.assignees.some((a: any) => {
+            const aid: number | undefined = a.userId ?? a.user?.id;
+            return typeof aid === 'number' && filterSet.has(aid);
+          });
         if (!hasAssignee) return false;
       }
       // Estimated-start range — uses the planning field, NOT actual startDate.
@@ -5263,7 +5280,7 @@ function PlanningView({ projectId }: { projectId: number }) {
       }
       return true;
     });
-  }, [tasks, search, filterStatus, filterPriority, filterAssigneeId, filterStartFrom, filterStartTo, filterDueFrom, filterDueTo, filterHasDue, colFilters, deliverableLookups]);
+  }, [tasks, search, filterStatus, filterPriority, filterAssigneeIds, filterStartFrom, filterStartTo, filterDueFrom, filterDueTo, filterHasDue, colFilters, deliverableLookups]);
 
   // Distinct option lists for the column funnels, derived from the
   // loaded task set so only present values are offered.
@@ -5301,11 +5318,11 @@ function PlanningView({ projectId }: { projectId: number }) {
   }, [tasks, deliverableLookups]);
 
   const hasColFilter = Object.values(colFilters).some(Boolean);
-  const hasTaskFilter = !!(filterStatus || filterPriority || filterAssigneeId || filterStartFrom || filterStartTo || filterDueFrom || filterDueTo || filterHasDue || hasColFilter);
+  const hasTaskFilter = !!(filterStatus || filterPriority || filterAssigneeIds.length > 0 || filterStartFrom || filterStartTo || filterDueFrom || filterDueTo || filterHasDue || hasColFilter);
   const clearTaskFilters = () => {
     setFilterStatus('');
     setFilterPriority('');
-    setFilterAssigneeId('');
+    setFilterAssigneeIds([]);
     setFilterStartFrom('');
     setFilterStartTo('');
     setFilterDueFrom('');
@@ -5950,33 +5967,39 @@ function PlanningView({ projectId }: { projectId: number }) {
                       <option value="low">Low</option>
                     </select>
                   </label>
-                  <label className="block col-span-2">
+                  <div className="block col-span-2">
                     <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Assignee</span>
-                    <select
-                      value={filterAssigneeId}
-                      onChange={(e) => setFilterAssigneeId(e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-                    >
-                      <option value="">Any assignee</option>
-                      {Array.from(
-                        new Map<number, { id: number; name: string }>(
+                    {/* Multi-select. Derives the people set from the
+                        loaded tasks so the filter list matches what's
+                        actually on this board (a project's roster is
+                        already served by /assignee-candidates for the
+                        row-level AssigneePicker; here we intentionally
+                        stay task-scoped so the filter can't propose
+                        someone the current view has no rows for). */}
+                    <PeopleMultiSelect
+                      people={Array.from(
+                        new Map<number, { userId: number; displayName: string; avatarUrl?: string | null }>(
                           tasks.flatMap((t: any) =>
                             (t.assignees ?? []).map((a: any) => {
                               const u = a.user ?? {};
-                              const id = a.userId ?? u.id;
+                              const id: number | undefined = a.userId ?? u.id;
                               if (id == null) return null;
                               const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || `User #${id}`;
-                              return [id, { id, name }] as [number, { id: number; name: string }];
-                            }).filter(Boolean),
+                              return [id, { userId: id, displayName: name, avatarUrl: u.avatarUrl ?? null }] as [
+                                number,
+                                { userId: number; displayName: string; avatarUrl?: string | null },
+                              ];
+                            }).filter(Boolean) as Array<[number, { userId: number; displayName: string; avatarUrl?: string | null }]>,
                           ),
                         ).values(),
-                      )
-                        .sort((a, b) => a.name.localeCompare(b.name))
-                        .map((u) => (
-                          <option key={u.id} value={String(u.id)}>{u.name}</option>
-                        ))}
-                    </select>
-                  </label>
+                      )}
+                      value={filterAssigneeIds}
+                      onChange={setFilterAssigneeIds}
+                      placeholder="Any assignee"
+                      title="Filter planning tasks by assignee"
+                      triggerClassName="w-full"
+                    />
+                  </div>
                   <label className="block">
                     <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Estimated start</span>
                     <div className="flex items-center gap-1.5">

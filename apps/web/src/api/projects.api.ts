@@ -29,8 +29,20 @@ export interface ProjectQuery extends PaginationQuery {
   status?: string;
   search?: string;
   isArchived?: boolean;
-  /** Filter to projects where this user is leader OR active member. */
+  /**
+   * DEPRECATED — use `memberIds` instead. Kept as a backwards-compat
+   * alias while call sites migrate; the backend maps it to
+   * `memberIds=[memberId]`. (fix/people-filter, 2026-08-25.)
+   */
   memberId?: number;
+  /**
+   * UNION filter — a project matches if ANY of the given userIds is on
+   * it via ANY of the paths we consider "on the team" (leader, legacy
+   * ProjectMember, project-partner-role party, project-partner-role
+   * contact person). Sent as repeated query params. See
+   * `apps/api/src/modules/projects/dto/query-projects.dto.ts`.
+   */
+  memberIds?: number[];
   /**
    * Include CLOSED projects in the result. Defaults to false on the API
    * — pass true behind a UI toggle when admins need to browse the

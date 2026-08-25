@@ -15,6 +15,7 @@ import { TaskDrawer } from './task-drawer';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { getTaskHealth } from '@/lib/task-health';
 import { STATUS_PILL, STATUS_LABEL, ZONE_BORDER_COLORS } from '@/lib/task-constants';
+import { PeopleMultiSelect } from '@/components/shared/people-multi-select';
 
 // Column labels mirror STATUS_LABEL exactly so the kanban headers read the
 // same as every other status badge in the app ("To Do" / "Done", not "Not
@@ -228,32 +229,49 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
   // matches that exact label everywhere else.
   const [searchText, setSearchText] = useState('');
   const [deliverableFilter, setDeliverableFilter] = useState('');
-  const [assigneeFilter, setAssigneeFilter] = useState('');
+  // Assignee filter is a set of userIds (UNION — a task matches if
+  // ANY selected person is on it). Was a single-value <select>;
+  // replaced with the PeopleMultiSelect for consistency with the
+  // Projects list "All Team Members" filter. (fix/people-filter.)
+  const [assigneeFilter, setAssigneeFilter] = useState<number[]>([]);
   const [priorityFilter, setPriorityFilter] = useState('');
 
   const filterOptions = useMemo(() => {
     const deliverables = new Set<string>();
-    const assigneeMap = new Map<string, string>();
+    // Track avatar + display name for the assignee options so the
+    // PeopleMultiSelect rows render with the same face the task
+    // avatars show elsewhere in the app.
+    const assigneeMap = new Map<number, {
+      userId: number;
+      displayName: string;
+      avatarUrl?: string | null;
+    }>();
     for (const t of tasks) {
       const dn = getTaskPhaseName(t);
       if (dn) deliverables.add(dn);
       for (const a of t.assignees ?? []) {
-        const id = a.userId ?? a.user?.id;
+        const id: number | undefined = a.userId ?? a.user?.id;
         if (id == null) continue;
         const name = `${a.user?.firstName ?? ''} ${a.user?.lastName ?? ''}`.trim() || `User #${id}`;
-        assigneeMap.set(String(id), name);
+        if (!assigneeMap.has(id)) {
+          assigneeMap.set(id, {
+            userId: id,
+            displayName: name,
+            avatarUrl: a.user?.avatarUrl ?? null,
+          });
+        }
       }
     }
     return {
       deliverables: Array.from(deliverables).sort(),
-      assignees: Array.from(assigneeMap.entries())
-        .map(([id, name]) => ({ id, name }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
+      assignees: Array.from(assigneeMap.values())
+        .sort((a, b) => a.displayName.localeCompare(b.displayName)),
     };
   }, [tasks]);
 
   const filteredTasks = useMemo(() => {
     const q = searchText.trim().toLowerCase();
+    const assigneeSet = new Set(assigneeFilter);
     return tasks.filter((t: any) => {
       // Kanban rule: tasks without a due date have no place on a
       // deadline-driven board (client feedback 2026-08-02 item 7).
@@ -262,16 +280,18 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
       if (q && !(`${t.code ?? ''} ${t.name ?? ''}`.toLowerCase().includes(q))) return false;
       if (deliverableFilter && (getTaskPhaseName(t) ?? '') !== deliverableFilter) return false;
       if (priorityFilter && t.priority !== priorityFilter) return false;
-      if (assigneeFilter) {
-        const aid = Number(assigneeFilter);
-        const has = (t.assignees ?? []).some((a: any) => (a.userId ?? a.user?.id) === aid);
+      if (assigneeSet.size > 0) {
+        const has = (t.assignees ?? []).some((a: any) => {
+          const aid: number | undefined = a.userId ?? a.user?.id;
+          return typeof aid === 'number' && assigneeSet.has(aid);
+        });
         if (!has) return false;
       }
       return true;
     });
   }, [tasks, searchText, deliverableFilter, assigneeFilter, priorityFilter]);
 
-  const isFiltered = !!searchText.trim() || !!deliverableFilter || !!assigneeFilter || !!priorityFilter;
+  const isFiltered = !!searchText.trim() || !!deliverableFilter || assigneeFilter.length > 0 || !!priorityFilter;
 
   const sensors = useSensors(
     // 8px activation distance — same as the My Tasks kanban. Lower values
@@ -369,17 +389,14 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
             <option key={d} value={d}>{d}</option>
           ))}
         </select>
-        <select
+        <PeopleMultiSelect
+          people={filterOptions.assignees}
           value={assigneeFilter}
-          onChange={(e) => setAssigneeFilter(e.target.value)}
-          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-400"
-          title="Filter by assignee"
-        >
-          <option value="">All Assignees</option>
-          {filterOptions.assignees.map((a) => (
-            <option key={a.id} value={a.id}>{a.name}</option>
-          ))}
-        </select>
+          onChange={setAssigneeFilter}
+          placeholder="All Assignees"
+          title="Filter kanban by assignee"
+          triggerClassName="w-56"
+        />
         <select
           value={priorityFilter}
           onChange={(e) => setPriorityFilter(e.target.value)}
@@ -395,7 +412,7 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
         {isFiltered && (
           <button
             type="button"
-            onClick={() => { setSearchText(''); setDeliverableFilter(''); setAssigneeFilter(''); setPriorityFilter(''); }}
+            onClick={() => { setSearchText(''); setDeliverableFilter(''); setAssigneeFilter([]); setPriorityFilter(''); }}
             className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
             title="Clear all filters"
           >

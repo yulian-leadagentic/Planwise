@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import client from '@/api/client';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { PeopleMultiSelect } from '@/components/shared/people-multi-select';
 
 // localStorage key for the per-user "which Project Role Type columns
 // are visible on the projects list" preference. Stored as a JSON
@@ -84,10 +85,17 @@ export function ProjectListPage() {
   const debouncedSearch = useDebounce(projectSearch, 300);
   const [chatProjectId, setChatProjectId] = useState<number | null>(null);
   const [chatProjectName, setChatProjectName] = useState('');
-  // "Filter by team member" — empty = no filter.
-  const [memberFilter, setMemberFilter] = useState<number | null>(null);
+  // "Filter by team member" — empty = no filter. Widened from single-
+  // value to a set (memberIds[]) with UNION semantics so a chip stack
+  // "Alice, Bob" returns projects on which EITHER appears via ANY of
+  // the person-on-project paths (leader / legacy member / partner-role
+  // party / partner-role contact). Backend widening lives on the
+  // GET /projects `memberIds[]` query param (fix/people-filter).
+  const [memberFilter, setMemberFilter] = useState<number[]>([]);
 
-  // Pull active users for the member dropdown (cached).
+  // Pull active users for the member dropdown (cached). `avatarUrl` is
+  // included so the PeopleMultiSelect chips + option rows render the
+  // real photo instead of falling back to initials on every row.
   const { data: activeUsers = [] } = useQuery({
     queryKey: ['users', 'active'],
     staleTime: 10 * 60 * 1000,
@@ -95,7 +103,14 @@ export function ProjectListPage() {
       client.get('/users?isActive=true&perPage=1000').then((r) => {
         const d = r.data?.data ?? r.data;
         const list = Array.isArray(d) ? d : d?.data ?? [];
-        return list as Array<{ id: number; firstName: string; lastName: string }>;
+        return list as Array<{
+          id: number;
+          firstName: string;
+          lastName: string;
+          avatarUrl?: string | null;
+          position?: string | null;
+          department?: string | null;
+        }>;
       }),
   });
 
@@ -119,7 +134,7 @@ export function ProjectListPage() {
   const { data, isLoading } = useProjects({
     search: debouncedSearch || undefined,
     status: apiStatus,
-    memberId: memberFilter ?? undefined,
+    memberIds: memberFilter.length > 0 ? memberFilter : undefined,
     closedOnly: isClosedFilter ? true : undefined,
     perPage: 100,
   });
@@ -324,27 +339,25 @@ export function ProjectListPage() {
           <option disabled>──────────</option>
           <option value="__closed__">Closed</option>
         </select>
-        {/* Filter by team member — matches projects where the user is leader OR an active member. */}
-        <select
-          value={memberFilter ?? ''}
-          onChange={(e) => setMemberFilter(e.target.value ? Number(e.target.value) : null)}
-          className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm max-w-[200px]"
-          title="Filter by team member"
-        >
-          <option value="">All Team Members</option>
-          {activeUsers.map((u) => (
-            <option key={u.id} value={u.id}>{u.firstName} {u.lastName}</option>
-          ))}
-        </select>
-        {memberFilter !== null && (
-          <button
-            type="button"
-            onClick={() => setMemberFilter(null)}
-            className="text-[12px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 underline"
-          >
-            Clear
-          </button>
-        )}
+        {/* Filter by team member — replaces the retested native <select>
+            (unsorted, single-select, no search) with the reusable chip-
+            based PeopleMultiSelect. Backend widening on `memberIds[]`
+            makes the filter walk leader + legacy members + partner-role
+            party + partner-role contact, so Alex Isakov now returns
+            every project he's on regardless of the path. */}
+        <PeopleMultiSelect
+          people={activeUsers.map((u) => ({
+            userId: u.id,
+            displayName: `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || `User #${u.id}`,
+            avatarUrl: u.avatarUrl ?? null,
+            subtitle: u.position ?? u.department ?? null,
+          }))}
+          value={memberFilter}
+          onChange={setMemberFilter}
+          placeholder="All Team Members"
+          title="Filter projects by team member"
+          triggerClassName="w-64"
+        />
 
         {/* Group By — single dropdown. Options include the three
             "structural" project fields plus any role-type column the
@@ -462,14 +475,14 @@ export function ProjectListPage() {
         // sticks across reloads.
         <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center space-y-3">
           {(() => {
-            const hasFilter = !!projectSearch || projectStatus.length > 0 || !!memberFilter;
+            const hasFilter = !!projectSearch || projectStatus.length > 0 || memberFilter.length > 0;
             return hasFilter ? (
               <>
                 <p className="text-sm text-slate-500 dark:text-slate-400">No projects match your current filters.</p>
                 <button
                   onClick={() => {
                     setProjectFilters({ projectSearch: '', projectStatus: [] });
-                    setMemberFilter(null);
+                    setMemberFilter([]);
                   }}
                   className="rounded-lg bg-slate-200 dark:bg-slate-700 px-4 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600"
                 >

@@ -320,16 +320,46 @@ export class ProjectsService {
       where.isArchived = query.isArchived;
     }
 
-    // Member filter — match projects where the user is either the leader
-    // OR an active member of the team. Combines with any existing AND/OR.
-    if (query.memberId) {
+    // Member filter — match projects where ANY of the requested users
+    // is on the project via ANY of the paths we consider "on the team":
+    //   • leader (project.leaderId)
+    //   • legacy internal team (ProjectMember.userId)
+    //   • ProjectPartnerRole.party.user  (person party)
+    //   • ProjectPartnerRole.contactParty.user  (contact person on an
+    //     org party — e.g. the BIM Manager who represents a firm)
+    // UNION across users AND across paths — a chip stack "Alice, Bob"
+    // returns projects on which Alice OR Bob appears via ANY path.
+    //
+    // fix/people-filter (2026-08-25). The previous single-`memberId`
+    // form only walked the first two paths, so a person present ONLY
+    // as a project-partner-role holder (BIM Manager, BIM Coordinator,
+    // ...) was invisible to the filter — Alex Isakov on 3 projects,
+    // filter returned 2. `memberId` still accepted as an alias for a
+    // one-element `memberIds`.
+    const memberIds: number[] = query.memberIds
+      ? Array.from(new Set(query.memberIds))
+      : query.memberId
+        ? [query.memberId]
+        : [];
+    if (memberIds.length > 0) {
       where.AND = [
         ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
         {
-          OR: [
-            { leaderId: query.memberId },
-            { members: { some: { userId: query.memberId } } },
-          ],
+          OR: memberIds.flatMap((userId) => [
+            { leaderId: userId },
+            { members: { some: { userId } } },
+            {
+              partnerRoles: {
+                some: {
+                  status: 'active',
+                  OR: [
+                    { party: { user: { id: userId } } },
+                    { contactParty: { user: { id: userId } } },
+                  ],
+                },
+              },
+            },
+          ]),
         },
       ];
     }
