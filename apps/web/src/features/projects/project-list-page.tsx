@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Plus, Trash2, MessageSquare, Search, Send, UserCircle, Columns3, ChevronDown } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
@@ -667,17 +667,37 @@ export function ProjectListPage() {
 
                   return (
                     <tr key={p.id}
-                      onClick={() => navigate(`/projects/${p.id}`)}
-                      className={cn('border-b border-slate-100 dark:border-slate-800 cursor-pointer hover:bg-blue-50/30 transition-colors',
+                      className={cn('border-b border-slate-100 dark:border-slate-800 hover:bg-blue-50/30 transition-colors',
                         idx % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-50/30')}>
-                      <td className="px-4 py-3 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">{p.number || '-'}</td>
+                      {/* Navigation lives on the project-code and name
+                          cells ONLY. Using react-router's <Link> so we
+                          get a real <a> — keyboard focus, Enter to open,
+                          Ctrl/Cmd-click for new-tab, screen-reader
+                          "link" role for free. Every other cell is now
+                          non-navigating, freeing them for inline editors
+                          (status, role holders) without needing defensive
+                          stopPropagation on every control. */}
+                      <td className="px-4 py-3 font-mono whitespace-nowrap">
+                        <Link
+                          to={`/projects/${p.id}`}
+                          className="text-slate-500 dark:text-slate-400 hover:text-blue-600 hover:underline focus:outline-none focus-visible:text-blue-600 focus-visible:underline"
+                        >
+                          {p.number || '-'}
+                        </Link>
+                      </td>
                       <td className="px-4 py-3 max-w-[280px]">
                         {/* Long project names were overflowing the cell
                             (no min-w-0 on the parent flex/grid context,
                             no truncate on the inner <p>). Cap the cell
                             at 280px and truncate with a hover tooltip
                             so the full name is still discoverable. */}
-                        <p className="font-semibold text-slate-800 dark:text-slate-100 truncate" title={p.name}>{p.name}</p>
+                        <Link
+                          to={`/projects/${p.id}`}
+                          className="block font-semibold text-slate-800 dark:text-slate-100 truncate hover:text-blue-600 hover:underline focus:outline-none focus-visible:text-blue-600 focus-visible:underline"
+                          title={p.name}
+                        >
+                          {p.name}
+                        </Link>
                       </td>
                       {/* Team Leader static cell removed — surface it via
                           the Columns customizer (it's seeded as a system
