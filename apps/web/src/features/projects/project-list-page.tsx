@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Plus, Trash2, MessageSquare, Search, Send, UserCircle, Columns3, ChevronDown } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
@@ -80,8 +80,13 @@ export function ProjectListPage() {
   // Finance permission gate — controls visibility of the Budget /
   // Cost / Hours columns. NO admin short-circuit: even admins need
   // an explicit Finance read grant in /admin/roles.
-  const { can: canPerm } = usePermissions();
+  const { can: canPerm, isAdmin } = usePermissions();
   const showFinance = canPerm('finance', 'read');
+  // In-cell editing gates. `isAdmin ||` bypass matches the project-wide
+  // convention (see e.g. project-detail-page): an admin can always
+  // write / re-assign, non-admins need the explicit module grant.
+  const canWriteProjects = isAdmin || canPerm('projects', 'write');
+  const canWritePartners = isAdmin || canPerm('partners', 'write');
   const debouncedSearch = useDebounce(projectSearch, 300);
   const [chatProjectId, setChatProjectId] = useState<number | null>(null);
   const [chatProjectName, setChatProjectName] = useState('');
@@ -305,6 +310,147 @@ export function ProjectListPage() {
     },
     onError: (err: any) => notify.apiError(err, 'Failed to delete'),
   });
+
+  /**
+   * In-cell status change. Fires against the permissive
+   * projects.service#update — no core-fields guardrail, so a
+   * status-only PATCH is accepted. Optimistic: we snapshot every
+   * ['projects', …] cache, patch the target row's status in place,
+   * and on error roll every snapshot back so the badge doesn't
+   * "stick" on a value the server rejected. Success invalidates the
+   * broad ['projects'] prefix so any dependent list (filtered,
+   * grouped) refetches.
+   *
+   * Close / reopen is a SEPARATE dimension (closedAt timestamp)
+   * with its own POST endpoints — not offered here to keep the
+   * inline editor to the four active statuses the status filter
+   * already exposes.
+   */
+  const updateProjectStatus = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: string }) =>
+      client.patch(`/projects/${id}`, { status }).then((r) => r.data),
+    onMutate: async ({ id, status }) => {
+      await queryClient.cancelQueries({ queryKey: ['projects'] });
+      const snapshots = queryClient.getQueriesData<any>({ queryKey: ['projects'] });
+      for (const [key, cached] of snapshots) {
+        if (!cached) continue;
+        // Cache shape: { data: [...], meta: {...} } | { data: {...} } | array.
+        const rows: any[] | undefined = cached?.data?.data
+          ? cached.data.data
+          : Array.isArray(cached?.data) ? cached.data
+          : Array.isArray(cached) ? cached
+          : undefined;
+        if (!rows) continue;
+        const idx = rows.findIndex((p: any) => p?.id === id);
+        if (idx === -1) continue;
+        // Immutable patch — clone the container so React-Query sees a
+        // new reference and the table re-renders.
+        const nextRows = rows.slice();
+        nextRows[idx] = { ...nextRows[idx], status };
+        const next = cached?.data?.data
+          ? { ...cached, data: { ...cached.data, data: nextRows } }
+          : Array.isArray(cached?.data)
+            ? { ...cached, data: nextRows }
+            : nextRows;
+        queryClient.setQueryData(key, next);
+      }
+      return { snapshots };
+    },
+    onError: (err: any, _vars, ctx) => {
+      // Revert every touched cache to its pre-mutation snapshot.
+      if (ctx?.snapshots) {
+        for (const [key, prev] of ctx.snapshots) {
+          queryClient.setQueryData(key, prev);
+        }
+      }
+      notify.apiError(err, 'Failed to update status');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+    },
+  });
+
+  /**
+   * Add a role holder — POST /project-partner-roles. The cell picker
+   * feeds us the party id it looked up from the candidates list, so
+   * we don't have to re-resolve here. We DO NOT optimistically patch
+   * the cache: the ProjectPartnerRole row's `id` is server-assigned
+   * and is needed for a subsequent DELETE, so we wait for the write
+   * to return and then invalidate ['projects'] to refetch it in
+   * full — matches the pattern useAddProjectMember already uses.
+   */
+  const addRoleHolder = useMutation({
+    mutationFn: (v: { projectId: number; roleId: number; partyId: number }) =>
+      client.post('/project-partner-roles', v).then((r) => r.data),
+    onError: (err: any) => notify.apiError(err, 'Failed to assign role'),
+  });
+
+  /**
+   * Remove a role holder — DELETE /project-partner-roles/:id, which
+   * soft-ends the row (sets valid_to=now). We identify the target by
+   * assignmentId, not by (roleId, partyId), because the candidate may
+   * hold the same role multiple times historically (unlikely today
+   * but the schema doesn't forbid it).
+   *
+   * Note: the DELETE endpoint requires `partners:delete`. The cell
+   * gate is `partners:write`; a user with write-but-not-delete will
+   * hit a 403 on removals and see the toast — accepted trade-off,
+   * matches how the Team tab does it.
+   */
+  const removeRoleHolder = useMutation({
+    mutationFn: (assignmentId: number) =>
+      client.delete(`/project-partner-roles/${assignmentId}`).then((r) => r.data),
+    onError: (err: any) => notify.apiError(err, 'Failed to remove role holder'),
+  });
+
+  /**
+   * Save = diff. Called by RoleHolderCell after the popover commits
+   * — we compute added/removed userIds vs current holders, translate
+   * userIds → partyIds via the candidates list (POST needs partyId),
+   * fire the parallel POSTs + DELETEs, then invalidate ['projects']
+   * once so a single refetch reflects the new holders on every list
+   * query. Failures on individual writes surface via the mutation
+   * error toasts above; a partial success still invalidates so the
+   * UI shows the writes that landed.
+   */
+  const saveRoleHolders = async (args: {
+    projectId: number;
+    roleId: number;
+    currentAssignments: Array<{ id: number; partyId: number | null; userId: number | null }>;
+    nextUserIds: number[];
+    candidates: Array<{ userId: number | null; partyId: number | null }>;
+  }) => {
+    const { projectId, roleId, currentAssignments, nextUserIds, candidates } = args;
+    const currentUserIds = currentAssignments
+      .map((a) => a.userId)
+      .filter((u): u is number => u != null);
+    const nextSet = new Set(nextUserIds);
+    const currentSet = new Set(currentUserIds);
+    const addedUserIds = nextUserIds.filter((u) => !currentSet.has(u));
+    const removedAssignments = currentAssignments.filter(
+      (a) => a.userId != null && !nextSet.has(a.userId),
+    );
+    const userIdToPartyId = new Map(
+      candidates
+        .filter((c) => c.userId != null && c.partyId != null)
+        .map((c) => [c.userId as number, c.partyId as number]),
+    );
+
+    const ops: Promise<any>[] = [];
+    for (const uid of addedUserIds) {
+      const partyId = userIdToPartyId.get(uid);
+      if (partyId == null) continue; // unassignable candidate — skipped
+      ops.push(addRoleHolder.mutateAsync({ projectId, roleId, partyId }));
+    }
+    for (const a of removedAssignments) {
+      ops.push(removeRoleHolder.mutateAsync(a.id));
+    }
+    if (ops.length === 0) return;
+    // allSettled — one failure shouldn't block the rest from writing;
+    // the failing mutation toasts on its own.
+    await Promise.allSettled(ops);
+    queryClient.invalidateQueries({ queryKey: ['projects'] });
+  };
 
   return (
     <div className="space-y-6">
@@ -657,7 +803,8 @@ export function ProjectListPage() {
                       </tr>
                     )}
                     {g.items.map((p: any, idx: number) => {
-                      const st = statusColors[p.status] ?? statusColors.draft;
+                  // Status swatch moved into <StatusCell/> — the read-
+                  // only badge and the inline <select> both live there.
                   const leader = p.leader;
                   const taskCount = p._count?.tasks ?? 0;
                   // Server-side rollup from `projects.service#findAll` —
@@ -675,17 +822,37 @@ export function ProjectListPage() {
 
                   return (
                     <tr key={p.id}
-                      onClick={() => navigate(`/projects/${p.id}`)}
-                      className={cn('border-b border-slate-100 dark:border-slate-800 cursor-pointer hover:bg-blue-50/30 transition-colors',
+                      className={cn('border-b border-slate-100 dark:border-slate-800 hover:bg-blue-50/30 transition-colors',
                         idx % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-50/30')}>
-                      <td className="px-4 py-3 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">{p.number || '-'}</td>
+                      {/* Navigation lives on the project-code and name
+                          cells ONLY. Using react-router's <Link> so we
+                          get a real <a> — keyboard focus, Enter to open,
+                          Ctrl/Cmd-click for new-tab, screen-reader
+                          "link" role for free. Every other cell is now
+                          non-navigating, freeing them for inline editors
+                          (status, role holders) without needing defensive
+                          stopPropagation on every control. */}
+                      <td className="px-4 py-3 font-mono whitespace-nowrap">
+                        <Link
+                          to={`/projects/${p.id}`}
+                          className="text-slate-500 dark:text-slate-400 hover:text-blue-600 hover:underline focus:outline-none focus-visible:text-blue-600 focus-visible:underline"
+                        >
+                          {p.number || '-'}
+                        </Link>
+                      </td>
                       <td className="px-4 py-3 max-w-[280px]">
                         {/* Long project names were overflowing the cell
                             (no min-w-0 on the parent flex/grid context,
                             no truncate on the inner <p>). Cap the cell
                             at 280px and truncate with a hover tooltip
                             so the full name is still discoverable. */}
-                        <p className="font-semibold text-slate-800 dark:text-slate-100 truncate" title={p.name}>{p.name}</p>
+                        <Link
+                          to={`/projects/${p.id}`}
+                          className="block font-semibold text-slate-800 dark:text-slate-100 truncate hover:text-blue-600 hover:underline focus:outline-none focus-visible:text-blue-600 focus-visible:underline"
+                          title={p.name}
+                        >
+                          {p.name}
+                        </Link>
                       </td>
                       {/* Team Leader static cell removed — surface it via
                           the Columns customizer (it's seeded as a system
@@ -703,35 +870,38 @@ export function ProjectListPage() {
                         // Relation name on Project is `partnerRoles`
                         // (not `projectPartnerRoles` — that's the inverse
                         // side on BusinessPartner).
-                        const assignees = ((p.partnerRoles ?? []) as any[])
+                        const assignments = ((p.partnerRoles ?? []) as any[])
                           .filter((r: any) => r.roleId === rt.id)
                           .sort((a: any, b: any) => Number(b.isPrimary) - Number(a.isPrimary));
                         return (
                           <td key={rt.id} className="px-4 py-3">
-                            {assignees.length === 0 ? (
-                              <span className="text-slate-300 dark:text-slate-600">—</span>
-                            ) : (
-                              <div className="flex flex-col gap-0.5 text-[12px]">
-                                {assignees.map((a: any) => (
-                                  <span
-                                    key={a.id}
-                                    className={cn(
-                                      'truncate',
-                                      a.isPrimary ? 'font-semibold text-slate-800 dark:text-slate-100' : 'text-slate-600 dark:text-slate-300',
-                                    )}
-                                    title={a.titleInProject ? `${a.party.displayName} — ${a.titleInProject}` : a.party.displayName}
-                                  >
-                                    {a.party.displayName}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
+                            <RoleHolderCell
+                              projectId={p.id}
+                              roleName={rt.name}
+                              assignments={assignments}
+                              canEdit={canWritePartners}
+                              onSave={(nextUserIds, candidates) => saveRoleHolders({
+                                projectId: p.id,
+                                roleId: rt.id,
+                                currentAssignments: assignments.map((a: any) => ({
+                                  id: a.id,
+                                  partyId: a.party?.id ?? null,
+                                  userId: a.party?.user?.id ?? null,
+                                })),
+                                nextUserIds,
+                                candidates,
+                              })}
+                            />
                           </td>
                         );
                       })}
                       {/* Department cell removed (V3) — header dropped above. */}
                       <td className="px-4 py-3">
-                        <span className={cn('rounded-[5px] px-2 py-0.5 text-[10px] font-bold', st.bg, st.text)}>{st.label}</span>
+                        <StatusCell
+                          value={p.status}
+                          canEdit={canWriteProjects}
+                          onChange={(status) => updateProjectStatus.mutate({ id: p.id, status })}
+                        />
                       </td>
                       <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{category}</td>
                       {/* Finance-gated cells — mirror the header gates
@@ -875,5 +1045,285 @@ function ColumnHeaderWithFilter({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Status cell — badge by default, click → native <select> in place.
+ *
+ * The four active statuses match what the top status filter offers
+ * (:334–337) and what the seed enums accept. `close` / `reopen` is
+ * a separate axis (project.closedAt timestamp) with its own dedicated
+ * POST endpoints and is NOT surfaced here — mixing them into the same
+ * dropdown blurred the user's mental model in prior rounds.
+ *
+ * UX contract:
+ *   • Read-only when `canEdit=false` — click is a no-op.
+ *   • Click → open <select> autofocused and pre-open (size=1 to keep
+ *     it compact; the browser handles the native option list).
+ *   • Change → commit (blur is implicit after the pick).
+ *   • Escape → cancel + revert to badge.
+ *   • Blur without a change → cancel + revert to badge.
+ *   • The select's own events don't bubble; the row has no onClick
+ *     any more but any table-level handler further up won't fire.
+ */
+function StatusCell({
+  value,
+  canEdit,
+  onChange,
+}: {
+  value: string;
+  canEdit: boolean;
+  onChange: (next: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const selectRef = useRef<HTMLSelectElement>(null);
+
+  useEffect(() => {
+    if (editing) {
+      // Focus + open the dropdown on the same frame the <select>
+      // mounts so the picker feels click-through.
+      queueMicrotask(() => selectRef.current?.focus());
+    }
+  }, [editing]);
+
+  const st = statusColors[value] ?? statusColors.draft;
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (canEdit) setEditing(true);
+        }}
+        disabled={!canEdit}
+        title={canEdit ? 'Change status' : undefined}
+        aria-label={canEdit ? `Change status (currently ${st.label})` : `Status: ${st.label}`}
+        className={cn(
+          'rounded-[5px] px-2 py-0.5 text-[10px] font-bold',
+          st.bg,
+          st.text,
+          canEdit && 'cursor-pointer hover:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400',
+          !canEdit && 'cursor-default',
+        )}
+      >
+        {st.label}
+      </button>
+    );
+  }
+
+  return (
+    <select
+      ref={selectRef}
+      value={value}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        e.stopPropagation();
+        const next = e.target.value;
+        setEditing(false);
+        if (next !== value) onChange(next);
+      }}
+      onBlur={() => setEditing(false)}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setEditing(false);
+        }
+      }}
+      className="rounded-[5px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+    >
+      {/* Only the four editable-in-place statuses — closed is a
+          separate action (POST /projects/:id/close|reopen). */}
+      <option value="draft">Draft</option>
+      <option value="active">Active</option>
+      <option value="on_hold">On Hold</option>
+      <option value="completed">Completed</option>
+    </select>
+  );
+}
+
+/**
+ * Role-holder cell — displays the active assignees for one role
+ * column, and swaps to an in-cell PeopleMultiSelect when the user
+ * clicks (if they hold partners:write).
+ *
+ * Candidates fetch is lazy — /projects/:id/assignee-candidates
+ * only fires the first time the user opens THIS cell, so we don't
+ * spam the API with N×M requests for every row × role column on
+ * page load. Cached under ['assignee-candidates', projectId] so
+ * multiple role columns on the same row share the same fetch.
+ *
+ * canAssign=false candidates (external contacts with no linked User
+ * — TaskAssignee.userId still writes to User.id, so they cannot be
+ * chosen as an assignee). PeopleMultiSelect keys on `userId` and
+ * has no disabled-option affordance today, so we filter them out
+ * before feeding the picker — see "Follow-up" in the branch report.
+ * Once the picker grows a `disabled` prop, drop the filter and pass
+ * the full list with a disabled reason.
+ *
+ * Save flow:
+ *   1. On popover close (blur / outside-click), diff nextValue
+ *      against the currently-selected userIds and hand the delta
+ *      to onSave (the parent computes party ids, fires POST/DELETE,
+ *      invalidates ['projects']).
+ *   2. Toast on error (parent's mutation), otherwise the invalidated
+ *      list refetch redraws the cell.
+ */
+function RoleHolderCell({
+  projectId,
+  roleName,
+  assignments,
+  canEdit,
+  onSave,
+}: {
+  projectId: number;
+  roleName: string;
+  assignments: any[];
+  canEdit: boolean;
+  onSave: (
+    nextUserIds: number[],
+    candidates: Array<{ userId: number | null; partyId: number | null }>,
+  ) => Promise<void> | void;
+}) {
+  const [open, setOpen] = useState(false);
+  // Buffer the picker's selection so the parent only sees the final
+  // diff on close (avoids one POST/DELETE per option toggle).
+  const [buffer, setBuffer] = useState<number[] | null>(null);
+
+  // Current-holder ids (userId only — external contacts without a
+  // User row aren't representable in the picker keyed on userId).
+  // Filter to non-null so a mixed row (person with User + external
+  // contact without) still initializes the picker with the assignable
+  // subset. External holders remain visible in the read-only summary.
+  const currentUserIds = useMemo(
+    () => assignments
+      .map((a: any) => a?.party?.user?.id)
+      .filter((u: any): u is number => typeof u === 'number'),
+    [assignments],
+  );
+
+  // Lazy candidates fetch — only kick off when the user opens the
+  // picker on this row. Shared across role columns on the same
+  // project via the query key.
+  const { data: candidates = [] } = useQuery<
+    Array<{
+      userId: number | null;
+      partyId: number | null;
+      displayName: string;
+      avatarUrl: string | null;
+      role: string | null;
+      discipline: string | null;
+      canAssign: boolean;
+    }>
+  >({
+    queryKey: ['assignee-candidates', projectId],
+    enabled: open,
+    staleTime: 60 * 1000,
+    queryFn: () =>
+      client.get(`/projects/${projectId}/assignee-candidates`).then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+
+  // Only assignable rows go into the picker (see docstring). Map to
+  // the PeopleMultiSelect `Person` shape.
+  const people = useMemo(
+    () => candidates
+      .filter((c) => c.canAssign && c.userId != null)
+      .map((c) => ({
+        userId: c.userId as number,
+        displayName: c.displayName,
+        avatarUrl: c.avatarUrl,
+        subtitle: c.discipline ?? c.role ?? null,
+      })),
+    [candidates],
+  );
+
+  // Read-only display — click opens the picker (when allowed). We
+  // deliberately match the pre-edit markup so the layout doesn't
+  // shift when a user without permission views the same cell.
+  const summary = (
+    <div className={cn(
+      'flex flex-col gap-0.5 text-[12px]',
+      assignments.length === 0 && 'text-slate-300 dark:text-slate-600',
+    )}>
+      {assignments.length === 0 ? (
+        <span>—</span>
+      ) : (
+        assignments.map((a: any) => (
+          <span
+            key={a.id}
+            className={cn(
+              'truncate',
+              a.isPrimary ? 'font-semibold text-slate-800 dark:text-slate-100' : 'text-slate-600 dark:text-slate-300',
+            )}
+            title={a.titleInProject ? `${a.party.displayName} — ${a.titleInProject}` : a.party.displayName}
+          >
+            {a.party.displayName}
+          </span>
+        ))
+      )}
+    </div>
+  );
+
+  if (!canEdit) return summary;
+
+  // Editor open — mount the PeopleMultiSelect. Its own popover floats
+  // attached, so we keep it visually "in-cell" (the trigger lives in
+  // the cell). Wrap in a container that swallows clicks so the popover
+  // interaction doesn't propagate to any table-level handler.
+  if (open) {
+    return (
+      <div
+        className="relative"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <PeopleMultiSelect
+          people={people}
+          value={buffer ?? currentUserIds}
+          onChange={(ids) => setBuffer(ids)}
+          placeholder="Add holder…"
+          title={`Edit ${roleName}`}
+          triggerClassName="min-w-[220px]"
+        />
+        {/* Commit button — small, so a picker close can happen via
+            the built-in outside-click OR the explicit save. On save,
+            hand the diff up and close. */}
+        <div className="mt-1 flex gap-1">
+          <button
+            type="button"
+            onClick={async () => {
+              const nextIds = buffer ?? currentUserIds;
+              setOpen(false);
+              setBuffer(null);
+              await onSave(nextIds, candidates);
+            }}
+            className="rounded-lg bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-blue-700"
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            onClick={() => { setOpen(false); setBuffer(null); }}
+            className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+      title={`Edit ${roleName}`}
+      className="block w-full rounded-md text-left hover:bg-slate-50 dark:hover:bg-slate-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 -mx-1 px-1 py-0.5"
+    >
+      {summary}
+    </button>
   );
 }
