@@ -37,8 +37,16 @@ export function invalidateAfterTimeEntry(
     queryClient.invalidateQueries({ queryKey: ['tasks', taskId] });
   }
 
-  // Project rollups. Prefer scoped invalidation when we know the project;
-  // fall back to the whole prefix when we don't (delete-by-id path).
+  // Project rollups. `progress` / `feasibility` are keyed as
+  // `[key, projectId]`, so scoping them is a real narrow (skip other
+  // projects' caches). `projects` is different: the LIST query is
+  // keyed `['projects', paramsObject]`, so the narrow
+  // `['projects', projectId]` prefix does NOT match the list — logging
+  // time on any project would leave the Projects page showing stale
+  // Hours / Cost / Completion (Branch A · fix/project-list-actuals,
+  // 2026-08-26). Always invalidate the broad `['projects']` prefix so
+  // the list refetches, and layer the per-id key on top when we have it
+  // so the detail page's `useProject(id)` also refreshes.
   if (projectId != null) {
     queryClient.invalidateQueries({ queryKey: ['progress', projectId] });
     queryClient.invalidateQueries({ queryKey: ['feasibility', projectId] });
@@ -46,8 +54,8 @@ export function invalidateAfterTimeEntry(
   } else {
     queryClient.invalidateQueries({ queryKey: ['progress'] });
     queryClient.invalidateQueries({ queryKey: ['feasibility'] });
-    queryClient.invalidateQueries({ queryKey: ['projects'] });
   }
+  queryClient.invalidateQueries({ queryKey: ['projects'] });
 
   // Planning grid + execution board — both render task rollups computed
   // from the tasks query, but they also cache their own derived views.
