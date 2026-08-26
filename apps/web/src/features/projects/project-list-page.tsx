@@ -80,8 +80,13 @@ export function ProjectListPage() {
   // Finance permission gate — controls visibility of the Budget /
   // Cost / Hours columns. NO admin short-circuit: even admins need
   // an explicit Finance read grant in /admin/roles.
-  const { can: canPerm } = usePermissions();
+  const { can: canPerm, isAdmin } = usePermissions();
   const showFinance = canPerm('finance', 'read');
+  // In-cell editing gates. `isAdmin ||` bypass matches the project-wide
+  // convention (see e.g. project-detail-page): an admin can always
+  // write / re-assign, non-admins need the explicit module grant.
+  const canWriteProjects = isAdmin || canPerm('projects', 'write');
+  const canWritePartners = isAdmin || canPerm('partners', 'write');
   const debouncedSearch = useDebounce(projectSearch, 300);
   const [chatProjectId, setChatProjectId] = useState<number | null>(null);
   const [chatProjectName, setChatProjectName] = useState('');
@@ -304,6 +309,65 @@ export function ProjectListPage() {
       notify.success('Project deleted', { code: 'PROJECT-DELETE-200' });
     },
     onError: (err: any) => notify.apiError(err, 'Failed to delete'),
+  });
+
+  /**
+   * In-cell status change. Fires against the permissive
+   * projects.service#update — no core-fields guardrail, so a
+   * status-only PATCH is accepted. Optimistic: we snapshot every
+   * ['projects', …] cache, patch the target row's status in place,
+   * and on error roll every snapshot back so the badge doesn't
+   * "stick" on a value the server rejected. Success invalidates the
+   * broad ['projects'] prefix so any dependent list (filtered,
+   * grouped) refetches.
+   *
+   * Close / reopen is a SEPARATE dimension (closedAt timestamp)
+   * with its own POST endpoints — not offered here to keep the
+   * inline editor to the four active statuses the status filter
+   * already exposes.
+   */
+  const updateProjectStatus = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: string }) =>
+      client.patch(`/projects/${id}`, { status }).then((r) => r.data),
+    onMutate: async ({ id, status }) => {
+      await queryClient.cancelQueries({ queryKey: ['projects'] });
+      const snapshots = queryClient.getQueriesData<any>({ queryKey: ['projects'] });
+      for (const [key, cached] of snapshots) {
+        if (!cached) continue;
+        // Cache shape: { data: [...], meta: {...} } | { data: {...} } | array.
+        const rows: any[] | undefined = cached?.data?.data
+          ? cached.data.data
+          : Array.isArray(cached?.data) ? cached.data
+          : Array.isArray(cached) ? cached
+          : undefined;
+        if (!rows) continue;
+        const idx = rows.findIndex((p: any) => p?.id === id);
+        if (idx === -1) continue;
+        // Immutable patch — clone the container so React-Query sees a
+        // new reference and the table re-renders.
+        const nextRows = rows.slice();
+        nextRows[idx] = { ...nextRows[idx], status };
+        const next = cached?.data?.data
+          ? { ...cached, data: { ...cached.data, data: nextRows } }
+          : Array.isArray(cached?.data)
+            ? { ...cached, data: nextRows }
+            : nextRows;
+        queryClient.setQueryData(key, next);
+      }
+      return { snapshots };
+    },
+    onError: (err: any, _vars, ctx) => {
+      // Revert every touched cache to its pre-mutation snapshot.
+      if (ctx?.snapshots) {
+        for (const [key, prev] of ctx.snapshots) {
+          queryClient.setQueryData(key, prev);
+        }
+      }
+      notify.apiError(err, 'Failed to update status');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+    },
   });
 
   return (
@@ -657,7 +721,8 @@ export function ProjectListPage() {
                       </tr>
                     )}
                     {g.items.map((p: any, idx: number) => {
-                      const st = statusColors[p.status] ?? statusColors.draft;
+                  // Status swatch moved into <StatusCell/> — the read-
+                  // only badge and the inline <select> both live there.
                   const leader = p.leader;
                   const taskCount = p._count?.tasks ?? 0;
                   const completionRate = 0; // would need aggregation
@@ -743,7 +808,11 @@ export function ProjectListPage() {
                       })}
                       {/* Department cell removed (V3) — header dropped above. */}
                       <td className="px-4 py-3">
-                        <span className={cn('rounded-[5px] px-2 py-0.5 text-[10px] font-bold', st.bg, st.text)}>{st.label}</span>
+                        <StatusCell
+                          value={p.status}
+                          canEdit={canWriteProjects}
+                          onChange={(status) => updateProjectStatus.mutate({ id: p.id, status })}
+                        />
                       </td>
                       <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{category}</td>
                       {/* Finance-gated cells — mirror the header gates
@@ -869,5 +938,100 @@ function ColumnHeaderWithFilter({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Status cell — badge by default, click → native <select> in place.
+ *
+ * The four active statuses match what the top status filter offers
+ * (:334–337) and what the seed enums accept. `close` / `reopen` is
+ * a separate axis (project.closedAt timestamp) with its own dedicated
+ * POST endpoints and is NOT surfaced here — mixing them into the same
+ * dropdown blurred the user's mental model in prior rounds.
+ *
+ * UX contract:
+ *   • Read-only when `canEdit=false` — click is a no-op.
+ *   • Click → open <select> autofocused and pre-open (size=1 to keep
+ *     it compact; the browser handles the native option list).
+ *   • Change → commit (blur is implicit after the pick).
+ *   • Escape → cancel + revert to badge.
+ *   • Blur without a change → cancel + revert to badge.
+ *   • The select's own events don't bubble; the row has no onClick
+ *     any more but any table-level handler further up won't fire.
+ */
+function StatusCell({
+  value,
+  canEdit,
+  onChange,
+}: {
+  value: string;
+  canEdit: boolean;
+  onChange: (next: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const selectRef = useRef<HTMLSelectElement>(null);
+
+  useEffect(() => {
+    if (editing) {
+      // Focus + open the dropdown on the same frame the <select>
+      // mounts so the picker feels click-through.
+      queueMicrotask(() => selectRef.current?.focus());
+    }
+  }, [editing]);
+
+  const st = statusColors[value] ?? statusColors.draft;
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (canEdit) setEditing(true);
+        }}
+        disabled={!canEdit}
+        title={canEdit ? 'Change status' : undefined}
+        aria-label={canEdit ? `Change status (currently ${st.label})` : `Status: ${st.label}`}
+        className={cn(
+          'rounded-[5px] px-2 py-0.5 text-[10px] font-bold',
+          st.bg,
+          st.text,
+          canEdit && 'cursor-pointer hover:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400',
+          !canEdit && 'cursor-default',
+        )}
+      >
+        {st.label}
+      </button>
+    );
+  }
+
+  return (
+    <select
+      ref={selectRef}
+      value={value}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        e.stopPropagation();
+        const next = e.target.value;
+        setEditing(false);
+        if (next !== value) onChange(next);
+      }}
+      onBlur={() => setEditing(false)}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setEditing(false);
+        }
+      }}
+      className="rounded-[5px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+    >
+      {/* Only the four editable-in-place statuses — closed is a
+          separate action (POST /projects/:id/close|reopen). */}
+      <option value="draft">Draft</option>
+      <option value="active">Active</option>
+      <option value="on_hold">On Hold</option>
+      <option value="completed">Completed</option>
+    </select>
   );
 }
