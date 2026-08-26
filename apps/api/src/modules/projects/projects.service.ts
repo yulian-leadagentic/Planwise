@@ -29,10 +29,17 @@ function callerCanReadFinance(user: any): boolean {
   });
 }
 
-/** Strip budget fields from a project payload. Pure — never mutates. */
-function omitBudget<T extends Record<string, any>>(p: T): Omit<T, 'budget' | 'estimatedValue'> {
+/**
+ * Strip finance-sensitive fields from a project payload. Pure — never mutates.
+ *
+ * `actualCost` is the rolled-up labor cost (logged hours × seniority hourly
+ * cost) added by `findAll` for the projects list. It's the same shape of data
+ * as `budget` / `estimatedValue`, so it rides on the same finance gate. Hours
+ * and completion % are NOT stripped — the list header shows them regardless.
+ */
+function omitBudget<T extends Record<string, any>>(p: T): Omit<T, 'budget' | 'estimatedValue' | 'actualCost'> {
   if (!p) return p as any;
-  const { budget: _b, estimatedValue: _e, ...rest } = p;
+  const { budget: _b, estimatedValue: _e, actualCost: _c, ...rest } = p;
   return rest as any;
 }
 
@@ -405,11 +412,153 @@ export class ProjectsService {
       this.prisma.project.count({ where }),
     ]);
 
+    // Per-project actuals for the list — Hours + Cost + Completion %.
+    // Computed BATCHED across every project id on this page (up to 100
+    // rows) so the list stays a small handful of queries no matter how
+    // many projects come back. Doing this per-row would issue an
+    // O(N × [entries + seniority + tasks]) fan-out and re-implement
+    // getLaborCost() / getProjectProgress() at the wrong scale.
+    //
+    // Formulas MUST match the in-project surfaces so the list agrees
+    // with the detail page:
+    //   • Hours + Cost mirror `getLaborCost` (:1500+) — same seniority
+    //     history resolution, same "unrateable minutes still count
+    //     toward Hours but not toward Cost" rule.
+    //   • Completion mirrors `execution-planning.service#getProjectProgress`
+    //     (:319+) — budget-hours-weighted average of `task.completionPct`,
+    //     with a simple-mean fallback when the whole bucket has zero
+    //     budget hours so a project of Done tasks reads 100 and not 0.
+    //     `task.completionPct` itself is already status-aware (100 for
+    //     completed/cancelled, 90 for in_review) — see
+    //     `time-entries.service#syncTaskCompletion` — so we just trust
+    //     the stored value.
+    const pageIds: number[] = data.map((p) => p.id);
+
+    // ── Hours + Cost ─────────────────────────────────────────────────
+    // Resolve project via `task.projectId`, NOT `entry.projectId`. The
+    // scalar on TimeEntry is nullable and historically NULL on many
+    // rows (QuickTimeLog / TaskDrawer paths didn't populate it), so a
+    // filter on `entry.projectId` silently drops those hours. See the
+    // matching note in `getLaborCost` (:1507–1511).
+    const entries = pageIds.length === 0 ? [] : await this.prisma.timeEntry.findMany({
+      where: { deletedAt: null, task: { projectId: { in: pageIds } } },
+      select: {
+        minutes: true,
+        userId: true,
+        date: true,
+        task: { select: { projectId: true } },
+      },
+    });
+
+    // Pre-load every contributor's seniority history in ONE query so
+    // the per-entry effective-level lookup runs entirely in memory.
+    // Shape mirrors `getLaborCost` (:1532–1543); kept inline (rather
+    // than extracted to a shared helper) because the per-row rollup
+    // here is narrower — we only need hourlyCost, not currency or the
+    // per-user breakdown — and coupling the list rollup to the detail
+    // aggregator would make future changes to either side awkward.
+    const contributorIds = Array.from(new Set(entries.map((e) => e.userId)));
+    const histories = contributorIds.length === 0 ? [] : await this.prisma.userSeniority.findMany({
+      where: { userId: { in: contributorIds } },
+      include: {
+        seniorityLevel: { select: { id: true, defaultHourlyCost: true } },
+      },
+      orderBy: { startDate: 'desc' },
+    });
+    const historyByUser = new Map<number, typeof histories>();
+    for (const h of histories) {
+      if (!historyByUser.has(h.userId)) historyByUser.set(h.userId, []);
+      historyByUser.get(h.userId)!.push(h);
+    }
+    const effectiveAt = (userId: number, date: Date) => {
+      const list = historyByUser.get(userId) ?? [];
+      // history is sorted descending by startDate; first match wins.
+      for (const row of list) {
+        if (row.startDate <= date && (row.endDate === null || row.endDate >= date)) {
+          return row.seniorityLevel;
+        }
+      }
+      return null;
+    };
+
+    const hoursByProject = new Map<number, number>();
+    const costByProject = new Map<number, number>();
+    for (const e of entries) {
+      const projectId = e.task?.projectId ?? null;
+      if (projectId == null) continue;
+      const hours = e.minutes / 60;
+      // Hours always count — even for unrateable users (no seniority,
+      // or a seniority with no hourly cost). Same treatment as
+      // `getLaborCost`, which surfaces those minutes in a separate
+      // `unrateable` bucket but includes them in `totalLoggedHours`.
+      hoursByProject.set(projectId, (hoursByProject.get(projectId) ?? 0) + hours);
+      const level = effectiveAt(e.userId, e.date);
+      if (!level || level.defaultHourlyCost == null) continue;
+      costByProject.set(
+        projectId,
+        (costByProject.get(projectId) ?? 0) + hours * Number(level.defaultHourlyCost),
+      );
+    }
+
+    // ── Completion % ─────────────────────────────────────────────────
+    // Same filter as `execution-planning.service#getProjectProgress`:
+    // exclude soft-deleted, archived, and personal tasks. Personal
+    // tasks are a user's own to-do list and shouldn't drag a project's
+    // completion bar around (Tier D #1).
+    const tasksForRollup = pageIds.length === 0 ? [] : await this.prisma.task.findMany({
+      where: {
+        projectId: { in: pageIds },
+        deletedAt: null,
+        isArchived: false,
+        isPersonal: false,
+      },
+      select: { projectId: true, completionPct: true, budgetHours: true },
+    });
+    const tasksByProject = new Map<number, Array<{ completionPct: number; budgetHours: unknown }>>();
+    for (const t of tasksForRollup) {
+      if (t.projectId == null) continue;
+      if (!tasksByProject.has(t.projectId)) tasksByProject.set(t.projectId, []);
+      tasksByProject.get(t.projectId)!.push({ completionPct: t.completionPct, budgetHours: t.budgetHours });
+    }
+    /**
+     * Budget-hours-weighted average of stored `completionPct`, with a
+     * simple-mean fallback when every task in the bucket has zero
+     * budget hours (PR-014 rule — a bucket of Done tasks with no
+     * budget still reads 100, not 0). Matches the rollup in
+     * `execution-planning.service#getProjectProgress` (:347–354) and
+     * the shared frontend helper `apps/web/src/lib/completion-rollup.ts`
+     * — three surfaces, ONE formula.
+     */
+    const rollupProjectCompletion = (list: Array<{ completionPct: number; budgetHours: unknown }>) => {
+      if (list.length === 0) return 0;
+      const totalH = list.reduce((s, t) => s + Number(t.budgetHours || 0), 0);
+      if (totalH > 0) {
+        return Math.round(
+          list.reduce((s, t) => s + t.completionPct * Number(t.budgetHours || 0), 0) / totalH,
+        );
+      }
+      return Math.round(list.reduce((s, t) => s + t.completionPct, 0) / list.length);
+    };
+
+    // Merge the rollups into each row. Numbers are rounded to 2dp
+    // (Hours/Cost) and 0dp (%) at the API boundary so the client
+    // renders a stable label and doesn't need to re-round.
+    const enriched = data.map((p) => ({
+      ...p,
+      actualHours: +(hoursByProject.get(p.id) ?? 0).toFixed(2),
+      actualCost: +(costByProject.get(p.id) ?? 0).toFixed(2),
+      completionPct: rollupProjectCompletion(tasksByProject.get(p.id) ?? []),
+    }));
+
     return {
-      // Strip budget + estimatedValue when the caller lacks finance:read.
-      // This is the response-shaping side of the gate; the UI side lives
-      // in project-list-page.tsx / project-detail-page.tsx.
-      data: hasFinance ? data : data.map((p: any) => omitBudget(p)),
+      // Strip budget + estimatedValue + actualCost when the caller
+      // lacks finance:read. This is the response-shaping side of the
+      // gate; the UI side lives in project-list-page.tsx /
+      // project-detail-page.tsx. actualHours + completionPct are NOT
+      // gated (the header shows Completion to everyone; Hours is
+      // already behind `showFinance` on the client, but there's no
+      // reason to hide raw hours from a non-finance user server-side).
+      data: hasFinance ? enriched : enriched.map((p: any) => omitBudget(p)),
       meta: {
         total,
         page: query.page ?? 1,
