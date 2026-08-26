@@ -660,7 +660,15 @@ export function ProjectListPage() {
                       const st = statusColors[p.status] ?? statusColors.draft;
                   const leader = p.leader;
                   const taskCount = p._count?.tasks ?? 0;
-                  const completionRate = 0; // would need aggregation
+                  // Server-side rollup from `projects.service#findAll` —
+                  // budget-hours-weighted mean of task.completionPct with
+                  // a simple-mean fallback (matches the in-project
+                  // Progress engine). Clamp defensively — a stray
+                  // out-of-range value shouldn't blow the bar layout.
+                  const completionRate = Math.max(
+                    0,
+                    Math.min(100, Math.round(Number(p.completionPct ?? 0))),
+                  );
                   const dept = p.department?.name ?? '-';
                   const categories = (p.categories ?? []).map((c: any) => c.serviceType?.name).filter(Boolean);
                   const category = categories.length > 0 ? categories.join(', ') : (p.projectType?.name ?? '-');
@@ -737,15 +745,33 @@ export function ProjectListPage() {
                       <td className="px-4 py-3 text-center">
                         <div className="flex items-center justify-center gap-1.5">
                           <div className="w-16 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                            <div className="h-full bg-blue-500 rounded-full" style={{ width: '0%' }} />
+                            <div className="h-full bg-blue-500 rounded-full" style={{ width: `${completionRate}%` }} />
                           </div>
-                          <span className="text-[11px] text-slate-500 dark:text-slate-400">0%</span>
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400">{completionRate}%</span>
                         </div>
                       </td>
                       {showFinance && (
                         <>
-                          <td className="px-4 py-3 text-right font-mono text-slate-500 dark:text-slate-400">-</td>
-                          <td className="px-4 py-3 text-right font-mono text-slate-500 dark:text-slate-400">-</td>
+                          {/* Cost — rolled-up labor cost from `findAll`.
+                              Finance-gated on the server (stripped by
+                              omitBudget when the caller lacks
+                              finance:read), so under the `showFinance`
+                              client gate it's always present when
+                              non-zero. Formatted like Budget above. */}
+                          <td className="px-4 py-3 text-right font-mono text-slate-700 dark:text-slate-200">
+                            {p.actualCost && Number(p.actualCost) > 0
+                              ? `₪${Number(p.actualCost).toLocaleString()}`
+                              : '-'}
+                          </td>
+                          {/* Hours — rolled-up logged hours (task-
+                              scoped, includes unrateable minutes to
+                              match `getLaborCost#totalLoggedHours`).
+                              tabular-nums keeps the column tidy. */}
+                          <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700 dark:text-slate-200">
+                            {p.actualHours && Number(p.actualHours) > 0
+                              ? `${Number(p.actualHours).toFixed(1)}h`
+                              : '-'}
+                          </td>
                         </>
                       )}
                       <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
