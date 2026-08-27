@@ -6,18 +6,41 @@ import { notify } from '@/lib/notify';
 import { inputClass } from './constants';
 
 /* ─── Customer Contact Picker ───────────────────────────────────────────────
-   Adds a person → customer-org relationship. Uses 'contact_of_customer'
-   rel type if it exists, falling back to 'worker_of'. The created row
-   surfaces on every project of this customer. */
+   Attaches a person to THIS project as a customer contact.
+
+   PR-026 (2026-08-27, docs/bm2/bm2-qa2-cc-specs.md Commit 3) — write path
+   changed from the org-wide `partner_relationships` edge to a
+   project-scoped `project_partner_role` row so the contact only appears
+   on the project it was attached to (not on every project of the same
+   customer). The row shape:
+     projectId       = this project
+     partyId         = the customer organisation
+     roleId          = the 'customer_contact' project role type
+     contactPartyId  = the selected person
+   Mirrors the existing "org party + contact person" convention read by
+   getAssigneeCandidates and enforced by ProjectPartnerRolesService.create
+   (which requires party.partnerType === 'organization' when
+   contactPartyId is set).
+
+   Candidate source is KEPT as-is (all persons) — the picker still lets you
+   pick any person BP, and the person can be attached to this project
+   even if they have no worker_of edge to the customer org (multi-employer
+   / freelancer cases stay working). The org-level worker_of /
+   contact_of_customer edges remain untouched as the wider candidate
+   seed for future filtering. */
 
 export function CustomerContactPicker({
+  projectId,
   customerOrgId,
   customerName,
+  customerContactRoleId,
   existingContactBpIds,
   onClose,
 }: {
+  projectId: number;
   customerOrgId: number;
   customerName: string;
+  customerContactRoleId: number;
   existingContactBpIds: number[];
   onClose: () => void;
 }) {
@@ -42,31 +65,29 @@ export function CustomerContactPicker({
   });
   const filtered = persons.filter((p: any) => !existingContactBpIds.includes(p.id));
 
-  const { data: relTypes = [] } = useQuery<any[]>({
-    queryKey: ['partner-relationship-types'],
-    staleTime: 10 * 60 * 1000,
-    queryFn: () => client.get('/admin/partner-types/relationship-types').then((r) => r.data?.data ?? r.data ?? []),
-  });
-  // Prefer a dedicated contact_of_customer type; else any person→org rel; else worker_of.
-  const relType = relTypes.find((rt: any) => rt.code === 'contact_of_customer')
-    ?? relTypes.find((rt: any) => rt.code === 'worker_of');
-
   const create = useMutation({
     mutationFn: () => {
-      if (!selectedPersonId || !relType) {
-        throw new Error('Missing person or relationship type');
+      if (!selectedPersonId) {
+        throw new Error('Missing person');
       }
-      // BM2 ops-surfaces Phase A: party↔party edges live on /partner-relationships now.
-      return client.post('/partner-relationships', {
-        partyAId: selectedPersonId,
-        partyBId: customerOrgId,
-        typeId: relType.id,
-        titleAtB: titleAtCustomer.trim() || undefined,
+      // PR-026: write a project-scoped project_partner_role row.
+      // party = customer org, role = 'customer_contact',
+      // contactParty = the person. The backend enforces the shape
+      // (organization party + person contact) and rejects mismatches.
+      return client.post('/project-partner-roles', {
+        projectId,
+        partyId: customerOrgId,
+        roleId: customerContactRoleId,
+        contactPartyId: selectedPersonId,
+        titleInProject: titleAtCustomer.trim() || undefined,
       }).then((r) => r.data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-team'] });
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });
+      // Branch 2 · fix/assignee-source — keep the task-tree picker
+      // in sync when a customer contact is added.
+      queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
       notify.success('Contact added', { code: 'CUSTOMER-CONTACT-200' });
       onClose();
     },
@@ -83,11 +104,6 @@ export function CustomerContactPicker({
           </button>
         </div>
         <div className="p-5 space-y-3">
-          {!relType && (
-            <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded">
-              No suitable relationship type found. Configure <code>contact_of_customer</code> or <code>worker_of</code> in admin first.
-            </p>
-          )}
           <div>
             <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Person</label>
             <select
@@ -117,7 +133,7 @@ export function CustomerContactPicker({
             <button onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
             <button
               onClick={() => create.mutate()}
-              disabled={create.isPending || !selectedPersonId || !relType}
+              disabled={create.isPending || !selectedPersonId}
               className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
             >
               {create.isPending ? 'Adding...' : 'Add Contact'}

@@ -53,9 +53,13 @@ export function TeamTab({
     queryFn: () => client.get(`/projects/${projectId}/team`).then((r) => r.data?.data ?? r.data),
   });
 
-  // The role catalog drives the dynamic sections below. We exclude
-  // 'customer' (its own locked section) and 'participant' (handled by
-  // the internal Project Team section).
+  // The role catalog drives the dynamic sections below. We exclude:
+  //   'customer'         — its own locked section;
+  //   'participant'      — handled by the internal Project Team section;
+  //   'customer_contact' — PR-026 (2026-08-27): rendered by the dedicated
+  //                        Customer Contacts card so it is NOT double-
+  //                        shown as a generic role section. Matches the
+  //                        backend `notIn` filter on `roleAssignments`.
   const { data: roleCatalog = [] } = useQuery<ProjectRoleTypeRow[]>({
     queryKey: ['project-role-types'],
     staleTime: 5 * 60 * 1000,
@@ -65,8 +69,9 @@ export function TeamTab({
         return Array.isArray(d) ? d : [];
       }),
   });
+  const customerContactRoleType = roleCatalog.find((rt) => rt.code === 'customer_contact') ?? null;
   const dynamicRoles = roleCatalog
-    .filter((rt) => rt.code !== 'customer' && rt.code !== 'participant')
+    .filter((rt) => rt.code !== 'customer' && rt.code !== 'participant' && rt.code !== 'customer_contact')
     .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
 
   // Split dynamic roles into two buckets so the Team tab can show the
@@ -397,8 +402,14 @@ export function TeamTab({
           action={(
             <button
               onClick={() => setShowCustomerContactPicker(true)}
-              disabled={!team.customer}
-              title={!team.customer ? 'No customer on project' : undefined}
+              disabled={!team.customer || !customerContactRoleType}
+              title={
+                !team.customer
+                  ? 'No customer on project'
+                  : !customerContactRoleType
+                    ? "The 'customer_contact' project role type is missing — run the pending migration."
+                    : undefined
+              }
               className="flex items-center gap-1.5 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors"
             >
               <UserPlus className="h-3.5 w-3.5" />
@@ -414,7 +425,12 @@ export function TeamTab({
                 <PersonRow
                   key={row.relationshipId}
                   row={row}
-                  onRemove={() => softEnd.mutate(row.relationshipId)}
+                  // PR-026 (2026-08-27): customer-contact rows are now
+                  // `project_partner_role` rows (role.code=customer_contact,
+                  // party=customer org, contactParty=person), so
+                  // disconnecting goes through DELETE /project-partner-roles/:id
+                  // — NOT the legacy DELETE /partner-relationships/:id.
+                  onRemove={() => removeRoleAssignment.mutate(row.relationshipId)}
                   accent="violet"
                   onOpenProfile={setFocusedPartnerId}
                 />
@@ -480,11 +496,16 @@ export function TeamTab({
         />
       )}
 
-      {/* Customer-contact add flow. */}
-      {showCustomerContactPicker && team.customer && (
+      {/* Customer-contact add flow. PR-026 (2026-08-27): the picker now
+          writes a project-scoped `project_partner_role` row, so it
+          needs the projectId + the customer_contact role id (looked up
+          from the role catalog above). */}
+      {showCustomerContactPicker && team.customer && customerContactRoleType && (
         <CustomerContactPicker
+          projectId={projectId}
           customerOrgId={team.customer.organizationId}
           customerName={team.customer.displayName}
+          customerContactRoleId={customerContactRoleType.id}
           existingContactBpIds={team.customerContacts.map((p) => p.businessPartnerId)}
           onClose={() => setShowCustomerContactPicker(false)}
         />
