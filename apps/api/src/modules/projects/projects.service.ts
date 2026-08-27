@@ -1090,8 +1090,6 @@ export class ProjectsService {
         })
       : [];
 
-    const customerOrgId = customerAssignment?.party.id ?? null;
-
     // Project Team = participants whose party has a User row (internal staff).
     const projectTeam = participantAssignments
       .filter((a) => a.party.user?.id)
@@ -1110,27 +1108,42 @@ export class ProjectsService {
         validTo: a.validTo,
       }));
 
-    // Customer Contacts — anyone with an active party↔party relationship
-    // pointing at the customer org (any rel type, party A is a person).
-    // Org-level association: contacts surface on every project of that
-    // customer.
-    // BM2 Phase 1 (2026-08-13): reads from `partner_relationships`
-    // (BUT050 party↔party). The legacy `business_partner_relationships`
-    // reader was retired with the table; edges of type `worker_of` +
-    // `contact_of_customer` land here.
+    // Customer Contacts — project-scoped participation of a person via the
+    // customer organisation.
+    //
+    // PR-026 (2026-08-27, docs/bm2/bm2-qa2-cc-specs.md Commit 3):
+    // switched from the org-wide `partnerRelationship.findMany` read
+    // (which surfaced every worker_of / contact_of_customer edge of
+    // the customer org on every project of that customer) to a
+    // project-scoped `projectPartnerRole` read with role.code =
+    // 'customer_contact'. The row shape: party = customer org,
+    // contactParty = the person — mirrors the "org participant + contact
+    // person" convention already consumed by `getAssigneeCandidates`.
+    //
+    // Clean start (no backfill): the org-level worker_of /
+    // contact_of_customer edges STAY as the picker's candidate source
+    // (they seed "who could be a customer contact"), but a project's
+    // customer-contact list is empty until contacts are explicitly
+    // (re-)attached via the picker.
+    const customerContactRoleType = await this.prisma.projectRoleType.findUnique({
+      where: { code: 'customer_contact' },
+    });
     let customerContacts: any[] = [];
-    if (customerOrgId != null) {
-      const rows = await this.prisma.partnerRelationship.findMany({
+    if (customerContactRoleType) {
+      const rows = await this.prisma.projectPartnerRole.findMany({
         where: {
-          partyBId: customerOrgId,
+          projectId,
+          roleId: customerContactRoleType.id,
           status: 'active',
           validFrom: { lte: now },
           validTo: { gt: now },
-          partyA: { partnerType: 'person', deletedAt: null },
         },
         include: {
-          type: true,
-          partyA: {
+          role: { select: { id: true, code: true, name: true } },
+          party: {
+            select: { id: true, partnerType: true, displayName: true },
+          },
+          contactParty: {
             select: {
               id: true,
               partnerType: true,
@@ -1145,27 +1158,32 @@ export class ProjectsService {
         },
         orderBy: { createdAt: 'asc' },
       });
-      // Dedupe by party A — a person might have multiple rels to the
-      // customer org (e.g. worker_of + contact_of_customer).
+      // Dedupe by the CONTACT PERSON id (the person is the rendered
+      // subject of the row — org context is on `party`, kept in the
+      // payload for future UI use but not the dedupe key). Rows with a
+      // missing contactParty are skipped defensively; the create path
+      // enforces contactPartyId when party is an org.
       const seen = new Set<number>();
       customerContacts = rows
+        .filter((r) => !!r.contactParty)
         .filter((r) => {
-          if (seen.has(r.partyA.id)) return false;
-          seen.add(r.partyA.id);
+          const pid = r.contactParty!.id;
+          if (seen.has(pid)) return false;
+          seen.add(pid);
           return true;
         })
         .map((r) => ({
           relationshipId: r.id,
-          relationshipTypeCode: r.type.code,
-          relationshipTypeName: r.type.name,
-          businessPartnerId: r.partyA.id,
-          userId: r.partyA.user?.id ?? null,
-          displayName: r.partyA.displayName,
-          firstName: r.partyA.firstName,
-          lastName: r.partyA.lastName,
-          email: r.partyA.email,
-          phone: r.partyA.phone,
-          position: r.partyA.user?.position ?? null,
+          relationshipTypeCode: r.role.code,
+          relationshipTypeName: r.titleInProject ?? r.role.name,
+          businessPartnerId: r.contactParty!.id,
+          userId: r.contactParty!.user?.id ?? null,
+          displayName: r.contactParty!.displayName,
+          firstName: r.contactParty!.firstName ?? null,
+          lastName: r.contactParty!.lastName ?? null,
+          email: r.contactParty!.email ?? null,
+          phone: r.contactParty!.phone ?? null,
+          position: r.contactParty!.user?.position ?? null,
           validFrom: r.validFrom,
           validTo: r.validTo,
         }));
@@ -1173,15 +1191,18 @@ export class ProjectsService {
 
     // Role-driven sections — all project_partner_role rows for this project,
     // enriched with role type + party metadata. Frontend renders one
-    // section per ProjectRoleType using these. We exclude customer and
-    // participant since those have their own pinned sections.
+    // section per ProjectRoleType using these. We exclude:
+    //   - 'customer' / 'participant' — their own pinned sections;
+    //   - 'customer_contact' (PR-026, 2026-08-27) — rendered by the
+    //     dedicated Customer Contacts card above so it is NOT
+    //     double-shown as a generic role section.
     const roleAssignments = await this.prisma.projectPartnerRole.findMany({
       where: {
         projectId,
         status: 'active',
         validFrom: { lte: now },
         validTo: { gt: now },
-        role: { code: { notIn: ['customer', 'participant'] } },
+        role: { code: { notIn: ['customer', 'participant', 'customer_contact'] } },
       },
       include: {
         role: true,
