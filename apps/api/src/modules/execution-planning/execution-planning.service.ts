@@ -2,6 +2,7 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProjectAccessService } from '../../common/services/project-access.service';
+import { rollupTaskCompletion } from '../../common/task-completion';
 
 /**
  * Workload Engine — computes planned vs capacity per worker per day.
@@ -328,32 +329,49 @@ export class ExecutionPlanningService {
     const tasks = await this.prisma.task.findMany({
       where: { projectId, deletedAt: null, isArchived: false, isPersonal: false },
       select: {
-        id: true, name: true, status: true, budgetHours: true, completionPct: true,
+        id: true, name: true, status: true, budgetHours: true,
         zoneId: true, phaseId: true,
         zone: { select: { id: true, name: true } },
         phase: { select: { id: true, name: true } },
       },
     });
 
-    // Weighted progress: SUM(completionPct * budgetHours) / SUM(budgetHours).
-    // Fallback (PR-014): when a bucket has zero total budget hours — e.g.
-    // every task is Done but nobody filled in a budget — the weighted
-    // formula collapses to 0/0 and silently drops the whole bucket to 0.
-    // Fall back to a simple average of completionPct across those tasks
-    // so a bucket of Done tasks reads 100%, not 0%. task.completionPct is
-    // already status-aware (completed/cancelled → 100 per
-    // time-entries.service#syncTaskCompletion), so this preserves the
-    // "Done contributes 100" rule the spec requires.
-    const rollup = (list: Array<{ completionPct: number; budgetHours: unknown }>) => {
-      if (list.length === 0) return 0;
-      const totalH = list.reduce((s, t) => s + Number(t.budgetHours || 0), 0);
-      if (totalH > 0) {
-        return Math.round(list.reduce((s, t) => s + t.completionPct * Number(t.budgetHours || 0), 0) / totalH);
-      }
-      return Math.round(list.reduce((s, t) => s + t.completionPct, 0) / list.length);
-    };
+    // Pull logged minutes per task so the rollup can compute the
+    // status-aware value at READ time (see `../../common/task-completion`).
+    // Trusting the stored `task.completionPct` scalar was the old
+    // approach — stale rows (data predating `syncTaskCompletion`, or a
+    // completion set via a path that skipped it) collapsed whole
+    // buckets to 0% even when every task was Done. Aggregating time
+    // entries once per project keeps this O(1) query overhead.
+    const taskIds = tasks.map((t) => t.id);
+    const timeAgg = taskIds.length === 0 ? [] : await this.prisma.timeEntry.groupBy({
+      by: ['taskId'],
+      where: { taskId: { in: taskIds }, deletedAt: null },
+      _sum: { minutes: true },
+    });
+    const loggedByTask = new Map<number, number>();
+    for (const row of timeAgg) {
+      if (row.taskId) loggedByTask.set(row.taskId, row._sum.minutes ?? 0);
+    }
+    const withLogged = tasks.map((t) => ({
+      status: t.status,
+      budgetHours: t.budgetHours as unknown,
+      loggedMinutes: loggedByTask.get(t.id) ?? 0,
+      zoneId: t.zoneId,
+      zone: t.zone,
+    }));
 
-    const weightedProgress = rollup(tasks);
+    // Canonical rollup — see `../../common/task-completion`. Per-task
+    // value is status-aware (completed/cancelled → 100, in_review → 90,
+    // else min(80, round(logged/budget × 80))); bucket rule is budget-
+    // hours-weighted average with a simple-mean fallback when the whole
+    // bucket has zero total budget hours (PR-014 — so a bucket of Done
+    // tasks with no budget still reads 100 rather than collapsing to 0/0).
+    // Shared with `projects.service#findAll` and the web helper
+    // `apps/web/src/lib/completion-rollup.ts` so all four surfaces
+    // (project-list Completion, project header, zone header, cell-summary)
+    // agree on ONE number.
+    const weightedProgress = rollupTaskCompletion(withLogged);
 
     // Status breakdown
     const statusCounts: Record<string, number> = {};
@@ -363,8 +381,8 @@ export class ExecutionPlanningService {
 
     // Per-zone progress. Project-root tasks (zoneId null, no zone) are
     // skipped — they aren't part of any zone's rollup.
-    const zoneMap = new Map<number, { name: string; tasks: Array<{ completionPct: number; budgetHours: unknown }> }>();
-    for (const t of tasks) {
+    const zoneMap = new Map<number, { name: string; tasks: Array<{ status: string; budgetHours: unknown; loggedMinutes: number }> }>();
+    for (const t of withLogged) {
       if (!t.zone || t.zoneId == null) continue;
       const zid = t.zoneId;
       if (!zoneMap.has(zid)) zoneMap.set(zid, { name: t.zone.name, tasks: [] });
@@ -375,7 +393,7 @@ export class ExecutionPlanningService {
       zoneId: id,
       zoneName: z.name,
       taskCount: z.tasks.length,
-      progress: rollup(z.tasks),
+      progress: rollupTaskCompletion(z.tasks),
     }));
 
     return {

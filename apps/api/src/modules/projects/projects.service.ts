@@ -10,6 +10,7 @@ import { UpdateProjectDto } from './dto/update-project.dto';
 import { QueryProjectsDto } from './dto/query-projects.dto';
 import { ProjectPartnerRolesService } from '../project-partner-roles/project-partner-roles.service';
 import { NumberRangesService } from '../number-ranges/number-ranges.service';
+import { rollupTaskCompletion } from '../../common/task-completion';
 import * as Sentry from '@sentry/node';
 
 /**
@@ -505,6 +506,15 @@ export class ProjectsService {
     // exclude soft-deleted, archived, and personal tasks. Personal
     // tasks are a user's own to-do list and shouldn't drag a project's
     // completion bar around (Tier D #1).
+    //
+    // Status + budget + logged minutes come out per task; the rollup
+    // itself is delegated to `rollupTaskCompletion` (../../common/
+    // task-completion) so this surface, `execution-planning.service#
+    // getProjectProgress`, and the web helper `apps/web/src/lib/
+    // completion-rollup.ts` can never drift. Per-task value is now
+    // recomputed from status at READ time — a stale stored
+    // `completionPct` on a completed task no longer collapses the
+    // whole project's Completion to 0 (the BIM-management repro).
     const tasksForRollup = pageIds.length === 0 ? [] : await this.prisma.task.findMany({
       where: {
         projectId: { in: pageIds },
@@ -512,33 +522,33 @@ export class ProjectsService {
         isArchived: false,
         isPersonal: false,
       },
-      select: { projectId: true, completionPct: true, budgetHours: true },
+      select: { id: true, projectId: true, status: true, budgetHours: true },
     });
-    const tasksByProject = new Map<number, Array<{ completionPct: number; budgetHours: unknown }>>();
+    // Aggregate logged minutes per task in one groupBy — mirrors the
+    // pattern used by `execution-board.service` / the enriched
+    // getProjectProgress above so all completion surfaces derive from
+    // the same source of truth.
+    const rollupTaskIds = tasksForRollup.map((t) => t.id);
+    const rollupTimeAgg = rollupTaskIds.length === 0 ? [] : await this.prisma.timeEntry.groupBy({
+      by: ['taskId'],
+      where: { taskId: { in: rollupTaskIds }, deletedAt: null },
+      _sum: { minutes: true },
+    });
+    const loggedByRollupTask = new Map<number, number>();
+    for (const row of rollupTimeAgg) {
+      if (row.taskId) loggedByRollupTask.set(row.taskId, row._sum.minutes ?? 0);
+    }
+
+    const tasksByProject = new Map<number, Array<{ status: string; budgetHours: unknown; loggedMinutes: number }>>();
     for (const t of tasksForRollup) {
       if (t.projectId == null) continue;
       if (!tasksByProject.has(t.projectId)) tasksByProject.set(t.projectId, []);
-      tasksByProject.get(t.projectId)!.push({ completionPct: t.completionPct, budgetHours: t.budgetHours });
+      tasksByProject.get(t.projectId)!.push({
+        status: t.status,
+        budgetHours: t.budgetHours as unknown,
+        loggedMinutes: loggedByRollupTask.get(t.id) ?? 0,
+      });
     }
-    /**
-     * Budget-hours-weighted average of stored `completionPct`, with a
-     * simple-mean fallback when every task in the bucket has zero
-     * budget hours (PR-014 rule — a bucket of Done tasks with no
-     * budget still reads 100, not 0). Matches the rollup in
-     * `execution-planning.service#getProjectProgress` (:347–354) and
-     * the shared frontend helper `apps/web/src/lib/completion-rollup.ts`
-     * — three surfaces, ONE formula.
-     */
-    const rollupProjectCompletion = (list: Array<{ completionPct: number; budgetHours: unknown }>) => {
-      if (list.length === 0) return 0;
-      const totalH = list.reduce((s, t) => s + Number(t.budgetHours || 0), 0);
-      if (totalH > 0) {
-        return Math.round(
-          list.reduce((s, t) => s + t.completionPct * Number(t.budgetHours || 0), 0) / totalH,
-        );
-      }
-      return Math.round(list.reduce((s, t) => s + t.completionPct, 0) / list.length);
-    };
 
     // Merge the rollups into each row. Numbers are rounded to 2dp
     // (Hours/Cost) and 0dp (%) at the API boundary so the client
@@ -547,7 +557,7 @@ export class ProjectsService {
       ...p,
       actualHours: +(hoursByProject.get(p.id) ?? 0).toFixed(2),
       actualCost: +(costByProject.get(p.id) ?? 0).toFixed(2),
-      completionPct: rollupProjectCompletion(tasksByProject.get(p.id) ?? []),
+      completionPct: rollupTaskCompletion(tasksByProject.get(p.id) ?? []),
     }));
 
     return {

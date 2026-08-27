@@ -4,6 +4,7 @@ import { startOfDay, endOfDay, addDays, parseISO, format } from 'date-fns';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { minutesOverlap } from '../../common/overlap';
+import { taskCompletionValue } from '../../common/task-completion';
 import { CreateTimeEntryDto } from './dto/create-time-entry.dto';
 import * as Sentry from '@sentry/node';
 
@@ -208,20 +209,25 @@ export class TimeEntriesService {
     });
     if (!task) return;
 
-    // Completion-rate model (must match apps/web/src/lib/task-health.ts):
+    // Completion-rate model: delegated to the canonical helper at
+    // `apps/api/src/common/task-completion` so this write path can't
+    // drift from the read-time rollups in `execution-planning.service`,
+    // `projects.service#findAll`, or the web helpers
+    // (`apps/web/src/lib/completion-rollup.ts`,
+    // `apps/web/src/lib/task-health.ts`). Formula recap:
     //   • completed / cancelled → 100
-    //   • in_review              → 90
-    //   • everything else        → time-based, capped at 80
-    //                              (logged / budget × 80)
-    // The first two are workflow-driven so we set them regardless of how
-    // many hours have been logged. For the rest we still need the time
-    // sum, but skip the DB query when there's no budget to divide by.
-    if (task.status === 'completed' || task.status === 'cancelled') {
-      await this.prisma.task.update({ where: { id: taskId }, data: { completionPct: 100 } });
-      return;
-    }
-    if (task.status === 'in_review') {
-      await this.prisma.task.update({ where: { id: taskId }, data: { completionPct: 90 } });
+    //   • in_review             → 90
+    //   • everything else       → min(80, round(loggedHours / budget × 80))
+    //
+    // The workflow-driven statuses never touch the DB for a logged-time
+    // sum. For the remaining time-based branch we still short-circuit
+    // when there's no budget to divide by, so the code path stays
+    // db-cheap.
+    if (task.status === 'completed' || task.status === 'cancelled' || task.status === 'in_review') {
+      await this.prisma.task.update({
+        where: { id: taskId },
+        data: { completionPct: taskCompletionValue({ status: task.status, budgetHours: task.budgetHours }) },
+      });
       return;
     }
 
@@ -231,8 +237,11 @@ export class TimeEntriesService {
       where: { taskId, deletedAt: null },
       _sum: { minutes: true },
     });
-    const loggedHours = (agg._sum.minutes ?? 0) / 60;
-    const pct = Math.min(80, Math.round((loggedHours / Number(task.budgetHours)) * 80));
+    const pct = taskCompletionValue({
+      status: task.status,
+      budgetHours: task.budgetHours,
+      loggedMinutes: agg._sum.minutes ?? 0,
+    });
 
     await this.prisma.task.update({
       where: { id: taskId },

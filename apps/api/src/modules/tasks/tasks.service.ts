@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { taskCompletionValue } from '../../common/task-completion';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
@@ -671,7 +672,15 @@ export class TasksService {
     return updated;
   }
 
-  /** Recompute and persist `completionPct` for one task. */
+  /**
+   * Recompute and persist `completionPct` for one task. Delegates to the
+   * canonical helper at `apps/api/src/common/task-completion` so this
+   * write path stays lockstep with `time-entries.service#syncTaskCompletion`
+   * and every read-time rollup (`execution-planning.service`,
+   * `projects.service#findAll`, and the web helpers in
+   * `apps/web/src/lib/*`). Time entries are aggregated only when the
+   * status needs them — completed/cancelled/in_review skip the DB.
+   */
   private async recomputeCompletionPct(taskId: number) {
     const task = await this.prisma.task.findUnique({
       where: { id: taskId },
@@ -680,10 +689,8 @@ export class TasksService {
     if (!task) return;
 
     let pct: number;
-    if (task.status === 'completed' || task.status === 'cancelled') {
-      pct = 100;
-    } else if (task.status === 'in_review') {
-      pct = 90;
+    if (task.status === 'completed' || task.status === 'cancelled' || task.status === 'in_review') {
+      pct = taskCompletionValue({ status: task.status, budgetHours: task.budgetHours });
     } else if (!task.budgetHours || Number(task.budgetHours) === 0) {
       pct = 0;
     } else {
@@ -691,8 +698,11 @@ export class TasksService {
         where: { taskId, deletedAt: null },
         _sum: { minutes: true },
       });
-      const loggedHours = (agg._sum.minutes ?? 0) / 60;
-      pct = Math.min(80, Math.round((loggedHours / Number(task.budgetHours)) * 80));
+      pct = taskCompletionValue({
+        status: task.status,
+        budgetHours: task.budgetHours,
+        loggedMinutes: agg._sum.minutes ?? 0,
+      });
     }
 
     await this.prisma.task.update({ where: { id: taskId }, data: { completionPct: pct } });
