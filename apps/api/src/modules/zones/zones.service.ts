@@ -1,4 +1,11 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+  UnprocessableEntityException,
+  HttpException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -450,6 +457,60 @@ export class ZonesService {
     }, { timeout: 30_000 });
   }
 
+  /**
+   * PR-013: catches Prisma constraint errors from any create in the
+   * transaction below and re-throws them as HTTP 4xx with a specific,
+   * user-facing message. Anything genuinely unexpected still surfaces
+   * as 500 (kept for observability). Without this, the entire path
+   * would report "Internal server error" for both a duplicate zone
+   * name (avoidable — retry with a new name) and a corrupt template
+   * (real bug — needs investigation), and the UI couldn't tell them
+   * apart.
+   */
+  private wrapPrismaError(err: unknown): never {
+    // HttpException already thrown by our code (NotFoundException,
+    // ConflictException, etc.) — pass through so we don't double-wrap.
+    if (err instanceof HttpException) throw err;
+    if (err instanceof Prisma.PrismaClientKnownRequestError) {
+      // Unique constraint violation. `meta.target` names the column(s).
+      if (err.code === 'P2002') {
+        const target = Array.isArray(err.meta?.target)
+          ? (err.meta!.target as string[]).join(', ')
+          : String(err.meta?.target ?? 'unknown');
+        throw new ConflictException(
+          `Cannot apply template: a record with the same ${target} already exists`,
+        );
+      }
+      // Foreign key violation — a referenced entity doesn't exist
+      // (e.g. the template references a Phase / ServiceType that's
+      // been removed). Treat as unprocessable — the template is
+      // corrupt, retrying won't help.
+      if (err.code === 'P2003') {
+        const field = String(err.meta?.field_name ?? err.meta?.constraint ?? 'a referenced record');
+        throw new UnprocessableEntityException(
+          `Cannot apply template: ${field} points to a record that no longer exists`,
+        );
+      }
+      // Referenced record not found on connect / update.
+      if (err.code === 'P2025') {
+        throw new BadRequestException(
+          `Cannot apply template: ${err.meta?.cause ?? 'a referenced record was not found'}`,
+        );
+      }
+      // Value too long for column.
+      if (err.code === 'P2000') {
+        const col = String((err.meta as { column_name?: string } | undefined)?.column_name ?? 'column');
+        throw new BadRequestException(
+          `Cannot apply template: a field value is too long (${col})`,
+        );
+      }
+    }
+    // Everything else — rethrow so HttpExceptionFilter still logs the
+    // stack and Sentry captures it. The user gets a generic 500 but
+    // this path stays observable.
+    throw err;
+  }
+
   async applyProjectTemplate(projectId: number, templateId: number, userId: number, zoneName?: string) {
     const template = await this.prisma.template.findUniqueOrThrow({
       where: { id: templateId },
@@ -483,7 +544,8 @@ export class ZonesService {
 
     const resolveBudget = this.resolveBudget.bind(this);
 
-    return this.prisma.$transaction(async (tx) => {
+    try {
+    return await this.prisma.$transaction(async (tx) => {
       const catalog = await this.loadCatalogMap(tx);
       const createdZones: any[] = [];
 
@@ -685,6 +747,9 @@ export class ZonesService {
 
       return createdZones;
     }, { timeout: 30_000 });
+    } catch (err) {
+      this.wrapPrismaError(err);
+    }
   }
 
   async batchReorder(items: { id: number; sortOrder: number; parentId?: number | null }[]) {

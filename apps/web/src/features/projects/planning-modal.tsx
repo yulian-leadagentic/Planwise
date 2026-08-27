@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle, ChevronsDownUp, ChevronsUpDown, Pencil, SlidersHorizontal, Archive, Undo2, Calendar } from 'lucide-react';
 import { formatDuration } from '@/lib/date-utils';
-import { notify } from '@/lib/notify';
+import { notify, getErrorMessage } from '@/lib/notify';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { planningApi, zonesApi, templatesApi } from '@/api/zones.api';
@@ -696,12 +696,16 @@ type SubGroupBucket = {
   tasks: any[];
   editableTemplateId: number | null;
   editableDeliverableId: number | null;
-  // Zone / phase context the bucket represents — carried down to each
-  // sub-group's Add-task button (bm2 fix #4) so the created task inherits
-  // the group's dimension. Null when the group doesn't map to a specific
-  // zone or service (e.g. a Deliverable sub-group has no zone context).
+  // Zone / phase / service-type context the bucket represents — carried
+  // down to each sub-group's Add-task button (bm2 fix #4 + PR-019) so the
+  // created task inherits the group's dimension even when the group is a
+  // LEGACY `st-*` (serviceType-only) bucket where no first-class
+  // Deliverable entity exists yet. Null when the group doesn't map to
+  // that specific dimension (e.g. a Deliverable sub-group has no zone
+  // context, a pd-* bucket has no serviceType context).
   zoneId?: number | null;
   phaseId?: number | null;
+  serviceTypeId?: number | null;
 };
 type PlanningSubGroupCtx = {
   /** Full ordered grouping stack including the primary at index 0. Length
@@ -1193,6 +1197,10 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
               : null) || task.phase?.color || task.serviceType?.color
           }
           onAssign={saveDeliverable}
+          // PR-019: narrow the picker to deliverables tied to the
+          // task's Service. ProjectDeliverable.serviceId inherits from
+          // template.phaseId, so match on Phase id here.
+          taskServiceId={task.phaseId ?? null}
         />
       )}
       {/* Service cell — click to edit. Phase is the parent Service. */}
@@ -1549,6 +1557,12 @@ function PhaseTemplatePickerForZone({ context, projectId, onClose, onDone }: {
     try {
       let ok = 0;
       let fail = 0;
+      // PR-013: preserve the first rejection so the toast can surface
+      // the actual server message (e.g. "missing_required_fields:
+      // serviceTypeId, zoneId") instead of the generic
+      // "Failed to apply template". Without this, individual failures
+      // are silently aggregated and the user gets no actionable info.
+      let firstFailure: unknown = null;
       for (const tpl of toAdd) {
         const detail = await client.get(`/templates/${tpl.id}`).then((r) => r.data.data ?? r.data);
         // Skip [SERVICE:xxx] marker rows (synthetic) — we want real tasks.
@@ -1577,12 +1591,30 @@ function PhaseTemplatePickerForZone({ context, projectId, onClose, onDone }: {
           )),
         );
         ok += results.filter((r) => r.status === 'fulfilled').length;
-        fail += results.filter((r) => r.status === 'rejected').length;
+        for (const r of results) {
+          if (r.status === 'rejected') {
+            fail += 1;
+            if (firstFailure == null) firstFailure = (r as PromiseRejectedResult).reason;
+          }
+        }
       }
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
-      if (fail === 0) notify.success(`Added ${ok} task${ok !== 1 ? 's' : ''} from ${toAdd.length} template${toAdd.length !== 1 ? 's' : ''}`, { code: 'TPL-APPLY-200' });
-      else if (ok > 0) notify.warning(`Added ${ok}, ${fail} failed`, { code: 'TPL-APPLY-207' });
-      else notify.error('Failed to apply template', { code: 'TPL-APPLY-500' });
+      if (fail === 0) {
+        notify.success(`Added ${ok} task${ok !== 1 ? 's' : ''} from ${toAdd.length} template${toAdd.length !== 1 ? 's' : ''}`, { code: 'TPL-APPLY-200' });
+      } else if (ok > 0) {
+        // Partial success — count in the title, first failure reason
+        // in the description so the PM knows exactly what to fix.
+        const reason = getErrorMessage(firstFailure, 'unknown reason');
+        notify.warning(`Added ${ok}, ${fail} failed`, { code: 'TPL-APPLY-207', description: reason });
+      } else if (firstFailure) {
+        // All-fail path — surface the actual server error (e.g.
+        // missing_required_fields) rather than the generic
+        // "Failed to apply template · TPL-APPLY-500" the user saw.
+        notify.apiError(firstFailure, 'Failed to apply template');
+      } else {
+        // Only reachable if there were no template tasks to create at all.
+        notify.warning('Template contained no tasks to add', { code: 'TPL-APPLY-204' });
+      }
       onDone();
     } catch (err: any) {
       notify.apiError(err, 'Failed to apply template');
@@ -2794,19 +2826,57 @@ function ProjectDeliverablePickerCell({
   currentLabel,
   currentColor,
   onAssign,
+  taskServiceId,
 }: {
   projectId: number;
   currentDeliverableId: number | null;
   currentLabel: string | null;
   currentColor?: string | null;
   onAssign: (payload: { projectDeliverableId: number | null; deliverableTemplateId: number | null }) => Promise<void> | void;
+  /** Task's Service (phase) id — used to narrow the picker to
+   *  deliverables that belong to the same Service line. Fail-open:
+   *  when the task has no service (null) or a deliverable has no
+   *  serviceId, we still show it so the picker never surprises the
+   *  user with an empty list. PR-019. */
+  taskServiceId?: number | null;
 }) {
   const { list } = useContext(ProjectDeliverablesContext);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const queryClient = useQueryClient();
 
+  // Fail-open filter: when the task has a Service line, prefer
+  // deliverables tied to that Service; otherwise show the full list.
+  // Deliverables with a NULL serviceId always show (unfiltered).
+  // A "Show all" chip lets the PM override the filter when they
+  // deliberately need a cross-service assignment. Always keep the
+  // currently-assigned deliverable visible so we never hide a value
+  // the task is already tied to.
+  const filteredList = useMemo(() => {
+    if (showAll || taskServiceId == null) return list;
+    return list.filter((d: { id: number; serviceId?: number | null }) =>
+      d.serviceId == null
+      || d.serviceId === taskServiceId
+      || d.id === currentDeliverableId,
+    );
+  }, [list, taskServiceId, showAll, currentDeliverableId]);
+  const isFiltered = filteredList.length < list.length;
+
   const handleChange = async (raw: string) => {
+    // PR-019 escape hatch — flip the picker to show deliverables from
+    // every Service, not just the task's. Keeps the current value and
+    // re-opens the same select with the full list on the next click.
+    if (raw === '__show_all__') {
+      setShowAll(true);
+      // Force-close so the user re-opens with the full list — a
+      // simpler UX than re-rendering the open <select>'s <option>s.
+      setEditing(false);
+      // Re-open on the next tick so the click that just fired doesn't
+      // immediately re-close.
+      setTimeout(() => setEditing(true), 0);
+      return;
+    }
     if (raw === '__new__') {
       const name = window.prompt('New Deliverable name:');
       if (!name || !name.trim()) { setEditing(false); return; }
@@ -2851,7 +2921,7 @@ function ProjectDeliverablePickerCell({
         type="button"
         onClick={(e) => { e.stopPropagation(); setEditing(true); }}
         title="Click to edit Deliverable"
-        className="text-left max-w-full truncate hover:bg-blue-50/50 rounded px-1 -mx-1 py-0.5"
+        className="text-left max-w-full truncate hover:bg-blue-50/50 dark:hover:bg-slate-800/50 rounded px-1 -mx-1 py-0.5"
       >
         {currentLabel ? (
           <span
@@ -2878,12 +2948,19 @@ function ProjectDeliverablePickerCell({
       onChange={(e) => handleChange(e.target.value)}
       onBlur={() => setEditing(false)}
       onClick={(e) => e.stopPropagation()}
-      className="w-full px-1 py-0.5 rounded border border-blue-300 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white dark:bg-slate-900"
+      className="w-full px-1 py-0.5 rounded border border-blue-300 dark:border-blue-500 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200"
     >
       <option value="">— None —</option>
-      {list.map((d: any) => (
+      {filteredList.map((d: { id: number; name: string }) => (
         <option key={d.id} value={d.id}>{d.name}</option>
       ))}
+      {/* PR-019: show-all escape hatch inline as an <option> so we
+          don't break the row's CSS grid alignment with an outer
+          wrapper. Only surfaces when the filter is actually hiding
+          something. */}
+      {isFiltered && (
+        <option value="__show_all__">— Show all Services… —</option>
+      )}
       <option value="__new__">+ Create new…</option>
     </select>
   );
@@ -3389,7 +3466,25 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
               <input value={newTask.name} onChange={(e) => setNewTask(f => ({ ...f, name: e.target.value }))} placeholder="Task name *" className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
               <input value={newTask.budgetHours} onChange={(e) => setNewTask(f => ({ ...f, budgetHours: e.target.value }))} placeholder="Hours" type="number" className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
               <input value={newTask.budgetAmount} onChange={(e) => setNewTask(f => ({ ...f, budgetAmount: e.target.value }))} placeholder="Amount" type="number" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
-              <button onClick={() => { if (!newTask.code.trim() || !newTask.name.trim()) { notify.warning('Code and Name required'); return; } createTask.mutate({ zoneId: zone.id, code: newTask.code.trim(), name: newTask.name.trim(), budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined, budgetAmount: newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined }); }}
+              <button onClick={() => {
+                if (!newTask.code.trim() || !newTask.name.trim()) { notify.warning('Code and Name required'); return; }
+                // PR-019: legacy ZoneGroup — route the payload through
+                // the same shape used by every other Add-task entry
+                // point (explicit requiresReview so the core-fields
+                // guardrail passes; zone-only context, matching the
+                // legacy flat table's UX). NOTE: this component is not
+                // currently rendered in staging (HierarchicalZoneGroup
+                // replaced it); the change keeps parity in case it's
+                // reintroduced.
+                createTask.mutate({
+                  zoneId: zone.id,
+                  code: newTask.code.trim(),
+                  name: newTask.name.trim(),
+                  budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined,
+                  budgetAmount: newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined,
+                  requiresReview: true,
+                });
+              }}
                 disabled={createTask.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-3 py-1.5 rounded-md disabled:opacity-50">Save</button>
               <button onClick={() => setShowAddTask(false)} className="text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 px-2 py-1.5">Cancel</button>
             </div>
@@ -3743,7 +3838,14 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
                 if (!newTask.code.trim() || !newTask.name.trim()) { notify.warning('Code and Name required'); return; }
                 const payload = { code: newTask.code.trim(), name: newTask.name.trim(), budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined, budgetAmount: newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined };
                 if (saveToCatalog) { try { const cats = await client.get('/templates?type=task_list').then(r => r.data.data ?? r.data); const cat = (Array.isArray(cats) ? cats : []).find((t: any) => t.code === '__TASK_CATALOG__'); if (cat) await client.post(`/templates/${cat.id}/tasks`, { ...payload, defaultBudgetHours: payload.budgetHours, defaultBudgetAmount: payload.budgetAmount }); } catch { /* best-effort catalog sync — task create below still runs */ } }
-                createTask.mutate({ zoneId: zone.id, ...payload });
+                // PR-019: Zone-header inline add. Zone doesn't inherently
+                // carry a Deliverable/Service, so if a sub-dim is active
+                // the created task will still miss those and hit the
+                // core-fields 400 guardrail — with a clear message. The
+                // user is expected to click Add on the specific
+                // Deliverable / Service card in that case. Explicit
+                // requiresReview so the guardrail's Review check passes.
+                createTask.mutate({ zoneId: zone.id, ...payload, requiresReview: true });
               }} disabled={createTask.isPending} className="bg-blue-600 text-white text-[11px] font-semibold px-3 py-1.5 rounded-md disabled:opacity-50">Save</button>
               <label className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 cursor-pointer whitespace-nowrap"><input type="checkbox" checked={saveToCatalog} onChange={(e) => setSaveToCatalog(e.target.checked)} className="h-3 w-3 rounded" />Catalog</label>
               <button onClick={() => setShowAddTask(false)} className="text-[11px] text-slate-400 dark:text-slate-500 px-1">✕</button>
@@ -3806,6 +3908,9 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
                     // override with its own zoneId.
                     contextZoneId={sg.zoneId ?? zone.id}
                     contextPhaseId={sg.phaseId ?? null}
+                    // PR-019: legacy st-* Deliverable buckets — carry the
+                    // ServiceType so Add-task can inherit it.
+                    contextServiceTypeId={nextDim === 'service' ? (sg.serviceTypeId ?? null) : null}
                   />
                 );
               })}
@@ -3926,7 +4031,7 @@ function ProjectRootDeliverableGroup({
   projectId, label, serviceLabel, color, tasks, members, onUpdate, onDeleteTask,
   selectedTaskIds, onToggleTask, onToggleMany,
   dndId, kind, editableTemplateId, editableDeliverableId, groupDepth = 0,
-  contextZoneId, contextPhaseId,
+  contextZoneId, contextPhaseId, contextServiceTypeId,
 }: {
   projectId: number;
   label: string;
@@ -3977,6 +4082,12 @@ function ProjectRootDeliverableGroup({
   /** Phase (Service) this group represents — populated only when this
    *  card is a Service bucket. Bm2 fix #4. */
   contextPhaseId?: number | null;
+  /** ServiceType this group represents — populated only when this
+   *  card is a LEGACY st-* deliverable bucket (task carries a
+   *  serviceTypeId but no first-class ProjectDeliverable entity).
+   *  PR-019: without this, an Add-task inside such a group would
+   *  send no deliverable link and trip the core-fields 400 guardrail. */
+  contextServiceTypeId?: number | null;
 }) {
   const subCtx = useContext(PlanningSubGroupContext);
   // Consult the group-by stack for the dim ONE level below us. When it
@@ -4063,6 +4174,11 @@ function ProjectRootDeliverableGroup({
     // deliverable already carries the phase via its serviceId FK).
     phaseId: editableDeliverableId == null && editableTemplateId == null
       ? (contextPhaseId ?? null) : null,
+    // ServiceType — carried from the group when this is a LEGACY st-*
+    // deliverable bucket (PR-019). Without this, a task added inside
+    // such a group would land with no deliverable identity and 400 on
+    // the core-fields guardrail.
+    serviceTypeId: contextServiceTypeId ?? null,
   };
   const createTask = useMutation({
     // `as any` matches the pattern used throughout this file (see the
@@ -4110,6 +4226,15 @@ function ProjectRootDeliverableGroup({
       phaseId: editableDeliverableId == null && editableTemplateId == null
         ? contextPhaseId ?? undefined
         : undefined,
+      // ServiceType context — PR-019. For legacy st-* deliverable
+      // buckets no editable Deliverable exists, so the ServiceType id
+      // is the only identifier tying the task back to the same bucket.
+      // Also required by the core-fields guardrail on every non-personal
+      // task.
+      serviceTypeId: contextServiceTypeId ?? undefined,
+      // Explicit Review flag — required by the core-fields guardrail
+      // on tasks.service#create. Undefined ⇒ 400 missing_required_fields.
+      requiresReview: true,
     });
   };
 
@@ -4393,6 +4518,9 @@ function ProjectRootDeliverableGroup({
                 // sub-bucket doesn't carry its own dimension (bm2 fix #4).
                 contextZoneId={sg.zoneId ?? contextZoneId ?? null}
                 contextPhaseId={sg.phaseId ?? contextPhaseId ?? null}
+                // PR-019: propagate legacy ServiceType context so
+                // st-* buckets can inherit it.
+                contextServiceTypeId={nestedDim === 'service' ? (sg.serviceTypeId ?? contextServiceTypeId ?? null) : (contextServiceTypeId ?? null)}
               />
             ))}
           </div>
@@ -4595,6 +4723,9 @@ function ProjectRootGroup({
             // to a Zone or Phase supply their own via bucketize (bm2 fix #4).
             contextZoneId={sg.zoneId ?? null}
             contextPhaseId={sg.phaseId ?? null}
+            // PR-019: legacy st-* Deliverable buckets carry ServiceType so
+            // an Add-task inside them can inherit it.
+            contextServiceTypeId={nextDim === 'service' ? (sg.serviceTypeId ?? null) : null}
           />
         ))}
       </>
@@ -4634,6 +4765,15 @@ function ProjectRootGroup({
           // project root with the deliverable prefilled (bm2 fix #4).
           contextZoneId={null}
           contextPhaseId={b.tasks[0]?.phaseId ?? null}
+          // PR-019: legacy st-* buckets carry only ServiceType — thread
+          // it so a new task in that bucket can inherit it (and pass
+          // the core-fields guardrail).
+          contextServiceTypeId={
+            b.tasks[0]?.projectDeliverableId == null
+            && b.tasks[0]?.deliverableTemplateId == null
+              ? (b.tasks[0]?.serviceTypeId ?? null)
+              : null
+          }
         />
       ))}
     </SortableContext>
@@ -5543,6 +5683,7 @@ function PlanningView({ projectId }: { projectId: number }) {
       // dim maps to that dimension.
       let bucketZoneId: number | null = null;
       let bucketPhaseId: number | null = null;
+      let bucketServiceTypeId: number | null = null;
       if (dim === 'service') {
         const marker = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1];
         if (t.projectDeliverableId != null) {
@@ -5565,6 +5706,12 @@ function PlanningView({ projectId }: { projectId: number }) {
           color = t.serviceType?.color || t.phase?.color || '#8B5CF6';
           sortOrder = Number(t.serviceType?.sortOrder ?? 0);
           key = `st-${t.serviceTypeId}`;
+          // PR-019: legacy service-type-only buckets carry no editable
+          // Deliverable entity, so the group's Add-task button has
+          // nothing to inherit unless we thread the ServiceType id
+          // through — otherwise the new task lands as "No Deliverable"
+          // and trips the core-fields 400 guardrail.
+          bucketServiceTypeId = t.serviceTypeId;
         } else if (marker) {
           label = marker;
           color = t.phase?.color || '#8B5CF6';
@@ -5613,6 +5760,7 @@ function PlanningView({ projectId }: { projectId: number }) {
           key, label, serviceLabel, color, tasks: [], sortOrder,
           editableTemplateId, editableDeliverableId,
           zoneId: bucketZoneId, phaseId: bucketPhaseId,
+          serviceTypeId: bucketServiceTypeId,
         });
       }
       map.get(key)!.tasks.push(t);
@@ -6375,6 +6523,18 @@ function PlanningView({ projectId }: { projectId: number }) {
                     contextZoneId={null}
                     contextPhaseId={
                       groupBy === 'phase' ? (g.tasks[0]?.phaseId ?? null) : null
+                    }
+                    // PR-019: when the top-level Deliverable group has
+                    // no first-class Deliverable entity (legacy st-*
+                    // bucket) — carry the ServiceType so Add-task can
+                    // inherit it. Only meaningful in Deliverable-primary
+                    // mode (groupBy='service').
+                    contextServiceTypeId={
+                      groupBy === 'service'
+                        && g.tasks[0]?.projectDeliverableId == null
+                        && g.tasks[0]?.deliverableTemplateId == null
+                        ? (g.tasks[0]?.serviceTypeId ?? null)
+                        : null
                     }
                   />
                 ))}
