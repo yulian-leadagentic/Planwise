@@ -138,25 +138,12 @@ export class ProjectsService {
       );
     }
 
-    // M4a.2 — Validate role assignments BEFORE creating the project so we
-    // can fail fast without rolling back. Every ProjectRoleType with
-    // isPrimaryRequired=true (excluding 'customer', which is handled
-    // separately via customerOrgId) must have at least one assignment
-    // marked isPrimary=true in the payload.
-    const requiredRoles = await this.prisma.projectRoleType.findMany({
-      where: { isPrimaryRequired: true, code: { not: 'customer' } },
-    });
-    if (requiredRoles.length > 0) {
-      const provided = roleAssignments ?? [];
-      for (const rt of requiredRoles) {
-        const match = provided.find((a) => a.roleId === rt.id && a.isPrimary === true);
-        if (!match) {
-          throw new BadRequestException(
-            `Project role "${rt.name}" is required (isPrimaryRequired=true). Provide a primary assignment for this role.`,
-          );
-        }
-      }
-    }
+    // BM2 QA-2 Commit 5 (PR-023): the previous "every isPrimaryRequired
+    // role-type must have a primary assignment at create time" check was
+    // removed. The New-Project form now treats all Team roles as optional
+    // (customer is still required via customerOrgId). isPrimaryRequired
+    // still drives the "obligatory roles" grouping on the project's Team
+    // tab post-creation — admins fill missing assignments there.
 
     // Resolve the project number from the PROJECT number range (auto → system
     // allocates and the supplied value is ignored; manual/external → validate;

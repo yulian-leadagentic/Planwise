@@ -39,7 +39,7 @@ const projectSchema = z.object({
   authoringToolVersion: z.string().optional(),
   // leaderId stays in the schema for back-compat with edit-mode forms
   // that still send the field; the dropdown was removed but Project
-  // Leader is now a ProjectRoleType assignment via RequiredRolePicker.
+  // Leader is now a ProjectRoleType assignment via TeamRolePicker.
   leaderId: optionalNumber,
 });
 
@@ -123,10 +123,14 @@ export function ProjectFormPage() {
   });
   const numberMode = numberConfig?.mode ?? null;
 
-  // M4a.2 — ProjectRoleType catalog. Any role flagged isPrimaryRequired
-  // (other than 'customer', which has its own field above) becomes a
-  // required picker on the create form. New role-types added in admin
-  // surface here automatically.
+  // ProjectRoleType catalog. The Team section on the New-Project form
+  // renders one picker per role-type (excluding 'customer', which has its
+  // own field above). BM2 QA-2 Commit 5 (PR-023): every role is OPTIONAL
+  // at create time — the previous "required if isPrimaryRequired" filter
+  // was removed, along with the client-side blocker and the backend's
+  // matching required-role check. Admins can still assign roles later
+  // from the project's Team tab, where `isPrimaryRequired` still governs
+  // the "obligatory roles" grouping.
   const { data: projectRoleTypes = [] } = useQuery<any[]>({
     queryKey: ['project-role-types'],
     staleTime: 5 * 60 * 1000,
@@ -136,20 +140,18 @@ export function ProjectFormPage() {
         return Array.isArray(d) ? d : [];
       }),
   });
-  const requiredRoles = projectRoleTypes.filter(
-    (rt: any) => rt.isPrimaryRequired && rt.code !== 'customer',
-  );
+  const teamRoles = projectRoleTypes.filter((rt: any) => rt.code !== 'customer');
 
-  // Required-role assignments — { [roleId]: partyId }. The form blocks
-  // submit until every required role has a pick.
-  const [requiredRoleSelections, setRequiredRoleSelections] = useState<Record<number, number | null>>({});
+  // Team role assignments — { [roleId]: partyId }. Every pick is optional;
+  // an unassigned role simply omits itself from the create payload.
+  const [teamRoleSelections, setTeamRoleSelections] = useState<Record<number, number | null>>({});
 
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
 
   // The `users` active-users query was here. Removed when the legacy
   // Project Leader dropdown was deleted — its only consumer. Team
-  // Leader is now a ProjectRoleType, picked via RequiredRolePicker (or
+  // Leader is now a ProjectRoleType, picked via TeamRolePicker (or
   // from the Team tab post-create).
 
   // Team-member state + Team-template picker were here. Both removed
@@ -317,23 +319,17 @@ export function ProjectFormPage() {
         },
       );
     } else {
-      // M4a.2 — Validate required-role selections before POST.
-      const missing = requiredRoles.filter((rt: any) => !requiredRoleSelections[rt.id]);
-      if (missing.length > 0) {
-        notify.warning(
-          `Missing required role${missing.length > 1 ? 's' : ''}: ${missing.map((r: any) => r.name).join(', ')}`,
-          { code: 'PROJECT-CREATE-400' },
-        );
-        return;
-      }
-      // Build the roleAssignments payload from the picks. Each pick is
-      // automatically isPrimary=true so it satisfies the server's
-      // isPrimaryRequired check.
-      const roleAssignments = requiredRoles
-        .filter((rt: any) => requiredRoleSelections[rt.id])
+      // BM2 QA-2 Commit 5 (PR-023): Team roles are all OPTIONAL at project
+      // creation. No client-side blocker on missing roles; the backend's
+      // matching required-role check was also removed. Build the payload
+      // from whichever picks the user did make — an unassigned role
+      // silently omits itself. Each supplied pick is marked isPrimary=true
+      // so it satisfies the per-role primary-slot uniqueness constraint.
+      const roleAssignments = teamRoles
+        .filter((rt: any) => teamRoleSelections[rt.id])
         .map((rt: any) => ({
           roleId: rt.id,
-          partyId: requiredRoleSelections[rt.id],
+          partyId: teamRoleSelections[rt.id],
           isPrimary: true,
         }));
       if (roleAssignments.length) payload.roleAssignments = roleAssignments;
@@ -585,10 +581,11 @@ export function ProjectFormPage() {
                   </p>
                 </div>
 
-                {/* Required project-role pickers used to live here. They
-                    moved to the TEAM section so all people-on-the-project
-                    fields (Project Leader + BIM Leader / Architect /
-                    Engineer / etc.) sit in one place — per user request. */}
+                {/* Team-role pickers used to live here. They moved to the
+                    TEAM section so all people-on-the-project fields
+                    (Project Leader + BIM Leader / Architect / Engineer /
+                    etc.) sit in one place — per user request. BM2 QA-2
+                    Commit 5 (PR-023) made every picker optional. */}
 
                 {/* Status */}
                 <div>
@@ -674,23 +671,26 @@ export function ProjectFormPage() {
               <div className="mt-4 flex flex-col gap-4">
                 {/* The legacy "Project Leader" dropdown was removed —
                     Team Leader is now just another Project Role Type
-                    (system-seeded as `team_leader`). To require it on
-                    every project, mark it isPrimaryRequired=true in
-                    Admin → Project Role Types and it'll show up as one
-                    of the RequiredRolePicker fields below. */}
+                    (system-seeded as `team_leader`) and surfaces below as
+                    one of the TeamRolePicker fields. BM2 QA-2 Commit 5
+                    (PR-023): the create form no longer treats any role
+                    as required — every picker is optional and
+                    `isPrimaryRequired` only governs the "obligatory
+                    roles" section on the project's Team tab. */}
 
-                {/* Required project-role pickers — one field per
-                    ProjectRoleType where isPrimaryRequired=true (excluding
-                    'customer', which has its own picker above). The TEAM
-                    section gathers all people-on-the-project fields so
-                    BIM Leader / Architect / etc. sit together. */}
-                {!isEdit && requiredRoles.map((rt: any) => (
-                  <RequiredRolePicker
+                {/* Team-role pickers — one field per ProjectRoleType
+                    (excluding 'customer', which has its own picker above).
+                    BM2 QA-2 Commit 5 (PR-023): every picker is OPTIONAL —
+                    unassigned roles are simply omitted from the create
+                    payload. Roles can still be assigned later from the
+                    project's Team tab. */}
+                {!isEdit && teamRoles.map((rt: any) => (
+                  <TeamRolePicker
                     key={rt.id}
                     role={rt}
-                    value={requiredRoleSelections[rt.id] ?? null}
+                    value={teamRoleSelections[rt.id] ?? null}
                     onChange={(v) =>
-                      setRequiredRoleSelections((prev) => ({ ...prev, [rt.id]: v }))
+                      setTeamRoleSelections((prev) => ({ ...prev, [rt.id]: v }))
                     }
                   />
                 ))}
@@ -851,12 +851,14 @@ function QuickLinkBlock({
   );
 }
 
-/* ─── Required Role Picker ──────────────────────────────────────────────────
-   One field per ProjectRoleType.isPrimaryRequired=true row. Fetches eligible
+/* ─── Team Role Picker ──────────────────────────────────────────────────
+   One field per ProjectRoleType (excluding 'customer'). Fetches eligible
    parties filtered by allowedPartnerKind + requiredPartnerRoleCode. Empty
-   list yields an inline note pointing to where to create such a party. */
+   list yields an inline note pointing to where to create such a party.
+   BM2 QA-2 Commit 5 (PR-023): the picker is always OPTIONAL — no required
+   marker, no client blocker, no backend enforcement. */
 
-function RequiredRolePicker({
+function TeamRolePicker({
   role,
   value,
   onChange,
@@ -873,7 +875,7 @@ function RequiredRolePicker({
   onChange: (partyId: number | null) => void;
 }) {
   const { data: candidates = [] } = useQuery<any[]>({
-    queryKey: ['required-role-candidates', role.id],
+    queryKey: ['team-role-candidates', role.id],
     staleTime: 60 * 1000,
     queryFn: () =>
       client.get('/business-partners', {
@@ -891,7 +893,8 @@ function RequiredRolePicker({
   return (
     <div>
       <label className={labelClass}>
-        {role.name} <span className="text-red-500">*</span>
+        {role.name}{' '}
+        <span className="text-[11px] font-normal text-slate-400 dark:text-slate-500">(optional)</span>
       </label>
       <select
         value={value ?? ''}
@@ -904,21 +907,17 @@ function RequiredRolePicker({
         ))}
       </select>
       {candidates.length === 0 ? (
-        // V5 — drop the previous "Partners" link. Clicking it
-        // navigated away mid-create-flow, wiping the half-filled
-        // form. Replace with a plain-text hint so the user knows
-        // what's missing without losing their inputs. Adding eligible
-        // people is still a one-time-setup step; the user can save
-        // the in-progress form, then go to /admin/employees in a
-        // separate tab if needed.
-        <p className="mt-1 text-[11px] text-amber-700">
+        // Plain-text hint (not a link — clicking away wipes the half-filled
+        // form). The user can save the in-progress project first, then
+        // populate eligible parties from /admin/employees in a separate tab.
+        <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
           No eligible {role.allowedPartnerKind === 'any' ? 'parties' : `${role.allowedPartnerKind}s`}
           {role.requiredPartnerRoleCode ? ` with role "${role.requiredPartnerRoleCode}"` : ''}
-          . Ask an admin to add one under Admin → Employees first.
+          . Ask an admin to add one under Admin → Employees first, or leave this blank and assign later.
         </p>
       ) : (
         <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
-          {role.description || `Required for project creation (admin configured ${role.name} as required).`}
+          {role.description || `Optional — assign now or leave blank and pick from the project's Team tab later.`}
         </p>
       )}
     </div>

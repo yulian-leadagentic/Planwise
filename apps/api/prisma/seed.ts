@@ -177,10 +177,14 @@ async function main() {
   console.log(`  Seeded ${phases.length} phases`);
 
   // Project Types
+  // BM2 QA-2 Commit 5 (PR-021): removed BIM Coordination / BIM Management /
+  // MEP Coordination from the ProjectType seed — those are *service* types
+  // (they belong on service/deliverable), not project *categories*. The
+  // matching entries in `serviceTypes` above already cover them. Existing
+  // databases: the accompanying migration deletes those three rows when no
+  // project still references them; leftover references stay for admin to
+  // reassign via the Admin → Project Types UI.
   const projectTypes = [
-    { name: 'BIM Coordination' },
-    { name: 'BIM Management' },
-    { name: 'MEP Coordination' },
     { name: 'Infrastructure' },
     { name: 'Buildings' },
     { name: 'Roads' },
