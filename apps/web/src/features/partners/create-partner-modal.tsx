@@ -89,8 +89,16 @@ export function CreatePartnerModal({
     phone: '',
     website: '',
     notes: '',
-    // Main Role — optional single categorization.
-    mainRoleTypeId: '' as string,
+    // BM2 QA-2 Commit 4 (2026-08-27) — Role(s) is now MULTI-select. The
+    // array holds the chosen role-type ids in the order the user picked
+    // them; the first pick is the primary. On submit we send
+    // `initialRoleTypeIds: [...]` (the whole set) + `mainRoleTypeId`
+    // (the primary) so the backend syncs one businessPartnerRole row per
+    // pick and marks the primary via `syncMainRoleIntoRoles`.
+    mainRoleTypeIds: [] as string[],
+    // BM2 QA-2 Commit 4 (2026-08-27) — Discipline classification lookup.
+    // Person-facing only; INFORMATIONAL, does not gate role eligibility.
+    disciplineId: '' as string,
   });
 
   // Lock background scroll while open — matches the previous behaviour
@@ -148,9 +156,35 @@ export function CreatePartnerModal({
       }),
   });
 
+  // BM2 QA-2 Commit 4 (2026-08-27) — Discipline picker source.
+  // Person-only surface, mirroring where Discipline is rendered in the
+  // form below. Active-only rows would need a server filter; the admin
+  // list already sorts by (sortOrder, name) so we surface everything and
+  // trust the admin to hide via the `isActive` flag if a hidden option
+  // is needed later.
+  const { data: disciplines = [] } = useQuery<Array<{ id: number; name: string; nameHe: string | null; isActive: boolean }>>({
+    queryKey: ['admin', 'disciplines', 'picker'],
+    staleTime: 10 * 60 * 1000,
+    enabled: partnerType === 'person',
+    queryFn: () =>
+      client.get('/admin/config/disciplines').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+
   // ── Submit ──────────────────────────────────────────────────────
   const create = useMutation({
     mutationFn: async () => {
+      // BM2 QA-2 Commit 4 (2026-08-27) — Role(s) multi-select.
+      // The chosen ids go on `initialRoleTypeIds` so the backend inserts
+      // one `businessPartnerRole` row per pick at create time; the first
+      // pick becomes the primary via `mainRoleTypeId` +
+      // `syncMainRoleIntoRoles` on the service. Empty array → no roles
+      // + no primary, same as the old "None" option.
+      const roleIds = form.mainRoleTypeIds.map((s) => Number(s)).filter((n) => Number.isFinite(n));
+      const primaryRoleId = roleIds[0];
+
       if (partnerType === 'organization') {
         const created: any = await client.post('/business-partners', {
           partnerType: 'organization',
@@ -161,7 +195,8 @@ export function CreatePartnerModal({
           website: form.website.trim() || undefined,
           address: form.address.trim() || undefined,
           notes: form.notes.trim() || undefined,
-          mainRoleTypeId: form.mainRoleTypeId ? Number(form.mainRoleTypeId) : undefined,
+          mainRoleTypeId: primaryRoleId ?? undefined,
+          initialRoleTypeIds: roleIds.length > 0 ? roleIds : undefined,
         }).then((r) => r.data?.data ?? r.data);
         return { created, warnings: [] as string[] };
       }
@@ -183,7 +218,10 @@ export function CreatePartnerModal({
         twitterUrl: form.twitterUrl.trim() || undefined,
         instagramUrl: form.instagramUrl.trim() || undefined,
         notes: form.notes.trim() || undefined,
-        mainRoleTypeId: form.mainRoleTypeId ? Number(form.mainRoleTypeId) : undefined,
+        mainRoleTypeId: primaryRoleId ?? undefined,
+        initialRoleTypeIds: roleIds.length > 0 ? roleIds : undefined,
+        // Discipline classification — person-facing only.
+        disciplineId: form.disciplineId ? Number(form.disciplineId) : undefined,
       }).then((r) => r.data?.data ?? r.data);
 
       const warnings: string[] = [];
@@ -241,8 +279,24 @@ export function CreatePartnerModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (partnerType === 'person') {
+      // English name — REQUIRED. Accept either a first or a last name so a
+      // single-name contact (e.g. an anglicised mononym) still saves.
       if (!form.firstName.trim() && !form.lastName.trim()) {
-        notify.warning('Enter at least a first or last name', { code: 'CONTACT-CREATE-400' });
+        notify.warning('Enter at least a first or last name (English)', { code: 'CONTACT-CREATE-400' });
+        return;
+      }
+      // BM2 QA-2 Commit 4 (2026-08-27) — Hebrew is normally OPTIONAL, but
+      // becomes REQUIRED when the contact is an organization employee
+      // (`worker_of` an org). Detected via the Employer dropdown — when
+      // the user has selected an org (or the modal was opened with
+      // `preselectEmployerOrgId + lockEmployer` for the customer/supplier
+      // contact flow), we need the Hebrew name too so the invoice / print
+      // surfaces render correctly in Hebrew-first workflows.
+      const isOrgEmployee = form.employerOrgId.trim().length > 0;
+      if (isOrgEmployee && !form.firstNameHe.trim() && !form.lastNameHe.trim()) {
+        notify.warning('Hebrew name is required for organization employees', {
+          code: 'CONTACT-CREATE-400-HE',
+        });
         return;
       }
     } else {
@@ -312,6 +366,7 @@ export function CreatePartnerModal({
               orgs={orgs}
               professions={professions}
               personRoleTypes={applicableRoles}
+              disciplines={disciplines}
               lockEmployer={!!lockEmployer}
             />
           ) : (
@@ -356,6 +411,7 @@ function PersonForm({
   orgs,
   professions,
   personRoleTypes,
+  disciplines,
   lockEmployer,
 }: {
   form: any;
@@ -363,9 +419,15 @@ function PersonForm({
   orgs: Organization[];
   professions: Array<{ id: number; name: string }>;
   personRoleTypes: RoleType[];
+  disciplines: Array<{ id: number; name: string; nameHe: string | null; isActive: boolean }>;
   lockEmployer: boolean;
 }) {
   void ({} as FormState);
+  // BM2 QA-2 Commit 4 (2026-08-27) — Hebrew is REQUIRED when the contact
+  // is an organization employee. Detected client-side by the presence of
+  // an Employer selection (or a locked-in employer preselect from the
+  // ProjectBpPicker's customer-contact / supplier-worker mode).
+  const isOrgEmployee = String(form.employerOrgId ?? '').trim().length > 0;
   return (
     <>
       <p className="text-[12px] text-slate-500 dark:text-slate-400">
@@ -379,30 +441,59 @@ function PersonForm({
         </div>
       )}
 
-      {/* Identity */}
+      {/* Identity — English name is REQUIRED (at least one of first / last);
+          Hebrew is optional except when the contact is an org employee
+          (worker_of an org), where both English AND Hebrew are required.
+          The conditional-required label mirrors the state used by the
+          submit-time guardrail. */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">First Name</label>
+          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+            First Name <span className="text-red-600 dark:text-red-400">*</span>
+          </label>
           <input value={form.firstName} onChange={(e) => setForm((f: any) => ({ ...f, firstName: e.target.value }))} className={inputClass} autoFocus />
         </div>
         <div>
-          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Last Name</label>
+          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+            Last Name <span className="text-red-600 dark:text-red-400">*</span>
+          </label>
           <input value={form.lastName} onChange={(e) => setForm((f: any) => ({ ...f, lastName: e.target.value }))} className={inputClass} />
         </div>
       </div>
-      <p className="text-[11px] text-slate-400 dark:text-slate-500">Enter a first and/or last name (at least one).</p>
+      <p className="text-[11px] text-slate-400 dark:text-slate-500">Enter a first and/or last name in English (at least one).</p>
       {/* Hebrew names — bilingual search picks these up so contacts are
-          findable in either language. */}
+          findable in either language. Required for org employees, optional
+          otherwise — the required marker + helper copy switches on
+          `isOrgEmployee`. */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">שם פרטי</label>
+          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+            שם פרטי{' '}
+            {isOrgEmployee ? (
+              <span className="text-red-600 dark:text-red-400">*</span>
+            ) : (
+              <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
+            )}
+          </label>
           <input dir="rtl" value={form.firstNameHe} onChange={(e) => setForm((f: any) => ({ ...f, firstNameHe: e.target.value }))} className={inputClass} />
         </div>
         <div>
-          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">שם משפחה</label>
+          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+            שם משפחה{' '}
+            {isOrgEmployee ? (
+              <span className="text-red-600 dark:text-red-400">*</span>
+            ) : (
+              <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
+            )}
+          </label>
           <input dir="rtl" value={form.lastNameHe} onChange={(e) => setForm((f: any) => ({ ...f, lastNameHe: e.target.value }))} className={inputClass} />
         </div>
       </div>
+      {isOrgEmployee && (
+        <p className="text-[11px] text-amber-700 dark:text-amber-300">
+          Hebrew name is required because this contact is being tagged as an organization employee.
+        </p>
+      )}
 
       {/* Job Title (Profession) */}
       <div>
@@ -429,23 +520,58 @@ function PersonForm({
         </p>
       </div>
 
-      {/* Main Role */}
+      {/* BM2 QA-2 Commit 4 (2026-08-27) — Role(s), multi-select. Relabelled
+          from "Main Role" to "Role(s)" so the multi-select semantics are
+          visible in the label. First pick is the primary (used as
+          `mainRoleTypeId`); all picks are written as `businessPartnerRole`
+          rows via the DTO's `initialRoleTypeIds`. Eligibility on
+          `project_partner_roles` reads the set (party.roles.some(...)) so
+          any of the picks that matches passes the guard. */}
       <div>
         <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
-          Main Role <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
+          Role(s) <span className="text-slate-400 dark:text-slate-500 font-normal">(optional, multi)</span>
+        </label>
+        <RoleMultiSelect
+          value={form.mainRoleTypeIds}
+          onChange={(next) => setForm((f: any) => ({ ...f, mainRoleTypeIds: next }))}
+          options={personRoleTypes}
+        />
+        <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+          Pick one or more categorizations (Customer, Supplier, Consultant…). The first pick is the primary. Project-level responsibilities are set via relationships.
+        </p>
+      </div>
+
+      {/* BM2 QA-2 Commit 4 (2026-08-27) — Discipline picker. INFORMATIONAL
+          only — display / search classification (Architecture / Structural /
+          MEP / …). Never gates project-role eligibility (that lives on
+          Profession + Role(s)). Sourced from /admin/config/disciplines
+          managed via the /admin/disciplines admin page. */}
+      <div>
+        <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+          Discipline <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
         </label>
         <select
-          value={form.mainRoleTypeId}
-          onChange={(e) => setForm((f: any) => ({ ...f, mainRoleTypeId: e.target.value }))}
+          value={form.disciplineId}
+          onChange={(e) => setForm((f: any) => ({ ...f, disciplineId: e.target.value }))}
           className={inputClass}
+          disabled={disciplines.length === 0}
         >
-          <option value="">— None / set later —</option>
-          {personRoleTypes.map((rt) => (
-            <option key={rt.id} value={rt.id}>{rt.name}</option>
-          ))}
+          <option value="">
+            {disciplines.length === 0
+              ? 'No disciplines configured — add some in /admin/disciplines first'
+              : '— None / set later —'}
+          </option>
+          {disciplines
+            .filter((d) => d.isActive)
+            .map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+                {d.nameHe ? ` · ${d.nameHe}` : ''}
+              </option>
+            ))}
         </select>
         <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
-          Primary categorization (Customer, Supplier, Consultant…). Project-level responsibilities are set via relationships.
+          Branch of engineering (display + search only). Managed under Admin → Disciplines.
         </p>
       </div>
 
@@ -571,23 +697,22 @@ function OrganizationForm({
         <input value={form.address} onChange={(e) => setForm((f: any) => ({ ...f, address: e.target.value }))} className={inputClass} />
       </div>
 
-      {/* Main Role */}
+      {/* BM2 QA-2 Commit 4 (2026-08-27) — Role(s), multi-select (org side).
+          Same multi-role model as the person form so organizations that
+          double as e.g. customer + supplier can carry both roles.
+          Discipline is deliberately NOT rendered on the org form — per
+          the spec Discipline is a person-facing classification only. */}
       <div>
         <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
-          Main Role <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
+          Role(s) <span className="text-slate-400 dark:text-slate-500 font-normal">(optional, multi)</span>
         </label>
-        <select
-          value={form.mainRoleTypeId}
-          onChange={(e) => setForm((f: any) => ({ ...f, mainRoleTypeId: e.target.value }))}
-          className={inputClass}
-        >
-          <option value="">— None / set later —</option>
-          {orgRoleTypes.map((rt) => (
-            <option key={rt.id} value={rt.id}>{rt.name}</option>
-          ))}
-        </select>
+        <RoleMultiSelect
+          value={form.mainRoleTypeIds}
+          onChange={(next) => setForm((f: any) => ({ ...f, mainRoleTypeIds: next }))}
+          options={orgRoleTypes}
+        />
         <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
-          Primary categorization (Customer, Supplier, Subcontractor…). Project-level context lives on relationships.
+          Pick one or more categorizations (Customer, Supplier, Subcontractor…). The first pick is the primary. Project-level context lives on relationships.
         </p>
       </div>
 
@@ -613,6 +738,86 @@ function SocialField({ icon, label, value, onChange, placeholder }: {
         {label}
       </label>
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={inputClass} />
+    </div>
+  );
+}
+
+/**
+ * BM2 QA-2 Commit 4 (2026-08-27) — chip-toggle multi-select for role
+ * types. Renders every applicable role as a clickable pill; the first
+ * pick is treated as the primary and gets a small "primary" badge so
+ * users can see which one becomes `mainRoleTypeId` on save.
+ *
+ * State model: the value is a string[] of role-type ids in the order the
+ * user picked them. Clicking an unselected pill appends its id; clicking
+ * a selected pill removes it (if the removed id was the primary, the
+ * next pick becomes the new primary automatically because it's simply
+ * the new first element).
+ *
+ * Inline (not extracted to /components/shared) — the surface is small
+ * and modal-specific; sharing would require a more general options
+ * contract we don't need elsewhere yet.
+ */
+function RoleMultiSelect({
+  value,
+  onChange,
+  options,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  options: RoleType[];
+}) {
+  const toggle = (id: number) => {
+    const asStr = String(id);
+    if (value.includes(asStr)) {
+      onChange(value.filter((v) => v !== asStr));
+    } else {
+      onChange([...value, asStr]);
+    }
+  };
+  if (options.length === 0) {
+    return (
+      <div className={cn(inputClass, 'text-slate-400 dark:text-slate-500 italic bg-slate-50 dark:bg-slate-800/40')}>
+        No role types configured — add some under Admin → Partner Types first.
+      </div>
+    );
+  }
+  return (
+    <div
+      className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2 flex flex-wrap gap-1.5"
+      role="group"
+      aria-label="Role(s)"
+    >
+      {options.map((rt) => {
+        const asStr = String(rt.id);
+        const idx = value.indexOf(asStr);
+        const selected = idx >= 0;
+        const isPrimary = idx === 0;
+        return (
+          <button
+            key={rt.id}
+            type="button"
+            onClick={() => toggle(rt.id)}
+            aria-pressed={selected}
+            className={cn(
+              'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] font-medium border transition-colors',
+              selected
+                ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600',
+            )}
+          >
+            {rt.name}
+            {isPrimary && (
+              <span
+                className="ml-1 rounded-full bg-blue-600 dark:bg-blue-500 text-white text-[9px] uppercase tracking-wider px-1 py-[1px]"
+                title="Primary — used for main-role filters and eligibility"
+              >
+                Primary
+              </span>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }

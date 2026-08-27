@@ -219,8 +219,9 @@ export function DisciplinesPage() {
       },
     ],
     // Deliberate empty deps — the callbacks close over stable references
-    // (mutation objects, confirm) whose identities are React-stable.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // (mutation objects, confirm) whose identities are React-stable. If
+    // ESLint's exhaustive-deps rule were enabled here it would flag this;
+    // seniority-levels-page uses the same pattern.
     [],
   );
 
