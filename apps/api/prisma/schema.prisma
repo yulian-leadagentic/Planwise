@@ -1718,6 +1718,14 @@ model BusinessPartner {
   mainRoleTypeId Int?             @map("main_role_type_id")
   mainRoleType   PartnerRoleType? @relation("BusinessPartnerMainRole", fields: [mainRoleTypeId], references: [id], onUpdate: Cascade, onDelete: SetNull)
 
+  // BM2 QA-2 Commit 4 (2026-08-27) — Discipline is a managed lookup
+  // (Architecture / Structural / MEP / …). INFORMATIONAL only, never a
+  // gate on project-role eligibility (that lives on Profession +
+  // Role(s)). Optional; SET NULL on delete so removing a discipline
+  // from the catalog never orphans partners.
+  disciplineId Int?        @map("discipline_id")
+  discipline   Discipline? @relation(fields: [disciplineId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -1751,6 +1759,7 @@ model BusinessPartner {
   @@index([companyName])
   @@index([deletedAt])
   @@index([mainRoleTypeId])
+  @@index([disciplineId])
   @@index([createdByImportId])
   // BM2 Phase 3 — non-unique lookup index on email (the @unique was
   // dropped; the DB still needs fast lookups by email for import dedup
@@ -2032,6 +2041,33 @@ model Currency {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("currencies")
+}
+
+// BM2 QA-2 Commit 4 (2026-08-27) — user-managed branch-of-engineering
+// catalog (Architecture / Structural / MEP / Interior / …). Referenced
+// from BusinessPartner.disciplineId. Distinct from PartnerRoleType
+// (Customer / Supplier / …) and Profession / Job Title (Architect /
+// Structural Engineer / …). Discipline is INFORMATIONAL — it feeds
+// display + search only, never a project-role eligibility gate.
+//
+// Empty by default; each org defines their own via the /admin/disciplines
+// page. Optional Hebrew rendering matches BusinessPartner.firstNameHe /
+// User.firstNameHe so bilingual pickers can surface either language.
+model Discipline {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique @db.VarChar(50)
+  name      String   @db.VarChar(100)
+  /// Optional Hebrew rendering, matches the bilingual name pattern
+  /// used on User / BusinessPartner.
+  nameHe    String?  @map("name_he") @db.VarChar(100)
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  partners BusinessPartner[]
+
+  @@map("disciplines")
 }
 
 // User-managed seniority ladder (Junior / Mid / Senior / Principal / …).

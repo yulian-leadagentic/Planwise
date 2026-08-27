@@ -38,6 +38,11 @@ const partnerInclude = {
   // Main Role — single primary categorization of the contact.
   // Surfaced in the drawer header + BP list badge + relationship pickers.
   mainRoleType: true,
+  // BM2 QA-2 Commit 4 (2026-08-27) — Discipline classification (Architecture /
+  // MEP / Structural / …). Display + search field only; NOT used by the
+  // eligibility check on `project_partner_roles`. Surfaced so the Contacts
+  // list can group and filter by it without a second round-trip.
+  discipline: true,
   // Professions ("Job Titles") the party holds. Surfaced so the Project
   // Role assignment pickers can pre-filter candidates against a role's
   // requiredProfessionIds — without this the dropdown showed every
@@ -376,6 +381,7 @@ export class BusinessPartnersService {
         notes: dto.notes ?? null,
         source: dto.source ?? 'manual',
         mainRoleTypeId: dto.mainRoleTypeId ?? null,
+        disciplineId: dto.disciplineId ?? null,
         roles:
           dto.initialRoleTypeIds && dto.initialRoleTypeIds.length > 0
             ? {
@@ -491,6 +497,8 @@ export class BusinessPartnersService {
         // forward it. If the field is absent from the PATCH body it
         // stays untouched.
         ...(dto.mainRoleTypeId !== undefined ? { mainRoleTypeId: dto.mainRoleTypeId } : {}),
+        // Discipline — same explicit-null-vs-undefined pattern.
+        ...(dto.disciplineId !== undefined ? { disciplineId: dto.disciplineId } : {}),
         ...(displayName !== undefined ? { displayName } : {}),
       },
       include: partnerInclude,

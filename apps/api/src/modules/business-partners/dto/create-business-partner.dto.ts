@@ -137,4 +137,15 @@ export class CreateBusinessPartnerDto {
   @IsOptional()
   @IsInt()
   mainRoleTypeId?: number | null;
+
+  /**
+   * Discipline — BM2 QA-2 Commit 4 (2026-08-27). Managed lookup on
+   * `disciplines`. INFORMATIONAL only; the eligibility check on
+   * `project_partner_roles` does NOT read this. Optional; validated FK
+   * by Prisma at insert time.
+   */
+  @ApiPropertyOptional({ type: Number, nullable: true })
+  @IsOptional()
+  @IsInt()
+  disciplineId?: number | null;
 }

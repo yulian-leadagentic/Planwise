@@ -395,6 +395,79 @@ export class ConfigController {
     return { message: 'Seniority level deleted' };
   }
 
+  // ─── Disciplines (BM2 QA-2 Commit 4, 2026-08-27) ───────────────────
+  // User-managed catalog of contact disciplines (Architecture / MEP /
+  // Structural / …). Purely INFORMATIONAL — feeds display + search on
+  // the Contacts list; never gates project-role eligibility (that lives
+  // on `requiredPartnerRoleCode` + `requiredProfessionIds`).
+  //
+  // Empty by default; each org fills the catalog to match how they
+  // organise their contact directory. The Contacts create form + drawer
+  // read this list to render a Discipline picker.
+
+  @Get('disciplines')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'List disciplines' })
+  async getDisciplines() {
+    return this.prisma.discipline.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  @Post('disciplines')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Create discipline' })
+  async createDiscipline(
+    @Body() body: { code: string; name: string; nameHe?: string | null; sortOrder?: number },
+  ) {
+    const count = await this.prisma.discipline.count();
+    return this.prisma.discipline.create({
+      data: {
+        code: body.code.trim(),
+        name: body.name.trim(),
+        nameHe: body.nameHe?.trim() || null,
+        sortOrder: body.sortOrder ?? (count + 1) * 10,
+      },
+    });
+  }
+
+  @Patch('disciplines/:id')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Update discipline' })
+  async updateDiscipline(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: {
+      code?: string;
+      name?: string;
+      nameHe?: string | null;
+      sortOrder?: number;
+      isActive?: boolean;
+    },
+  ) {
+    return this.prisma.discipline.update({
+      where: { id },
+      data: {
+        code: body.code?.trim(),
+        name: body.name?.trim(),
+        // Explicit-null clears the Hebrew name; omitting keeps it.
+        nameHe: body.nameHe === undefined ? undefined : (body.nameHe?.trim() || null),
+        sortOrder: body.sortOrder,
+        isActive: body.isActive,
+      },
+    });
+  }
+
+  @Delete('disciplines/:id')
+  @RequirePermissions({ module: 'admin', action: 'delete' })
+  @ApiOperation({ summary: 'Delete discipline (BPs referencing it are set to null)' })
+  async deleteDiscipline(@Param('id', ParseIntPipe) id: number) {
+    // BP.disciplineId FK is ON DELETE SET NULL — legacy contacts that
+    // reference this discipline stay in the database, just without a
+    // discipline classification.
+    await this.prisma.discipline.delete({ where: { id } });
+    return { message: 'Discipline deleted' };
+  }
+
   // ─── Time-log note phrases (Tier C #9b, 2026-06-30) ────────────────
   // Admin-curated pool of description snippets. GET returns active
   // rows only for pickers; admin CRUD sees everything.
