@@ -10,6 +10,7 @@ import {
   DollarSign,
   GraduationCap,
   Briefcase,
+  Compass,
   Link as LinkIcon,
   Upload,
   ListChecks,
@@ -48,6 +49,7 @@ const ADMIN_ITEMS: SubNavItem[] = [
 
   { label: 'Currencies',             href: '/admin/currencies',                icon: DollarSign,    module: 'admin',                    group: 'Catalog' },
   { label: 'Seniority Levels',       href: '/admin/seniority-levels',          icon: GraduationCap, module: 'admin',                    group: 'Catalog' },
+  { label: 'Disciplines',            href: '/admin/disciplines',               icon: Compass,       module: 'admin',                    group: 'Catalog' },
   { label: 'Project Stage Milestones', href: '/admin/project-stage-milestones', icon: ListChecks,   module: 'admin',                    group: 'Catalog' },
 
   { label: 'Notification Settings',  href: '/admin/notification-settings',     icon: Bell,          module: 'admin/notification-settings', group: 'Communication' },

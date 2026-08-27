@@ -55,6 +55,7 @@ const NumberRangesPage = lazy(() => import('@/features/admin/number-ranges-page'
 const ObjectNumberingPage = lazy(() => import('@/features/admin/object-numbering-page').then(m => ({ default: m.ObjectNumberingPage })));
 const CurrenciesPage = lazy(() => import('@/features/admin/currencies-page').then(m => ({ default: m.CurrenciesPage })));
 const SeniorityLevelsPage = lazy(() => import('@/features/admin/seniority-levels-page').then(m => ({ default: m.SeniorityLevelsPage })));
+const DisciplinesPage = lazy(() => import('@/features/admin/disciplines-page').then(m => ({ default: m.DisciplinesPage })));
 const ProjectRoleTypesPage = lazy(() => import('@/features/admin/project-role-types-page').then(m => ({ default: m.ProjectRoleTypesPage })));
 const ActivityLogPage = lazy(() => import('@/features/admin/activity-log-page').then(m => ({ default: m.ActivityLogPage })));
 const WorkSchedulesPage = lazy(() => import('@/features/admin/work-schedules-page').then(m => ({ default: m.WorkSchedulesPage })));
@@ -178,6 +179,7 @@ export function AppRouter() {
           <Route path="object-numbering" element={<L><ObjectNumberingPage /></L>} />
           <Route path="currencies" element={<L><CurrenciesPage /></L>} />
           <Route path="seniority-levels" element={<L><SeniorityLevelsPage /></L>} />
+          <Route path="disciplines" element={<L><DisciplinesPage /></L>} />
           <Route path="project-role-types" element={<L><ProjectRoleTypesPage /></L>} />
           <Route path="data-import" element={<L><DataImportPage /></L>} />
           <Route path="data-import/history" element={<L><ImportHistoryPage /></L>} />
