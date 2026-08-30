@@ -68,19 +68,44 @@ export function extractEmailDomain(email: string | null | undefined): string | n
  * anything in the DB is *also* treated as personal, but the fallback
  * below guarantees the "gmail never binds an org" rule works even
  * when the catalog is empty.
+ *
+ * BM2 QA-2 Commit 12 (2026-08-30) — extended from 11 → 29 entries to
+ * match the Israel-focused seed shipped in the `personal_email_domains`
+ * catalog migration. Keep the two lists in sync when adding new hosts:
+ * the fallback set is what guarantees the "no auto-match" rule when
+ * the catalog is empty (fresh DB, integration tests, offline).
  */
 export const PERSONAL_EMAIL_DOMAIN_FALLBACK: ReadonlySet<string> = new Set([
   'gmail.com',
+  'googlemail.com',
   'yahoo.com',
-  'outlook.com',
+  'yahoo.co.il',
+  'ymail.com',
   'hotmail.com',
-  'icloud.com',
-  'walla.co.il',
+  'hotmail.co.il',
+  'outlook.com',
+  'outlook.co.il',
   'live.com',
+  'msn.com',
+  'icloud.com',
   'me.com',
   'aol.com',
   'proton.me',
   'protonmail.com',
+  'gmx.com',
+  'yandex.com',
+  'mail.com',
+  'walla.com',
+  'walla.co.il',
+  'nana10.co.il',
+  'nana.co.il',
+  '012.net.il',
+  '013.net',
+  'bezeqint.net',
+  'netvision.net.il',
+  'zahav.net.il',
+  'actcom.net.il',
+  'barak.net.il',
 ]);
 
 function toDisplayName(dto: { partnerType: PartnerType; firstName?: string | null; lastName?: string | null; companyName?: string | null; displayName?: string | null }): string {
@@ -711,10 +736,22 @@ export class BusinessPartnersService {
    * "example.com" (matches the shape stored elsewhere and picked up by
    * `resolveOrgByDomainOrName` / `extractEmailDomain`).
    *
-   * The schema's `@@unique([domain])` (global — a domain can be owned
-   * by at most ONE org) surfaces as P2002; we translate it to a
-   * ConflictException with the message the frontend already knows how
-   * to render.
+   * BM2 QA-2 Commit 12 (2026-08-30) — personal / free-email domains
+   * (gmail.com, yahoo.co.il, walla.co.il, …) are ALLOWED. They are
+   * marked `is_personal = true` and DO NOT bind an org for import
+   * dedup / email→org auto-matching (`resolveOrgByDomainOrName` and
+   * dedup.service both skip personal domains up-front). At the DB
+   * level the exclusivity is now a MySQL 8 functional unique index on
+   * `IF(is_personal=0, domain, NULL)`, so personal rows all collapse
+   * to NULL and can be duplicated across orgs. A separate compound
+   * `UNIQUE(partner_id, domain)` still prevents the SAME org from
+   * listing the SAME domain twice.
+   *
+   * P2002 error surface after the change:
+   *   • Compound (partner_id, domain) — same org, duplicate row.
+   *     Message: "already attached to this partner".
+   *   • Functional (non-personal) — a different org already claims
+   *     this corporate domain. Message names the owner (unchanged).
    */
   async addDomain(bpId: number, rawDomain: string, userId?: number) {
     const bp = await this.findOne(bpId);
@@ -735,9 +772,13 @@ export class BusinessPartnersService {
         `"${domain}" doesn't look like a domain (expected e.g. example.com).`,
       );
     }
+    // Detect personal at write time via the same helper used by the
+    // resolver (fallback set OR catalog). Persist as a boolean so
+    // downstream reads never have to re-consult the list.
+    const isPersonal = await this.isPersonalDomain(domain);
     try {
       const created = await this.prisma.businessPartnerDomain.create({
-        data: { partnerId: bpId, domain },
+        data: { partnerId: bpId, domain, isPersonal },
       });
       try {
         await this.activityLog.write({
@@ -748,16 +789,29 @@ export class BusinessPartnersService {
           entityType: 'business_partner_domain',
           entityId: created.id,
           entityName: domain,
-          description: `Attached domain "${domain}" to partner "${bp.displayName}"`,
-          metadata: { partnerId: bpId, domain },
+          description: `Attached ${isPersonal ? 'personal ' : ''}domain "${domain}" to partner "${bp.displayName}"`,
+          metadata: { partnerId: bpId, domain, isPersonal },
         });
       } catch (e) { Sentry.captureException(e); /* swallow */ }
       return created;
     } catch (err: unknown) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        // Report which BP owns it so the operator can go merge/reassign.
-        const existing = await this.prisma.businessPartnerDomain.findUnique({
-          where: { domain },
+        // Same-org duplicate — compound (partner_id, domain) unique.
+        const sameOrg = await this.prisma.businessPartnerDomain.findFirst({
+          where: { partnerId: bpId, domain },
+          select: { id: true },
+        });
+        if (sameOrg) {
+          throw new ConflictException(
+            `Domain "${domain}" is already attached to this partner.`,
+          );
+        }
+        // Cross-org conflict on a NON-personal domain. Report which BP
+        // owns it so the operator can go merge/reassign. Personal
+        // domains cannot reach this branch (the functional index maps
+        // them to NULL) but we guard defensively.
+        const existing = await this.prisma.businessPartnerDomain.findFirst({
+          where: { domain, isPersonal: false },
           include: { partner: { select: { id: true, displayName: true } } },
         });
         if (existing) {
@@ -818,8 +872,15 @@ export class BusinessPartnersService {
   }): Promise<{ id: number; reason: 'domain' | 'name' } | null> {
     const emailDomain = input.email ? extractEmailDomain(input.email) : null;
     if (emailDomain && !(await this.isPersonalDomain(emailDomain))) {
-      const domainRow = await this.prisma.businessPartnerDomain.findUnique({
-        where: { domain: emailDomain },
+      // BM2 QA-2 Commit 12 (2026-08-30) — `domain` is no longer a
+      // top-level @unique field (the exclusivity migration replaced
+      // it with a MySQL 8 functional partial index + a compound
+      // partner_id+domain unique). Use findFirst with an explicit
+      // is_personal=false filter — cheap defense in depth against a
+      // catalog/fallback drift that would otherwise let a personal
+      // row become an org match here.
+      const domainRow = await this.prisma.businessPartnerDomain.findFirst({
+        where: { domain: emailDomain, isPersonal: false },
         include: { partner: { select: { id: true, deletedAt: true } } },
       });
       if (domainRow?.partner && !domainRow.partner.deletedAt) {

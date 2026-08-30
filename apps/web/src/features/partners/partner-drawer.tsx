@@ -905,12 +905,17 @@ function JobTitlesSection({ bpId, canWrite }: { bpId: number; canWrite: boolean 
 // dedup matches company-by-domain first (see resolveOrgByDomainOrName)
 // so keeping this list accurate directly improves import quality.
 //
-// Line editor — no modal. Type a domain, hit Add. Server enforces the
-// global-uniqueness constraint (a domain can only be owned by ONE org);
-// duplicate attempts surface as a friendly toast that names the org
-// that already owns it.
+// Line editor — no modal. Type a domain, hit Add.
+//
+// BM2 QA-2 Commit 12 (2026-08-30) — personal / free-email domains
+// (gmail.com, yahoo.co.il, walla.co.il, …) are allowed on an org row
+// but marked "personal". Server enforces:
+//   • corporate domains — one org globally (unchanged); duplicate
+//     attempts surface as a toast that names the current owner.
+//   • personal domains — any org may add; they NEVER drive email→org
+//     auto-matching, so the row is informational only.
 
-interface BpDomain { id: number; partnerId: number; domain: string }
+interface BpDomain { id: number; partnerId: number; domain: string; isPersonal?: boolean }
 
 function DomainsSection({ bpId, canWrite, canDelete }: { bpId: number; canWrite: boolean; canDelete: boolean }) {
   const queryClient = useQueryClient();
@@ -961,7 +966,9 @@ function DomainsSection({ bpId, canWrite, canDelete }: { bpId: number; canWrite:
     <div>
       <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-2">Email domains</p>
       <p className="text-[11px] text-slate-400 dark:text-slate-500 mb-2">
-        Import dedup matches this org by its owned domains. A domain can be owned by only one org.
+        Import dedup matches this org by its owned domains. A corporate domain can be owned by only
+        one org; personal / free-email domains (gmail, yahoo, walla, …) may be listed on any org and
+        never drive auto-matching.
       </p>
       {isLoading ? (
         <p className="text-[11px] text-slate-400 dark:text-slate-500">Loading…</p>
@@ -972,6 +979,14 @@ function DomainsSection({ bpId, canWrite, canDelete }: { bpId: number; canWrite:
           {domains.map((d) => (
             <div key={d.id} className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 px-3 py-2">
               <span className="text-[13px] font-mono text-slate-800 dark:text-slate-100 flex-1 truncate">{d.domain}</span>
+              {d.isPersonal && (
+                <span
+                  className="text-[10px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                  title="Personal / free-email domain — non-exclusive; never drives email→org auto-matching."
+                >
+                  Personal
+                </span>
+              )}
               {canDelete && (
                 <button
                   onClick={async () => {

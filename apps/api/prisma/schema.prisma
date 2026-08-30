@@ -1773,14 +1773,26 @@ model BusinessPartner {
 // dedup matches company-by-domain first, then normalized name. Personal
 // / free-email domains never bind an org — that list is maintained via
 // PersonalEmailDomain (Phase 4).
+//
+// BM2 QA-2 Commit 12 (2026-08-30) — personal / free-email domains are
+// allowed on org rows but are marked `isPersonal=true` at write time.
+// The old global `@@unique([domain])` was replaced by two migration-
+// level indexes (see 20260830200000_bp_phase4_personal_domains_non_exclusive):
+//   • `ux_bp_domain_partner_domain` — compound UNIQUE(partner_id, domain);
+//     one org cannot list the same domain twice. Modelled below.
+//   • `ux_bp_domain_non_personal_domain` — MySQL 8 functional UNIQUE on
+//     `IF(is_personal=0, domain, NULL)` so exclusivity only applies to
+//     corporate domains. Prisma cannot express a functional index; it
+//     lives in the hand-written migration.
 model BusinessPartnerDomain {
-  id        Int    @id @default(autoincrement())
-  partnerId Int    @map("partner_id")
-  domain    String @db.VarChar(255)
+  id         Int     @id @default(autoincrement())
+  partnerId  Int     @map("partner_id")
+  domain     String  @db.VarChar(255)
+  isPersonal Boolean @default(false) @map("is_personal")
 
   partner BusinessPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
 
-  @@unique([domain])
+  @@unique([partnerId, domain], map: "ux_bp_domain_partner_domain")
   @@index([partnerId])
   @@map("business_partner_domains")
 }
