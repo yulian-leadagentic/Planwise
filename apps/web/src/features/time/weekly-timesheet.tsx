@@ -37,13 +37,6 @@ function minutesToTime(mins: number): string {
 
 // ─── Time Entry Form Popup ──────────────────────────────────────────────────
 
-const KANBAN_STATUSES = [
-  { value: 'not_started', label: 'To Do', bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-600 dark:text-slate-300' },
-  { value: 'in_progress', label: 'In Progress', bg: 'bg-blue-100', text: 'text-blue-700' },
-  { value: 'in_review', label: 'In Review', bg: 'bg-violet-100', text: 'text-violet-700' },
-  { value: 'completed', label: 'Done', bg: 'bg-emerald-100', text: 'text-emerald-700' },
-];
-
 function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
   date: string; startTime: string; endTime: string; onClose: () => void; onSaved: () => void;
 }) {
@@ -54,7 +47,6 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
   const [location, setLocation] = useState<'office' | 'home'>('office');
   const [note, setNote] = useState('');
   const [isBillable, setIsBillable] = useState(true);
-  const [taskStatus, setTaskStatus] = useState<string>('in_progress');
   const [showQuickTask, setShowQuickTask] = useState(false);
   const [quickTaskName, setQuickTaskName] = useState('');
   // Task being edited in the drawer. The "+ Quick Task" button creates a
@@ -114,25 +106,10 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
 
     const effectiveTaskId = overrideTaskId ?? taskId;
 
-    // Update task status if a task is selected. Full invalidation runs
-    // after the time-entry save below (see onSuccess); here we still
-    // refresh tasks + planning immediately because the status change
-    // itself needs to render even if the time entry is later cancelled
-    // by the overlap dialog.
-    if (effectiveTaskId && taskStatus) {
-      try {
-        await client.patch(`/tasks/${effectiveTaskId}`, { status: taskStatus });
-        queryClient.invalidateQueries({ queryKey: ['tasks'] });
-        queryClient.invalidateQueries({ queryKey: ['planning'] });
-      } catch (err) {
-        // Surface the status-update failure but keep going — the time
-        // entry save below is independent of the status write and must
-        // still succeed. The old silent swallow here hid PR-008 (the
-        // core-fields guardrail 400 from tasks.service was invisible to
-        // the user). Any future failure — 400/403/500 — now toasts.
-        notify.apiError(err, 'Failed to update task status');
-      }
-    }
+    // Task status is set only in the Planning tree — logging time never
+    // changes task status. Only completionPct is updated (see
+    // `time-entries.service#syncTaskCompletion` on the API). Removing
+    // the status write-back closes PR-008 (Commit 10).
 
     const payloadBase: TimeEntryPayload = {
       projectId: projectId ? Number(projectId) : undefined,
@@ -227,7 +204,6 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
         ];
       });
       setTaskId(String(newTask.id));
-      setTaskStatus(newTask.status || 'in_progress');
       setShowQuickTask(false);
       setQuickTaskName('');
       // Refresh /tasks/mine so the new task shows in the dropdown; the
@@ -320,7 +296,7 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
                   className="text-sm text-slate-400 dark:text-slate-500 px-2">Cancel</button>
               </div>
             ) : (
-              <select value={taskId} onChange={(e) => { setTaskId(e.target.value); const t = filteredTasks.find((tk: any) => String(tk.id) === e.target.value); if (t) setTaskStatus(t.status || 'in_progress'); }}
+              <select value={taskId} onChange={(e) => setTaskId(e.target.value)}
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
                 <option value="">— Select task —</option>
                 {filteredTasks.map((t: any) => {
@@ -384,21 +360,10 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
             </div>
           </div>
 
-          {/* Task Status (Kanban stages) */}
-          {taskId && (
-            <div>
-              <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">Task Status</label>
-              <div className="flex items-center gap-1">
-                {KANBAN_STATUSES.map((s) => (
-                  <button key={s.value} type="button" onClick={() => setTaskStatus(s.value)}
-                    className={cn('rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors',
-                      taskStatus === s.value ? `${s.bg} ${s.text} ring-2 ring-offset-1 ring-blue-400` : 'bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800')}>
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Task Status control removed (Commit 10 · PR-008): logging time
+              never changes task status. Status is set only in the Planning
+              tree. Logging time keeps driving completionPct via
+              time-entries.service#syncTaskCompletion. */}
 
           {/* Billable toggle hidden per user feedback 2026-06-22 — state
               stays wired so the API call keeps defaulting to true. */}
