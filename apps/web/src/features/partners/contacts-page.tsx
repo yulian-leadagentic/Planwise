@@ -1,8 +1,8 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Search, X, Mail, Phone, Building2, FolderKanban, Pencil, UserPlus,
+  Search, X, Mail, Phone, Building2, FolderKanban, Pencil, UserPlus, Upload,
   List as ListIcon, FolderOpen, Building, ExternalLink, MapPin, UserCircle2,
   ChevronLeft, ChevronRight, ChevronDown, User as UserIcon,
 } from 'lucide-react';
@@ -10,6 +10,7 @@ import client from '@/api/client';
 import { cn } from '@/lib/utils';
 import { useDebounce } from '@/hooks/use-debounce';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
+import { usePermissions } from '@/hooks/use-permissions';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { PartnerDrawer } from './partner-drawer';
 import { CreatePartnerModal } from './create-partner-modal';
@@ -98,6 +99,16 @@ const GROUP_PAGE_SIZE = 500;
 
 export function ContactsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  // Gate the "Import contacts" action: admin OR write on
+  // `data-import/contacts` (backend enforces the same at
+  // contacts-import.controller.ts:64, module seeded in
+  // migration 20260520000000_data_import_module). Reuse the existing deep
+  // link — `?target=contacts` opens the same wizard component with the
+  // contacts branch already selected (data-import-page.tsx:82-93) — so
+  // we never duplicate the wizard here.
+  const { can, isAdmin } = usePermissions();
+  const canImportContacts = isAdmin || can('data-import/contacts', 'write');
   const initialView = (searchParams.get('view') as ViewMode) ?? 'list';
   const [view, setView] = useState<ViewMode>(
     VIEW_TABS.some((t) => t.key === initialView) ? initialView : 'list',
@@ -294,6 +305,24 @@ export function ContactsPage() {
             People at customers and partners — searchable, filterable, and grouped by project or customer.
           </p>
         </div>
+        <div className="flex items-center gap-2">
+        {/* "Import contacts" — routes to the existing wizard via the
+            deep-link that data-import-page.tsx already supports
+            (?target=contacts auto-selects the contacts branch and jumps
+            past step 1). The wizard component is not duplicated. Gated
+            by admin OR data-import/contacts:write; the backend re-checks
+            the same guard at contacts-import.controller.ts:64. */}
+        {canImportContacts && (
+          <button
+            type="button"
+            onClick={() => navigate('/admin/data-import?target=contacts')}
+            className="inline-flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-slate-400 dark:hover:border-slate-500"
+            title="Bulk-import contacts from an Excel or CSV file"
+          >
+            <Upload className="h-4 w-4" aria-hidden="true" />
+            Import contacts
+          </button>
+        )}
         {/* Split-button "New" — the single creation entry point since
             ux/partner-contact. Opens the shared CreatePartnerModal
             with either 'person' or 'organization' as the starting
@@ -344,6 +373,7 @@ export function ContactsPage() {
               </button>
             </div>
           )}
+        </div>
         </div>
       </div>
 

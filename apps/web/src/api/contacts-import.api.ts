@@ -186,9 +186,11 @@ export const contactsImportApi = {
   upload: async (file: File): Promise<UploadResponse> => {
     const form = new FormData();
     form.append('file', file);
-    const r = await client.post<UploadResponse>('/data-import/contacts/upload', form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    // Do NOT set 'Content-Type' manually — axios inspects the FormData body
+    // and emits `multipart/form-data; boundary=…`. A manual header without a
+    // boundary token yields an unparseable body on the server (multer can't
+    // split the parts) — this was the F28 upload failure. (BM2 · commit 6.)
+    const r = await client.post<UploadResponse>('/data-import/contacts/upload', form);
     return r.data;
   },
 
