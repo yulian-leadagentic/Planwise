@@ -4626,10 +4626,18 @@ function ProjectRootGroup({
     if (pdId != null) {
       // Authoritative project-owned deliverable — key on its id so even
       // project-only deliverables (no catalog template) group correctly.
+      // Commit 8 · Model B (drag-authoritative): `d-pd-<id>` participates
+      // in the deliverable-card DnD surface and persists via
+      // POST /project-deliverables/reorder. Sibling render order is
+      // sortOrder-only (Model B) — the migration seeded sortOrder by
+      // target date so the FIRST render is chronological, and any
+      // subsequent manual drag overrides date for good.
       const d = deliverableById?.get(pdId);
       key = `pd-${pdId}`;
       label = d?.name ?? `Deliverable #${pdId}`;
       color = d?.service?.color || t.phase?.color || '#8B5CF6';
+      dndId = `d-pd-${pdId}`;
+      sortOrder = Number(d?.sortOrder ?? 0);
     } else if (tplId != null) {
       key = `tpl-${tplId}`;
       // Per-project entity name takes precedence over the source template
@@ -5226,9 +5234,17 @@ function PlanningView({ projectId }: { projectId: number }) {
     if (!over || active.id === over.id) return;
 
     // Deliverable card reorder: ids of the form "d-st-<id>" (ServiceType
-    // bucket) or "d-ph-<id>" (Phase bucket). We compute the new card
-    // order across the currently-rendered list, then PATCH the
-    // appropriate entity's sortOrder on the backend.
+    // bucket), "d-ph-<id>" (Phase bucket), or "d-pd-<id>" (project-owned
+    // Deliverable, Commit 8 · Model B). We compute the new card order
+    // across the currently-rendered list, then PATCH the appropriate
+    // entity's sortOrder on the backend. ProjectDeliverable has its own
+    // batch endpoint (POST /project-deliverables/reorder); ServiceType
+    // and Phase persist via a per-entity PATCH.
+    //
+    // Model B write shape: renumber every affected sibling in the visible
+    // order as (i+1)*1000. The 1000-step spacing matches the seed from
+    // planning_sequence_backfill and leaves midpoint room for a
+    // subsequent create/drag without another full renumber pass.
     if (typeof active.id === 'string' && active.id.startsWith('d-')) {
       if (typeof over.id !== 'string' || !over.id.startsWith('d-')) return;
 
@@ -5236,21 +5252,27 @@ function PlanningView({ projectId }: { projectId: number }) {
       // groupBy=zone (ProjectRootGroup buckets) or alt mode (groups).
       // We rebuild it here from the cached planning data so we don't
       // depend on the consumer's local state.
-      type CardEntity = { dndId: string; kind: 'st' | 'ph'; entityId: number };
+      type CardEntity = { dndId: string; kind: 'st' | 'ph' | 'pd'; entityId: number };
       const currentCards: CardEntity[] = [];
       const seen = new Set<string>();
       // For zone mode the DnD covers the project-root cards (which are
-      // bucketed by ServiceType / Phase). For alt modes, the rendered
-      // groups already carry the dndId.
+      // bucketed by ProjectDeliverable / ServiceType / Phase). For alt
+      // modes, the rendered groups already carry the dndId.
       const sourceList: any[] = groupBy === 'zone'
         ? sorted.filter((t: any) => t.zoneId == null) // root tasks
         : sorted;
       for (const t of sourceList) {
         let dndId: string | undefined;
-        let kind: 'st' | 'ph' | null = null;
+        let kind: 'st' | 'ph' | 'pd' | null = null;
         let entityId: number | null = null;
         if (groupBy === 'zone' || groupBy === 'service') {
-          if (t.serviceTypeId != null) {
+          // Priority: ProjectDeliverable → ServiceType → Phase, mirroring
+          // the bucketing pipeline in ProjectRootGroup / groups memo.
+          if (t.projectDeliverableId != null) {
+            dndId = `d-pd-${t.projectDeliverableId}`;
+            kind = 'pd';
+            entityId = t.projectDeliverableId;
+          } else if (t.serviceTypeId != null) {
             dndId = `d-st-${t.serviceTypeId}`;
             kind = 'st';
             entityId = t.serviceTypeId;
@@ -5277,13 +5299,25 @@ function PlanningView({ projectId }: { projectId: number }) {
       if (fromIdx === -1 || toIdx === -1) return;
       const reordered = arrayMove(currentCards, fromIdx, toIdx);
 
-      // Persist new sortOrder per affected entity. We only PATCH cards
-      // whose order actually changed (cheap; usually just a few).
+      // Persist new sortOrder per affected entity. ProjectDeliverable has
+      // a batch endpoint; ServiceType / Phase persist via a per-entity
+      // PATCH. Every card gets renumbered in the visible order so Model
+      // B's "sortOrder-only render" always mirrors the exact sequence
+      // the user just produced. (i+1)*1000 keeps midpoint headroom.
       const writes: Promise<unknown>[] = [];
+      const pdBatch: { id: number; sortOrder: number }[] = [];
       reordered.forEach((c, i) => {
-        const endpoint = c.kind === 'st' ? '/service-types' : '/phases';
-        writes.push(client.patch(`${endpoint}/${c.entityId}`, { sortOrder: i }));
+        const so = (i + 1) * 1000;
+        if (c.kind === 'pd') {
+          pdBatch.push({ id: c.entityId, sortOrder: so });
+        } else {
+          const endpoint = c.kind === 'st' ? '/service-types' : '/phases';
+          writes.push(client.patch(`${endpoint}/${c.entityId}`, { sortOrder: so }));
+        }
       });
+      if (pdBatch.length > 0) {
+        writes.push(client.post('/project-deliverables/reorder', { items: pdBatch }));
+      }
       try {
         await Promise.all(writes);
         // Refetch planning so card order reflects the new sortOrder.
@@ -5291,6 +5325,7 @@ function PlanningView({ projectId }: { projectId: number }) {
         invalidate();
         queryClient.invalidateQueries({ queryKey: ['/service-types'] });
         queryClient.invalidateQueries({ queryKey: ['/phases'] });
+        queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] });
       } catch (err: any) {
         notify.apiError(err, 'Failed to reorder deliverables');
       }
@@ -5338,7 +5373,10 @@ function PlanningView({ projectId }: { projectId: number }) {
       const newIndex = fromSiblings.findIndex((z: any) => z.id === toZoneId);
       if (oldIndex === -1 || newIndex === -1) return;
       const reordered = arrayMove(fromSiblings, oldIndex, newIndex);
-      const items = reordered.map((z: any, i: number) => ({ id: z.id, sortOrder: i }));
+      // Model B: renumber affected siblings in (i+1)*1000 steps so the
+      // seed spacing from planning_sequence_backfill stays consistent
+      // and future smart-insert has midpoint headroom.
+      const items = reordered.map((z: any, i: number) => ({ id: z.id, sortOrder: (i + 1) * 1000 }));
       try {
         await zonesApi.reorder(items);
         invalidate();
@@ -5369,7 +5407,11 @@ function PlanningView({ projectId }: { projectId: number }) {
       const newIndex = targetZoneTasks.findIndex((t: any) => t.id === overId);
       if (oldIndex === -1 || newIndex === -1) return;
       const reordered = arrayMove(targetZoneTasks, oldIndex, newIndex);
-      const items = reordered.map((t: any, i: number) => ({ id: t.id, sortOrder: i }));
+      // Model B (Commit 8): renumber in (i+1)*1000 steps to match the
+      // backfill migration's seed spacing — keeps midpoint headroom
+      // for the smart-insert path in tasks.service.ts to slot new rows
+      // without another renumber pass.
+      const items = reordered.map((t: any, i: number) => ({ id: t.id, sortOrder: (i + 1) * 1000 }));
       try {
         await tasksApi.reorder(items);
         invalidate();
@@ -5386,9 +5428,10 @@ function PlanningView({ projectId }: { projectId: number }) {
       const insertIdx = targetList.findIndex((t: any) => t.id === overId);
       const insertAt = insertIdx >= 0 ? insertIdx : targetList.length;
       targetList.splice(insertAt, 0, activeTask);
+      // Model B (Commit 8): (i+1)*1000 to preserve seed spacing.
       const items = targetList.map((t: any, i: number) => ({
         id: t.id,
-        sortOrder: i,
+        sortOrder: (i + 1) * 1000,
         ...(t.id === activeId ? { zoneId: targetZoneId } : {}),
       }));
       const fromZoneName = activeTask.zone?.name || (activeTask.zoneId == null ? 'Project Root' : '');
@@ -5606,10 +5649,16 @@ function PlanningView({ projectId }: { projectId: number }) {
         if (t.projectDeliverableId != null) {
           // Authoritative project-owned deliverable. Key on its id so even
           // project-only deliverables (no catalog template) group correctly.
+          // Commit 8 · Model B (drag-authoritative): wire `d-pd-<id>` into
+          // the deliverable-card DnD surface (persists via
+          // POST /project-deliverables/reorder) and carry the entity's
+          // sortOrder so cards render in Model B's sortOrder-only order.
           const d = deliverableById.get(t.projectDeliverableId);
           label = d?.name ?? `Deliverable #${t.projectDeliverableId}`;
           color = d?.service?.color || t.phase?.color || '#8B5CF6';
           key = `pd-${t.projectDeliverableId}`;
+          dndId = `d-pd-${t.projectDeliverableId}`;
+          sortOrder = Number(d?.sortOrder ?? 0);
         } else if (t.deliverableTemplateId != null) {
           // Apply the same per-project entity name as the resolver above.
           label = overrideFor(t.deliverableTemplateId) ?? t.deliverableTemplate?.name ?? `Deliverable #${t.deliverableTemplateId}`;
@@ -5691,6 +5740,11 @@ function PlanningView({ projectId }: { projectId: number }) {
           label = d?.name ?? `Deliverable #${t.projectDeliverableId}`;
           color = d?.service?.color || t.phase?.color || '#8B5CF6';
           key = `pd-${t.projectDeliverableId}`;
+          // Commit 8 · Model B — carry the persisted sortOrder so sub-
+          // buckets sort by the same rule as top-level groups (sortOrder
+          // ASC). Sub-buckets have no DnD, so we intentionally don't set
+          // a dndId here.
+          sortOrder = Number(d?.sortOrder ?? 0);
           editableDeliverableId = t.projectDeliverableId;
           editableTemplateId = t.deliverableTemplateId ?? null;
         } else if (t.deliverableTemplateId != null) {

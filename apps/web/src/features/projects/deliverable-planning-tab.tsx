@@ -84,7 +84,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   // not just top-level roots (bm2 fix #1: brand-new projects had NO
   // tasks yet, so tasks-driven rows produced an empty grid even with
   // zones + deliverables present).
-  type ZoneNode = { id: number; name: string; children?: ZoneNode[] };
+  type ZoneNode = { id: number; name: string; sortOrder?: number; children?: ZoneNode[] };
   const zonesFlat: ZoneNode[] = useMemo(() => {
     const roots: ZoneNode[] = Array.isArray(planningData?.zones) ? planningData.zones : [];
     const out: ZoneNode[] = [];
@@ -202,12 +202,39 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       const deliverable = deliverables.find((d) => d.id === dId);
       emit(dId, deliverable, zoneId, zone?.name ?? (zoneId == null ? 'Project Root' : `Zone #${zoneId}`));
     }
-    // Sort: zone name first (Project Root last), then deliverable name.
+    // Sort: Commit 8 · Model B (drag-authoritative). Render order is
+    // ProjectDeliverable.sortOrder ASC, then Zone.sortOrder ASC as a
+    // tiebreak (so a deliverable's per-zone rows still cluster in a
+    // predictable order). "Project Root" rows (zoneId == null) drop
+    // below zoned ones inside the same deliverable so per-zone entries
+    // surface first. Name tiebreaks last so a run of zero sortOrder
+    // (pre-backfill data / fresh row) still renders deterministically.
+    //
+    // Model B rule: sortOrder is authoritative — a manual drag on
+    // planning-modal overrides the initial chronological seed, and this
+    // Gantt inherits that same order for its default view. (The Gantt's
+    // localStorage row-order layer sits on top and preserves any per-
+    // browser drag on THIS screen — see RowsView `rowOrder` state.)
+    const dSortOrderById = new Map<number, number>();
+    for (const d of deliverables) {
+      dSortOrderById.set(d.id, Number(d.sortOrder ?? 0));
+    }
+    const zSortOrderById = new Map<number, number>();
+    for (const z of zonesFlat) {
+      zSortOrderById.set(z.id, Number(z.sortOrder ?? 0));
+    }
     return list.sort((a, b) => {
+      const dA = dSortOrderById.get(a.deliverableId) ?? 0;
+      const dB = dSortOrderById.get(b.deliverableId) ?? 0;
+      if (dA !== dB) return dA - dB;
+      // Same deliverable: zoned rows first, then Project Root last.
       if (a.zoneId == null && b.zoneId != null) return 1;
       if (b.zoneId == null && a.zoneId != null) return -1;
-      const zc = a.zoneName.localeCompare(b.zoneName);
-      if (zc !== 0) return zc;
+      const zA = a.zoneId != null ? (zSortOrderById.get(a.zoneId) ?? 0) : 0;
+      const zB = b.zoneId != null ? (zSortOrderById.get(b.zoneId) ?? 0) : 0;
+      if (zA !== zB) return zA - zB;
+      const zNc = a.zoneName.localeCompare(b.zoneName);
+      if (zNc !== 0) return zNc;
       return a.deliverableName.localeCompare(b.deliverableName);
     });
   }, [tasks, zonesFlat, deliverables]);
