@@ -110,6 +110,18 @@ export class ZonesService {
       depth = parent.depth + 1;
     }
 
+    // Smart-insert sortOrder — Commit 8 · Model B. Zones carry no
+    // planning date, so we simply append at the tail of the sibling
+    // container (project + parentId). Sibling sortOrder values are seeded
+    // as multiples of 1000 by planning_sequence_backfill so `max + 1000`
+    // preserves midpoint headroom for a future manual drag.
+    const lastSibling = await this.prisma.zone.findFirst({
+      where: { projectId: dto.projectId, parentId: dto.parentId ?? null, deletedAt: null },
+      orderBy: [{ sortOrder: 'desc' }, { id: 'desc' }],
+      select: { sortOrder: true },
+    });
+    const sortOrder = (lastSibling?.sortOrder ?? 0) + 1000;
+
     const zone = await this.prisma.zone.create({
       data: {
         projectId: dto.projectId,
@@ -123,8 +135,9 @@ export class ZonesService {
         typicalCount: dto.typicalCount ?? 1,
         path: '', // placeholder, updated below
         depth,
+        sortOrder,
       },
-      
+
     });
 
     // Update path to include own id

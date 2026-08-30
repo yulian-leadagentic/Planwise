@@ -67,15 +67,23 @@ export class ProjectDeliverablesService {
   }
 
   async create(dto: CreateProjectDeliverableDto) {
-    // Default sortOrder to the end of the project's current list.
+    // Compute sortOrder — Commit 8 · Model B smart-insert. A new
+    // ProjectDeliverable has no `targetDate` at create-time (the DTO
+    // doesn't accept one; the date is set later via upsert-target when
+    // the PM lays it out on Deliverable Planning). So the sensible slot
+    // is tail-append — the deliverable becomes "last" until the user
+    // sets a target date OR drags it into position. Sibling sortOrder
+    // values are seeded as multiples of 1000 by the
+    // planning_sequence_backfill migration so `max + 1000` keeps
+    // midpoint headroom for future drags/inserts.
     let sortOrder = dto.sortOrder;
     if (sortOrder == null) {
       const last = await this.prisma.projectDeliverable.findFirst({
         where: { projectId: dto.projectId, deletedAt: null },
-        orderBy: { sortOrder: 'desc' },
+        orderBy: [{ sortOrder: 'desc' }, { id: 'desc' }],
         select: { sortOrder: true },
       });
-      sortOrder = (last?.sortOrder ?? -1) + 1;
+      sortOrder = (last?.sortOrder ?? 0) + 1000;
     }
 
     // Inherit the Service line from the source template's phase when not given.

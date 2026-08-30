@@ -181,6 +181,19 @@ export class TasksService {
       });
     }
 
+    // Smart-insert sortOrder — Commit 8 · Model B. Place the new row in
+    // its date-driven position among current siblings (container = same
+    // project + same zone) without renumbering the neighbours. If no
+    // date, append at the tail. See migration
+    // 20260830100000_planning_sequence_backfill for the seed rule the
+    // sibling column reflects (multiples of 1000 give midpoint headroom).
+    const estimatedStartDate = dto.estimatedStartDate ? new Date(dto.estimatedStartDate) : null;
+    const sortOrder = await this.computeInsertSortOrder({
+      projectId,
+      zoneId: dto.zoneId ?? null,
+      estimatedStartDate,
+    });
+
     const task = await this.prisma.task.create({
       data: {
         zoneId: dto.zoneId ?? null,
@@ -199,9 +212,10 @@ export class TasksService {
         phaseId: dto.phaseId,
         priority: dto.priority as any,
         // Planning forecast — distinct from `startDate` (actual start).
-        estimatedStartDate: dto.estimatedStartDate ? new Date(dto.estimatedStartDate) : null,
+        estimatedStartDate,
         endDate: dto.endDate ? new Date(dto.endDate) : null,
         startDate: dto.startDate ? new Date(dto.startDate) : null,
+        sortOrder,
         // Personal-task + optional-review flags (Tier D #1 + #2).
         // isPersonal defaults to false at the column level; we still
         // pass it explicitly so the API contract is visible.
@@ -955,6 +969,62 @@ export class TasksService {
         },
       },
     });
+  }
+
+  /**
+   * Compute a `sort_order` for a to-be-created task so it lands in
+   * date-driven position among current siblings, without renumbering
+   * neighbours (Commit 8 · Model B). Container = (projectId, zoneId).
+   *
+   * Sibling `sort_order` values are seeded as multiples of 1000 by the
+   * planning_sequence_backfill migration and by this helper's tail-
+   * append branch, so a midpoint (avg of neighbours) has ~500 units of
+   * headroom before it would collide.
+   *
+   * Rules:
+   *   • No date → append at tail (`max + 1000`).
+   *   • Container empty → 1000.
+   *   • Date given, find first sibling whose date > D (siblings sorted
+   *     by `sort_order ASC`). Midpoint with the neighbour before, or
+   *     head-insert if position 0. All-earlier → tail.
+   *   • Undated siblings sort as "later than any date" (nulls-last),
+   *     matching the migration's ORDER BY.
+   */
+  private async computeInsertSortOrder(params: {
+    projectId: number | null;
+    zoneId: number | null;
+    estimatedStartDate: Date | null;
+  }): Promise<number> {
+    const { projectId, zoneId, estimatedStartDate } = params;
+    if (projectId == null) return 1000; // isPersonal, no project — sensible default
+    const siblings = await this.prisma.task.findMany({
+      where: { projectId, zoneId, deletedAt: null },
+      select: { id: true, sortOrder: true, estimatedStartDate: true },
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+    });
+    if (siblings.length === 0) return 1000;
+    const tailAppend = () => (siblings[siblings.length - 1].sortOrder ?? 0) + 1000;
+    if (!estimatedStartDate) return tailAppend();
+    const newMs = estimatedStartDate.getTime();
+    // Find insert position — first sibling whose date > D. Undated siblings
+    // count as "later" (nulls-last), same as migration's ORDER BY.
+    const insertAt = siblings.findIndex((s) => {
+      if (!s.estimatedStartDate) return true;
+      return s.estimatedStartDate.getTime() > newMs;
+    });
+    if (insertAt === -1) return tailAppend();
+    const nextSo = siblings[insertAt].sortOrder ?? 0;
+    if (insertAt === 0) {
+      // Head-insert. Halve the leading gap; fall back to next - 1000 if it
+      // would collide with 0.
+      return nextSo > 1000 ? Math.floor(nextSo / 2) : Math.max(1, nextSo - 1);
+    }
+    const prevSo = siblings[insertAt - 1].sortOrder ?? 0;
+    const mid = Math.floor((prevSo + nextSo) / 2);
+    // Collision guard: if the neighbours are already touching (post-drag
+    // sequences can compress) drop to prev + 1 — a subsequent drag will
+    // re-space via the reorder endpoint's 1000-step renumber.
+    return mid > prevSo && mid < nextSo ? mid : prevSo + 1;
   }
 
   async batchReorder(items: { id: number; sortOrder: number; zoneId?: number }[]) {
