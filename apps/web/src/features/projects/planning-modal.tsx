@@ -1459,7 +1459,16 @@ function CatalogPickerForZone({ context, projectId, onClose, onDone }: {
       const fail = results.length - ok;
       if (fail === 0) notify.success(`Added ${ok} task${ok !== 1 ? 's' : ''} from catalog`, { code: 'TASK-ADD-200' });
       else if (ok > 0) notify.warning(`Added ${ok}, ${fail} failed`, { code: 'TASK-ADD-207' });
-      else notify.error('Failed to add tasks', { code: 'TASK-ADD-500' });
+      else {
+        // All creates rejected — surface the real server message (e.g.
+        // a structured missing_required_fields 400) via notify.apiError
+        // instead of a generic mislabeled 500 toast that would swallow
+        // the reason and tell the PM nothing. See QA3 · task-add.
+        const firstFailure = results.find(
+          (r): r is PromiseRejectedResult => r.status === 'rejected',
+        );
+        notify.apiError(firstFailure?.reason, 'Failed to add tasks');
+      }
       onDone();
     } catch (err: any) {
       notify.apiError(err, 'Failed to add tasks');
@@ -3049,7 +3058,16 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
       const fail = results.length - ok;
       if (fail === 0) notify.success(`Added ${ok} task${ok !== 1 ? 's' : ''} from catalog`, { code: 'TASK-ADD-200' });
       else if (ok > 0) notify.warning(`Added ${ok}, ${fail} failed`, { code: 'TASK-ADD-207' });
-      else notify.error('Failed to add tasks', { code: 'TASK-ADD-500' });
+      else {
+        // All creates rejected — surface the real server message (e.g.
+        // a structured missing_required_fields 400) via notify.apiError
+        // instead of a generic mislabeled 500 toast that would swallow
+        // the reason and tell the PM nothing. See QA3 · task-add.
+        const firstFailure = results.find(
+          (r): r is PromiseRejectedResult => r.status === 'rejected',
+        );
+        notify.apiError(firstFailure?.reason, 'Failed to add tasks');
+      }
       onCreated();
       onClose();
     } catch (err: any) {

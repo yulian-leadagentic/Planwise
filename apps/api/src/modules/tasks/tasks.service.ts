@@ -70,53 +70,48 @@ export class TasksService {
   }
 
   /**
-   * Every CORE task (isPersonal !== true) must carry the fields that
-   * make it schedulable and countable: a Service (serviceTypeId), a
-   * Zone (zoneId), a Deliverable link (projectDeliverableId OR
-   * deliverableTemplateId), and an explicit Review flag
-   * (requiresReview must be set, not defaulted). Personal tasks are
-   * exempt — they belong to the individual employee.
+   * A CORE task (isPersonal !== true) only needs enough context to know
+   * WHERE it belongs — a Zone (`zoneId`) OR a project (`projectId`) for
+   * project-root tasks. Everything else — Service (`serviceTypeId`),
+   * Deliverable (`projectDeliverableId` / `deliverableTemplateId`),
+   * Review flag — is optional at create-time and at update-time so the
+   * PM can "add empty row now, link later" inline from the grid.
+   * Personal tasks stay exempt from every check.
    *
-   * Returns the list of missing field names — an empty list means the
-   * task is valid. Callers throw a 400 with a machine-readable body so
-   * the frontend can highlight each field inline.
+   * Relaxed 2026-08-31 (QA3 · task-add). Previously required Service +
+   * Zone + Deliverable + explicit Review; that guardrail was fighting
+   * the actual UX — the inline empty-row add and Zone-header add both
+   * legitimately create tasks without those fields — and mislabeled its
+   * 400 as a 500 client-side. The invariant we still enforce: a
+   * non-personal task must resolve to a project (via zone or direct
+   * projectId), so it can be placed on the planning grid.
+   *
+   * Returns the list of missing field names — empty means valid. On
+   * failure the caller throws a structured 400 the frontend surfaces
+   * via `notify.apiError`.
    */
   private missingCoreFields(
     dto: Partial<CreateTaskDto>,
-    existing?: { zoneId: number | null; serviceTypeId: number | null; projectDeliverableId: number | null; deliverableTemplateId: number | null; requiresReview: boolean | null; isPersonal: boolean } | null,
+    existing?: { zoneId: number | null; projectId: number | null; isPersonal: boolean } | null,
   ): string[] {
     const merged = {
       isPersonal: dto.isPersonal ?? existing?.isPersonal ?? false,
-      // For each field: prefer the DTO value if the caller sent that key
-      // (including explicit null → "clearing"), otherwise fall through to
-      // the persisted value on update.
+      // For each key: prefer the DTO value if the caller sent that key
+      // (including explicit null → "clearing"), otherwise fall through
+      // to the persisted value on update.
       zoneId: dto.zoneId !== undefined ? dto.zoneId : (existing?.zoneId ?? null),
-      serviceTypeId: dto.serviceTypeId !== undefined ? dto.serviceTypeId : (existing?.serviceTypeId ?? null),
-      projectDeliverableId:
-        dto.projectDeliverableId !== undefined
-          ? dto.projectDeliverableId
-          : (existing?.projectDeliverableId ?? null),
-      deliverableTemplateId:
-        dto.deliverableTemplateId !== undefined
-          ? dto.deliverableTemplateId
-          : (existing?.deliverableTemplateId ?? null),
-      // requiresReview must be explicitly set on a core task — on
-      // create we detect "not sent"; on update we fall through to the
-      // existing value (already a boolean, always set).
-      requiresReview:
-        dto.requiresReview !== undefined
-          ? dto.requiresReview
-          : (existing?.requiresReview ?? null),
+      projectId: dto.projectId !== undefined ? dto.projectId : (existing?.projectId ?? null),
     };
     if (merged.isPersonal) return [];
-    const missing: string[] = [];
-    if (merged.serviceTypeId == null) missing.push('serviceTypeId');
-    if (merged.zoneId == null) missing.push('zoneId');
-    if (merged.projectDeliverableId == null && merged.deliverableTemplateId == null) {
-      missing.push('projectDeliverableId');
+    // Zone-or-project placement is the only hard requirement now. Both
+    // paths are legitimate — `zoneId` is the common case (task sits
+    // under a zone in the grid); `projectId` is the project-root case
+    // (task sits at the project level, no zone). Report `zoneId` as the
+    // missing field so the inline error mirrors the primary UX.
+    if (merged.zoneId == null && merged.projectId == null) {
+      return ['zoneId'];
     }
-    if (merged.requiresReview == null) missing.push('requiresReview');
-    return missing;
+    return [];
   }
 
   async create(userId: number, dto: CreateTaskDto) {
@@ -129,15 +124,17 @@ export class TasksService {
     // project/deliverable the hours still roll up, but the task doesn't
     // block that Deliverable's completion.
     //
-    // Core-task guardrail (Ops backlog #2, 2026-08-08): a non-personal
-    // task MUST carry Service, Zone, Deliverable, and an explicit
-    // Review flag. Reject with a structured 400 listing every missing
-    // field so the frontend can highlight them inline.
+    // Core-task guardrail (relaxed 2026-08-31, QA3 · task-add): a
+    // non-personal task must resolve to a project — either via a
+    // `zoneId` (the common case) or a direct `projectId` (project-
+    // root). Service, Deliverable, and Review flag are optional; the
+    // PM fills them inline from the grid after creating. Reject with a
+    // structured 400 so the frontend can highlight the missing field.
     const missing = this.missingCoreFields(dto);
     if (missing.length > 0) {
       throw new BadRequestException({
         error: 'missing_required_fields',
-        message: 'Core tasks require Service, Zone, Deliverable, and an explicit Review flag.',
+        message: 'Non-personal tasks need a Zone (or a project for project-root tasks).',
         missing,
       });
     }
@@ -539,30 +536,21 @@ export class TasksService {
   async update(id: number, dto: UpdateTaskDto, userId?: number) {
     const existing = await this.findOne(id);
 
-    // Core-task guardrail (Ops backlog #2, 2026-08-08 · refined
-    // 2026-08-19 for PR-010/011): the invariant is that a non-personal
-    // task must always carry Service, Zone, Deliverable, and an
-    // explicit Review flag. But re-running the check on *every* PATCH
-    // regressed a common workflow — a legacy task that predates the
-    // guardrail (or was created incomplete) could not have its status
-    // or dates changed, because a partial update let the missing
-    // fields fall through and the check refused to save. Neither the
-    // status nor the date field caused the failure; the check would
-    // block a `dueDate: '2026-09-01'` PATCH the same as it would
-    // block clearing a required column.
+    // Core-task guardrail (relaxed 2026-08-31, QA3 · task-add). The
+    // only invariant left is that a non-personal task resolves to a
+    // project — via `zoneId` or (project-root) `projectId`. Everything
+    // else — Service, Deliverable, Review flag — is optional at every
+    // stage, so the PM can add a bare row and link the rest inline.
+    // Editing that clears the placement (zoneId=null on a task that
+    // has no projectId, or isPersonal→false on a personal task with
+    // neither) still 400s so we can't silently orphan a task.
     //
-    // Gate: only re-validate when the DTO actually touches one of the
-    // core fields. `undefined` = key not sent = leave alone; `null` =
-    // key sent as null = clearing (still validated). Status-only,
-    // date-only, priority-only, assignee, description edits proceed.
-    // Editing that clears a required column still 400s (invariant
-    // intact). Create-path enforcement in `create()` is unchanged.
+    // Gate (kept from PR-010/011): only re-validate when the DTO
+    // actually touches one of the placement / personal keys. Status,
+    // date, priority, assignee, description edits proceed untouched.
     const CORE_FIELD_KEYS = [
-      'serviceTypeId',
       'zoneId',
-      'projectDeliverableId',
-      'deliverableTemplateId',
-      'requiresReview',
+      'projectId',
       'isPersonal',
     ] as const;
     const touchesCoreField = CORE_FIELD_KEYS.some((k) =>
@@ -572,17 +560,14 @@ export class TasksService {
     if (touchesCoreField) {
       const existingCore = {
         zoneId: (existing as any).zoneId ?? null,
-        serviceTypeId: (existing as any).serviceTypeId ?? null,
-        projectDeliverableId: (existing as any).projectDeliverableId ?? null,
-        deliverableTemplateId: (existing as any).deliverableTemplateId ?? null,
-        requiresReview: (existing as any).requiresReview ?? null,
+        projectId: (existing as any).projectId ?? null,
         isPersonal: (existing as any).isPersonal ?? false,
       };
       const missing = this.missingCoreFields(dto, existingCore);
       if (missing.length > 0) {
         throw new BadRequestException({
           error: 'missing_required_fields',
-          message: 'Core tasks require Service, Zone, Deliverable, and an explicit Review flag.',
+          message: 'Non-personal tasks need a Zone (or a project for project-root tasks).',
           missing,
         });
       }
