@@ -4,7 +4,7 @@ import { Plus, Trash2, MessageSquare, Search, Send, UserCircle, Columns3, Chevro
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
-import { useProjects } from '@/hooks/use-projects';
+import { useProjects, useProjectTypes } from '@/hooks/use-projects';
 import { useFilterStore } from '@/stores/filter.store';
 import { useDebounce } from '@/hooks/use-debounce';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
@@ -133,8 +133,25 @@ export function ProjectListPage() {
   // visible rows without a server round-trip. Empty string = no filter.
   // Kept as a single object so adding another column later is a one-key
   // append with no new useState.
-  const [colFilters, setColFilters] = useState<{ code: string; name: string; type: string }>({ code: '', name: '', type: '' });
-  const [openColFilter, setOpenColFilter] = useState<null | keyof typeof colFilters>(null);
+  // Per-column client-side filters. Text columns (code, name) get a
+  // substring input; enum-ish columns (type, status, role[N]) get a
+  // dropdown whose OPTIONS are derived from the currently-loaded rows
+  // (QA3 · A · item 2) — never from the full catalog/enum, so users
+  // aren't offered filter values that don't exist on screen.
+  //   • `roles` — keyed by role-type id so a dynamic role column carries
+  //     its own filter without needing a new useState per column.
+  //   • Empty option-list → filter chevron hidden (see hasFilterableXxx
+  //     memos below).
+  const [colFilters, setColFilters] = useState<{
+    code: string;
+    name: string;
+    type: string;
+    status: string;
+    roles: Record<number, string>;
+  }>({ code: '', name: '', type: '', status: '', roles: {} });
+  // openColFilter — one popover open at a time. Role columns use a
+  // synthetic key `role:<id>` so the discriminated union stays flat.
+  const [openColFilter, setOpenColFilter] = useState<string | null>(null);
 
   const { data, isLoading } = useProjects({
     search: debouncedSearch || undefined,
@@ -215,8 +232,87 @@ export function ProjectListPage() {
     const nameFilter = colFilters.name.trim().toLowerCase();
     if (nameFilter && !String(p.name ?? '').toLowerCase().includes(nameFilter)) return false;
     if (colFilters.type && String(p.projectTypeId ?? '') !== colFilters.type) return false;
+    if (colFilters.status && String(p.status ?? '') !== colFilters.status) return false;
+    // Role-column filters — one per visible role-type column. Value is
+    // a party.displayName (matched exactly against the assignments on
+    // that role). Synthetic `__none__` bucket matches projects with no
+    // assignee on that role, so users can filter "who's missing a lead".
+    for (const [roleIdStr, wanted] of Object.entries(colFilters.roles)) {
+      if (!wanted) continue;
+      const roleId = Number(roleIdStr);
+      const assignees = ((p.partnerRoles ?? []) as any[])
+        .filter((r: any) => r.roleId === roleId)
+        .map((r: any) => r.party?.displayName ?? null);
+      if (wanted === '__none__') {
+        if (assignees.length > 0) return false;
+      } else if (!assignees.includes(wanted)) {
+        return false;
+      }
+    }
     return true;
   });
+
+  // ─── Per-column filter option sets ───────────────────────────────
+  // QA3 · A · item 2 — every enum-ish column's filter dropdown is
+  // sourced from the DISTINCT values actually present in `rawList`
+  // (server-returned rows, before client-side col filters), NOT from
+  // the full ProjectType catalog / ProjectStatus enum / users list.
+  // Empty option list → the filter chevron is hidden entirely for that
+  // column (see `hasCategoryFilterable` etc). rawList is the right
+  // source (not `projects`) so a user who has narrowed by e.g. Status
+  // can still switch to a different status — filtering by column A
+  // must never drop options for column B.
+
+  /** Category (ProjectType) options — [id, name][], alpha sort. */
+  const categoryFilterOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const p of rawList) {
+      if (p?.projectType?.id && p?.projectType?.name) {
+        map.set(p.projectType.id, p.projectType.name);
+      }
+    }
+    return Array.from(map.entries()).sort(([, a], [, b]) => a.localeCompare(b));
+  }, [rawList]);
+
+  /** Status options — [value, label][], sorted by label. Empty when
+   *  every row shares the same status (nothing to pick between). */
+  const statusFilterOptions = useMemo(() => {
+    const present = new Set<string>();
+    for (const p of rawList) {
+      if (p?.status) present.add(String(p.status));
+    }
+    return Array.from(present)
+      .map((v) => [v, statusColors[v]?.label ?? v] as [string, string])
+      .sort(([, a], [, b]) => a.localeCompare(b));
+  }, [rawList]);
+
+  /** Role-column options — Map<roleId, Array<{ value, label }>>. Each
+   *  role's dropdown is derived from that role's assignee.displayName
+   *  values across rawList. If any project has no assignee on the role
+   *  we prepend a synthetic `__none__` bucket labelled "— None". */
+  const roleFilterOptionsByRoleId = useMemo(() => {
+    const out = new Map<number, Array<{ value: string; label: string }>>();
+    for (const rt of visibleRoleColumns) {
+      const names = new Set<string>();
+      let anyEmpty = false;
+      for (const p of rawList) {
+        const assignments = ((p?.partnerRoles ?? []) as any[]).filter((r) => r?.roleId === rt.id);
+        if (assignments.length === 0) {
+          anyEmpty = true;
+        } else {
+          for (const a of assignments) {
+            if (a?.party?.displayName) names.add(a.party.displayName);
+          }
+        }
+      }
+      const opts = Array.from(names)
+        .sort((a, b) => a.localeCompare(b))
+        .map((n) => ({ value: n, label: n }));
+      if (anyEmpty) opts.unshift({ value: '__none__', label: '— None' });
+      out.set(rt.id, opts);
+    }
+    return out;
+  }, [rawList, visibleRoleColumns]);
 
   // ─── Group By ─────────────────────────────────────────────────────────
   // Single-value grouping (or null = no grouping). The dropdown lists
@@ -364,6 +460,64 @@ export function ProjectListPage() {
         }
       }
       notify.apiError(err, 'Failed to update status');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+    },
+  });
+
+  /**
+   * In-cell Category (project-type) change (QA3 · A · item 1). Same
+   * PATCH endpoint + optimistic-snapshot shape as `updateProjectStatus`
+   * above — projectTypeId is on UpdateProjectDto via PartialType, so
+   * the DTO already accepts it. The optimistic patch replaces both
+   * `projectTypeId` AND the embedded `projectType` object (name + color
+   * that the read-mode cell renders) so the pill flips instantly
+   * without waiting for the invalidate refetch. Error rolls back;
+   * success invalidates the whole ['projects'] prefix.
+   */
+  const projectTypesQuery = useProjectTypes();
+  const updateProjectCategory = useMutation({
+    mutationFn: ({ id, projectTypeId }: { id: number; projectTypeId: number }) =>
+      client.patch(`/projects/${id}`, { projectTypeId }).then((r) => r.data),
+    onMutate: async ({ id, projectTypeId }) => {
+      await queryClient.cancelQueries({ queryKey: ['projects'] });
+      const snapshots = queryClient.getQueriesData<any>({ queryKey: ['projects'] });
+      const nextType = (projectTypesQuery.data ?? []).find((t: any) => t.id === projectTypeId) ?? null;
+      for (const [key, cached] of snapshots) {
+        if (!cached) continue;
+        const rows: any[] | undefined = cached?.data?.data
+          ? cached.data.data
+          : Array.isArray(cached?.data) ? cached.data
+          : Array.isArray(cached) ? cached
+          : undefined;
+        if (!rows) continue;
+        const idx = rows.findIndex((p: any) => p?.id === id);
+        if (idx === -1) continue;
+        const nextRows = rows.slice();
+        nextRows[idx] = {
+          ...nextRows[idx],
+          projectTypeId,
+          projectType: nextType
+            ? { id: nextType.id, name: nextType.name, color: nextType.color ?? null }
+            : nextRows[idx].projectType,
+        };
+        const next = cached?.data?.data
+          ? { ...cached, data: { ...cached.data, data: nextRows } }
+          : Array.isArray(cached?.data)
+            ? { ...cached, data: nextRows }
+            : nextRows;
+        queryClient.setQueryData(key, next);
+      }
+      return { snapshots };
+    },
+    onError: (err: any, _vars, ctx) => {
+      if (ctx?.snapshots) {
+        for (const [key, prev] of ctx.snapshots) {
+          queryClient.setQueryData(key, prev);
+        }
+      }
+      notify.apiError(err, 'Failed to update category');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
@@ -709,58 +863,136 @@ export function ProjectListPage() {
                       'team_leader'). Add it via Columns customizer if
                       you want it on screen. */}
                   {/* Dynamic role-type columns — order follows the catalog
-                      sortOrder via visibleRoleColumns. */}
-                  {visibleRoleColumns.map((rt) => (
-                    <th key={rt.id} className="px-4 py-3 text-left font-semibold">{rt.name}</th>
-                  ))}
-                  {/* Department column removed (V3) — field is unused. */}
-                  <th className="px-4 py-3 text-left font-semibold">Status</th>
-                  <th className="px-4 py-3 text-left font-semibold">
-                    <ColumnHeaderWithFilter
-                      label="Category"
-                      isOpen={openColFilter === 'type'}
-                      onToggle={() => setOpenColFilter((c) => c === 'type' ? null : 'type')}
-                      value={colFilters.type}
-                      hasFilter={!!colFilters.type}
-                    >
-                      {(() => {
-                        // Derive Category options from the current result
-                        // set — cheaper than a dedicated projectTypes
-                        // query, and the picker always matches what's on
-                        // screen.
-                        const opts = Array.from(
-                          new Map<number, string>(
-                            rawList
-                              .filter((r) => r.projectType?.id && r.projectType?.name)
-                              .map((r) => [r.projectType.id, r.projectType.name] as [number, string]),
-                          ).entries(),
-                        ).sort(([, a], [, b]) => a.localeCompare(b));
-                        return (
-                          <>
+                      sortOrder via visibleRoleColumns. Each column gets
+                      an in-header filter (QA3 · A · item 2) sourced from
+                      the assignee.displayName values actually present in
+                      the loaded rows for THAT role. Empty option list →
+                      chevron hidden. */}
+                  {visibleRoleColumns.map((rt) => {
+                    const roleKey = `role:${rt.id}`;
+                    const opts = roleFilterOptionsByRoleId.get(rt.id) ?? [];
+                    const current = colFilters.roles[rt.id] ?? '';
+                    return (
+                      <th key={rt.id} className="px-4 py-3 text-left font-semibold">
+                        {opts.length === 0 ? (
+                          rt.name
+                        ) : (
+                          <ColumnHeaderWithFilter
+                            label={rt.name}
+                            isOpen={openColFilter === roleKey}
+                            onToggle={() => setOpenColFilter((c) => c === roleKey ? null : roleKey)}
+                            value={current}
+                            hasFilter={!!current}
+                          >
                             <select
                               autoFocus
-                              value={colFilters.type}
-                              onChange={(e) => setColFilters((f) => ({ ...f, type: e.target.value }))}
-                              className="w-full px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-[12px] focus:border-blue-500 focus:outline-none"
+                              value={current}
+                              onChange={(e) => setColFilters((f) => ({
+                                ...f,
+                                roles: { ...f.roles, [rt.id]: e.target.value },
+                              }))}
+                              className="w-full px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 text-[12px] focus:border-blue-500 focus:outline-none"
                             >
-                              <option value="">All categories</option>
-                              {opts.map(([id, name]) => (
-                                <option key={id} value={String(id)}>{name}</option>
+                              <option value="">All {rt.name.toLowerCase()}</option>
+                              {opts.map((o) => (
+                                <option key={o.value} value={o.value}>{o.label}</option>
                               ))}
                             </select>
-                            {colFilters.type && (
+                            {current && (
                               <button
                                 type="button"
-                                onClick={() => setColFilters((f) => ({ ...f, type: '' }))}
-                                className="mt-1.5 text-[11px] text-blue-600 hover:text-blue-700 font-medium"
+                                onClick={() => setColFilters((f) => ({
+                                  ...f,
+                                  roles: { ...f.roles, [rt.id]: '' },
+                                }))}
+                                className="mt-1.5 text-[11px] text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium"
                               >
                                 Clear
                               </button>
                             )}
-                          </>
-                        );
-                      })()}
-                    </ColumnHeaderWithFilter>
+                          </ColumnHeaderWithFilter>
+                        )}
+                      </th>
+                    );
+                  })}
+                  {/* Department column removed (V3) — field is unused. */}
+                  <th className="px-4 py-3 text-left font-semibold">
+                    {/* Status per-column filter (QA3 · A · item 2). The
+                        top-level status <select> above already narrows
+                        server-side by a single status; this in-header
+                        picker narrows the client view within whatever
+                        the server returned, sourced from distinct
+                        statuses actually present. Hidden when only one
+                        status is on screen. */}
+                    {statusFilterOptions.length === 0 ? (
+                      'Status'
+                    ) : (
+                      <ColumnHeaderWithFilter
+                        label="Status"
+                        isOpen={openColFilter === 'status'}
+                        onToggle={() => setOpenColFilter((c) => c === 'status' ? null : 'status')}
+                        value={colFilters.status}
+                        hasFilter={!!colFilters.status}
+                      >
+                        <select
+                          autoFocus
+                          value={colFilters.status}
+                          onChange={(e) => setColFilters((f) => ({ ...f, status: e.target.value }))}
+                          className="w-full px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 text-[12px] focus:border-blue-500 focus:outline-none"
+                        >
+                          <option value="">All statuses</option>
+                          {statusFilterOptions.map(([value, label]) => (
+                            <option key={value} value={value}>{label}</option>
+                          ))}
+                        </select>
+                        {colFilters.status && (
+                          <button
+                            type="button"
+                            onClick={() => setColFilters((f) => ({ ...f, status: '' }))}
+                            className="mt-1.5 text-[11px] text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </ColumnHeaderWithFilter>
+                    )}
+                  </th>
+                  <th className="px-4 py-3 text-left font-semibold">
+                    {/* Category filter — options derived from rawList
+                        via categoryFilterOptions memo. Hidden when
+                        there's nothing to pick between. */}
+                    {categoryFilterOptions.length === 0 ? (
+                      'Category'
+                    ) : (
+                      <ColumnHeaderWithFilter
+                        label="Category"
+                        isOpen={openColFilter === 'type'}
+                        onToggle={() => setOpenColFilter((c) => c === 'type' ? null : 'type')}
+                        value={colFilters.type}
+                        hasFilter={!!colFilters.type}
+                      >
+                        <select
+                          autoFocus
+                          value={colFilters.type}
+                          onChange={(e) => setColFilters((f) => ({ ...f, type: e.target.value }))}
+                          className="w-full px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 text-[12px] focus:border-blue-500 focus:outline-none"
+                        >
+                          <option value="">All categories</option>
+                          {categoryFilterOptions.map(([id, name]) => (
+                            <option key={id} value={String(id)}>{name}</option>
+                          ))}
+                        </select>
+                        {colFilters.type && (
+                          <button
+                            type="button"
+                            onClick={() => setColFilters((f) => ({ ...f, type: '' }))}
+                            className="mt-1.5 text-[11px] text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </ColumnHeaderWithFilter>
+                    )}
                   </th>
                   {/* Finance-gated columns. Hidden entirely when the
                       caller lacks finance:read so the table degrades
@@ -817,8 +1049,13 @@ export function ProjectListPage() {
                     Math.min(100, Math.round(Number(p.completionPct ?? 0))),
                   );
                   const dept = p.department?.name ?? '-';
-                  const categories = (p.categories ?? []).map((c: any) => c.serviceType?.name).filter(Boolean);
-                  const category = categories.length > 0 ? categories.join(', ') : (p.projectType?.name ?? '-');
+                  // Category cell reads `projectType` directly (single FK
+                  // via `projects.service#findAll`). The historical
+                  // `p.categories` (many-to-many service-types) is a
+                  // decorative field that lived elsewhere and was mixed
+                  // into this cell in v1 — dropped now that the cell is
+                  // inline-editable against `projectTypeId` (spec: single
+                  // Category = ProjectType).
 
                   return (
                     <tr key={p.id}
@@ -903,7 +1140,14 @@ export function ProjectListPage() {
                           onChange={(status) => updateProjectStatus.mutate({ id: p.id, status })}
                         />
                       </td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{category}</td>
+                      <td className="px-4 py-3">
+                        <CategoryCell
+                          value={p.projectType ?? null}
+                          options={projectTypesQuery.data ?? []}
+                          canEdit={canWriteProjects}
+                          onChange={(projectTypeId) => updateProjectCategory.mutate({ id: p.id, projectTypeId })}
+                        />
+                      </td>
                       {/* Finance-gated cells — mirror the header gates
                           so the row stays column-aligned for either
                           permission state. */}
@@ -1139,6 +1383,104 @@ function StatusCell({
       <option value="active">Active</option>
       <option value="on_hold">On Hold</option>
       <option value="completed">Completed</option>
+    </select>
+  );
+}
+
+/**
+ * Category (project-type) cell — plain-text pill by default, click →
+ * native <select> in place. Mirrors StatusCell's contract exactly:
+ *
+ *   • Read-only when `canEdit=false` — click is a no-op.
+ *   • Click → open <select> autofocused so the picker feels
+ *     click-through.
+ *   • Change → commit; Escape / blur without change → cancel + revert.
+ *   • stopPropagation on click / change / keydown so the row navigation
+ *     (project-code and name cells) never fires.
+ *
+ * Options come from `useProjectTypes()` cached upstream — the same
+ * `/admin/config/project-types` catalog the New-Project form uses (PR-021).
+ * We render `— None` for `projectTypeId=null` so a legacy project without
+ * a category still surfaces something clickable. The <select> deliberately
+ * does NOT expose a "None" write value: `CreateProjectDto.projectTypeId`
+ * is required, so clearing it via PATCH would 400 — the write only
+ * offers real catalog ids.
+ *
+ * QA3 · A · item 1.
+ */
+function CategoryCell({
+  value,
+  options,
+  canEdit,
+  onChange,
+}: {
+  value: { id: number; name: string; color?: string | null } | null;
+  options: Array<{ id: number; name: string; color?: string | null }>;
+  canEdit: boolean;
+  onChange: (nextTypeId: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const selectRef = useRef<HTMLSelectElement>(null);
+
+  useEffect(() => {
+    if (editing) {
+      queueMicrotask(() => selectRef.current?.focus());
+    }
+  }, [editing]);
+
+  const label = value?.name ?? '—';
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (canEdit) setEditing(true);
+        }}
+        disabled={!canEdit}
+        title={canEdit ? 'Change category' : undefined}
+        aria-label={canEdit ? `Change category (currently ${label})` : `Category: ${label}`}
+        className={cn(
+          'block w-full rounded-md text-left text-slate-600 dark:text-slate-300 -mx-1 px-1 py-0.5',
+          canEdit && 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400',
+          !canEdit && 'cursor-default',
+        )}
+      >
+        {label}
+      </button>
+    );
+  }
+
+  return (
+    <select
+      ref={selectRef}
+      value={value?.id ?? ''}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        e.stopPropagation();
+        const nextId = Number(e.target.value);
+        setEditing(false);
+        if (!Number.isFinite(nextId) || nextId <= 0) return;
+        if (nextId === value?.id) return;
+        onChange(nextId);
+      }}
+      onBlur={() => setEditing(false)}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setEditing(false);
+        }
+      }}
+      className="rounded-[5px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+    >
+      {/* Placeholder when the project has no category set — kept
+          disabled so a user can't PATCH projectTypeId to an invalid
+          value (server DTO makes it required). */}
+      {value?.id == null && <option value="" disabled>— None</option>}
+      {options.map((t) => (
+        <option key={t.id} value={t.id}>{t.name}</option>
+      ))}
     </select>
   );
 }
