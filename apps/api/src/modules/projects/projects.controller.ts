@@ -62,6 +62,18 @@ export class ProjectsController {
     return this.projectsService.getNumberConfig();
   }
 
+  // QA3 Commit D (Item 6d) — feeds the Contacts /contacts?view=by-project
+  // grid. Returns one row per project the caller can see that has any
+  // attached contact/participant, with the contact list per project (the
+  // internal team + external participants + customer contacts). Static
+  // route so it precedes the `:id` catch-all.
+  @Get('attached-contacts')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'Projects with their attached contacts, grouped for the By-Project view' })
+  async getAttachedContacts(@CurrentUser() user: any) {
+    return this.projectsService.getAttachedContacts(user.id, user.roleId, user);
+  }
+
   @Get(':id')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get project by ID' })

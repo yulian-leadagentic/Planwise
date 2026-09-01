@@ -22,12 +22,14 @@ import { inputClass } from './constants';
    (which requires party.partnerType === 'organization' when
    contactPartyId is set).
 
-   Candidate source is KEPT as-is (all persons) — the picker still lets you
-   pick any person BP, and the person can be attached to this project
-   even if they have no worker_of edge to the customer org (multi-employer
-   / freelancer cases stay working). The org-level worker_of /
-   contact_of_customer edges remain untouched as the wider candidate
-   seed for future filtering. */
+   QA3 Commit D (Item 5, 2026-09-01) — candidate list is now SCOPED:
+   the picker only surfaces persons whose active `worker_of` targets
+   this customer org, AND who are NOT internal staff (no login user and
+   not worker_of the "Internal" seed org). Enforced server-side via the
+   `employerId=customerOrgId&excludeInternal=true` filter on
+   /business-partners (see QueryBusinessPartnersDto). This matches
+   Yulian's rule "no internal users; no employees of other customers".
+   */
 
 export function CustomerContactPicker({
   projectId,
@@ -55,9 +57,17 @@ export function CustomerContactPicker({
   }, []);
 
   const { data: persons = [] } = useQuery<any[]>({
+    // QA3 Commit D (Item 5): scope to this customer org's workers only,
+    // exclude internal staff. Query-key includes the org id so switching
+    // to a different customer refetches instead of showing stale rows.
     queryKey: ['bp-persons-for-customer-contact', customerOrgId],
     queryFn: () => client.get('/business-partners', {
-      params: { partnerType: 'person', perPage: 500 },
+      params: {
+        partnerType: 'person',
+        employerId: customerOrgId,
+        excludeInternal: true,
+        perPage: 500,
+      },
     }).then((r) => {
       const d = r.data?.data ?? r.data;
       return Array.isArray(d) ? d : (d?.data ?? []);
@@ -117,7 +127,10 @@ export function CustomerContactPicker({
               ))}
             </select>
             {filtered.length === 0 && (
-              <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">No people available. All are already contacts, or no persons exist yet.</p>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+                No contacts at {customerName} yet. Add one from the customer's card
+                (Contacts → By Customer → this org → Add contact) first.
+              </p>
             )}
           </div>
           <div>

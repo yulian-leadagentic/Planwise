@@ -463,11 +463,40 @@ export class ProjectPartnerRolesService {
     if (!customer) {
       throw new BadRequestException(`Organization ${customerOrgId} not found`);
     }
+    // QA3 Commit D (Item 6b) — auto-tag the org with the `customer`
+    // role-tag on write. Previously threw when the tag was missing;
+    // callers of setProjectCustomer are either creating a project (the
+    // create-project guardrail on ProjectsService.create already
+    // auto-upserts before we get here) or explicitly re-assigning the
+    // customer — either way, ensuring the tag is present matches the
+    // spec ("when an org is created/used as a customer, ensure it
+    // carries the `customer` role-tag"). Idempotent via the (bpId,
+    // roleTypeId) uniqueness constraint on business_partner_roles.
     const hasCustomerRole = customer.roles.some((r) => r.roleType.code === 'customer');
     if (!hasCustomerRole) {
-      throw new BadRequestException(
-        `Organization "${customer.displayName}" does not hold the "customer" partner-role.`,
-      );
+      const customerRoleType = await this.prisma.partnerRoleType.findUnique({
+        where: { code: 'customer' },
+        select: { id: true },
+      });
+      if (!customerRoleType) {
+        throw new BadRequestException(
+          'partner_role_types.code="customer" missing — schema seed is broken.',
+        );
+      }
+      await this.prisma.businessPartnerRole.upsert({
+        where: {
+          businessPartnerId_roleTypeId: {
+            businessPartnerId: customer.id,
+            roleTypeId: customerRoleType.id,
+          },
+        },
+        create: {
+          businessPartnerId: customer.id,
+          roleTypeId: customerRoleType.id,
+          isPrimary: false,
+        },
+        update: {},
+      });
     }
     const role = await this.prisma.projectRoleType.findUnique({
       where: { code: 'customer' },

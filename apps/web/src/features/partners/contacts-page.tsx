@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Search, X, Mail, Phone, Building2, FolderKanban, Pencil, UserPlus, Upload,
   List as ListIcon, FolderOpen, Building, ExternalLink, MapPin, UserCircle2,
-  ChevronLeft, ChevronRight, ChevronDown, User as UserIcon,
+  ChevronLeft, ChevronRight, ChevronDown, User as UserIcon, Plus, ArrowRight,
 } from 'lucide-react';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
@@ -73,6 +73,28 @@ type Org = {
   // this field still parse.
 };
 
+// QA3 Commit D (Item 6d) — shape returned by GET /projects/attached-contacts.
+type AttachedProject = {
+  projectId: number;
+  projectName: string;
+  projectNumber: string | null;
+  projectStatus: string;
+  contacts: Array<{
+    id: number;
+    displayName: string;
+    firstName: string | null;
+    lastName: string | null;
+    email: string | null;
+    partnerType: 'person' | 'organization';
+    roleCode: string;
+    roleName: string;
+    titleInProject: string | null;
+    orgId: number | null;
+    orgName: string | null;
+    isInternal: boolean;
+  }>;
+};
+
 type ViewMode = 'list' | 'by-project' | 'by-customer';
 
 const VIEW_TABS: Array<{ key: ViewMode; label: string; icon: React.ComponentType<{ className?: string }>; sub: string }> = [
@@ -133,6 +155,12 @@ export function ContactsPage() {
   // separate contact/organization creation flows now render the
   // same form under the hood (see create-partner-modal.tsx).
   const [showCreate, setShowCreate] = useState<null | 'person' | 'organization'>(null);
+  // QA3 Commit D (Item 6a) — "Add contact" for a specific customer org.
+  // When set, the CreatePartnerModal opens in person mode with the
+  // employer preset + locked, so the flow explicitly reads "add a
+  // contact at THIS customer" (matches the existing project Team
+  // customer-contact adder convention).
+  const [addContactForOrgId, setAddContactForOrgId] = useState<number | null>(null);
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const newMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -207,20 +235,46 @@ export function ContactsPage() {
     staleTime: 5 * 60_000,
   });
 
-  // Customer organizations specifically — drives the By Customer view. We
-  // ask the API for orgs that hold the "customer" role-type so we don't have
-  // to filter client-side and we don't miss orgs whose main_role is set but
-  // are also in the roles list.
+  // Customer organizations — drives the By Customer view.
+  //
+  // QA3 Commit D (Item 6b, 2026-09-01) — `includeProjectCustomers=true`
+  // makes the API union orgs holding the `customer` role-tag with orgs
+  // that appear as `customer` on any active ProjectPartnerRole. Before
+  // this, orgs used as project customers whose partner-role tag was
+  // never set (legacy data from before the create-project auto-tag
+  // guard — e.g. אסדן / טקרו / חדיף on staging) were invisible here.
+  // The write path now auto-upserts the tag (see projects.service
+  // + project-partner-roles.service), so the UNION is a safety net for
+  // pre-existing rows rather than the primary source of truth.
   const { data: customersData } = useQuery<Org[]>({
-    queryKey: ['business-partners', 'customers-for-contacts'],
+    queryKey: ['business-partners', 'customers-for-contacts', 'v2-union'],
     queryFn: () =>
       client.get('/business-partners', {
-        params: { partnerType: 'organization', roleType: 'customer', perPage: 200 },
+        params: {
+          partnerType: 'organization',
+          roleType: 'customer',
+          includeProjectCustomers: true,
+          perPage: 200,
+        },
       }).then((r) => {
         const body = r.data?.data ?? r.data;
         return Array.isArray(body) ? body : (body?.data ?? []);
       }),
     staleTime: 5 * 60_000,
+  });
+
+  // QA3 Commit D (Item 6d, 2026-09-01) — By-Project feed. Loads only
+  // when the By Project view is active so the initial page render
+  // (default view = list) stays cheap.
+  const { data: attachedByProject, isLoading: byProjectLoading } = useQuery<AttachedProject[]>({
+    queryKey: ['projects', 'attached-contacts'],
+    enabled: view === 'by-project',
+    queryFn: () =>
+      client.get('/projects/attached-contacts').then((r) => {
+        const body = r.data?.data ?? r.data;
+        return Array.isArray(body) ? body : (body?.data ?? []);
+      }),
+    staleTime: 60_000,
   });
 
   const allContacts: Contact[] = contactsPage?.data ?? [];
@@ -527,16 +581,19 @@ export function ContactsPage() {
           )}
         </>
       ) : view === 'by-project' ? (
-        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-16 text-center text-sm text-slate-500 dark:text-slate-400">
-          <FolderOpen className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600 mb-3" />
-          <p className="font-semibold text-slate-700 dark:text-slate-200">By Project view — coming next</p>
-          <p className="mt-1 text-[12px] text-slate-400 dark:text-slate-500">Project cards with stacked contact avatars; click a stack to expand.</p>
-        </div>
+        <ByProjectView
+          groups={attachedByProject ?? []}
+          isLoading={byProjectLoading}
+          onSelectContact={openContact}
+          onOpenProject={(id) => navigate(`/projects/${id}`)}
+        />
       ) : (
         <ByCustomerView
           customers={customersData ?? []}
           contacts={visibleContacts}
           onSelect={openContact}
+          onAddContact={(orgId) => setAddContactForOrgId(orgId)}
+          onOpenCustomer={openContact}
         />
       )}
 
@@ -557,6 +614,21 @@ export function ContactsPage() {
           defaultPartnerType={showCreate}
           onClose={() => setShowCreate(null)}
           onCreated={(id) => { setShowCreate(null); openContact(id); }}
+        />
+      )}
+
+      {/* QA3 Commit D (Item 6a) — "Add contact at <customer>" flow.
+          Locks the form to person mode with the employer pre-selected
+          and pinned to that customer. Same modal component as the free
+          "New Contact" above so the surface stays consistent. */}
+      {addContactForOrgId !== null && (
+        <CreatePartnerModal
+          defaultPartnerType="person"
+          lockPartnerType
+          preselectEmployerOrgId={addContactForOrgId}
+          lockEmployer
+          onClose={() => setAddContactForOrgId(null)}
+          onCreated={(id) => { setAddContactForOrgId(null); openContact(id); }}
         />
       )}
     </div>
@@ -731,11 +803,19 @@ function ContactStatusBadge({ status }: { status: string }) {
  * a clear empty hint to add the first contact.
  */
 function ByCustomerView({
-  customers, contacts, onSelect,
+  customers, contacts, onSelect, onAddContact, onOpenCustomer,
 }: {
   customers: Org[];
   contacts: Contact[];
   onSelect: (id: number) => void;
+  // QA3 Commit D (Item 6a) — parent-owned "Add contact for this customer"
+  // trigger; opens the shared Person New-Contact modal with the employer
+  // pre-selected & locked.
+  onAddContact: (customerOrgId: number) => void;
+  // QA3 Commit D (Item 6c) — parent-owned "open the customer's BP drawer"
+  // trigger. Reuses the same useDrawerRoute('contact') channel as the
+  // per-contact rows so refresh / back restore the open state.
+  onOpenCustomer: (customerOrgId: number) => void;
 }) {
   // Group contacts by their worker_of org id.
   const byOrg = useMemo(() => {
@@ -777,8 +857,9 @@ function ByCustomerView({
         <Building className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600 mb-3" />
         <p className="font-semibold text-slate-700 dark:text-slate-200">No customer organizations yet</p>
         <p className="mt-1 text-[12px] text-slate-400 dark:text-slate-500">
-          Add an organization from <span className="font-mono text-slate-500 dark:text-slate-400">Partners → Organizations</span> and tag it
-          with the <span className="font-mono text-slate-500 dark:text-slate-400">customer</span> role to see it here.
+          Any organization set as a project's customer, or tagged with the{' '}
+          <span className="font-mono text-slate-500 dark:text-slate-400">customer</span> role, will appear here.
+          Add one from <span className="font-mono text-slate-500 dark:text-slate-400">Partners → Organizations</span> to get started.
         </p>
       </div>
     );
@@ -793,6 +874,8 @@ function ByCustomerView({
             customer={customer}
             contacts={byOrg.get(customer.id) ?? []}
             onSelect={onSelect}
+            onAddContact={onAddContact}
+            onOpenCustomer={onOpenCustomer}
           />
         ))}
       </div>
@@ -818,41 +901,68 @@ function ByCustomerView({
 }
 
 function CustomerCard({
-  customer, contacts, onSelect,
+  customer, contacts, onSelect, onAddContact, onOpenCustomer,
 }: {
   customer: Org;
   contacts: Contact[];
   onSelect: (id: number) => void;
+  onAddContact: (customerOrgId: number) => void;
+  onOpenCustomer: (customerOrgId: number) => void;
 }) {
   return (
     <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden hover:shadow-md transition-shadow">
-      {/* Header */}
-      <div className="border-b border-slate-100 dark:border-slate-800 px-4 py-3 bg-gradient-to-br from-purple-50 to-white">
-        <div className="flex items-center gap-3">
-          <div className="rounded-lg bg-purple-100 p-2 shrink-0">
-            <Building2 className="h-5 w-5 text-purple-700" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h3 className="font-bold text-[14px] text-slate-800 dark:text-slate-100 truncate" title={customer.displayName}>
-              {customer.displayName}
-            </h3>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-              <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-1.5 py-0.5 font-semibold text-purple-700">
-                Customer
-              </span>
-              <span className="ml-2 tabular-nums">
-                {contacts.length} {contacts.length === 1 ? 'contact' : 'contacts'}
-              </span>
-            </p>
-          </div>
+      {/* Header
+          QA3 Commit D (Item 6c) — the entire header is now a clickable
+          button that opens the org's partner drawer (`?contact=<id>`);
+          the Add-contact action inside stops propagation so it opens the
+          create modal instead of the drawer. Per-contact rows below
+          keep their own click handler with their own stopPropagation. */}
+      <div className="border-b border-slate-100 dark:border-slate-800 bg-gradient-to-br from-purple-50 to-white dark:from-purple-950/30 dark:to-slate-900">
+        <div className="flex items-stretch">
+          <button
+            type="button"
+            onClick={() => onOpenCustomer(customer.id)}
+            className="flex items-center gap-3 flex-1 min-w-0 px-4 py-3 text-left hover:bg-purple-50/60 dark:hover:bg-purple-900/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-l-[14px]"
+            title={`Open ${customer.displayName}`}
+          >
+            <div className="rounded-lg bg-purple-100 dark:bg-purple-900/50 p-2 shrink-0">
+              <Building2 className="h-5 w-5 text-purple-700 dark:text-purple-300" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="font-bold text-[14px] text-slate-800 dark:text-slate-100 truncate" title={customer.displayName}>
+                {customer.displayName}
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 dark:bg-purple-900/50 px-1.5 py-0.5 font-semibold text-purple-700 dark:text-purple-300">
+                  Customer
+                </span>
+                <span className="ml-2 tabular-nums">
+                  {contacts.length} {contacts.length === 1 ? 'contact' : 'contacts'}
+                </span>
+              </p>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onAddContact(customer.id); }}
+            className="shrink-0 px-3 flex items-center gap-1 text-[11px] font-semibold text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 border-l border-slate-200 dark:border-slate-700 rounded-r-[14px] focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            title={`Add a contact at ${customer.displayName}`}
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+            Add contact
+          </button>
         </div>
       </div>
 
       {/* Contact list */}
       {contacts.length === 0 ? (
-        <div className="px-4 py-6 text-center text-[12px] text-slate-400 dark:text-slate-500 italic">
-          No contacts at this customer yet.
-        </div>
+        <button
+          type="button"
+          onClick={() => onAddContact(customer.id)}
+          className="w-full px-4 py-6 text-center text-[12px] text-slate-400 dark:text-slate-500 italic hover:bg-blue-50/40 dark:hover:bg-blue-900/20 hover:text-blue-700 dark:hover:text-blue-300"
+        >
+          No contacts at this customer yet. Click to add the first.
+        </button>
       ) : (
         <div className="divide-y divide-slate-50 dark:divide-slate-800 max-h-[320px] overflow-y-auto">
           {contacts.map((c) => (
@@ -861,6 +971,159 @@ function CustomerCard({
         </div>
       )}
     </div>
+  );
+}
+
+/* ─── By Project view ───────────────────────────────────────────────────
+   QA3 Commit D (Item 6d, 2026-09-01). Grouped list — one card per
+   project the caller can see that has at least one attached contact.
+   Contacts come from project_partner_roles across every role except
+   the buying-org 'customer' row (so participants, customer contacts,
+   and every discipline-holder show up). Sourced from
+   GET /projects/attached-contacts. */
+
+function ByProjectView({
+  groups, isLoading, onSelectContact, onOpenProject,
+}: {
+  groups: AttachedProject[];
+  isLoading: boolean;
+  onSelectContact: (id: number) => void;
+  onOpenProject: (projectId: number) => void;
+}) {
+  if (isLoading) {
+    return (
+      <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center text-sm text-slate-400 dark:text-slate-500">
+        Loading projects with attached contacts…
+      </div>
+    );
+  }
+  if (groups.length === 0) {
+    return (
+      <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-16 text-center text-sm text-slate-500 dark:text-slate-400">
+        <FolderOpen className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600 mb-3" />
+        <p className="font-semibold text-slate-700 dark:text-slate-200">No projects with attached contacts yet</p>
+        <p className="mt-1 text-[12px] text-slate-400 dark:text-slate-500">
+          As soon as a project has participants, role-holders or customer contacts, they'll show up here grouped by project.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      {groups.map((g) => (
+        <ProjectContactsCard
+          key={g.projectId}
+          group={g}
+          onSelectContact={onSelectContact}
+          onOpenProject={onOpenProject}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ProjectContactsCard({
+  group, onSelectContact, onOpenProject,
+}: {
+  group: AttachedProject;
+  onSelectContact: (id: number) => void;
+  onOpenProject: (projectId: number) => void;
+}) {
+  return (
+    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden hover:shadow-md transition-shadow">
+      {/* Header — clickable, opens the project detail page. Same
+          affordance the CustomerCard uses (dedicated button that
+          participates in focus order + keyboard access). */}
+      <button
+        type="button"
+        onClick={() => onOpenProject(group.projectId)}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left border-b border-slate-100 dark:border-slate-800 bg-gradient-to-br from-blue-50 to-white dark:from-blue-950/30 dark:to-slate-900 hover:bg-blue-50/60 dark:hover:bg-blue-900/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        title={`Open ${group.projectName}`}
+      >
+        <div className="rounded-lg bg-blue-100 dark:bg-blue-900/50 p-2 shrink-0">
+          <FolderKanban className="h-5 w-5 text-blue-700 dark:text-blue-300" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="font-bold text-[14px] text-slate-800 dark:text-slate-100 truncate" title={group.projectName}>
+            {group.projectName}
+          </h3>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+            {group.projectNumber && (
+              <span className="font-mono tabular-nums text-slate-600 dark:text-slate-300 mr-2">{group.projectNumber}</span>
+            )}
+            <span className="tabular-nums">
+              {group.contacts.length} {group.contacts.length === 1 ? 'contact' : 'contacts'}
+            </span>
+          </p>
+        </div>
+        <ArrowRight className="h-4 w-4 text-slate-300 dark:text-slate-600 shrink-0" aria-hidden="true" />
+      </button>
+
+      {/* Contact rows. Per-project empty state deliberately unreachable
+          — the API omits projects with no contacts (see
+          ProjectsService.getAttachedContacts). Left as a defensive
+          guard so a stale response never renders a blank card. */}
+      {group.contacts.length === 0 ? (
+        <div className="px-4 py-6 text-center text-[12px] text-slate-400 dark:text-slate-500 italic">
+          No contacts on this project yet.
+        </div>
+      ) : (
+        <div className="divide-y divide-slate-50 dark:divide-slate-800 max-h-[320px] overflow-y-auto">
+          {group.contacts.map((c) => (
+            <ProjectContactRow key={`${c.id}-${c.roleCode}`} c={c} onSelect={onSelectContact} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProjectContactRow({
+  c, onSelect,
+}: {
+  c: AttachedProject['contacts'][number];
+  onSelect: (id: number) => void;
+}) {
+  const isOrg = c.partnerType === 'organization';
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(c.id)}
+      className="group w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-blue-50/40 dark:hover:bg-blue-900/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+      title={`Open ${c.displayName}`}
+    >
+      {isOrg ? (
+        <div className="rounded-full bg-violet-100 dark:bg-violet-900/40 p-1.5 shrink-0">
+          <Building2 className="h-3.5 w-3.5 text-violet-700 dark:text-violet-300" />
+        </div>
+      ) : (
+        <UserAvatar
+          firstName={c.firstName ?? ''}
+          lastName={c.lastName ?? ''}
+          avatarUrl={null}
+          size="sm"
+        />
+      )}
+      <div className="flex-1 min-w-0">
+        <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">
+          {c.displayName}
+          {c.isInternal && (
+            <span
+              className="ml-1.5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-[1px] text-[9px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300"
+              title="Internal team member (has a login account)"
+            >
+              Internal
+            </span>
+          )}
+        </p>
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+          <span className="text-slate-600 dark:text-slate-300">{c.titleInProject ?? c.roleName}</span>
+          {c.orgName && (
+            <> · <span className="text-slate-500 dark:text-slate-400">{c.orgName}</span></>
+          )}
+        </p>
+      </div>
+    </button>
   );
 }
 

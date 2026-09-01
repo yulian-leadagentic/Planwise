@@ -7,6 +7,7 @@ import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
 import { formatDate } from '@/lib/date-utils';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { CreatePartnerModal } from './create-partner-modal';
 
 const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
@@ -232,6 +233,10 @@ export function PartnerDrawer({
   const { can, isAdmin } = usePermissions();
   const canWrite = isAdmin || can('partners', 'write');
   const canDelete = isAdmin || can('partners', 'delete');
+  // QA3 Commit D (Item 6a) — "Add contact" flow launched from an org
+  // drawer. Preselects the employer to THIS org and locks it so the
+  // resulting person is worker_of this org from the start.
+  const [addContactOpen, setAddContactOpen] = useState(false);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -271,6 +276,25 @@ export function PartnerDrawer({
             tab bar so it doesn't compete with tab navigation. */}
         {bp && <MainRoleHeaderField bp={bp} canWrite={canWrite} />}
 
+        {/* QA3 Commit D (Item 6a) — quick action strip for orgs.
+            Renders "Add contact" so a user landing on a customer's
+            drawer can create a person under that employer in one
+            click, no navigation. Person-side drawers get no action
+            (they have no "employer" to prefill). */}
+        {bp?.partnerType === 'organization' && canWrite && (
+          <div className="flex items-center justify-end gap-2 border-b border-slate-100 dark:border-slate-800 px-5 py-2 bg-slate-50/40 dark:bg-slate-800/30">
+            <button
+              type="button"
+              onClick={() => setAddContactOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-blue-400 dark:hover:border-blue-500 hover:text-blue-700 dark:hover:text-blue-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              title={`Add a new person working at ${bp.displayName}`}
+            >
+              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+              Add contact
+            </button>
+          </div>
+        )}
+
         {/* Tabs */}
         <div className="flex border-b border-slate-200 dark:border-slate-700 px-5">
           {([
@@ -306,6 +330,21 @@ export function PartnerDrawer({
           )}
         </div>
       </div>
+
+      {/* QA3 Commit D (Item 6a) — the person-create modal launched from
+          this drawer. Pinned to person mode + this org as the locked
+          employer so the flow explicitly reads "add a contact at THIS
+          org". */}
+      {addContactOpen && bp?.partnerType === 'organization' && (
+        <CreatePartnerModal
+          defaultPartnerType="person"
+          lockPartnerType
+          preselectEmployerOrgId={bp.id}
+          lockEmployer
+          onClose={() => setAddContactOpen(false)}
+          onCreated={() => setAddContactOpen(false)}
+        />
+      )}
     </>
   );
 }

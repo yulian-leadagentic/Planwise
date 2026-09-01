@@ -134,9 +134,37 @@ export class BusinessPartnersService {
     if (query.status) where.status = query.status;
 
     if (query.roleType) {
-      where.roles = {
-        some: { roleType: { code: query.roleType } },
-      };
+      // QA3 Commit D (Item 6b): when `includeProjectCustomers=true`, the
+      // WHERE unions the businessPartnerRole tag match with orgs that
+      // appear as `roleType` on any active ProjectPartnerRole. Reason:
+      // pre-guard legacy data has orgs used as project customers whose
+      // partner-role tag was never set (e.g. אסדן / טקרו / חדיף on
+      // staging). The write path was later hardened (projects.create +
+      // setProjectCustomer now auto-upsert the tag, see this commit's
+      // Item 6b change), so this UNION is the read-side safety net for
+      // legacy rows.
+      const roleTag = { some: { roleType: { code: query.roleType } } };
+      if (query.includeProjectCustomers) {
+        const now = new Date();
+        const orClause = [
+          { roles: roleTag },
+          {
+            projectPartnerRoles: {
+              some: {
+                role: { code: query.roleType },
+                status: 'active',
+                validFrom: { lte: now },
+                validTo: { gt: now },
+              },
+            },
+          },
+        ];
+        // Preserve any pre-existing OR on `where` (currently only `search`
+        // sets it later, but be defensive).
+        where.OR = where.OR ? [...where.OR, ...orClause] : orClause;
+      } else {
+        where.roles = roleTag;
+      }
     }
 
     // Employer filter — matches persons whose active worker_of edge
@@ -156,13 +184,43 @@ export class BusinessPartnersService {
       };
     }
 
+    // QA3 Commit D (Item 5) — exclude internal staff from candidate
+    // pickers. Two combined rules that match the client-side filter in
+    // contacts-page.tsx (which we can now drop from the customer-contact
+    // picker):
+    //   1. `user is null` — no login account.
+    //   2. NOT worker_of an org whose name is "Internal" (the seeded
+    //      self-org). Guarded by an OR clause so persons with no worker_of
+    //      edge (unaffiliated externals) still match.
+    if (query.excludeInternal) {
+      // Prisma nullable one-to-one — use `is: null` (bare `null` shorthand
+      // works on newer versions but the explicit form is unambiguous).
+      where.user = { is: null };
+      where.NOT = [
+        {
+          partnerRelationshipsA: {
+            some: {
+              type: { code: 'worker_of' },
+              validTo: { gt: new Date() },
+              partyB: {
+                OR: [
+                  { displayName: { equals: 'Internal' } },
+                  { companyName: { equals: 'Internal' } },
+                ],
+              },
+            },
+          },
+        },
+      ];
+    }
+
     if (query.search) {
       const s = query.search.trim();
       // Bilingual search — see comment in users.service.findAll. The
       // person-name columns (firstName/lastName + Hebrew variants) are
       // included on top of displayName because admins routinely type
       // just the first or last name. (T3.3, 2026-06-28)
-      where.OR = [
+      const searchOr = [
         { displayName: { contains: s } },
         { firstName:   { contains: s } },
         { lastName:    { contains: s } },
@@ -173,6 +231,20 @@ export class BusinessPartnersService {
         { phone:       { contains: s } },
         { mobile:      { contains: s } },
       ];
+      // QA3 Commit D — if a prior clause already set OR (e.g. the
+      // customer-role UNION), fold the two ORs into an AND so both
+      // constraints hold. Otherwise the naive assignment used to drop
+      // the earlier OR silently.
+      if (where.OR) {
+        where.AND = [
+          ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+          { OR: where.OR },
+          { OR: searchOr },
+        ];
+        delete where.OR;
+      } else {
+        where.OR = searchOr;
+      }
     }
 
     const page = query.page ?? 1;

@@ -131,11 +131,39 @@ export class ProjectsService {
         `Customer organization (BP id=${customerOrgId}) not found. Pick an existing organization or use the "Internal" org for internal projects.`,
       );
     }
+    // QA3 Commit D (Item 6b) — auto-tag the org with the `customer`
+    // role-tag when it's used as a project customer. Previously this
+    // threw with "does not hold the customer role"; the new behaviour
+    // mirrors syncMainRoleIntoRoles: idempotent upsert into
+    // business_partner_roles so any org used as a project customer
+    // carries the tag going forward. Read-side UNION (see
+    // BusinessPartnersService.findAll `includeProjectCustomers`) is the
+    // safety net for pre-existing legacy rows that predate this.
     const hasCustomerRole = customerOrg.roles.some((r) => r.roleType.code === 'customer');
     if (!hasCustomerRole) {
-      throw new BadRequestException(
-        `Organization "${customerOrg.displayName}" does not hold the "customer" role. Add it from /partners → Organizations before using this org as a project customer.`,
-      );
+      const customerRoleType = await this.prisma.partnerRoleType.findUnique({
+        where: { code: 'customer' },
+        select: { id: true },
+      });
+      if (!customerRoleType) {
+        throw new BadRequestException(
+          'partner_role_types.code="customer" missing — schema seed is broken.',
+        );
+      }
+      await this.prisma.businessPartnerRole.upsert({
+        where: {
+          businessPartnerId_roleTypeId: {
+            businessPartnerId: customerOrg.id,
+            roleTypeId: customerRoleType.id,
+          },
+        },
+        create: {
+          businessPartnerId: customerOrg.id,
+          roleTypeId: customerRoleType.id,
+          isPrimary: false,
+        },
+        update: {},
+      });
     }
 
     // BM2 QA-2 Commit 5 (PR-023): the previous "every isPrimaryRequired
@@ -1240,6 +1268,193 @@ export class ProjectsService {
         onBehalfOfParty: a.onBehalfOfParty,
       })),
     };
+  }
+
+  /**
+   * QA3 Commit D (Item 6d) — feeds the Contacts By-Project grid.
+   *
+   * For every project the caller can see that has any attached contact,
+   * returns one group: {projectId, projectName, projectNumber,
+   * projectStatus, contacts[]}. Contacts come from the same
+   * project-scoped set the Team tab renders (from PR-026):
+   *   • ProjectPartnerRole rows across ALL roles except the `customer`
+   *     role itself (the customer is the buying org, not a "contact
+   *     attached to the project" — but its customer_contact rows ARE
+   *     surfaced, which is the point).
+   *   • Both party (person or org) and, when the party is an org,
+   *     contactParty (the contact person for that org) — for
+   *     customer_contact rows the contactParty is the actual human.
+   *
+   * Empty projects (no attached contact) are omitted; the frontend
+   * shows a top-level empty state when the whole grid is empty. The
+   * per-project empty case in the spec ("per-project empty state only
+   * when it truly has none") is currently unreachable because we omit
+   * empty projects here — the spec was written before the decision to
+   * drop noisy empty rows. Documented so a future change knows the
+   * intent.
+   */
+  async getAttachedContacts(
+    userId?: number,
+    roleId?: number | null,
+    _caller?: any,
+  ): Promise<
+    Array<{
+      projectId: number;
+      projectName: string;
+      projectNumber: string | null;
+      projectStatus: string;
+      contacts: Array<{
+        id: number;
+        displayName: string;
+        firstName: string | null;
+        lastName: string | null;
+        email: string | null;
+        partnerType: 'person' | 'organization';
+        roleCode: string;
+        roleName: string;
+        titleInProject: string | null;
+        orgId: number | null;
+        orgName: string | null;
+        isInternal: boolean;
+      }>;
+    }>
+  > {
+    // Visibility scope. Admins see all; others see only projects they
+    // have access to — same accessor used by findAll and getTeam.
+    let projectIdFilter: number[] | 'all' = 'all';
+    if (userId != null) {
+      const accessible = await this.access.getAccessibleProjectIds(userId, roleId);
+      if (!accessible.all) {
+        if (accessible.projectIds.length === 0) return [];
+        projectIdFilter = accessible.projectIds;
+      }
+    }
+
+    const now = new Date();
+    const rows = await this.prisma.projectPartnerRole.findMany({
+      where: {
+        ...(projectIdFilter === 'all' ? {} : { projectId: { in: projectIdFilter } }),
+        status: 'active',
+        validFrom: { lte: now },
+        validTo: { gt: now },
+        // Skip the buying-org row itself. All other roles (participant,
+        // customer_contact, architect, BIM leader, ...) are contacts we
+        // want on the By-Project grid.
+        role: { code: { not: 'customer' } },
+        project: { deletedAt: null },
+      },
+      include: {
+        role: { select: { code: true, name: true } },
+        project: { select: { id: true, name: true, number: true, status: true } },
+        party: {
+          select: {
+            id: true,
+            partnerType: true,
+            displayName: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            user: { select: { id: true } },
+          },
+        },
+        contactParty: {
+          select: {
+            id: true,
+            partnerType: true,
+            displayName: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            user: { select: { id: true } },
+          },
+        },
+      },
+      orderBy: [{ projectId: 'asc' }, { isPrimary: 'desc' }, { createdAt: 'asc' }],
+    });
+
+    // Group per project; within a project dedupe on the resolved contact
+    // key (contactParty when set — for org rows with a contact — else
+    // party). A person appearing under multiple roles surfaces as one
+    // row on the ORIGINAL role (first sighting; we don't merge role
+    // labels here — that's the Team tab's job).
+    type ContactRow = {
+      id: number;
+      displayName: string;
+      firstName: string | null;
+      lastName: string | null;
+      email: string | null;
+      partnerType: 'person' | 'organization';
+      roleCode: string;
+      roleName: string;
+      titleInProject: string | null;
+      orgId: number | null;
+      orgName: string | null;
+      isInternal: boolean;
+    };
+    const byProject = new Map<
+      number,
+      {
+        projectId: number;
+        projectName: string;
+        projectNumber: string | null;
+        projectStatus: string;
+        contacts: ContactRow[];
+        seen: Set<number>;
+      }
+    >();
+
+    for (const r of rows) {
+      if (!r.project) continue;
+      const bucket = byProject.get(r.projectId) ?? {
+        projectId: r.projectId,
+        projectName: r.project.name,
+        projectNumber: r.project.number,
+        projectStatus: r.project.status,
+        contacts: [],
+        seen: new Set<number>(),
+      };
+      byProject.set(r.projectId, bucket);
+
+      // Resolve the "who is the contact" — for an org party with a
+      // contactParty (SAP-style "partner + contact person"), the human
+      // is contactParty; otherwise the party itself is the contact.
+      let contactSource: typeof r.party | typeof r.contactParty = r.party;
+      let orgId: number | null = null;
+      let orgName: string | null = null;
+      if (r.party.partnerType === 'organization' && r.contactParty) {
+        contactSource = r.contactParty;
+        orgId = r.party.id;
+        orgName = r.party.displayName;
+      } else if (r.party.partnerType === 'organization') {
+        // Party is an org with no contactParty — still surface the org
+        // as the row so a customer-side org participation isn't hidden.
+        contactSource = r.party;
+      }
+      if (!contactSource) continue;
+      if (bucket.seen.has(contactSource.id)) continue;
+      bucket.seen.add(contactSource.id);
+
+      bucket.contacts.push({
+        id: contactSource.id,
+        displayName: contactSource.displayName,
+        firstName: contactSource.firstName ?? null,
+        lastName: contactSource.lastName ?? null,
+        email: contactSource.email ?? null,
+        partnerType: contactSource.partnerType as 'person' | 'organization',
+        roleCode: r.role.code,
+        roleName: r.role.name,
+        titleInProject: r.titleInProject,
+        orgId,
+        orgName,
+        isInternal: !!contactSource.user?.id,
+      });
+    }
+
+    // Sort project groups by name (stable, deterministic). Drop the
+    // `seen` bookkeeping from the response.
+    return Array.from(byProject.values())
+      .sort((a, b) => a.projectName.localeCompare(b.projectName))
+      .map(({ seen: _seen, ...rest }) => rest);
   }
 
   /**
