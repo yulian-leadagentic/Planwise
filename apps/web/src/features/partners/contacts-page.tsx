@@ -1,10 +1,10 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Search, X, Mail, Phone, Building2, FolderKanban, Pencil, UserPlus, Upload,
   List as ListIcon, FolderOpen, Building, ExternalLink, MapPin, UserCircle2,
-  ChevronLeft, ChevronRight, ChevronDown, User as UserIcon, Plus, ArrowRight,
+  ChevronLeft, ChevronRight, Plus, ArrowRight,
 } from 'lucide-react';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
@@ -149,30 +149,20 @@ export function ContactsPage() {
 
   const perPage = view === 'list' ? LIST_PAGE_SIZE : GROUP_PAGE_SIZE;
 
-  // Unified "New" split-button — offers "New Contact" and "New
-  // Organization", opening the shared CreatePartnerModal with the
-  // right default type. Consolidation from ux/partner-contact — the
-  // separate contact/organization creation flows now render the
-  // same form under the hood (see create-partner-modal.tsx).
-  const [showCreate, setShowCreate] = useState<null | 'person' | 'organization'>(null);
+  // "New Contact" opens the shared CreatePartnerModal pinned to person
+  // mode via `lockPartnerType` (QA3 · Commit C, 2026-09-01). Rationale:
+  // the Contacts screen is by definition about people; org creation
+  // stays on the Partners page (`CreateOrganizationModal` there), so
+  // there's no Person/Org toggle and no split-button menu on this
+  // surface — consistent with PR-025's New-Project decision that
+  // person-only entry points don't surface the toggle.
+  const [showCreate, setShowCreate] = useState(false);
   // QA3 Commit D (Item 6a) — "Add contact" for a specific customer org.
   // When set, the CreatePartnerModal opens in person mode with the
   // employer preset + locked, so the flow explicitly reads "add a
   // contact at THIS customer" (matches the existing project Team
   // customer-contact adder convention).
   const [addContactForOrgId, setAddContactForOrgId] = useState<number | null>(null);
-  const [newMenuOpen, setNewMenuOpen] = useState(false);
-  const newMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!newMenuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (newMenuRef.current && !newMenuRef.current.contains(e.target as Node)) {
-        setNewMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [newMenuOpen]);
 
   // Any filter change resets pagination to page 1 — otherwise a user on
   // page 3 who narrows the search would either see empty results (if the
@@ -377,57 +367,20 @@ export function ContactsPage() {
             Import contacts
           </button>
         )}
-        {/* Split-button "New" — the single creation entry point since
-            ux/partner-contact. Opens the shared CreatePartnerModal
-            with either 'person' or 'organization' as the starting
-            mode; the user can still flip the toggle inside the modal
-            if they picked the wrong option. */}
-        <div ref={newMenuRef} className="relative">
-          <div className="inline-flex rounded-md shadow-sm">
-            <button
-              type="button"
-              onClick={() => { setShowCreate('person'); setNewMenuOpen(false); }}
-              className="inline-flex items-center gap-2 rounded-l-md bg-blue-600 hover:bg-blue-700 px-3.5 py-2 text-sm font-semibold text-white"
-            >
-              <UserPlus className="h-4 w-4" aria-hidden="true" /> New Contact
-            </button>
-            <button
-              type="button"
-              onClick={() => setNewMenuOpen((v) => !v)}
-              aria-label="More create options"
-              aria-haspopup="menu"
-              aria-expanded={newMenuOpen}
-              className="rounded-r-md border-l border-blue-500/40 bg-blue-600 hover:bg-blue-700 px-2 py-2 text-white"
-            >
-              <ChevronDown className="h-4 w-4" aria-hidden="true" />
-            </button>
-          </div>
-          {newMenuOpen && (
-            <div
-              role="menu"
-              className="absolute right-0 top-full mt-1 w-56 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg overflow-hidden z-20"
-            >
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => { setShowCreate('person'); setNewMenuOpen(false); }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
-              >
-                <UserIcon className="h-4 w-4 text-blue-600" aria-hidden="true" />
-                New Contact
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => { setShowCreate('organization'); setNewMenuOpen(false); }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
-              >
-                <Building2 className="h-4 w-4 text-violet-600" aria-hidden="true" />
-                New Organization
-              </button>
-            </div>
-          )}
-        </div>
+        {/* "New Contact" — single, person-only entry point (QA3 · Commit
+            C, 2026-09-01). The split-button/menu that used to offer a
+            "New Organization" alternative was removed: this surface is
+            about people; org creation stays on the Partners page. The
+            modal opens with `lockPartnerType`, so the internal
+            Person/Org toggle is hidden here (mirrors the
+            add-contact-from-customer-drawer flow in Commit D). */}
+        <button
+          type="button"
+          onClick={() => setShowCreate(true)}
+          className="inline-flex items-center gap-2 rounded-md bg-blue-600 hover:bg-blue-700 px-3.5 py-2 text-sm font-semibold text-white shadow-sm"
+        >
+          <UserPlus className="h-4 w-4" aria-hidden="true" /> New Contact
+        </button>
         </div>
       </div>
 
@@ -607,13 +560,17 @@ export function ContactsPage() {
         />
       )}
 
-      {/* Shared creation modal — opens the newly-created record in the
+      {/* Shared creation modal — person-only on this surface (QA3 ·
+          Commit C). `lockPartnerType` hides the internal Person/Org
+          toggle inside the modal so the flow can't be flipped to
+          organization mid-form. Newly-created contact opens in the
           drawer via useDrawerRoute so the URL reflects the state. */}
-      {showCreate !== null && (
+      {showCreate && (
         <CreatePartnerModal
-          defaultPartnerType={showCreate}
-          onClose={() => setShowCreate(null)}
-          onCreated={(id) => { setShowCreate(null); openContact(id); }}
+          defaultPartnerType="person"
+          lockPartnerType
+          onClose={() => setShowCreate(false)}
+          onCreated={(id) => { setShowCreate(false); openContact(id); }}
         />
       )}
 
