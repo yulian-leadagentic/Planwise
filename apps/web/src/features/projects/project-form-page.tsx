@@ -2,14 +2,15 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ArrowLeft, Loader2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { ArrowLeft, Loader2, Plus, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import client from '@/api/client';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { useProject, useCreateProject, useUpdateProject, useProjectTypes } from '@/hooks/use-projects';
 import { usePermissions } from '@/hooks/use-permissions';
 import { notify } from '@/lib/notify';
+import { PeopleMultiSelect, type Person } from '@/components/shared/people-multi-select';
 
 // Empty-string → undefined preprocessor. Lets `.optional()` pass for
 // blank fields without z.coerce.number() turning '' into NaN and
@@ -124,13 +125,15 @@ export function ProjectFormPage() {
   const numberMode = numberConfig?.mode ?? null;
 
   // ProjectRoleType catalog. The Team section on the New-Project form
-  // renders one picker per role-type (excluding 'customer', which has its
-  // own field above). BM2 QA-2 Commit 5 (PR-023): every role is OPTIONAL
-  // at create time — the previous "required if isPrimaryRequired" filter
-  // was removed, along with the client-side blocker and the backend's
-  // matching required-role check. Admins can still assign roles later
-  // from the project's Team tab, where `isPrimaryRequired` still governs
-  // the "obligatory roles" grouping.
+  // used to render one stacked <select> per role-type (excluding
+  // 'customer', which has its own field above). QA3 Commit B replaces
+  // that long, mostly-empty column with a compact "+ Add role" picker:
+  // the user picks a role and a person, and a chip-row lands in the
+  // list. Every role is still OPTIONAL at create time (PR-023): zero
+  // assignments is a valid submit, and admins can fill in more from
+  // the project's Team tab afterwards. `isPrimaryRequired` still
+  // governs the "obligatory roles" grouping there, not the create
+  // form.
   const { data: projectRoleTypes = [] } = useQuery<any[]>({
     queryKey: ['project-role-types'],
     staleTime: 5 * 60 * 1000,
@@ -140,11 +143,20 @@ export function ProjectFormPage() {
         return Array.isArray(d) ? d : [];
       }),
   });
-  const teamRoles = projectRoleTypes.filter((rt: any) => rt.code !== 'customer');
+  const teamRoles = useMemo(
+    () => projectRoleTypes.filter((rt: any) => rt.code !== 'customer'),
+    [projectRoleTypes],
+  );
 
-  // Team role assignments — { [roleId]: partyId }. Every pick is optional;
-  // an unassigned role simply omits itself from the create payload.
-  const [teamRoleSelections, setTeamRoleSelections] = useState<Record<number, number | null>>({});
+  // Team assignments the user has queued up before submit. Each row is
+  // { tempId, roleId, partyId } — the tempId is a client-side stable key
+  // (uuid-ish) so React survives adds/removes cleanly, and the same role
+  // can appear more than once when the model allows it (different people
+  // in the same role). Dedupe on (roleId, partyId) — a pair is unique per
+  // ProjectPartnerRole's @@unique([projectId, partyId, roleId, validFrom]).
+  const [teamAssignments, setTeamAssignments] = useState<
+    Array<{ tempId: string; roleId: number; partyId: number }>
+  >([]);
 
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
@@ -322,16 +334,16 @@ export function ProjectFormPage() {
       // BM2 QA-2 Commit 5 (PR-023): Team roles are all OPTIONAL at project
       // creation. No client-side blocker on missing roles; the backend's
       // matching required-role check was also removed. Build the payload
-      // from whichever picks the user did make — an unassigned role
-      // silently omits itself. Each supplied pick is marked isPrimary=true
-      // so it satisfies the per-role primary-slot uniqueness constraint.
-      const roleAssignments = teamRoles
-        .filter((rt: any) => teamRoleSelections[rt.id])
-        .map((rt: any) => ({
-          roleId: rt.id,
-          partyId: teamRoleSelections[rt.id],
-          isPrimary: true,
-        }));
+      // from the assignments the user queued in TeamPicker. Zero rows is
+      // fine — the roleAssignments field is simply omitted. Each row is
+      // marked isPrimary=true so it satisfies the per-role primary-slot
+      // uniqueness constraint (project_partner_roles.@@unique on
+      // [projectId, partyId, roleId, validFrom]).
+      const roleAssignments = teamAssignments.map((a) => ({
+        roleId: a.roleId,
+        partyId: a.partyId,
+        isPrimary: true,
+      }));
       if (roleAssignments.length) payload.roleAssignments = roleAssignments;
 
       createProject.mutate(payload, {
@@ -668,32 +680,21 @@ export function ProjectFormPage() {
             <div className="p-6">
               <h2 className={sectionHeadingClass}>TEAM</h2>
 
-              <div className="mt-4 flex flex-col gap-4">
-                {/* The legacy "Project Leader" dropdown was removed —
-                    Team Leader is now just another Project Role Type
-                    (system-seeded as `team_leader`) and surfaces below as
-                    one of the TeamRolePicker fields. BM2 QA-2 Commit 5
-                    (PR-023): the create form no longer treats any role
-                    as required — every picker is optional and
-                    `isPrimaryRequired` only governs the "obligatory
-                    roles" section on the project's Team tab. */}
-
-                {/* Team-role pickers — one field per ProjectRoleType
-                    (excluding 'customer', which has its own picker above).
-                    BM2 QA-2 Commit 5 (PR-023): every picker is OPTIONAL —
-                    unassigned roles are simply omitted from the create
-                    payload. Roles can still be assigned later from the
-                    project's Team tab. */}
-                {!isEdit && teamRoles.map((rt: any) => (
-                  <TeamRolePicker
-                    key={rt.id}
-                    role={rt}
-                    value={teamRoleSelections[rt.id] ?? null}
-                    onChange={(v) =>
-                      setTeamRoleSelections((prev) => ({ ...prev, [rt.id]: v }))
-                    }
+              <div className="mt-4 flex flex-col gap-3">
+                {/* QA3 Commit B — replaced the long stack of one <select>
+                    per role-type with a single "+ Add role" picker.
+                    Nothing is forced (PR-023 lives on): zero assignments
+                    submits fine, and the Team tab still exists for adding
+                    more after the project is created. "Project Leader"
+                    lives here too as one of the roles (system-seeded
+                    `team_leader`) — no separate dropdown. */}
+                {!isEdit && (
+                  <TeamPicker
+                    roles={teamRoles}
+                    assignments={teamAssignments}
+                    onChange={setTeamAssignments}
                   />
-                ))}
+                )}
 
                 {/* Other team members are managed from the Team tab on
                     the project detail page — keeping the create flow
@@ -851,30 +852,261 @@ function QuickLinkBlock({
   );
 }
 
-/* ─── Team Role Picker ──────────────────────────────────────────────────
-   One field per ProjectRoleType (excluding 'customer'). Fetches eligible
-   parties filtered by allowedPartnerKind + requiredPartnerRoleCode. Empty
-   list yields an inline note pointing to where to create such a party.
-   BM2 QA-2 Commit 5 (PR-023): the picker is always OPTIONAL — no required
-   marker, no client blocker, no backend enforcement. */
+/* ─── Team Picker ────────────────────────────────────────────────────────
+   QA3 Commit B — replaces the previous "one <select> per ProjectRoleType"
+   stack on the New-Project form. UX:
 
-function TeamRolePicker({
+     ┌ TEAM ────────────────────────────────────────────────┐
+     │  [BIM Manager] · Jane Doe          [×]               │
+     │  [Architect]   · John Smith        [×]               │
+     │                                                      │
+     │  [+ Add role]                                        │
+     │                                                      │
+     │  (when adding) ┌─────────────────────────────────┐   │
+     │                │ Role   [Select role       ▾]    │   │
+     │                │ Person [Search / pick person…]  │   │
+     │                │ [Add] [Cancel]                  │   │
+     │                └─────────────────────────────────┘   │
+     └──────────────────────────────────────────────────────┘
+
+   Everything is optional (PR-023). Zero assignments submits fine.
+   Dedupes (roleId, partyId) so the same person can't be added to the
+   same role twice — the ProjectPartnerRole @@unique on
+   [projectId, partyId, roleId, validFrom] would reject it anyway, but
+   catching it here avoids a late server error.
+
+   Candidates are fetched per role using the same /business-partners
+   query the old TeamRolePicker used (partnerType filtered by
+   allowedPartnerKind, plus optional roleType filter). Persons and
+   organizations both flow through PeopleMultiSelect — its Person
+   shape is opaque numeric id + displayName + optional avatar, and
+   works fine for orgs (initials-fallback avatar). */
+
+type TeamRole = {
+  id: number;
+  name: string;
+  code: string;
+  allowedPartnerKind: 'person' | 'organization' | 'any';
+  requiredPartnerRoleCode: string | null;
+  description: string | null;
+};
+
+function TeamPicker({
+  roles,
+  assignments,
+  onChange,
+}: {
+  roles: TeamRole[];
+  assignments: Array<{ tempId: string; roleId: number; partyId: number }>;
+  onChange: (
+    next: Array<{ tempId: string; roleId: number; partyId: number }>,
+  ) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [draftRoleId, setDraftRoleId] = useState<number | null>(null);
+  // PeopleMultiSelect returns a number[]; we constrain to 0-or-1 by
+  // taking the last-picked id and discarding earlier ones. Keeps the
+  // multi-select UX (search box, avatar rows, chip) while enforcing
+  // single-select semantics for the "one person per assignment" model.
+  const [draftPartyIds, setDraftPartyIds] = useState<number[]>([]);
+
+  const roleById = useMemo(() => {
+    const m = new Map<number, TeamRole>();
+    for (const r of roles) m.set(r.id, r);
+    return m;
+  }, [roles]);
+
+  const draftRole = draftRoleId != null ? roleById.get(draftRoleId) ?? null : null;
+
+  const remove = (tempId: string) =>
+    onChange(assignments.filter((a) => a.tempId !== tempId));
+
+  const startAdding = () => {
+    setDraftRoleId(null);
+    setDraftPartyIds([]);
+    setAdding(true);
+  };
+  const cancelAdding = () => {
+    setDraftRoleId(null);
+    setDraftPartyIds([]);
+    setAdding(false);
+  };
+
+  const commit = () => {
+    if (draftRoleId == null || draftPartyIds.length === 0) return;
+    const partyId = draftPartyIds[draftPartyIds.length - 1]!;
+    const dupe = assignments.some(
+      (a) => a.roleId === draftRoleId && a.partyId === partyId,
+    );
+    if (dupe) {
+      // Silently no-op with a toast rather than throwing — user just
+      // picked the same combo they already had. `notify` is used across
+      // the form for user-facing feedback.
+      notify.info('That person is already assigned to that role.', {
+        code: 'PROJECT-ROLE-DUP',
+      });
+      return;
+    }
+    onChange([
+      ...assignments,
+      {
+        // Fresh tempId per row so React keys stay stable across adds
+        // and removes. crypto.randomUUID is present in every browser we
+        // target (matches other Planwise call sites); no fallback needed.
+        tempId:
+          typeof crypto !== 'undefined' && 'randomUUID' in crypto
+            ? crypto.randomUUID()
+            : `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        roleId: draftRoleId,
+        partyId,
+      },
+    ]);
+    cancelAdding();
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      {/* Chosen assignments — chip on the left (role), person name +
+          × on the right. Mirrors the QA2-4 RoleMultiSelect chip look
+          (rounded-full, blue-tinted) so both surfaces read as siblings. */}
+      {assignments.length === 0 && !adding && (
+        <p className="text-[12px] text-slate-500 dark:text-slate-400">
+          No team roles assigned yet — add one below, or leave blank and
+          assign roles later from the project's Team tab.
+        </p>
+      )}
+      {assignments.length > 0 && (
+        <ul className="flex flex-col gap-1.5">
+          {assignments.map((a) => {
+            const role = roleById.get(a.roleId);
+            return (
+              <li
+                key={a.tempId}
+                className="flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5"
+              >
+                <span className="inline-flex items-center rounded-full border border-blue-500 bg-blue-50 dark:bg-blue-900/30 px-2 py-[2px] text-[11px] font-semibold text-blue-700 dark:text-blue-300">
+                  {role?.name ?? `Role #${a.roleId}`}
+                </span>
+                {/* Party name — resolved by the inline PartyName lookup so
+                    we don't have to plumb the full candidate list up here. */}
+                <PartyName role={role} partyId={a.partyId} />
+                <button
+                  type="button"
+                  onClick={() => remove(a.tempId)}
+                  aria-label="Remove assignment"
+                  className="ml-auto rounded p-1 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-100"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* Add-role affordance. When idle, a compact link-styled button.
+          When adding, an inline panel with role + person selects. */}
+      {!adding && (
+        <button
+          type="button"
+          onClick={startAdding}
+          disabled={roles.length === 0}
+          className="mt-1 self-start inline-flex items-center gap-1 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 px-2.5 py-1.5 text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+          Add role
+        </button>
+      )}
+      {!adding && roles.length === 0 && (
+        <p className="text-[11px] text-amber-700 dark:text-amber-400">
+          No project role types configured yet. Add them under
+          {' '}<a href="/admin/project-role-types" className="underline">Admin → Project Role Types</a>.
+        </p>
+      )}
+
+      {adding && (
+        <div className="mt-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-3 flex flex-col gap-2.5">
+          <div>
+            <label className={labelClass}>Role</label>
+            <select
+              value={draftRoleId ?? ''}
+              onChange={(e) => {
+                const next = e.target.value ? Number(e.target.value) : null;
+                setDraftRoleId(next);
+                // Reset the person selection when the role changes — the
+                // eligible-party pool differs across roles.
+                setDraftPartyIds([]);
+              }}
+              className={inputClass}
+              autoFocus
+            >
+              <option value="">Select a role…</option>
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className={labelClass}>Person</label>
+            {draftRole ? (
+              <TeamPartyPicker
+                role={draftRole}
+                value={draftPartyIds}
+                onChange={(ids) => {
+                  // Single-select semantics: keep only the last picked id.
+                  // Passing `[]` (all cleared) also lands here.
+                  setDraftPartyIds(ids.length === 0 ? [] : [ids[ids.length - 1]!]);
+                }}
+              />
+            ) : (
+              <p className="text-[12px] text-slate-400 dark:text-slate-500 italic px-1">
+                Pick a role first.
+              </p>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={cancelAdding}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={commit}
+              disabled={draftRoleId == null || draftPartyIds.length === 0}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Small helper — fetches the candidates for a role and renders
+   PeopleMultiSelect. Wrapped so the candidate query lives inside the
+   picker (not in TeamPicker's own state) and rebuilds when the role
+   changes. */
+function TeamPartyPicker({
   role,
   value,
   onChange,
 }: {
-  role: {
-    id: number;
-    name: string;
-    code: string;
-    allowedPartnerKind: 'person' | 'organization' | 'any';
-    requiredPartnerRoleCode: string | null;
-    description: string | null;
-  };
-  value: number | null;
-  onChange: (partyId: number | null) => void;
+  role: TeamRole;
+  value: number[];
+  onChange: (ids: number[]) => void;
 }) {
   const { data: candidates = [] } = useQuery<any[]>({
+    // Same query key/shape the old TeamRolePicker used, so any cached
+    // response is reused here. staleTime matches the previous minute.
     queryKey: ['team-role-candidates', role.id],
     staleTime: 60 * 1000,
     queryFn: () =>
@@ -890,36 +1122,76 @@ function TeamRolePicker({
       }),
   });
 
+  const people: Person[] = useMemo(
+    () =>
+      candidates.map((c: any) => ({
+        userId: c.id,
+        displayName: c.displayName,
+        avatarUrl: c.avatarUrl ?? null,
+        // Small subtitle so the row disambiguates person-vs-org and
+        // exposes the party's own role/type. Falls back to empty.
+        subtitle:
+          c.partnerType === 'organization'
+            ? 'Organization'
+            : c.email ?? null,
+      })),
+    [candidates],
+  );
+
+  if (candidates.length === 0) {
+    return (
+      <p className="text-[11px] text-amber-700 dark:text-amber-400 px-1">
+        No eligible {role.allowedPartnerKind === 'any' ? 'parties' : `${role.allowedPartnerKind}s`}
+        {role.requiredPartnerRoleCode ? ` with role "${role.requiredPartnerRoleCode}"` : ''}
+        . Ask an admin to add one under Admin → Employees first, or skip
+        this role and assign later from the project's Team tab.
+      </p>
+    );
+  }
+
   return (
-    <div>
-      <label className={labelClass}>
-        {role.name}{' '}
-        <span className="text-[11px] font-normal text-slate-400 dark:text-slate-500">(optional)</span>
-      </label>
-      <select
-        value={value ?? ''}
-        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
-        className={inputClass}
-      >
-        <option value="">Select {role.name.toLowerCase()}…</option>
-        {candidates.map((c: any) => (
-          <option key={c.id} value={c.id}>{c.displayName}</option>
-        ))}
-      </select>
-      {candidates.length === 0 ? (
-        // Plain-text hint (not a link — clicking away wipes the half-filled
-        // form). The user can save the in-progress project first, then
-        // populate eligible parties from /admin/employees in a separate tab.
-        <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
-          No eligible {role.allowedPartnerKind === 'any' ? 'parties' : `${role.allowedPartnerKind}s`}
-          {role.requiredPartnerRoleCode ? ` with role "${role.requiredPartnerRoleCode}"` : ''}
-          . Ask an admin to add one under Admin → Employees first, or leave this blank and assign later.
-        </p>
-      ) : (
-        <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
-          {role.description || `Optional — assign now or leave blank and pick from the project's Team tab later.`}
-        </p>
-      )}
-    </div>
+    <PeopleMultiSelect
+      people={people}
+      value={value}
+      onChange={onChange}
+      placeholder={`Select ${role.allowedPartnerKind === 'organization' ? 'organization' : 'person'}…`}
+      triggerClassName="w-full"
+      title={`${role.name} — pick a ${role.allowedPartnerKind === 'organization' ? 'organization' : 'person'}`}
+    />
+  );
+}
+
+/* Read-only party-name lookup used in the chip-row list. Uses the same
+   /business-partners response the picker already cached, so it's a
+   zero-cost read for anything the user just clicked on. Falls back to
+   the id when the row isn't in the cached candidate set (rare). */
+function PartyName({
+  role,
+  partyId,
+}: {
+  role: TeamRole | undefined;
+  partyId: number;
+}) {
+  const { data: candidates = [] } = useQuery<any[]>({
+    queryKey: ['team-role-candidates', role?.id ?? 0],
+    enabled: !!role,
+    staleTime: 60 * 1000,
+    queryFn: () =>
+      client.get('/business-partners', {
+        params: {
+          partnerType: role && role.allowedPartnerKind !== 'any' ? role.allowedPartnerKind : undefined,
+          roleType: role?.requiredPartnerRoleCode ?? undefined,
+          perPage: 500,
+        },
+      }).then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : (d?.data ?? []);
+      }),
+  });
+  const bp = candidates.find((c: any) => c.id === partyId);
+  return (
+    <span className="text-[12.5px] text-slate-700 dark:text-slate-200 truncate">
+      {bp?.displayName ?? `#${partyId}`}
+    </span>
   );
 }
