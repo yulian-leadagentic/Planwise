@@ -38,8 +38,17 @@ export class AuthController {
   // Local dev is same-origin http → `SameSite=Lax` + `Secure=false`.
   // clearCookie() on logout MUST use the same attributes or the browser
   // ignores the delete.
+  //
+  // Detection: explicit AUTH_CROSS_SITE=true wins; otherwise anything
+  // that isn't `development` (staging, production, test on a real host)
+  // is treated as cross-site. Railway sets NODE_ENV=staging on staging,
+  // so an equality check against `production` alone would silently drop
+  // the cookie there.
   private refreshCookieOptions() {
-    const crossSite = process.env.NODE_ENV === 'production';
+    const explicit = process.env.AUTH_CROSS_SITE;
+    const crossSite =
+      explicit === 'true' ||
+      (explicit !== 'false' && (process.env.NODE_ENV ?? 'development') !== 'development');
     return {
       httpOnly: true,
       secure: crossSite,
