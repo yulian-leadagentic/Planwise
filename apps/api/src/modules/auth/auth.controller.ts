@@ -30,6 +30,24 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  // In staging/prod the web app and the API are served from different
+  // subdomains of up.railway.app — a public suffix — so the refresh cookie
+  // travels cross-site on the /auth/refresh XHR. `SameSite=None; Secure`
+  // is required for the browser to send it; anything stricter silently
+  // drops the cookie and the user gets logged out on token expiry.
+  // Local dev is same-origin http → `SameSite=Lax` + `Secure=false`.
+  // clearCookie() on logout MUST use the same attributes or the browser
+  // ignores the delete.
+  private refreshCookieOptions() {
+    const crossSite = process.env.NODE_ENV === 'production';
+    return {
+      httpOnly: true,
+      secure: crossSite,
+      sameSite: crossSite ? ('none' as const) : ('lax' as const),
+      path: '/',
+    };
+  }
+
   @Post('login')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @UseGuards(AuthGuard('local'))
@@ -38,9 +56,7 @@ export class AuthController {
   async login(@Req() req: Request, @Res({ passthrough: true }) res: Response, @Body() _dto: LoginDto) {
     const result = await this.authService.login(req.user as any);
     res.cookie('refresh_token', result.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      ...this.refreshCookieOptions(),
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
     return { accessToken: result.accessToken, user: result.user };
@@ -53,9 +69,7 @@ export class AuthController {
   async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const result = await this.authService.refreshTokens(req.user as any);
     res.cookie('refresh_token', result.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      ...this.refreshCookieOptions(),
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
     return { accessToken: result.accessToken };
@@ -67,7 +81,7 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Logout and clear refresh cookie' })
   async logout(@Res({ passthrough: true }) res: Response) {
-    res.clearCookie('refresh_token');
+    res.clearCookie('refresh_token', this.refreshCookieOptions());
     return { message: 'Logged out successfully' };
   }
 
