@@ -37,12 +37,16 @@ const elu = (performance as any).eventLoopUtilization as (
   next?: any,
 ) => { idle: number; active: number; utilization: number };
 
-const TICK_MS = 30_000;
+// Cadence tightened 30s → 5s on 2026-09-17 per QA3 Wave-1 Commit 1: the
+// wedge post-mortem needs the last-known-good vitals as close to the kill
+// moment as we can get. 5s balances "visible in Railway logs without eating
+// ingest budget" against "line-up-tight-enough to see the wall approaching."
+const TICK_MS = 5_000;
 
 export function startVitalsLogger(logger: Logger): void {
   // monitorEventLoopDelay samples the loop at high resolution and tracks
   // a histogram. We read+reset every tick to get the worst-case lag in
-  // the last 30s — that's what reveals sync work blocking the loop.
+  // the last window — that's what reveals sync work blocking the loop.
   const histogram = monitorEventLoopDelay({ resolution: 50 });
   histogram.enable();
 
@@ -76,7 +80,8 @@ export function startVitalsLogger(logger: Logger): void {
     }
   };
 
-  // First tick after 30s so boot churn doesn't show up as anomaly.
+  // First tick after one full window so boot churn doesn't show up as an
+  // anomaly (also the histogram needs a moment to accumulate a sample).
   setTimeout(() => {
     tick();
     setInterval(tick, TICK_MS).unref();

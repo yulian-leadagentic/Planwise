@@ -11,13 +11,22 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor';
 import { SlowRequestInterceptor } from './common/interceptors/slow-request.interceptor';
+import { RequestLifecycleInterceptor } from './common/interceptors/request-lifecycle.interceptor';
 import { SentryContextInterceptor } from './common/interceptors/sentry-context.interceptor';
 import { startWatchdog } from './common/watchdog';
 import { startWedgeKillswitch } from './common/wedge-killswitch';
 import { startVitalsLogger } from './common/vitals';
+import { installStartupSignals } from './common/startup-signals';
 import { initSentry } from './observability/sentry';
 
 async function bootstrap() {
+  // Sync stderr signal / exit handlers FIRST — before Sentry, before Nest,
+  // before app-module evaluation. If anything below throws or wedges, we
+  // still want the next post-mortem to answer "did we receive a signal, and
+  // if so which one?" See ./common/startup-signals.ts for why sync stderr
+  // (not pino) is required.
+  installStartupSignals();
+
   // Sentry init BEFORE anything else — same rationale as the BigInt patch
   // below: any error thrown during app-module evaluation (mis-wired provider,
   // env-var miss on boot) should still be captured. Guarded on SENTRY_DSN
@@ -75,13 +84,18 @@ async function bootstrap() {
 
   // Global filters & interceptors
   app.useGlobalFilters(new HttpExceptionFilter());
-  // SlowRequestInterceptor goes FIRST so its timer measures the full
-  // request including TimeoutInterceptor's 30s budget and Response wrap.
+  // RequestLifecycleInterceptor goes FIRST so its start/end lines bracket
+  // everything else — including the slow-request timer, the response wrap,
+  // and the 30s timeout budget. That means an in-flight request whose
+  // handler wedged shows a `req.start` with no matching `req.end` — exactly
+  // the pattern the QA3 Wave-1 post-mortem needs.
+  // SlowRequestInterceptor next so its timer also measures the full budget.
   // SentryContextInterceptor attaches user/route tags to the request's
   // isolation scope — placed early so anything captured downstream (by a
   // service's Sentry.captureException or by HttpExceptionFilter) has the
   // request context already pinned.
   app.useGlobalInterceptors(
+    new RequestLifecycleInterceptor(app.get(Logger)),
     new SlowRequestInterceptor(app.get(Logger)),
     new SentryContextInterceptor(),
     new ResponseInterceptor(),
@@ -164,8 +178,9 @@ async function bootstrap() {
   // main-loop unresponsiveness; complements the watchdog, doesn't replace it.
   startWedgeKillswitch(logger);
 
-  // Vitals logger — emits event-loop / heap / handle stats every 30s so the
-  // log line just before a wedge tells us what subsystem hit the wall.
+  // Vitals logger — emits event-loop / heap / handle stats every 5s (was
+  // 30s pre-QA3 Wave-1 Commit 1) so the log line just before a wedge is
+  // close enough to the kill moment to reveal what subsystem hit the wall.
   startVitalsLogger(logger);
 }
 bootstrap();
