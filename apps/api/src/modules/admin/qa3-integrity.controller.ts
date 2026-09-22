@@ -155,13 +155,18 @@ export class Qa3IntegrityController {
           AND pd.deleted_at IS NULL
           AND p.id IS NULL
       `,
-      // project_deliverables.service_type_id → service_types.id
+      // project_deliverables.service_id → phases.id (per schema:
+      // ProjectDeliverable.serviceId is a FK to Phase — the "Service"
+      // concept for deliverables. Task's `service_type_id` is a different
+      // catalog. Kept the count under `deliverableWithoutService` for
+      // continuity of the response shape.)
       this.prisma.$queryRaw<CountRow[]>`
         SELECT COUNT(*) AS n FROM project_deliverables pd
-        LEFT JOIN service_types s ON s.id = pd.service_type_id
+        LEFT JOIN phases p ON p.id = pd.service_id
         WHERE pd.project_id = ${projectId}
           AND pd.deleted_at IS NULL
-          AND s.id IS NULL
+          AND pd.service_id IS NOT NULL
+          AND p.id IS NULL
       `,
       // zones.project_id → projects.id
       this.prisma.$queryRaw<CountRow[]>`
@@ -205,12 +210,12 @@ export class Qa3IntegrityController {
     // twin for each real row. Group by (project_id, name, service_type_id)
     // for deliverables; group by (project_id, parent_id, name) for zones.
     const dupDeliverables = await this.prisma.$queryRaw<
-      Array<{ name: string; service_type_id: number | null; n: number | bigint }>
+      Array<{ name: string; service_id: number | null; n: number | bigint }>
     >`
-      SELECT name, service_type_id, COUNT(*) AS n
+      SELECT name, service_id, COUNT(*) AS n
       FROM project_deliverables
       WHERE project_id = ${projectId} AND deleted_at IS NULL
-      GROUP BY name, service_type_id
+      GROUP BY name, service_id
       HAVING COUNT(*) > 1
       ORDER BY n DESC, name ASC
       LIMIT 10
@@ -264,7 +269,7 @@ export class Qa3IntegrityController {
       duplicates: {
         deliverablesByNameAndService: dupDeliverables.map((r) => ({
           name: r.name,
-          serviceTypeId: r.service_type_id,
+          serviceId: r.service_id,
           count: num(r.n),
         })),
         zonesByNameAndParent: dupZones.map((r) => ({
