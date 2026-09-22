@@ -13,6 +13,7 @@ import { STATUS_LABEL } from '@/lib/task-constants';
 import { cn } from '@/lib/utils';
 import { getTaskPhaseName, getTaskServiceName } from './execution-board.util';
 import type { Task, ZoneNode, FlatRow } from './parts/types';
+import { DUE_WINDOW_OPTIONS, matchesDueWindow, type DueWindow } from '@/lib/due-window';
 import { ZONE_COLORS, PROJECT_COLORS } from './parts/constants';
 import { useExecutionBoard } from './parts/use-execution-board';
 import { HealthBadge } from './parts/health-badge';
@@ -95,6 +96,12 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   const [dueFrom, setDueFrom] = useState<string>('');
   const [dueTo, setDueTo] = useState<string>('');
   const [onlyWithDue, setOnlyWithDue] = useState(false);
+  // QA3 Wave-3 Commit 9 (PR-033): shared with My Tasks. Forward-
+  // looking window with overdue-open always included. `execNow` is the
+  // reference time captured per render so the boundary stays stable
+  // during a single filter loop.
+  const [dueWindow, setDueWindow] = useState<DueWindow>('all');
+  const execNow = Date.now();
   // General task-status filter ('' = all). Applies across all three views.
   const [statusFilter, setStatusFilter] = useState<string>('');
   // Service (Phase) filter ('' = all). Resolved via getTaskServiceName so it
@@ -160,7 +167,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     // Inline the filter-active check (the memoized isFilterActive const
     // is declared later in the component — referencing it here would hit
     // its TDZ during render).
-    const filterActive = projectIds.size > 0 || serviceFilter.size > 0 || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter || phaseFilter.size > 0;
+    const filterActive = projectIds.size > 0 || serviceFilter.size > 0 || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter || phaseFilter.size > 0 || dueWindow !== 'all';
     if (!filterActive || !data) return;
     const keys = new Set<string>();
     const addZones = (nodes: ZoneNode[]) => {
@@ -174,7 +181,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       addZones(data.zones[project.id] ?? []);
     }
     setExpandedIds((prev) => new Set([...prev, ...keys]));
-  }, [projectIds, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, data]);
+  }, [projectIds, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, data, dueWindow]);
 
   const toggleExpand = useCallback((key: string) => {
     setExpandedIds((prev) => {
@@ -353,6 +360,10 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
         if (dueFrom && d < dueFrom) return false;
         if (dueTo && d > dueTo) return false;
       }
+      // QA3 Wave-3 Commit 9 (PR-033): shared forward-looking window
+      // — Day/Week/Month with overdue-open always included. Composed
+      // on top of the explicit dueFrom/dueTo range above.
+      if (!matchesDueWindow(t, dueWindow, execNow)) return false;
       if (serviceFilter.size > 0) {
         // serviceFilter is a SET of deliverable column values straight from
         // the multi-select. Match STRICTLY on the same dimension the board
@@ -364,7 +375,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       }
       return true;
     });
-  }, [data?.tasks, projectIds, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, deliverableNameToService, viewMode]);
+  }, [data?.tasks, projectIds, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, deliverableNameToService, viewMode, dueWindow, execNow]);
 
   const { phaseColumns, directMatrix, hasNoPhase, phaseToService } = useMemo(() => {
     const tasks = filteredTasks;
@@ -884,6 +895,32 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
           </select>
         )}
 
+        {/* QA3 Wave-3 Commit 9 (PR-033) · shared with My Tasks. */}
+        <div
+          className="inline-flex items-center gap-0 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-0.5 text-[11px]"
+          role="tablist"
+          aria-label="Due window"
+        >
+          {DUE_WINDOW_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setDueWindow(opt.value)}
+              title={opt.title}
+              role="tab"
+              aria-selected={dueWindow === opt.value}
+              className={cn(
+                'px-2 py-1 rounded font-semibold transition-colors',
+                dueWindow === opt.value
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/60',
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
         {/* Due-date range + only-with-due toggle (#3.3). */}
         <div className="flex items-center gap-1.5 text-[12px] text-slate-600 dark:text-slate-300">
           <span className="font-semibold uppercase text-[10px] tracking-wider text-slate-400 dark:text-slate-500">Due</span>
@@ -917,7 +954,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
             with collapsible zones (Matrix + Zone Tasks), so it now lives
             inside their Zone column header — see below. The button hides
             naturally on Status / Task Board (no Zone header). */}
-        {(serviceFilter.size > 0 || dueFrom || dueTo || onlyWithDue || statusFilter || phaseFilter.size > 0) && (
+        {(serviceFilter.size > 0 || dueFrom || dueTo || onlyWithDue || statusFilter || phaseFilter.size > 0 || dueWindow !== 'all') && (
           <button
             type="button"
             onClick={() => {
@@ -927,6 +964,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
               setOnlyWithDue(false);
               setStatusFilter('');
               setPhaseFilter(new Set());
+              setDueWindow('all');
               // Reset the touched flag so the Zone Tasks department default
               // re-applies on the next render, matching a fresh visit.
               setPhaseFilterTouched(false);

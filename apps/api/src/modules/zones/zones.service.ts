@@ -187,6 +187,35 @@ export class ZonesService {
     const allIds = [id, ...descendantIds];
     const now = new Date();
 
+    // QA3 Wave-3 Commit 9 (PR-040): block delete when ANY task under
+    // this zone (or its descendants) has logged time. Mirrors the
+    // "Cannot delete: still referenced" pattern in phases.service.ts.
+    // We count non-deleted TimeEntry rows on non-deleted tasks under
+    // any of `allIds` — one query is enough because Prisma joins the
+    // task filter on the TimeEntry side. Empty zones and zones whose
+    // tasks are unlogged still soft-delete normally.
+    const loggedEntryCount = await this.prisma.timeEntry.count({
+      where: {
+        deletedAt: null,
+        task: {
+          deletedAt: null,
+          zoneId: { in: allIds },
+        },
+      },
+    });
+    if (loggedEntryCount > 0) {
+      const affectedTaskCount = await this.prisma.task.count({
+        where: {
+          deletedAt: null,
+          zoneId: { in: allIds },
+          timeEntries: { some: { deletedAt: null } },
+        },
+      });
+      throw new ConflictException(
+        `Cannot delete: ${loggedEntryCount} logged time entr${loggedEntryCount === 1 ? 'y' : 'ies'} on ${affectedTaskCount} task${affectedTaskCount === 1 ? '' : 's'} under this zone. Move or delete the logged time first.`,
+      );
+    }
+
     await this.prisma.$transaction([
       this.prisma.zone.updateMany({
         where: { id: { in: allIds }, deletedAt: null },

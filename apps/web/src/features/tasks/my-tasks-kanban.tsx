@@ -19,6 +19,7 @@ import { DroppableColumn } from './my-tasks-kanban/droppable-column';
 import { UpcomingTab } from './my-tasks-kanban/upcoming-tab';
 import { TimeReportingTab } from './my-tasks-kanban/time-reporting-tab';
 import { PersonalTaskDialog } from './my-tasks-kanban/personal-task-dialog';
+import { DUE_WINDOW_OPTIONS, matchesDueWindow, type DueWindow } from '@/lib/due-window';
 
 // ─── Kanban Board ──────────────────────────────────────────────────────────
 
@@ -43,6 +44,12 @@ export function MyTasksKanbanPage() {
   const [filterPriority, setFilterPriority] = useState<string>('');
   const [filterDueFrom, setFilterDueFrom] = useState<string>('');
   const [filterDueTo, setFilterDueTo] = useState<string>('');
+  // QA3 Wave-3 Commit 9 (PR-033 · also Tzlil My-Tasks note #5).
+  // Forward-looking window: Day = end-of-today, Week = +7d, Month = +30d.
+  // Overdue open tasks are ALWAYS included so this list stays a real
+  // "act now" queue. Composed on top of dueFrom/dueTo, not a
+  // replacement — the range inputs stay for explicit slices.
+  const [dueWindow, setDueWindow] = useState<DueWindow>('all');
   // Tier D #1 (personal-tasks) + #6a+b filters — personal task cut and
   // has-due-date cut. Both default to 'any' so the initial view is
   // unfiltered.
@@ -106,8 +113,10 @@ export function MyTasksKanbanPage() {
   // only show tasks that have a DUE DATE; other task-display
   // surfaces follow the same rule except the Planning grid which
   // stays exhaustive so PMs can still see uncommitted work).
+  const now = Date.now();
   const tasks = useMemo(() => {
     return allTasks.filter((t) => {
+      if (!matchesDueWindow(t, dueWindow, now)) return false;
       if (filterProjectId && t.project?.id !== filterProjectId) return false;
       if (filterServiceId && t.phaseId !== filterServiceId) return false;
       if (filterPhaseName) {
@@ -138,9 +147,9 @@ export function MyTasksKanbanPage() {
       if (activeTab === 'kanban' && !revealHiddenKanban && !showFutureTasks && t.isReady === false) return false;
       return true;
     });
-  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, showFutureTasks, revealHiddenKanban]);
+  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, showFutureTasks, revealHiddenKanban, dueWindow, now]);
 
-  const hasActiveFilter = !!(filterProjectId || filterServiceId || filterPhaseName || filterPriority || filterDueFrom || filterDueTo || filterKind || filterHasDue);
+  const hasActiveFilter = !!(filterProjectId || filterServiceId || filterPhaseName || filterPriority || filterDueFrom || filterDueTo || filterKind || filterHasDue || dueWindow !== 'all');
 
   // Count of tasks the two Kanban-only rules are excluding right
   // now — feeds the "N hidden — no due date / not started" chip.
@@ -152,6 +161,7 @@ export function MyTasksKanbanPage() {
     if (revealHiddenKanban) return 0;
     let count = 0;
     for (const t of allTasks) {
+      if (!matchesDueWindow(t, dueWindow, now)) continue;
       if (filterProjectId && t.project?.id !== filterProjectId) continue;
       if (filterServiceId && t.phaseId !== filterServiceId) continue;
       if (filterPhaseName) {
@@ -175,7 +185,7 @@ export function MyTasksKanbanPage() {
       if (droppedByNoDueDate || droppedByFutureStart) count++;
     }
     return count;
-  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, showFutureTasks, revealHiddenKanban]);
+  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, showFutureTasks, revealHiddenKanban, dueWindow, now]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -403,6 +413,35 @@ export function MyTasksKanbanPage() {
             Include future tasks
           </label>
         )}
+        {/* QA3 Wave-3 Commit 9 (PR-033) · shared with Execution Review.
+            Forward-looking window: Day=end of today, Week=+7d,
+            Month=+30d. Overdue open tasks always pass regardless of
+            the window. Composed on top of the explicit Due date range
+            below, not a replacement. */}
+        <div
+          className="inline-flex items-center gap-0 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-0.5 text-[11px]"
+          role="tablist"
+          aria-label="Due window"
+        >
+          {DUE_WINDOW_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setDueWindow(opt.value)}
+              title={opt.title}
+              role="tab"
+              aria-selected={dueWindow === opt.value}
+              className={cn(
+                'px-2 py-1 rounded font-semibold transition-colors',
+                dueWindow === opt.value
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/60',
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
         {/* Due-date range — same control set as the Execution board's
             date filter. Either side optional. */}
         <div className="flex items-center gap-1 text-[12px] text-slate-500 dark:text-slate-400">
@@ -434,6 +473,7 @@ export function MyTasksKanbanPage() {
               setFilterDueTo('');
               setFilterKind('');
               setFilterHasDue('');
+              setDueWindow('all');
             }}
             className="text-[12px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 underline"
           >
