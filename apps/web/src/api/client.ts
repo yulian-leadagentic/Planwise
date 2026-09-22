@@ -3,6 +3,7 @@ import * as Sentry from '@sentry/react';
 import { useAuthStore } from '@/stores/auth.store';
 import { notify, getErrorCode, getErrorMessage } from '@/lib/notify';
 import { API_BASE } from '@/lib/runtime-config';
+import { refreshOnce } from './refresh-lock';
 
 const client = axios.create({
   baseURL: `${API_BASE}/api/v1`,
@@ -57,24 +58,14 @@ client.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        const { data } = await axios.post(`${API_BASE}/api/v1/auth/refresh`, null, {
-          withCredentials: true,
-        });
-        // Defensive: handle BOTH wrapped { success, data: { accessToken } }
-        // and unwrapped { accessToken } response shapes. The wrapping
-        // interceptor handles this server-side, but if it ever yields a
-        // different shape (e.g. on a misconfigured route or future
-        // refactor), the old `data.data.accessToken` line silently set
-        // the token to undefined and the user got "logged out" without
-        // ever seeing /login — the most likely cause of the
-        // long-session kick-out reports.
-        const newToken: string | undefined =
-          data?.data?.accessToken ?? data?.accessToken;
-        if (!newToken) {
-          throw new Error(
-            `Refresh response missing accessToken (payload: ${JSON.stringify(data).slice(0, 200)})`,
-          );
-        }
+        // Delegate the actual POST to the shared refresh-lock so that if
+        // AuthBootstrap ALSO has a refresh in flight (e.g. on F5, before
+        // the spinner has released children), both callers await the same
+        // network round-trip. Two parallel /auth/refresh POSTs each rotate
+        // the server-side refresh token — one loses, the loser's caller
+        // gets kicked to /login — that's Failure A's residual vector even
+        // after the per-load queue.
+        const newToken = await refreshOnce();
         useAuthStore.getState().setToken(newToken);
         processQueue(null, newToken);
         originalRequest.headers.Authorization = `Bearer ${newToken}`;

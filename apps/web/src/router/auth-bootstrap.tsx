@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
-import axios from 'axios';
 import { useAuthStore } from '@/stores/auth.store';
-import { API_BASE } from '@/lib/runtime-config';
+import { refreshOnce } from '@/api/refresh-lock';
 
 /**
  * On page load / refresh, silently obtain a fresh access token using the
@@ -49,13 +48,15 @@ export function AuthBootstrap({ children }: { children: React.ReactNode }) {
     }
     let cancelled = false;
 
-    axios
-      .post(`${API_BASE}/api/v1/auth/refresh`, null, { withCredentials: true })
-      .then((res) => {
+    // Shared with the axios response interceptor via refresh-lock so that
+    // any authed request that fires while this refresh is in flight (a
+    // rogue module-load side effect, a background query that mounted
+    // before the spinner released) awaits the SAME network round-trip
+    // instead of racing a second /auth/refresh POST.
+    refreshOnce()
+      .then((token) => {
         if (cancelled) return;
-        const token = res.data?.data?.accessToken ?? res.data?.accessToken;
-        if (token) setToken(token);
-        else setBootstrapComplete();
+        setToken(token);
       })
       .catch(() => {
         if (!cancelled) setBootstrapComplete();
