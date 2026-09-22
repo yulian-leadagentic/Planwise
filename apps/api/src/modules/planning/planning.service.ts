@@ -1,12 +1,29 @@
 import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { withQueryTimeout } from '../../common/query-timeout';
 
 @Injectable()
 export class PlanningService {
   constructor(private prisma: PrismaService) {}
 
+  /**
+   * Public entry point. Wraps the actual read in a per-request query
+   * timeout so a slow/stuck query returns 503 instead of stalling the
+   * event loop. See ../common/query-timeout.ts for the mechanism and its
+   * limits (JS-level timeout; MySQL keeps running the query in the
+   * connection until it finishes on its own — acceptable first-pass
+   * containment while we chase the wedge's real cause).
+   */
   async getPlanningData(projectId: number) {
+    return withQueryTimeout(
+      () => this.getPlanningDataImpl(projectId),
+      undefined,
+      `getPlanningData(${projectId})`,
+    );
+  }
+
+  private async getPlanningDataImpl(projectId: number) {
     const project = await this.prisma.project.findFirstOrThrow({
       where: { id: projectId, deletedAt: null },
       select: { id: true, name: true, status: true, budget: true },
