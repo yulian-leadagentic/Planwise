@@ -126,16 +126,24 @@ export function ProjectDetailPage() {
                   read-only pill. Backend accepts `status` on PATCH via
                   UpdateProjectDto — see projects.controller#update. */}
               <ProjectStatusEditor projectId={projectId} status={project.status} />
-              {/* Inline category (project-type) editor (PR-003). Same
-                  contract — PATCH `/projects/:id` with `projectTypeId`.
-                  `projectType` is eager-loaded by projects.service#findOne
-                  but the shared Project type doesn't yet declare it — so
-                  we structurally narrow just this one prop here. */}
+              {/* Inline category (project-type) editor (PR-003).
+                  QA3 Wave-1 Commit 3C-b: multi-select chips. PATCH
+                  contract sends `projectTypeIds` — the backend derives
+                  primary from element 0. Legacy responses without
+                  `categoryLinks` fall back to the primary FK alone. */}
               <ProjectCategoryEditor
                 projectId={projectId}
                 projectType={
                   (project as unknown as { projectType?: { id: number; name: string; color: string | null } | null })
                     .projectType ?? null
+                }
+                categoryLinks={
+                  (project as unknown as {
+                    categoryLinks?: Array<{
+                      projectTypeId: number;
+                      projectType: { id: number; name: string; color: string | null };
+                    }>;
+                  }).categoryLinks ?? []
                 }
               />
               {project.number && (

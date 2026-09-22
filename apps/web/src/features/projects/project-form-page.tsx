@@ -2,8 +2,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ArrowLeft, Loader2, Plus, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, Loader2, Plus, Star, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import client from '@/api/client';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
@@ -25,7 +25,15 @@ const projectSchema = z.object({
   name: z.string().min(1, 'Project name is required'),
   number: z.string().optional(),
   description: z.string().optional(),
-  projectTypeId: z.coerce.number().min(1, 'Please select a project category'),
+  /**
+   * QA3 Wave-1 Commit 3C-b · multi-select categories. First entry is
+   * primary (used for rollups); the rest are extras/tags. The chip
+   * picker (rendered below) writes into this field via setValue and
+   * enforces >=1 via zod on submit.
+   */
+  projectTypeIds: z
+    .array(z.number().int().positive())
+    .min(1, 'Please select at least one project category'),
   departmentId: optionalNumber,
   customerOrgId: z.coerce.number().min(1, 'Please pick a customer organization'),
   status: z.string().default('draft'),
@@ -50,7 +58,7 @@ const projectSchema = z.object({
 const FIELD_LABELS: Record<string, string> = {
   name: 'Project Name',
   number: 'Project Number',
-  projectTypeId: 'Project Category',
+  projectTypeIds: 'Project Category',
   departmentId: 'Department',
   customerOrgId: 'Customer',
   status: 'Status',
@@ -62,6 +70,13 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 type ProjectFormData = z.infer<typeof projectSchema>;
+
+// Backend stores ProjectType color as either `#RRGGBB` or the raw hex
+// with no leading `#`. Normalize before applying to inline `style`.
+function normalizeHex(color: string | null | undefined): string | null {
+  if (!color) return null;
+  return color.startsWith('#') ? color : `#${color}`;
+}
 
 const inputClass =
   'w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
@@ -187,11 +202,37 @@ export function ProjectFormPage() {
     handleSubmit,
     reset,
     watch,
+    setValue,
+    trigger,
     formState: { errors },
   } = useForm<ProjectFormData>({
     resolver: zodResolver(projectSchema),
-    defaultValues: { status: 'draft', endDate: DEFAULT_OPEN_END_DATE },
+    defaultValues: {
+      status: 'draft',
+      endDate: DEFAULT_OPEN_END_DATE,
+      // Array default so the chip picker starts empty and zod's min(1)
+      // fires as "please select at least one" instead of a
+      // "Required"/"undefined" schema mismatch.
+      projectTypeIds: [],
+    },
   });
+
+  // Extracted separately so the chip picker can subscribe without
+  // triggering re-render churn on the rest of the form; `setValue`
+  // below persists both to the RHF store (so zod validates on submit)
+  // and to the visible chip row.
+  const selectedCategoryIds: number[] = (watch('projectTypeIds') as number[] | undefined) ?? [];
+  const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
+  const categoryPickerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!categoryMenuOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (categoryPickerRef.current?.contains(e.target as Node)) return;
+      setCategoryMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [categoryMenuOpen]);
 
   // For edit-mode: look up the project's current customer.
   // BM2 ops-surfaces Phase A: project participation lives on
@@ -214,11 +255,23 @@ export function ProjectFormPage() {
     if (project && isEdit) {
       // Slice ISO timestamps to YYYY-MM-DD so <input type="date"> accepts them.
       const toDateInput = (v: string | null | undefined) => (v ? v.slice(0, 10) : '');
+      // Seed the multi-select from the junction rows when the API
+      // included them (post-3C backend). Primary FK stays first so the
+      // chip picker renders it as the primary chip. Fallback for
+      // legacy responses that pre-date `categoryLinks`: single-element
+      // array from the primary FK.
+      const linkIds = ((project as any).categoryLinks as Array<{ projectTypeId: number }> | undefined)
+        ?.map((l) => l.projectTypeId)
+        ?? [];
+      const primaryId = project.projectTypeId;
+      const seededCategoryIds = linkIds.length
+        ? [primaryId, ...linkIds.filter((id) => id !== primaryId)]
+        : [primaryId];
       reset({
         name: project.name,
         number: project.number ?? '',
         description: project.description ?? '',
-        projectTypeId: project.projectTypeId,
+        projectTypeIds: seededCategoryIds,
         departmentId: (project as any).departmentId ?? undefined,
         customerOrgId: existingCustomerRel?.partyId ?? existingCustomerRel?.party?.id ?? undefined,
         status: project.status,
@@ -503,36 +556,133 @@ export function ProjectFormPage() {
                   )}
                 </div>
 
-                {/* Project Category (was "Project Type" — renamed per V4
-                    since the two were the same concept causing confusion). */}
+                {/* Project Category (was "Project Type" — renamed per V4).
+                    QA3 Wave-1 Commit 3C-b: multi-select chip picker.
+                    First chip = PRIMARY (used for rollups/reports);
+                    additional chips are extras/tags. Click a non-
+                    primary chip's star to promote it to primary; ×
+                    removes. Empty state fails validation on submit. */}
                 <div>
                   <label className={labelClass}>
                     Project Category <span className="text-red-500">*</span>
+                    <span className="ml-1.5 text-[11px] font-normal text-slate-400 dark:text-slate-500">
+                      (first is primary — used for rollups)
+                    </span>
                   </label>
-                  <div className="relative">
-                    {(() => {
-                      const selectedId = watch('projectTypeId');
-                      const selectedType = (projectTypes ?? []).find((t: any) => String(t.id) === String(selectedId));
-                      const color = selectedType?.color;
-                      return color ? (
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border border-slate-200 dark:border-slate-700 z-10"
-                          style={{ backgroundColor: color.startsWith('#') ? color : `#${color}` }} />
-                      ) : null;
-                    })()}
-                    <select
-                      {...register('projectTypeId')}
-                      className={`${errors.projectTypeId ? inputErrorClass : inputClass} ${watch('projectTypeId') ? 'pl-8' : ''}`}
-                    >
-                      <option value="">Select type</option>
-                      {(projectTypes ?? []).map((t: any) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </select>
+                  <div
+                    ref={categoryPickerRef}
+                    className={`relative rounded-lg border ${errors.projectTypeIds ? 'border-red-400' : 'border-slate-200 dark:border-slate-700'} bg-white dark:bg-slate-900 p-2`}
+                  >
+                    <div className="flex flex-wrap items-center gap-1.5 min-h-[2rem]">
+                      {selectedCategoryIds.length === 0 && (
+                        <span className="text-[13px] text-slate-400 dark:text-slate-500 pl-1">
+                          No categories selected
+                        </span>
+                      )}
+                      {selectedCategoryIds.map((id, idx) => {
+                        const t = (projectTypes ?? []).find((x: any) => x.id === id);
+                        if (!t) return null;
+                        const color = normalizeHex(t.color);
+                        const isPrimary = idx === 0;
+                        return (
+                          <span
+                            key={id}
+                            className={`inline-flex items-center gap-1.5 rounded-full pl-2 pr-1 py-0.5 text-[12px] ${
+                              isPrimary
+                                ? 'bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200 font-semibold'
+                                : 'bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
+                            }`}
+                          >
+                            {color && (
+                              <span
+                                className="h-2.5 w-2.5 rounded-full border border-slate-200 dark:border-slate-700"
+                                style={{ backgroundColor: color }}
+                              />
+                            )}
+                            <span className="truncate max-w-[160px]" title={t.name}>{t.name}</span>
+                            {isPrimary ? (
+                              <span
+                                className="inline-flex items-center gap-0.5 rounded bg-blue-600 text-white px-1 py-[1px] text-[9px] font-bold tracking-wide uppercase"
+                                title="Primary category — used for rollups"
+                              >
+                                <Star className="h-2.5 w-2.5 fill-white" />
+                                Primary
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const next = [id, ...selectedCategoryIds.filter((x) => x !== id)];
+                                  setValue('projectTypeIds', next, { shouldValidate: true, shouldDirty: true });
+                                }}
+                                title="Make primary"
+                                className="rounded p-0.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/40"
+                              >
+                                <Star className="h-3 w-3" />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = selectedCategoryIds.filter((x) => x !== id);
+                                setValue('projectTypeIds', next, { shouldValidate: true, shouldDirty: true });
+                              }}
+                              title="Remove category"
+                              className="rounded p-0.5 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/40"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        onClick={() => setCategoryMenuOpen((v) => !v)}
+                        className="inline-flex items-center gap-1 rounded-full border border-dashed border-slate-300 dark:border-slate-600 px-2 py-0.5 text-[12px] text-slate-500 dark:text-slate-400 hover:border-blue-400 hover:text-blue-600"
+                      >
+                        <Plus className="h-3 w-3" />
+                        Add category
+                      </button>
+                    </div>
+                    {categoryMenuOpen && (
+                      <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-[260px] overflow-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-1.5 shadow-lg">
+                        {((projectTypes ?? []).filter((t: any) => !selectedCategoryIds.includes(t.id))).length === 0 ? (
+                          <div className="px-3 py-2 text-[12px] text-slate-500 dark:text-slate-400">
+                            All categories already selected
+                          </div>
+                        ) : (
+                          (projectTypes ?? [])
+                            .filter((t: any) => !selectedCategoryIds.includes(t.id))
+                            .map((t: any) => {
+                              const color = normalizeHex(t.color);
+                              return (
+                                <button
+                                  key={t.id}
+                                  type="button"
+                                  onClick={() => {
+                                    const next = [...selectedCategoryIds, t.id];
+                                    setValue('projectTypeIds', next, { shouldValidate: true, shouldDirty: true });
+                                    void trigger('projectTypeIds');
+                                    setCategoryMenuOpen(false);
+                                  }}
+                                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] hover:bg-slate-50 dark:hover:bg-slate-800/60"
+                                >
+                                  <span
+                                    className="h-3 w-3 shrink-0 rounded-full border border-slate-200 dark:border-slate-700"
+                                    style={color ? { backgroundColor: color } : { backgroundColor: '#E2E8F0' }}
+                                  />
+                                  <span className="truncate text-slate-700 dark:text-slate-200">{t.name}</span>
+                                </button>
+                              );
+                            })
+                        )}
+                      </div>
+                    )}
                   </div>
-                  {errors.projectTypeId && (
-                    <p className="mt-1 text-[12px] text-red-500">{errors.projectTypeId.message}</p>
+                  {errors.projectTypeIds && (
+                    <p className="mt-1 text-[12px] text-red-500">
+                      {(errors.projectTypeIds as any)?.message ?? 'Please select at least one project category'}
+                    </p>
                   )}
                 </div>
 

@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Plus, Trash2, MessageSquare, Search, Send, UserCircle, Columns3, ChevronDown } from 'lucide-react';
+import { Plus, Trash2, MessageSquare, Search, Send, UserCircle, Columns3, ChevronDown, Check, Star } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
@@ -231,7 +231,17 @@ export function ProjectListPage() {
     if (codeFilter && !String(p.number ?? '').toLowerCase().includes(codeFilter)) return false;
     const nameFilter = colFilters.name.trim().toLowerCase();
     if (nameFilter && !String(p.name ?? '').toLowerCase().includes(nameFilter)) return false;
-    if (colFilters.type && String(p.projectTypeId ?? '') !== colFilters.type) return false;
+    if (colFilters.type) {
+      // QA3 Wave-1 Commit 3C-b: category filter matches ANY category the
+      // project carries — primary FK OR any junction row. Legacy rows
+      // without categoryLinks fall back to the primary FK alone.
+      const allIds = new Set<string>();
+      if (p.projectTypeId != null) allIds.add(String(p.projectTypeId));
+      for (const l of (p.categoryLinks ?? []) as Array<{ projectTypeId: number }>) {
+        if (l?.projectTypeId != null) allIds.add(String(l.projectTypeId));
+      }
+      if (!allIds.has(colFilters.type)) return false;
+    }
     if (colFilters.status && String(p.status ?? '') !== colFilters.status) return false;
     // Role-column filters — one per visible role-type column. Value is
     // a party.displayName (matched exactly against the assignments on
@@ -263,12 +273,20 @@ export function ProjectListPage() {
   // can still switch to a different status — filtering by column A
   // must never drop options for column B.
 
-  /** Category (ProjectType) options — [id, name][], alpha sort. */
+  /** Category (ProjectType) options — [id, name][], alpha sort. Sources
+   *  every distinct id present as a primary FK OR in any project's
+   *  `categoryLinks`, so the dropdown reflects the full set of
+   *  categories users can filter by (3C-b). */
   const categoryFilterOptions = useMemo(() => {
     const map = new Map<number, string>();
     for (const p of rawList) {
       if (p?.projectType?.id && p?.projectType?.name) {
         map.set(p.projectType.id, p.projectType.name);
+      }
+      for (const l of (p?.categoryLinks ?? []) as Array<{ projectType?: { id?: number; name?: string } }>) {
+        const id = l?.projectType?.id;
+        const name = l?.projectType?.name;
+        if (id && name) map.set(id, name);
       }
     }
     return Array.from(map.entries()).sort(([, a], [, b]) => a.localeCompare(b));
@@ -477,13 +495,28 @@ export function ProjectListPage() {
    * success invalidates the whole ['projects'] prefix.
    */
   const projectTypesQuery = useProjectTypes();
+  // QA3 Wave-1 Commit 3C-b: sends `projectTypeIds` (multi-select).
+  // Backend derives the primary FK from `projectTypeIds[0]` and rewrites
+  // the junction. Optimistic patch updates both `projectType` (primary
+  // for the current cell render) and `categoryLinks` so the pill row
+  // flips instantly without waiting for the invalidate refetch.
   const updateProjectCategory = useMutation({
-    mutationFn: ({ id, projectTypeId }: { id: number; projectTypeId: number }) =>
-      client.patch(`/projects/${id}`, { projectTypeId }).then((r) => r.data),
-    onMutate: async ({ id, projectTypeId }) => {
+    mutationFn: ({ id, projectTypeIds }: { id: number; projectTypeIds: number[] }) =>
+      client.patch(`/projects/${id}`, { projectTypeIds }).then((r) => r.data),
+    onMutate: async ({ id, projectTypeIds }) => {
       await queryClient.cancelQueries({ queryKey: ['projects'] });
       const snapshots = queryClient.getQueriesData<any>({ queryKey: ['projects'] });
-      const nextType = (projectTypesQuery.data ?? []).find((t: any) => t.id === projectTypeId) ?? null;
+      const catalog = projectTypesQuery.data ?? [];
+      const byId = new Map<number, { id: number; name: string; color: string | null }>();
+      for (const t of catalog as any[]) {
+        byId.set(t.id, { id: t.id, name: t.name, color: t.color ?? null });
+      }
+      const primaryId = projectTypeIds[0];
+      const nextPrimary = primaryId != null ? byId.get(primaryId) ?? null : null;
+      const nextLinks = projectTypeIds
+        .map((tid) => byId.get(tid))
+        .filter((t): t is { id: number; name: string; color: string | null } => !!t)
+        .map((t) => ({ projectTypeId: t.id, projectType: t }));
       for (const [key, cached] of snapshots) {
         if (!cached) continue;
         const rows: any[] | undefined = cached?.data?.data
@@ -497,10 +530,9 @@ export function ProjectListPage() {
         const nextRows = rows.slice();
         nextRows[idx] = {
           ...nextRows[idx],
-          projectTypeId,
-          projectType: nextType
-            ? { id: nextType.id, name: nextType.name, color: nextType.color ?? null }
-            : nextRows[idx].projectType,
+          projectTypeId: primaryId ?? nextRows[idx].projectTypeId,
+          projectType: nextPrimary ?? nextRows[idx].projectType,
+          categoryLinks: nextLinks,
         };
         const next = cached?.data?.data
           ? { ...cached, data: { ...cached.data, data: nextRows } }
@@ -1142,10 +1174,11 @@ export function ProjectListPage() {
                       </td>
                       <td className="px-4 py-3">
                         <CategoryCell
-                          value={p.projectType ?? null}
+                          primary={p.projectType ?? null}
+                          links={(p.categoryLinks ?? []) as Array<{ projectTypeId: number; projectType: { id: number; name: string; color: string | null } }>}
                           options={projectTypesQuery.data ?? []}
                           canEdit={canWriteProjects}
-                          onChange={(projectTypeId) => updateProjectCategory.mutate({ id: p.id, projectTypeId })}
+                          onChange={(projectTypeIds) => updateProjectCategory.mutate({ id: p.id, projectTypeIds })}
                         />
                       </td>
                       {/* Finance-gated cells — mirror the header gates
@@ -1409,79 +1442,202 @@ function StatusCell({
  * QA3 · A · item 1.
  */
 function CategoryCell({
-  value,
+  primary,
+  links,
   options,
   canEdit,
   onChange,
 }: {
-  value: { id: number; name: string; color?: string | null } | null;
+  /** Eager-loaded primary ProjectType from `projects.service#findAll`.
+   *  Kept separately from `links` because legacy responses that pre-
+   *  date the junction only have the primary. */
+  primary: { id: number; name: string; color?: string | null } | null;
+  /** All linked categories (junction rows) from `categoryLinks`. When
+   *  the row includes the primary AND extras, we render one chip per
+   *  entry with the primary marked. */
+  links: Array<{ projectTypeId: number; projectType: { id: number; name: string; color: string | null } }>;
   options: Array<{ id: number; name: string; color?: string | null }>;
   canEdit: boolean;
-  onChange: (nextTypeId: number) => void;
+  onChange: (nextTypeIds: number[]) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const selectRef = useRef<HTMLSelectElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
-  useEffect(() => {
-    if (editing) {
-      queueMicrotask(() => selectRef.current?.focus());
+  // Effective category list — every distinct ProjectType attached to
+  // the row, primary first. Falls back to the primary FK alone when the
+  // junction hasn't been backfilled (legacy row).
+  const displayed = useMemo(() => {
+    const seen = new Set<number>();
+    const out: Array<{ id: number; name: string; color: string | null; isPrimary: boolean }> = [];
+    if (primary?.id) {
+      seen.add(primary.id);
+      out.push({ id: primary.id, name: primary.name, color: primary.color ?? null, isPrimary: true });
     }
+    for (const l of links) {
+      const t = l?.projectType;
+      if (!t?.id || seen.has(t.id)) continue;
+      seen.add(t.id);
+      out.push({ id: t.id, name: t.name, color: t.color ?? null, isPrimary: false });
+    }
+    return out;
+  }, [primary, links]);
+
+  const selectedIds = useMemo(() => displayed.map((d) => d.id), [displayed]);
+
+  // Close popover on outside click / Escape. Same wiring as the detail
+  // header editor so the two feel identical.
+  useEffect(() => {
+    if (!editing) return;
+    const onDoc = (e: MouseEvent) => {
+      if (popoverRef.current?.contains(e.target as Node)) return;
+      if (buttonRef.current?.contains(e.target as Node)) return;
+      setEditing(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setEditing(false);
+        buttonRef.current?.focus();
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [editing]);
 
-  const label = value?.name ?? '—';
+  const summary = (
+    <div className="flex flex-wrap items-center gap-1">
+      {displayed.length === 0 ? (
+        <span className="text-slate-400 dark:text-slate-500 text-[12px]">—</span>
+      ) : (
+        displayed.map((d) => (
+          <span
+            key={d.id}
+            className={cn(
+              'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] leading-tight border',
+              d.isPrimary
+                ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200 font-semibold'
+                : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300',
+            )}
+            title={d.isPrimary ? `${d.name} — primary` : d.name}
+          >
+            {d.color && (
+              <span
+                className="h-2 w-2 rounded-full border border-slate-200 dark:border-slate-700"
+                style={{ backgroundColor: d.color.startsWith('#') ? d.color : `#${d.color}` }}
+              />
+            )}
+            <span className="truncate max-w-[120px]">{d.name}</span>
+          </span>
+        ))
+      )}
+    </div>
+  );
 
-  if (!editing) {
-    return (
+  if (!canEdit) return summary;
+
+  return (
+    <div className="relative">
       <button
+        ref={buttonRef}
         type="button"
         onClick={(e) => {
           e.stopPropagation();
-          if (canEdit) setEditing(true);
+          setEditing((v) => !v);
         }}
-        disabled={!canEdit}
-        title={canEdit ? 'Change category' : undefined}
-        aria-label={canEdit ? `Change category (currently ${label})` : `Category: ${label}`}
+        aria-haspopup="menu"
+        aria-expanded={editing}
+        title="Change categories"
         className={cn(
-          'block w-full rounded-md text-left text-slate-600 dark:text-slate-300 -mx-1 px-1 py-0.5',
-          canEdit && 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400',
-          !canEdit && 'cursor-default',
+          'block w-full rounded-md text-left -mx-1 px-1 py-0.5',
+          'hover:bg-slate-50 dark:hover:bg-slate-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400',
         )}
       >
-        {label}
+        {summary}
       </button>
-    );
-  }
 
-  return (
-    <select
-      ref={selectRef}
-      value={value?.id ?? ''}
-      onClick={(e) => e.stopPropagation()}
-      onChange={(e) => {
-        e.stopPropagation();
-        const nextId = Number(e.target.value);
-        setEditing(false);
-        if (!Number.isFinite(nextId) || nextId <= 0) return;
-        if (nextId === value?.id) return;
-        onChange(nextId);
-      }}
-      onBlur={() => setEditing(false)}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          setEditing(false);
-        }
-      }}
-      className="rounded-[5px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-    >
-      {/* Placeholder when the project has no category set — kept
-          disabled so a user can't PATCH projectTypeId to an invalid
-          value (server DTO makes it required). */}
-      {value?.id == null && <option value="" disabled>— None</option>}
-      {options.map((t) => (
-        <option key={t.id} value={t.id}>{t.name}</option>
-      ))}
-    </select>
+      {editing && (
+        <div
+          ref={popoverRef}
+          role="menu"
+          onClick={(e) => e.stopPropagation()}
+          className="absolute left-0 top-full z-30 mt-1 min-w-[240px] max-h-[300px] overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-1.5 shadow-lg"
+        >
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
+            Categories — first checked = primary
+          </div>
+          {options.length === 0 && (
+            <div className="px-3 py-2 text-[12px] text-slate-500 dark:text-slate-400">
+              No categories configured
+            </div>
+          )}
+          {options.map((t) => {
+            const selected = selectedIds.includes(t.id);
+            const isPrimary = selectedIds[0] === t.id;
+            const color = t.color ? (t.color.startsWith('#') ? t.color : `#${t.color}`) : null;
+            return (
+              <div key={t.id} className="flex items-center gap-2 rounded-md px-2 py-1 hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={selected}
+                  onClick={() => {
+                    const next = selected
+                      ? selectedIds.filter((x) => x !== t.id)
+                      : [...selectedIds, t.id];
+                    if (next.length === 0) return; // primary must exist
+                    onChange(next);
+                  }}
+                  className="flex flex-1 items-center gap-2 text-left text-[13px]"
+                >
+                  <span
+                    className={cn(
+                      'inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border',
+                      selected
+                        ? 'border-blue-500 bg-blue-500 text-white'
+                        : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900',
+                    )}
+                  >
+                    {selected && <Check className="h-2.5 w-2.5" />}
+                  </span>
+                  <span
+                    className="h-3 w-3 shrink-0 rounded-full border border-slate-200 dark:border-slate-700"
+                    style={color ? { backgroundColor: color } : { backgroundColor: '#E2E8F0' }}
+                  />
+                  <span className="truncate text-slate-700 dark:text-slate-200">{t.name}</span>
+                </button>
+                {selected && !isPrimary && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Promote this id to primary — moves it to index 0.
+                      const next = [t.id, ...selectedIds.filter((x) => x !== t.id)];
+                      onChange(next);
+                    }}
+                    title="Make primary"
+                    className="rounded p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/40"
+                  >
+                    <Star className="h-3 w-3" />
+                  </button>
+                )}
+                {isPrimary && (
+                  <span
+                    className="inline-flex items-center gap-0.5 rounded bg-blue-600 text-white px-1 py-[1px] text-[9px] font-bold tracking-wide uppercase"
+                    title="Primary category — used for rollups"
+                  >
+                    <Star className="h-2.5 w-2.5 fill-white" />
+                    Primary
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

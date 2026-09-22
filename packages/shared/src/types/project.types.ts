@@ -48,6 +48,18 @@ export interface Project {
    * with no tasks; not present on payloads that don't compute it.
    */
   completionPct?: number;
+  /**
+   * All categories linked to this project (QA3 Wave-1 Commit 3C · PR-037).
+   * `projectTypeId` above stays as the PRIMARY id (used for rollups,
+   * grouping and reports); `categoryLinks` mirrors it PLUS any extras
+   * the user picked in the multi-select. Populated by the projects
+   * list + detail endpoints when the client asked for the include.
+   * Legacy responses that pre-date the junction omit this field.
+   */
+  categoryLinks?: Array<{
+    projectTypeId: number;
+    projectType: { id: number; name: string; color: string | null };
+  }>;
 }
 
 export interface ProjectMember {

@@ -61,7 +61,20 @@ export interface CreateProjectPayload {
   name: string;
   number?: string;
   description?: string;
-  projectTypeId: number;
+  /**
+   * Primary Category — used for rollups/grouping. Optional at the wire
+   * level: when the client sends only `projectTypeIds`, the backend
+   * picks `projectTypeIds[0]` as primary. Pre-multi-select callers
+   * still send this alone; the backend treats it as a single-element
+   * array. (QA3 Wave-1 Commit 3C · PR-037.)
+   */
+  projectTypeId?: number;
+  /**
+   * All Categories (multi-select). Every id in the array becomes a
+   * junction row; `projectTypeIds[0]` becomes primary unless
+   * `projectTypeId` is set explicitly. (QA3 Wave-1 Commit 3C · PR-037.)
+   */
+  projectTypeIds?: number[];
   status?: string;
   budget?: number;
   startDate?: string;
