@@ -5,6 +5,33 @@
 
 ---
 
+## 🚦 WAVE 2 — **CLOSED 2026-09-22 (HEAD `9b67e9b`)**
+
+Verify-first per `docs/bm2/qa3-wave2-run.md`. All items either VERIFIED
+against the existing implementation or FIXED with a scoped commit;
+schema left untouched per decision.
+
+**Commit 4 — Cost surfacing:**
+- **PR-004 / PR-005 / PR-006** — cost engine + hours + completion % rollup VERIFIED (`projects.service#getLaborCost` :1951, list rollup :539–613, `actualCost` on both list and now `findOne`).
+- **PR-029 — rate path** VERIFIED. Rate flows through `SeniorityLevel.defaultHourlyCost` set in the SeniorityLevels admin page; per-user assignment via People page's seniority history. `User.hourlyRate` field exists in schema but is unused by the cost engine (documented, no action).
+- **PR-035 + PR-031 (bundled)** FIXED at `8f86e2a` — new `computeProjectActualCost` helper on the service, `findOne` returns `actualCost`. Project detail top row renders **Budget | Cost | Utilization%** inline (finance-gated). Ops dashboard label changed to "Budget allocated X%" (metric unchanged; only wording — the number is `Σ Task.budgetAmount / Project.budget`, i.e. planned allocation, not spent). Live-verified on P18: `Budget: ₪170,000 | Cost: ₪0 | Utilization: 0%`. Zero cost matches the unrateable-contributors path (`getLaborCost` bucket) — engine is behaving correctly.
+
+**Commit 5 — Zone/Service exposure:**
+- **PR-032 — zoneType picker in TEMPLATES** FIXED at `8f86e2a` — new `manual-zone-form.tsx` component wired into `EditorView`'s root Add menu ("Manual Zone" alongside "Zone from Template") and `ZoneTreeNode`'s child-add flow ("New Zone" / "From Template" pair). Backend already accepted `zoneType`; this is FE-only. Live-verified: form renders all 8 types (Site/Building/Level/Zone/Area/Section/Wing/Floor).
+- **PR-034 — group-by-Zone tree + ERD** VERIFIED. Planning tab with Group=Zone already renders nested Zone > sub-zone hierarchy (P18: 4 root zones each with 3 sub-zones, indented). PR-032 now unlocks varied types on that same tree. **ERD schema change refused per decision** — `Zone.zoneType` stays an enum, no FK to `ZoneTypeMeta`, no migration. Doc-only note is the acceptable follow-up (out of Wave-2 scope).
+- **PR-042 — template Service surface** VERIFIED. Deliverable Templates page shows the Phase (Service) as a cyan pill on each template row + phase picker in header form + phase-filter dropdown ([deliverable-templates-page.tsx:409](apps/web/src/features/templates/deliverable-templates-page.tsx:409)). Zone Template editor's Deliverable groups show the same cyan Service pill ([service-group-item.tsx:58-62](apps/web/src/features/templates/zone-templates/service-group-item.tsx:58)).
+- **PR-020 — no-zone Service progress** VERIFIED on P18: with Group=Zone, "No Zone" group renders **75% · 22 tasks · 148h budget · 103h logged · ₪59,200**. Overall progress rollup includes no-zone tasks; per-zone rollup deliberately skips them (`execution-planning.service.ts:400` vs :386).
+
+**Commit 6 — Deliverable identity / Execution dedup:**
+- **PR-041 — duplicate deliverable in Execution** FIXED at `9b67e9b` — `!orderedColumns.includes(tpl.name)` guard added to the first ordering loop in `execution-board-page.tsx:404-410`. Live-verified on P18 Execution filtered to "BIM management": chip count at the matrix column-header row dropped from **4 → 1**. Matrix key stays `${zoneId}|${phaseName}` (string), per analyst decision — id-keying would over-split.
+- **Template rename propagation** VERIFIED structurally: `Task.name` is a copied string column, so renaming a Template does NOT change existing task names or hours (TimeEntry.minutes is unrelated). `PATCH /templates/:id` updates the Template row only. New instantiations copy the CURRENT Template.name. Existing projects that reference by `deliverableTemplateId` see the new name via FK; projects using `projectDeliverableId` are unaffected (project-owned name). No live rename was performed on staging (avoid destructive smoke on real templates).
+- **PR-019 — task add sets deliverable link** VERIFIED. `tasks.service.ts:201-203` writes both `deliverableTemplateId` and `projectDeliverableId` on create; Planning "Add > New Task" / "New Deliverable" affordances live-visible on P18 group cards.
+- **PR-013 — add task template into tree** VERIFIED. Planning "Add > From Template" affordance live-visible on P18 group cards; `CatalogPickerForZone` at `planning-modal.tsx:1424` is the writer.
+
+**Wave-2 commits shipped:**
+- `8f86e2a` — feat(projects,templates): PR-035/031 cost surfacing + PR-032 zoneType picker
+- `9b67e9b` — fix(execution): dedupe duplicate deliverable columns by name (PR-041)
+
 ## 🚦 WAVE 1 — **CLOSED 2026-09-22 (HEAD `68c68a9`)**
 
 All Wave-1 goals shipped, live-verified on staging, and the temporary
