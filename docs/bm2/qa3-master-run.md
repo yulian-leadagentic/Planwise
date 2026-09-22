@@ -1,3 +1,5 @@
+> ⚠️ **SUPERSEDED (2026-09-22):** The **COMMIT 3** section below ("bind Category ← ProjectType") is OUT OF DATE and WRONG. Root cause was corrected — the "Project Categories" tab writes to `service_types`, not `project_types`. Follow **`qa3-commit3.md`** for Commit 3 and **`qa3-status.md`** for current state. The rest of this file (Commits 1,2,4+ and the wave split) still stands.
+
 # Planwise QA3 — Master Development Run (single continuous sequence)
 
 **From:** Yulian (via analyst/reviewer) · **Date:** 2026-09-17 · **For:** CC

@@ -23,11 +23,19 @@ import { useConfirm } from '@/components/shared/confirm-dialog';
 // ---------------------------------------------------------------------------
 // Tab definitions
 // ---------------------------------------------------------------------------
-type TabKey = 'zone' | 'service' | 'department' | 'profession';
+// QA3 Wave-1 Commit 3A (2026-09-22): the `'service'` tab was mislabelled
+// "Project Categories" but wired to /service-types (ServiceType) — while
+// the New-Project dropdown reads /admin/config/project-types (ProjectType).
+// Result: adding a "category" in Templates→Types didn't appear in
+// New-Project. Fix: rename the ServiceType tab to "Services" (which is
+// what it actually manages) and add a new "Project Categories" tab wired
+// to the ProjectType table that New-Project actually reads.
+type TabKey = 'zone' | 'projectCategory' | 'service' | 'department' | 'profession';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'zone', label: 'Zone Types' },
-  { key: 'service', label: 'Project Categories' },
+  { key: 'projectCategory', label: 'Project Categories' },
+  { key: 'service', label: 'Services' },
   { key: 'department', label: 'Departments' },
   { key: 'profession', label: 'Job Titles' },
 ];
@@ -111,6 +119,55 @@ export function TypesPage() {
       notify.success('Zone type deleted', { code: 'ZONETYPE-DELETE-200' });
     },
     onError: (err: any) => notify.apiError(err, 'Failed to delete zone type'),
+  });
+
+  // -----------------------------------------------------------------------
+  // Project Categories queries — the SAME table (`project_types`) the
+  // New-Project dropdown reads via useProjectTypes(). Adding/renaming
+  // here has to be visible in /projects/new after refresh.
+  // -----------------------------------------------------------------------
+  const projectCategoriesQuery = useQuery({
+    queryKey: ['admin', 'project-types'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => client.get('/admin/config/project-types').then((r) => r.data?.data ?? r.data),
+    enabled: activeTab === 'projectCategory',
+  });
+
+  const createProjectCategory = useMutation({
+    mutationFn: (payload: { name: string; code?: string; color?: string }) =>
+      client.post('/admin/config/project-types', payload).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'project-types'] });
+      // Also invalidate the New-Project form's useProjectTypes() so a
+      // newly created category shows up there without a hard refresh.
+      queryClient.invalidateQueries({ queryKey: ['projectTypes'] });
+      notify.success('Project category created', { code: 'PROJCAT-CREATE-200' });
+      resetForm();
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to create project category'),
+  });
+
+  const updateProjectCategory = useMutation({
+    mutationFn: ({ id, ...payload }: { id: number; name: string; code?: string; color?: string }) =>
+      client.patch(`/admin/config/project-types/${id}`, payload).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'project-types'] });
+      queryClient.invalidateQueries({ queryKey: ['projectTypes'] });
+      notify.success('Project category updated', { code: 'PROJCAT-UPDATE-200' });
+      setEditing(null);
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update project category'),
+  });
+
+  const deleteProjectCategory = useMutation({
+    mutationFn: (id: number) =>
+      client.delete(`/admin/config/project-types/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'project-types'] });
+      queryClient.invalidateQueries({ queryKey: ['projectTypes'] });
+      notify.success('Project category deleted', { code: 'PROJCAT-DELETE-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to delete project category'),
   });
 
   // -----------------------------------------------------------------------
@@ -236,17 +293,20 @@ export function TypesPage() {
 
   const isLoading =
     (activeTab === 'zone' && zoneTypesQuery.isLoading) ||
+    (activeTab === 'projectCategory' && projectCategoriesQuery.isLoading) ||
     (activeTab === 'service' && serviceTypesQuery.isLoading) ||
     (activeTab === 'department' && departmentsQuery.isLoading) ||
     (activeTab === 'profession' && professionsQuery.isLoading);
 
   const isCreating =
+    (activeTab === 'projectCategory' && createProjectCategory.isPending) ||
     (activeTab === 'service' && createServiceType.isPending) ||
     (activeTab === 'department' && createDepartment.isPending) ||
     (activeTab === 'profession' && createProfession.isPending);
 
   const isSaving =
     updateZoneType.isPending ||
+    updateProjectCategory.isPending ||
     updateServiceType.isPending ||
     updateDepartment.isPending || updateProfession.isPending;
 
@@ -263,6 +323,10 @@ export function TypesPage() {
           name: z.label ?? z.code ?? '',
           color: z.color ?? '',
           sortOrder: z.sortOrder ?? 0,
+        }));
+      } else if (activeTab === 'projectCategory') {
+        items = (projectCategoriesQuery.data ?? []).map((c: any) => ({
+          id: c.id, code: c.code ?? '', name: c.name, color: c.color ?? '',
         }));
       } else if (activeTab === 'service') {
         items = (serviceTypesQuery.data ?? []).map((s: any) => ({
@@ -284,10 +348,10 @@ export function TypesPage() {
           r.name.toLowerCase().includes(q) ||
           r.code.toLowerCase().includes(q),
       );
-    }, [activeTab, search, zoneTypesQuery.data, serviceTypesQuery.data, departmentsQuery.data, professionsQuery.data]);
+    }, [activeTab, search, zoneTypesQuery.data, projectCategoriesQuery.data, serviceTypesQuery.data, departmentsQuery.data, professionsQuery.data]);
 
-  const hasColor = activeTab === 'zone' || activeTab === 'service';
-  const hasCode = activeTab === 'zone' || activeTab === 'service' || activeTab === 'department';
+  const hasColor = activeTab === 'zone' || activeTab === 'projectCategory' || activeTab === 'service';
+  const hasCode = activeTab === 'zone' || activeTab === 'projectCategory' || activeTab === 'service' || activeTab === 'department';
   const hasNumbering = activeTab === 'department';
 
   // -----------------------------------------------------------------------
@@ -322,6 +386,8 @@ export function TypesPage() {
         label: trimmedName,
         color: editing.color.trim() || undefined,
       });
+    } else if (activeTab === 'projectCategory') {
+      updateProjectCategory.mutate({ id: editing.id as number, name: trimmedName, code: editing.code.trim() || undefined, color: editing.color.trim() || undefined });
     } else if (activeTab === 'service') {
       updateServiceType.mutate({ id: editing.id as number, name: trimmedName, code: editing.code.trim() || undefined, color: editing.color.trim() || undefined });
     } else if (activeTab === 'department') {
@@ -329,7 +395,7 @@ export function TypesPage() {
     } else if (activeTab === 'profession') {
       updateProfession.mutate({ id: editing.id as number, name: trimmedName });
     }
-  }, [editing, activeTab, updateZoneType, updateServiceType, updateDepartment, updateProfession]);
+  }, [editing, activeTab, updateZoneType, updateProjectCategory, updateServiceType, updateDepartment, updateProfession]);
 
   // Escape key handler for inline edit
   useEffect(() => {
@@ -351,7 +417,9 @@ export function TypesPage() {
     const trimmedName = formName.trim();
     if (!trimmedName) return;
 
-    if (activeTab === 'service') {
+    if (activeTab === 'projectCategory') {
+      createProjectCategory.mutate({ name: trimmedName, code: formCode.trim() || undefined, color: formColor.trim() || undefined });
+    } else if (activeTab === 'service') {
       createServiceType.mutate({ name: trimmedName, code: formCode.trim() || undefined, color: formColor.trim() || undefined });
     } else if (activeTab === 'department') {
       createDepartment.mutate({ name: trimmedName, code: formCode.trim() || undefined });
@@ -365,6 +433,7 @@ export function TypesPage() {
     if (!(await confirm(`Delete "${row.name}"? This action cannot be undone.`))) return;
 
     if (activeTab === 'zone') deleteZoneType.mutate(row.id as number);
+    else if (activeTab === 'projectCategory') deleteProjectCategory.mutate(row.id as number);
     else if (activeTab === 'service') deleteServiceType.mutate(row.id as number);
     else if (activeTab === 'department') deleteDepartment.mutate(row.id as number);
     else if (activeTab === 'profession') deleteProfession.mutate(row.id as number);
@@ -386,7 +455,12 @@ export function TypesPage() {
   const canAdd = activeTab !== 'zone';
   const canDelete = true;
   const isSimpleList = activeTab === 'profession';
-  const addLabel = activeTab === 'department' ? 'Add Department' : activeTab === 'profession' ? 'Add Job Title' : activeTab === 'service' ? 'Add Category' : 'Add Type';
+  const addLabel =
+    activeTab === 'department' ? 'Add Department' :
+    activeTab === 'profession' ? 'Add Job Title' :
+    activeTab === 'projectCategory' ? 'Add Category' :
+    activeTab === 'service' ? 'Add Service' :
+    'Add Type';
 
   // -----------------------------------------------------------------------
   // Render
@@ -472,7 +546,8 @@ export function TypesPage() {
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
                   placeholder={
-                    activeTab === 'service' ? 'e.g. BIM, MEP, Structural' :
+                    activeTab === 'projectCategory' ? 'e.g. מגורים, Buildings, Infrastructure' :
+                    activeTab === 'service' ? 'e.g. BIM Coordination, MEP, Structural' :
                     activeTab === 'department' ? 'e.g. Buildings, VDC' :
                     activeTab === 'profession' ? 'e.g. Architect, MEP Engineer' :
                     'e.g. Civil Engineering'
@@ -542,7 +617,11 @@ export function TypesPage() {
                   <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] w-28">Code</th>
                 )}
                 <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em]">
-                  {activeTab === 'department' ? 'Department Name' : activeTab === 'profession' ? 'Job Title Name' : activeTab === 'service' ? 'Category Name' : 'Name'}
+                  {activeTab === 'department' ? 'Department Name' :
+                   activeTab === 'profession' ? 'Job Title Name' :
+                   activeTab === 'projectCategory' ? 'Category Name' :
+                   activeTab === 'service' ? 'Service Name' :
+                   'Name'}
                 </th>
                 <th className="px-5 py-2.5 text-right text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] w-28">Actions</th>
               </tr>
