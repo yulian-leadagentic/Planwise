@@ -117,7 +117,23 @@ export class ProjectsService {
   }
 
   async create(userId: number, dto: CreateProjectDto) {
-    const { memberIds, leaderId, customerOrgId, roleAssignments, ...rest } = dto;
+    const { memberIds, leaderId, customerOrgId, roleAssignments, projectTypeIds, ...rest } = dto;
+
+    // QA3 Wave-1 Commit 3C (PR-037) — resolve the effective category set.
+    // Priority: explicit `projectTypeIds` array > explicit `projectTypeId`
+    // scalar > fail. `projectTypeId` becomes the PRIMARY FK (used for
+    // rollups); the full set gets junction rows.
+    const categoryIds = projectTypeIds && projectTypeIds.length > 0
+      ? projectTypeIds
+      : (rest.projectTypeId != null ? [rest.projectTypeId] : []);
+    if (categoryIds.length === 0) {
+      throw new BadRequestException('At least one Project Category is required (projectTypeId or projectTypeIds).');
+    }
+    // Primary FK: explicit scalar wins when both were sent, else first of array.
+    const primaryProjectTypeId = rest.projectTypeId ?? categoryIds[0];
+    rest.projectTypeId = primaryProjectTypeId;
+    // De-dupe the junction set — a caller can send the primary twice.
+    const uniqueCategoryIds = Array.from(new Set(categoryIds));
 
     // Validate the customer organization up-front so we don't leave a
     // dangling project if the relationship rules reject it. A customer is an
@@ -182,14 +198,28 @@ export class ProjectsService {
     const project = await this.prisma.project.create({
       data: {
         ...rest,
+        // Narrow projectTypeId — the DTO made it optional in the outer
+        // shape but our resolution above assigned it from the primary
+        // pick. Explicit here keeps Prisma's generated type happy without
+        // a `!` non-null assertion.
+        projectTypeId: primaryProjectTypeId,
         number,
         leaderId: leaderId && leaderId > 0 ? leaderId : null,
         createdBy: userId,
         startDate: dto.startDate ? new Date(dto.startDate) : undefined,
         endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+        // QA3-3C: seed the multi-select junction alongside the primary FK.
+        // Nested createMany keeps this atomic with the project row.
+        categoryLinks: {
+          createMany: {
+            data: uniqueCategoryIds.map((projectTypeId) => ({ projectTypeId })),
+            skipDuplicates: true,
+          },
+        },
       },
       include: {
         projectType: true, department: true, categories: { include: { serviceType: true } },
+        categoryLinks: { include: { projectType: true } },
         creator: { select: { id: true, firstName: true, lastName: true } },
         leader: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
       },
@@ -318,7 +348,15 @@ export class ProjectsService {
     }
 
     if (query.projectTypeId) {
-      where.projectTypeId = query.projectTypeId;
+      // QA3-3C (PR-037): match on EITHER the primary FK OR the junction —
+      // so a project tagged with the queried category as a secondary
+      // still shows up. Rollups/grouping still use the PRIMARY only; this
+      // is a list-filter concern.
+      where.OR = [
+        ...(Array.isArray(where.OR) ? where.OR : []),
+        { projectTypeId: query.projectTypeId },
+        { categoryLinks: { some: { projectTypeId: query.projectTypeId } } },
+      ];
     }
 
     // Hide CLOSED projects from the default list. T3.6+7, 2026-06-28.
@@ -395,6 +433,7 @@ export class ProjectsService {
         orderBy: { createdAt: 'desc' },
         include: {
           projectType: true, department: true, categories: { include: { serviceType: true } },
+        categoryLinks: { include: { projectType: true } },
           creator: { select: { id: true, firstName: true, lastName: true } },
           leader: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
           _count: { select: { members: true, labels: true, tasks: true, zones: true } },
@@ -598,6 +637,7 @@ export class ProjectsService {
       where: { id },
       include: {
         projectType: true, department: true, categories: { include: { serviceType: true } },
+        categoryLinks: { include: { projectType: true } },
         creator: { select: { id: true, firstName: true, lastName: true, email: true } },
         leader: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
         members: {
@@ -670,13 +710,40 @@ export class ProjectsService {
 
   async update(id: number, dto: UpdateProjectDto, actorUserId?: number) {
     await this.findOne(id);
-    const { memberIds, ...rest } = dto;
+    const { memberIds, projectTypeIds, ...rest } = dto;
 
     // Capture which keys are actually being changed (any value supplied,
     // including null) so the activity-log description can name the fields
     // — gives the audit feed entries like "Updated 'Tower 1' — name, leader"
     // instead of a generic "updated project".
     const changedKeys = Object.keys(rest);
+    if (projectTypeIds !== undefined) changedKeys.push('projectTypeIds');
+
+    // QA3-3C (PR-037): reconcile the multi-select junction if the caller
+    // sent `projectTypeIds`. Rule: the array replaces the CURRENT link
+    // set. When both `projectTypeId` and `projectTypeIds` come in, the
+    // scalar wins the primary FK; when only `projectTypeIds` is sent,
+    // element 0 becomes the primary. When only `projectTypeId` is sent
+    // (legacy client), the junction is left untouched.
+    let categoryLinksWrite: any = undefined;
+    if (projectTypeIds && projectTypeIds.length > 0) {
+      const primaryFromExplicit = rest.projectTypeId;
+      const primaryPicked = primaryFromExplicit ?? projectTypeIds[0];
+      // Ensure the primary is present in the junction set — a caller that
+      // sends [2, 5] with an explicit projectTypeId=9 gets {2, 5, 9}.
+      const uniqueIds = Array.from(new Set([primaryPicked, ...projectTypeIds]));
+      rest.projectTypeId = primaryPicked;
+      categoryLinksWrite = {
+        // deleteMany+createMany inside one update is a single Prisma
+        // "nested set" — runs in a single implicit transaction so the
+        // junction never appears empty to a concurrent read.
+        deleteMany: {},
+        createMany: {
+          data: uniqueIds.map((projectTypeId) => ({ projectTypeId })),
+          skipDuplicates: true,
+        },
+      };
+    }
 
     const project = await this.prisma.project.update({
       where: { id },
@@ -684,9 +751,11 @@ export class ProjectsService {
         ...rest,
         startDate: dto.startDate ? new Date(dto.startDate) : undefined,
         endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+        ...(categoryLinksWrite ? { categoryLinks: categoryLinksWrite } : {}),
       },
       include: {
         projectType: true, department: true, categories: { include: { serviceType: true } },
+        categoryLinks: { include: { projectType: true } },
         creator: { select: { id: true, firstName: true, lastName: true } },
       },
     });

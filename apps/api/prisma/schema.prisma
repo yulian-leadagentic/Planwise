@@ -454,9 +454,35 @@ model ProjectType {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  projects Project[]
+  projects      Project[]
+  /// QA3 Wave-1 Commit 3C (PR-037): the multi-select junction. Every
+  /// project-category assignment (including the "primary" one) shows up
+  /// here too, so a category filter can match on either side. Deleting
+  /// a ProjectType hard-cascades its junction rows but the primary FK
+  /// on Project stays as-is — an admin editing project_types must
+  /// first migrate projects off the primary FK to avoid orphaning.
+  categoryLinks ProjectCategoryLink[]
 
   @@map("project_types")
+}
+
+/// Multi-select Project ↔ ProjectType junction (PR-037).
+/// Project.projectTypeId remains the PRIMARY category — the single
+/// value rollups/grouping/reports read. This table is additive: every
+/// primary FK also has a row here (backfilled on migration), plus any
+/// extra tags. Single-category projects therefore always show exactly
+/// one link row; a project with 2 categories shows 2 rows.
+model ProjectCategoryLink {
+  projectId     Int      @map("project_id")
+  projectTypeId Int      @map("project_type_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  project     Project     @relation(fields: [projectId],     references: [id], onDelete: Cascade)
+  projectType ProjectType @relation(fields: [projectTypeId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, projectTypeId])
+  @@index([projectTypeId])
+  @@map("project_category_links")
 }
 
 model Department {
@@ -590,6 +616,12 @@ model Project {
   zones             Zone[]
   tasks             Task[]
   categories        ProjectCategory[]
+  /// QA3 Wave-1 Commit 3C (PR-037): multi-select Project Categories.
+  /// Junction to ProjectType. `projectTypeId` above STAYS the PRIMARY
+  /// category — used for rollups/grouping (never multi-counted).
+  /// This junction lets a project carry additional categories as tags.
+  /// A single-category project shows exactly one link row here (primary).
+  categoryLinks     ProjectCategoryLink[]
   files             ProjectFile[]
   partnerRoles      ProjectPartnerRole[]
   milestoneStatuses ProjectMilestoneStatus[]

@@ -41,9 +41,31 @@ export class CreateProjectDto {
   @IsString()
   description?: string;
 
-  @ApiProperty()
+  /**
+   * PRIMARY category — the single value used for rollups, grouping and
+   * reports. Optional in the DTO: when the caller sends `projectTypeIds`
+   * without an explicit primary, the service uses `projectTypeIds[0]`.
+   * Backwards-compat: existing pre-multi-select clients still send only
+   * `projectTypeId` and the service treats that as a single-element
+   * array. Validation requires at least one of the two to be present.
+   */
+  @ApiPropertyOptional({ description: 'Primary Project Category (used for rollups). Optional when projectTypeIds is provided.' })
+  @IsOptional()
   @IsInt()
-  projectTypeId: number;
+  projectTypeId?: number;
+
+  /**
+   * QA3 Wave-1 Commit 3C (PR-037): the multi-select list. All ids in this
+   * array become junction rows; `projectTypeIds[0]` becomes the primary
+   * FK unless `projectTypeId` was passed explicitly. Order matters ONLY
+   * to derive the default primary — the junction itself is unordered.
+   */
+  @ApiPropertyOptional({ description: 'All Project Categories (multi-select). First id defaults to primary unless projectTypeId is set.', type: [Number] })
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  @Type(() => Number)
+  projectTypeIds?: number[];
 
   @ApiPropertyOptional()
   @IsOptional()
