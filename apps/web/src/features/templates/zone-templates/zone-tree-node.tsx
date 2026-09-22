@@ -10,6 +10,7 @@ import { InstanceCountStepper } from './instance-count-stepper';
 import { ZoneTemplatePicker } from './zone-template-picker';
 import { ServiceGroupItem } from './service-group-item';
 import { ReadOnlyZoneNode } from './read-only-zone-node';
+import { ManualZoneForm } from './manual-zone-form';
 
 // ---------------------------------------------------------------------------
 // Zone Tree Node (recursive)
@@ -34,6 +35,11 @@ export function ZoneTreeNode({
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(true);
   const [showAddChild, setShowAddChild] = useState(false);
+  // QA3 Wave-2 Commit 5 (PR-032): sibling to `showAddChild`. The
+  // existing picker only references other zone templates; this opens
+  // a compact manual form with a zoneType picker so children can be
+  // tagged Site / Building / Level without a round-trip.
+  const [showAddChildManual, setShowAddChildManual] = useState(false);
   // Tracks the in-flight "delete this zone" confirmation so the styled
   // ConfirmDialog can replace the native confirm() popup.
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -135,13 +141,22 @@ export function ZoneTreeNode({
           onChange={(n) => updateMutation.mutate({ instanceCount: n })}
         />
 
-        {/* [+ Add Zone] button — sub-zones only contain other zones. */}
+        {/* Add-child affordances — a compact manual "New" flow with a
+            zoneType picker (PR-032) and the legacy "From Template"
+            reference picker. Both drop into the expanded tree body. */}
+        <button
+          onClick={() => { setShowAddChildManual(true); setExpanded(true); }}
+          className="ml-auto shrink-0 flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
+          title="Add new child zone"
+        >
+          <Plus className="h-3 w-3" /> New Zone
+        </button>
         <button
           onClick={() => { setShowAddChild(true); setExpanded(true); }}
-          className="ml-auto shrink-0 flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
-          title="Add child zone"
+          className="shrink-0 flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
+          title="Add child zone from an existing zone template"
         >
-          <Plus className="h-3 w-3" /> Add Zone
+          <Plus className="h-3 w-3" /> From Template
         </button>
 
         {/* Delete this zone. `shrink-0` keeps it visible even when the row
@@ -205,6 +220,12 @@ export function ZoneTreeNode({
               servicePhaseMap={servicePhaseMap}
             />
           ))}
+
+          {showAddChildManual && (
+            <div className="mt-1">
+              <ManualZoneForm templateId={templateId} parentId={zone.id} onDone={() => setShowAddChildManual(false)} />
+            </div>
+          )}
 
           {showAddChild && (
             <div className="mt-1">

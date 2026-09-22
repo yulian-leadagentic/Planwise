@@ -224,9 +224,15 @@ export function ProjectDetailPage() {
               <span className="text-slate-500 dark:text-slate-400 text-xs">{memberCount} members</span>
             </div>
 
-            {/* Budget — gated by finance permission. Same gate used by the
-                Cost tab and labor-cost endpoints, so non-finance users don't
-                see project value anywhere. */}
+            {/* Budget / Cost / Utilization% — gated by finance permission.
+                Same gate used by the Cost tab and labor-cost endpoints,
+                so non-finance users don't see project value anywhere.
+                QA3 Wave-2 Commit 4 (PR-035/031): Cost + Utilization%
+                render inline next to Budget so the ratio is visible
+                without opening the Cost tab. Cost = actualCost (Σ hours ×
+                seniority rate); Utilization = Cost / Budget as an
+                integer %. Cost may be absent on cache-miss — treat 0 as
+                a valid render. */}
             {showFinance && project.budget != null && (
               <>
                 <span className="text-slate-300 dark:text-slate-600">|</span>
@@ -236,6 +242,43 @@ export function ProjectDetailPage() {
                     &#8362;{formatBudget(project.budget)}
                   </span>
                 </div>
+                {(() => {
+                  const actualCost = Number((project as any).actualCost ?? 0);
+                  const budget = Number(project.budget ?? 0);
+                  const utilization = budget > 0 ? Math.round((actualCost / budget) * 100) : null;
+                  return (
+                    <>
+                      <span className="text-slate-300 dark:text-slate-600">|</span>
+                      <div className="flex items-center gap-1">
+                        <span className="text-slate-500 dark:text-slate-400 text-xs">Cost:</span>
+                        <span className="font-mono text-xs font-semibold text-slate-900 dark:text-slate-100">
+                          &#8362;{formatBudget(actualCost)}
+                        </span>
+                      </div>
+                      {utilization != null && (
+                        <>
+                          <span className="text-slate-300 dark:text-slate-600">|</span>
+                          <div className="flex items-center gap-1">
+                            <span className="text-slate-500 dark:text-slate-400 text-xs">Utilization:</span>
+                            <span
+                              className={cn(
+                                'font-mono text-xs font-semibold',
+                                utilization > 100
+                                  ? 'text-red-600 dark:text-red-400'
+                                  : utilization > 85
+                                    ? 'text-amber-600 dark:text-amber-400'
+                                    : 'text-slate-900 dark:text-slate-100',
+                              )}
+                              title={`Cost ${formatBudget(actualCost)} of Budget ${formatBudget(budget)}`}
+                            >
+                              {utilization}%
+                            </span>
+                          </div>
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
               </>
             )}
 

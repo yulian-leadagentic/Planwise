@@ -11,6 +11,7 @@ import { ZoneTemplatePicker } from './zone-template-picker';
 import { RootManualTaskForm } from './root-manual-task-form';
 import { RootServicePickerModal } from './root-service-picker-modal';
 import { RootCatalogPickerModal } from './root-catalog-picker-modal';
+import { ManualZoneForm } from './manual-zone-form';
 
 // ---------------------------------------------------------------------------
 // Editor View
@@ -29,6 +30,11 @@ export function EditorView({
   const [showRootServicePicker, setShowRootServicePicker] = useState(false);
   const [showRootCatalogPicker, setShowRootCatalogPicker] = useState(false);
   const [showRootManualTask, setShowRootManualTask] = useState(false);
+  // QA3 Wave-2 Commit 5 (PR-032): manual zone flow with zoneType picker.
+  // Sibling to `showAddRoot` (which is the reference-existing-template
+  // picker), so template authors can create a Site / Building / Level
+  // by name + type without having to spin up a whole zone template first.
+  const [showRootManualZone, setShowRootManualZone] = useState(false);
 
   // ---- fetch template detail ----
   const { data: template, isLoading } = useQuery({
@@ -196,8 +202,11 @@ export function EditorView({
             </button>
             {showRootAddMenu && (
               <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-md border border-border bg-background shadow-lg">
+                <button onClick={() => { setShowRootManualZone(true); setShowRootAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
+                  <Layers className="h-3.5 w-3.5 text-amber-600" /> Manual Zone
+                </button>
                 <button onClick={() => { setShowAddRoot(true); setShowRootAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
-                  <Layers className="h-3.5 w-3.5 text-amber-600" /> Zone
+                  <Layers className="h-3.5 w-3.5 text-amber-500" /> Zone from Template
                 </button>
                 <button onClick={() => { setShowRootServicePicker(true); setShowRootAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
                   <Copy className="h-3.5 w-3.5 text-blue-600" /> Deliverable
@@ -214,7 +223,7 @@ export function EditorView({
         </div>
 
         <div className="rounded-lg border border-border bg-background p-4 space-y-1">
-          {totalItems === 0 && !showAddRoot && !showRootManualTask ? (
+          {totalItems === 0 && !showAddRoot && !showRootManualTask && !showRootManualZone ? (
             <div className="py-8 text-center">
               <Layers className="mx-auto h-10 w-10 text-muted-foreground" />
               <p className="mt-2 text-sm text-muted-foreground">No items yet. Click [+ Add] to add zones, phases/milestones, or tasks.</p>
@@ -267,6 +276,10 @@ export function EditorView({
 
           {showAddRoot && (
             <ZoneTemplatePicker templateId={templateId} parentId={null} onDone={() => setShowAddRoot(false)} />
+          )}
+
+          {showRootManualZone && (
+            <ManualZoneForm templateId={templateId} parentId={null} onDone={() => setShowRootManualZone(false)} />
           )}
 
           {showRootManualTask && (

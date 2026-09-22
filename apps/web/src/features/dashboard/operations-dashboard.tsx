@@ -429,7 +429,14 @@ export function OperationsDashboardPage() {
                         <div className="flex items-center gap-2.5 shrink-0 text-[11px]">
                           {overdueTasks.length > 0 && <span className="font-semibold text-red-600 font-mono tabular-nums">{overdueTasks.length} overdue</span>}
                           <span className="w-px h-4 bg-slate-200 dark:bg-slate-700" />
-                          <span className={cn('font-mono tabular-nums font-semibold', project.budgetPct > 85 ? 'text-red-600' : 'text-slate-500 dark:text-slate-400')}>budget {project.budgetPct}%</span>
+                          {/* QA3 Wave-2 Commit 4 (PR-031): label relabelled
+                              "Budget allocated" — the metric is
+                              Σ Task.budgetAmount / Project.budget, i.e. how
+                              much of the project's budget is committed to
+                              tasks. Actual labor cost lives on the project
+                              detail top row (Cost + Utilization%), which
+                              is the surface the QA item asked for. */}
+                          <span className={cn('font-mono tabular-nums font-semibold', project.budgetPct > 85 ? 'text-red-600' : 'text-slate-500 dark:text-slate-400')}>Budget allocated {project.budgetPct}%</span>
                           <span className={cn('font-mono tabular-nums font-semibold', project.daysLeft < 0 ? 'text-red-600' : project.daysLeft < 30 ? 'text-amber-600' : 'text-slate-500 dark:text-slate-400')}>
                             {project.daysLeft < 0 ? `${Math.abs(project.daysLeft)}d overdue` : project.daysLeft != null ? `${project.daysLeft}d left` : '—'}
                           </span>

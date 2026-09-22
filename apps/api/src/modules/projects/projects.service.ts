@@ -704,8 +704,60 @@ export class ProjectsService {
       }
     }
 
-    const enriched = { ...project, bimLeader };
+    // QA3 Wave-2 Commit 4 (PR-035/031): expose `actualCost` on the
+    // detail response so the project header can render Budget | Cost |
+    // Utilization% without a separate labor-cost fetch. Cheap: same
+    // per-entry loop as the list rollup but for a single projectId.
+    // Finance gate stays on `omitBudget` below — non-finance callers
+    // don't see the value.
+    const actualCost = await this.computeProjectActualCost(id);
+
+    const enriched = { ...project, bimLeader, actualCost };
     return callerCanReadFinance(caller) ? enriched : omitBudget(enriched);
+  }
+
+  /**
+   * Sum labor cost for one project: Σ(logged hours × effective
+   * SeniorityLevel.defaultHourlyCost). Mirrors the list-path rollup
+   * (`getPaginated` :539–556) so both surfaces share semantics —
+   * project membership resolved via task.projectId (not the
+   * historically-nullable entry.projectId), unrateable entries drop
+   * from Cost but still count as hours elsewhere. Returns 0 when the
+   * project has no logged time.
+   */
+  private async computeProjectActualCost(projectId: number): Promise<number> {
+    const entries = await this.prisma.timeEntry.findMany({
+      where: { deletedAt: null, task: { projectId } },
+      select: { minutes: true, userId: true, date: true },
+    });
+    if (entries.length === 0) return 0;
+    const userIds = Array.from(new Set(entries.map((e) => e.userId)));
+    const histories = await this.prisma.userSeniority.findMany({
+      where: { userId: { in: userIds } },
+      include: { seniorityLevel: { select: { id: true, defaultHourlyCost: true } } },
+      orderBy: { startDate: 'desc' },
+    });
+    const historyByUser = new Map<number, typeof histories>();
+    for (const h of histories) {
+      if (!historyByUser.has(h.userId)) historyByUser.set(h.userId, []);
+      historyByUser.get(h.userId)!.push(h);
+    }
+    let total = 0;
+    for (const e of entries) {
+      const list = historyByUser.get(e.userId) ?? [];
+      // history is sorted DESC by startDate; first row where the entry
+      // date falls in [startDate, endDate ?? +∞) is the effective level.
+      let level: { defaultHourlyCost: any } | null = null;
+      for (const row of list) {
+        if (row.startDate <= e.date && (row.endDate === null || row.endDate >= e.date)) {
+          level = row.seniorityLevel;
+          break;
+        }
+      }
+      if (!level || level.defaultHourlyCost == null) continue;
+      total += (e.minutes / 60) * Number(level.defaultHourlyCost);
+    }
+    return +total.toFixed(2);
   }
 
   async update(id: number, dto: UpdateProjectDto, actorUserId?: number) {
