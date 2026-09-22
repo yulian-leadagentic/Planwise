@@ -401,9 +401,20 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       }
     }
 
+    // QA3 Wave-2 Commit 6 (PR-041): dedupe by name. Multiple
+    // deliverable templates can share a name — "BIM management"
+    // instances existed 4× on staging, which pushed 4 identical
+    // columns and broke the "filter to BIM management → one column"
+    // expectation. Matrix cells key on `${zoneId}|${phaseName}`
+    // (string, not id), so all 4 templates' tasks already aggregate
+    // into ONE cell per zone; the render just needs a matching
+    // single-column header. Keep the template-driven order (that's
+    // how sortOrder flows through), just skip duplicates on push.
     const orderedColumns: string[] = [];
     for (const tpl of templates) {
-      if (nameToHasTasks.has(tpl.name)) orderedColumns.push(tpl.name);
+      if (nameToHasTasks.has(tpl.name) && !orderedColumns.includes(tpl.name)) {
+        orderedColumns.push(tpl.name);
+      }
     }
     for (const name of nameToHasTasks) {
       if (!orderedColumns.includes(name)) orderedColumns.push(name);
