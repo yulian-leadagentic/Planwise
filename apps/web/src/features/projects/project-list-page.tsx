@@ -1147,6 +1147,7 @@ export function ProjectListPage() {
                             <RoleHolderCell
                               projectId={p.id}
                               roleName={rt.name}
+                              roleCode={rt.code}
                               assignments={assignments}
                               canEdit={canWritePartners}
                               onSave={(nextUserIds, candidates) => saveRoleHolders({
@@ -1671,12 +1672,21 @@ function CategoryCell({
 function RoleHolderCell({
   projectId,
   roleName,
+  roleCode,
   assignments,
   canEdit,
   onSave,
 }: {
   projectId: number;
   roleName: string;
+  /**
+   * ProjectRoleType.code — passed to `/assignee-candidates?roleCode=…`
+   * so the backend widens the picker to every company person who holds
+   * this role (QA3 Wave-3 Commit 7 · PR-028). Picking a non-member
+   * auto-adds them via the existing POST /project-partner-roles write
+   * path (which creates the participation row as a side effect).
+   */
+  roleCode: string;
   assignments: any[];
   canEdit: boolean;
   onSave: (
@@ -1715,11 +1725,17 @@ function RoleHolderCell({
       canAssign: boolean;
     }>
   >({
-    queryKey: ['assignee-candidates', projectId],
+    // Cache key includes roleCode so each role column keeps its own
+    // widened list (Team Leader → team leaders, BIM Manager → BIM
+    // managers, …). Adjacent columns for the same project don't share
+    // a fetch anymore, but the request is still lazy per open.
+    queryKey: ['assignee-candidates', projectId, roleCode],
     enabled: open,
     staleTime: 60 * 1000,
     queryFn: () =>
-      client.get(`/projects/${projectId}/assignee-candidates`).then((r) => {
+      client.get(`/projects/${projectId}/assignee-candidates`, {
+        params: { roleCode },
+      }).then((r) => {
         const d = r.data?.data ?? r.data;
         return Array.isArray(d) ? d : [];
       }),

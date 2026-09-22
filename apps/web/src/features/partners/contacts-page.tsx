@@ -4,9 +4,10 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Search, X, Mail, Phone, Building2, FolderKanban, Pencil, UserPlus, Upload,
   List as ListIcon, FolderOpen, Building, ExternalLink, MapPin, UserCircle2,
-  ChevronLeft, ChevronRight, Plus, ArrowRight,
+  ChevronLeft, ChevronRight, Plus, ArrowRight, Copy,
 } from 'lucide-react';
 import client from '@/api/client';
+import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useDebounce } from '@/hooks/use-debounce';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
@@ -142,6 +143,13 @@ export function ContactsPage() {
   // client-side .filter() over the loaded page silently hid employees
   // of that org whose row sat past row 200.
   const [orgFilter, setOrgFilter] = useState<string>('');
+  // QA3 Wave-3 Commit 7: single table with an include-AMC toggle
+  // (locked spec). Default OFF preserves the historical "external
+  // contacts only" behavior — AMC employees keep living on the People
+  // page. Turning it ON re-includes both internal identities
+  // (user-linked + Internal-org worker_of) so the same table can
+  // surface them without a second surface.
+  const [includeAmc, setIncludeAmc] = useState(false);
   const [page, setPage] = useState(1);
   // Drawer identity in the URL (?contact=N) so refresh / outbound-return
   // restore it, matching the task-drawer's useDrawerRoute('task') pattern.
@@ -300,6 +308,9 @@ export function ContactsPage() {
   // surface are already the exception (most persons here are external);
   // the server-side partnerType='person' + the filters below narrow the
   // set enough that this is not a routine concern.
+  // Split externals vs internals so the toggle can flip the source
+  // without a second server round-trip (the loaded page already
+  // carries both; we filter here).
   const externalContacts = useMemo(
     () => allContacts.filter((c) => {
       // Primary — has a login account → internal.
@@ -316,6 +327,19 @@ export function ContactsPage() {
     [allContacts, internalOrgIds],
   );
 
+  // When the AMC toggle is ON, surface the full loaded page (externals
+  // + internals). Sort so externals still lead — matches the locked
+  // spec's "core consultants first" ordering.
+  const shownContacts = useMemo(() => {
+    if (!includeAmc) return externalContacts;
+    return [...allContacts].sort((a, b) => {
+      const aInt = !!a.user ? 1 : 0;
+      const bInt = !!b.user ? 1 : 0;
+      if (aInt !== bInt) return aInt - bInt; // externals (0) first
+      return a.displayName.localeCompare(b.displayName);
+    });
+  }, [includeAmc, allContacts, externalContacts]);
+
   // Employer dropdown — sourced from the full org roster (already loaded
   // above) instead of derived from the current page. Previously this was
   // built from externalContacts, so paginating away from page 1 dropped
@@ -329,14 +353,38 @@ export function ContactsPage() {
 
   // Rows to render this page. Server-side employerId + status + search
   // narrowed the set already — no client-side org filter here anymore.
-  const visibleContacts = externalContacts;
+  const visibleContacts = shownContacts;
+
+  // "Copy external emails" — grabs every external contact's email (the
+  // people users typically need to CC, e.g. sending a batch update to
+  // consultants). Deliberately reads `externalContacts`, not
+  // `visibleContacts`, so the button's semantics stay stable regardless
+  // of the AMC toggle. Missing/blank emails are skipped.
+  const copyExternalEmails = async () => {
+    const emails = externalContacts
+      .map((c) => (c.email ?? '').trim())
+      .filter((e) => !!e);
+    const deduped = Array.from(new Set(emails));
+    if (deduped.length === 0) {
+      notify.warning('No external emails to copy', { code: 'CONTACTS-COPY-EMPTY' });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(deduped.join(', '));
+      notify.success(`Copied ${deduped.length} email${deduped.length === 1 ? '' : 's'}`, { code: 'CONTACTS-COPY-200' });
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to copy — clipboard access denied');
+    }
+  };
 
   const hasFilters = !!search || statusFilter !== 'active' || !!orgFilter;
 
   // Header count string — server total when available so the badge is
   // truthful even when the current page holds only a slice. Falls back
-  // to the local count for the initial render before meta lands.
-  const totalCount = meta?.total ?? externalContacts.length;
+  // to the local count for the initial render before meta lands. When
+  // the AMC toggle is ON we count the full loaded set so the badge
+  // reflects the visible list rather than externals-only.
+  const totalCount = meta?.total ?? (includeAmc ? allContacts.length : externalContacts.length);
   const totalPages = meta?.totalPages ?? 1;
 
   return (
@@ -374,6 +422,21 @@ export function ContactsPage() {
             modal opens with `lockPartnerType`, so the internal
             Person/Org toggle is hidden here (mirrors the
             add-contact-from-customer-drawer flow in Commit D). */}
+        {/* QA3 Wave-3 Commit 7: copy every external contact's email to
+            the clipboard, comma-joined, so users can paste directly
+            into an email client's To/CC field. Deliberately independent
+            of the AMC toggle — "external" is a stable concept the
+            button name promises. */}
+        <button
+          type="button"
+          onClick={copyExternalEmails}
+          className="inline-flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-slate-400 dark:hover:border-slate-500"
+          title="Copy all external contact emails to the clipboard"
+          disabled={externalContacts.length === 0}
+        >
+          <Copy className="h-4 w-4" aria-hidden="true" />
+          Copy external emails
+        </button>
         <button
           type="button"
           onClick={() => setShowCreate(true)}
@@ -412,6 +475,19 @@ export function ContactsPage() {
           <option value="inactive">Inactive only</option>
           <option value="all">All statuses</option>
         </select>
+        {/* QA3 Wave-3 Commit 7: include-AMC toggle. Default OFF so the
+            surface still leads with externals (locked spec); flipping
+            it ON re-includes internals (user-linked BPs + Internal-org
+            worker_of edges). Same table, no second surface. */}
+        <label className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={includeAmc}
+            onChange={(e) => setIncludeAmc(e.target.checked)}
+            className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
+          />
+          Include AMC
+        </label>
         <select
           value={orgFilter}
           onChange={(e) => setOrgFilter(e.target.value)}
@@ -491,7 +567,7 @@ export function ContactsPage() {
         <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading contacts…</div>
       ) : visibleContacts.length === 0 ? (
         <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center text-sm text-slate-400 dark:text-slate-500 italic">
-          {externalContacts.length === 0
+          {visibleContacts.length === 0
             ? 'No external contacts yet. Add one from Partners → Add Contact, or click "New Contact" above.'
             : 'No contacts match the current filters.'}
         </div>

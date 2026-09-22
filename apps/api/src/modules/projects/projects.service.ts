@@ -1602,7 +1602,7 @@ export class ProjectsService {
    * external contact is surfaced but disabled at the picker level with
    * a reason. (Branch 2 · fix/assignee-source, PR-001/009.)
    */
-  async getAssigneeCandidates(projectId: number): Promise<
+  async getAssigneeCandidates(projectId: number, roleCode?: string): Promise<
     Array<{
       userId: number | null;
       partyId: number | null;
@@ -1819,6 +1819,98 @@ export class ProjectsService {
         role: a.role.name,
         title: a.titleInProject,
       });
+    }
+
+    // QA3 Wave-3 Commit 7 (PR-028): when the caller passes a `roleCode`
+    // (e.g. from the project-list role cell for "Team Leader"), widen
+    // the picker to every COMPANY person who holds that ProjectRoleType
+    // — not just people currently on this project. Picking a non-member
+    // then adds them via the caller's `POST /project-partner-roles`
+    // write path, which creates the participation row as a side effect
+    // (no separate add-to-team step). Guarded by roleCode: the default
+    // task-assignee flow (no roleCode) keeps its existing per-project
+    // scope.
+    if (roleCode) {
+      const projectRoleType = await this.prisma.projectRoleType.findUnique({
+        where: { code: roleCode },
+        select: {
+          id: true,
+          name: true,
+          requiredProfessionIds: true,
+          allowedPartnerKind: true,
+        },
+      });
+      if (projectRoleType) {
+        // Same profession/kind filters the RoleAssignmentPicker uses on
+        // the project-detail add-role flow (role-assignment-picker.tsx
+        // :85-95). Any party who holds AT LEAST ONE required Job Title
+        // AND matches allowedPartnerKind qualifies.
+        const requiredProfIds: number[] = Array.isArray(projectRoleType.requiredProfessionIds)
+          ? (projectRoleType.requiredProfessionIds as number[])
+          : [];
+        const kind = projectRoleType.allowedPartnerKind ?? 'any';
+        const partnerTypeFilter = kind === 'any' ? undefined
+          : kind === 'person' ? 'person'
+          : kind === 'organization' ? 'organization'
+          : undefined;
+
+        const roleQualified = await this.prisma.businessPartner.findMany({
+          where: {
+            deletedAt: null,
+            ...(partnerTypeFilter ? { partnerType: partnerTypeFilter } : {}),
+            ...(requiredProfIds.length > 0
+              ? { professions: { some: { professionId: { in: requiredProfIds } } } }
+              : {}),
+          },
+          select: {
+            id: true,
+            partnerType: true,
+            firstName: true,
+            lastName: true,
+            displayName: true,
+            email: true,
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                avatarUrl: true,
+                position: true,
+                department: true,
+              },
+            },
+          },
+        });
+
+        for (const bp of roleQualified) {
+          // Only persons are assignable individually; orgs can't hold
+          // a task or a role slot by themselves.
+          if (bp.partnerType !== 'person') continue;
+          const user = bp.user;
+          const fullName = `${bp.firstName ?? ''} ${bp.lastName ?? ''}`.trim()
+            || bp.displayName
+            || bp.email
+            || `Partner #${bp.id}`;
+          upsert({
+            userId: user?.id ?? null,
+            partyId: bp.id,
+            firstName: bp.firstName ?? user?.firstName ?? null,
+            lastName: bp.lastName ?? user?.lastName ?? null,
+            displayName: fullName,
+            email: bp.email ?? user?.email ?? null,
+            avatarUrl: user?.avatarUrl ?? null,
+            position: user?.position ?? null,
+            department: user?.department ?? null,
+            // Tag with the role NAME so the picker's `discipline`
+            // subtitle shows why they're eligible; the upsert dedupes
+            // roles so already-on-project members keep their existing
+            // role labels alongside this one.
+            role: projectRoleType.name,
+            title: null,
+          });
+        }
+      }
     }
 
     // Stable sort — assignable rows first (so the common case is at the

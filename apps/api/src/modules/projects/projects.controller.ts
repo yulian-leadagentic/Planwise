@@ -202,9 +202,15 @@ export class ProjectsController {
   async getAssigneeCandidates(
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) projectId: number,
+    // QA3 Wave-3 Commit 7 (PR-028): widen the candidate set to every
+    // company person who holds the given ProjectRoleType code. Picking
+    // a non-member from the list then auto-adds them to the team via
+    // the caller's `POST /project-partner-roles` write path (which
+    // creates the participation row as a side effect).
+    @Query('roleCode') roleCode?: string,
   ) {
     await this.access.assertProjectAccess(user.id, projectId, user.roleId);
-    return this.projectsService.getAssigneeCandidates(projectId);
+    return this.projectsService.getAssigneeCandidates(projectId, roleCode);
   }
 
   /** Excel export of every task on the project as a FLAT list — no
