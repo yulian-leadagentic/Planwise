@@ -138,10 +138,10 @@ export class Qa3IntegrityController {
           AND t.project_deliverable_id IS NOT NULL
           AND pd.id IS NULL
       `,
-      // task.service_type_id → services.id (allow NULL)
+      // task.service_type_id → service_types.id (allow NULL)
       this.prisma.$queryRaw<CountRow[]>`
         SELECT COUNT(*) AS n FROM tasks t
-        LEFT JOIN services s ON s.id = t.service_type_id
+        LEFT JOIN service_types s ON s.id = t.service_type_id
         WHERE t.project_id = ${projectId}
           AND t.deleted_at IS NULL
           AND t.service_type_id IS NOT NULL
@@ -155,10 +155,10 @@ export class Qa3IntegrityController {
           AND pd.deleted_at IS NULL
           AND p.id IS NULL
       `,
-      // project_deliverables.service_type_id → services.id
+      // project_deliverables.service_type_id → service_types.id
       this.prisma.$queryRaw<CountRow[]>`
         SELECT COUNT(*) AS n FROM project_deliverables pd
-        LEFT JOIN services s ON s.id = pd.service_type_id
+        LEFT JOIN service_types s ON s.id = pd.service_type_id
         WHERE pd.project_id = ${projectId}
           AND pd.deleted_at IS NULL
           AND s.id IS NULL
