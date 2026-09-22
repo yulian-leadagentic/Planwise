@@ -7,6 +7,7 @@ import { ConfigController } from './config.controller';
 // old integrity endpoint. Atomic, staging-only, dryRun-reversible split
 // of project_types / service_types — see the controller header.
 import { Qa3ReconciliationController } from './qa3-reconciliation.controller';
+import { Qa3ThreeCBackfillController } from './qa3-3c-backfill.controller';
 import { AuthorizationModule } from '../../common/authorization.module';
 
 @Module({
@@ -17,6 +18,7 @@ import { AuthorizationModule } from '../../common/authorization.module';
     EnumsController,
     ConfigController,
     Qa3ReconciliationController,
+    Qa3ThreeCBackfillController,
   ],
 })
 export class AdminModule {}
