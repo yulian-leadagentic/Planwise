@@ -5,6 +5,38 @@
 
 ---
 
+## 🚦 WAVE 3 — **CLOSED 2026-09-22 (HEAD `f7fcdf3`)**
+
+Per `docs/bm2/qa3-wave2-run.md`… wait, this is Wave 3 per `docs/bm2/qa3-wave3-run.md`. Verify-first: three commits, two of them scoped code changes, one entirely verify-only.
+
+**Commit 7 — Team picker & project-contact scoping** (`2b55348`):
+- **PR-023** — role picker filters by role. **VERIFIED** — `RoleAssignmentPicker` at [role-assignment-picker.tsx:67-95](apps/web/src/features/projects/project-detail/role-assignment-picker.tsx:67) narrows candidates by `role.requiredPartnerRoleCode` (API `roleType` param) + `requiredProfessionIds` (Job Title match).
+- **PR-026** — project + org-scoped contacts. **VERIFIED** — PPR customer_contact scoping in place from earlier BM2 phases.
+- **PR-028** — role-cell quick-assign auto-add. **FIXED** — `/projects/:id/assignee-candidates` widened with optional `?roleCode=…`; when set, the service folds in every company person who holds that ProjectRoleType (person + required profession + allowed partner kind) alongside the existing per-project rows. `RoleHolderCell` passes `roleCode`; picking a non-member writes via the existing `POST /project-partner-roles`, which creates the participation row as a side effect — no permission-model change. **Live-verified**: clicking BIM MANAGER cell on projects list sent `GET /projects/29/assignee-candidates?roleCode=bim_m`.
+- **PR-038** — assign team to project roles. **VERIFIED** — same `RoleAssignmentPicker` covers every ProjectRoleType (Team Leader, BIM Manager, MEP Coordinator, …).
+- **Contacts — one table + include-AMC toggle** (locked spec). **FIXED** — `contacts-page.tsx` adds `Include AMC` checkbox (default OFF, historical behaviour preserved). ON pulls in User-linked + Internal-org worker_of edges and sorts externals first. **Live-verified**: toggle switched visible email rows from 8 → 48 on staging.
+- **"Copy external emails"** toolbar button. **FIXED** — dedupes + comma-joins externals' emails to the clipboard. **Live-verified**: button renders, enabled when externals exist, wired to the shared notify surface for success/empty/error.
+- **Multi-org consultants preserved**. **VERIFIED** — BP relationships accept multiple worker_of edges; the contact form + partner drawer never collapse the list.
+
+**Commit 8 — Contact-add + Job Title** (no code shipped):
+- **PR-024** — contact-add form (English req + Hebrew optional + Job Title closed list + Role(s) multi-select + Discipline). **VERIFIED** — [create-partner-modal.tsx](apps/web/src/features/partners/create-partner-modal.tsx): Hebrew fields at line 73-74, Job Title picker sourced from `professions` catalog and rendered as `<select>` (closed list) at line 501-511, Role(s) label already relabelled from "Main Role" (line 532), Discipline picker at line 550-572. English name required, Hebrew optional per line 288.
+- **PR-039** — Job Title purpose report. **REPORT-ONLY, STOPPED before removing.**
+   - Job Title = `Profession` (closed-list catalog under `/admin/config/professions`).
+   - Stored on `BusinessPartner.professions` (many-to-many); persons declare which titles they hold.
+   - Consumed by `ProjectRoleType.requiredProfessionIds` — the `RoleAssignmentPicker` narrows candidates to parties whose `professions.some(pid ∈ requiredProfessionIds)`, AND the backend rejects assignments that fail this check with "must hold one of these job titles".
+   - Discipline is documented as INFORMATIONAL only ([create-partner-modal.tsx:544-547](apps/web/src/features/partners/create-partner-modal.tsx:544)); it does NOT gate eligibility.
+   - **Impact of removal**: every ProjectRoleType currently keyed on `requiredProfessionIds` loses its filter — role pickers open up to unqualified candidates, and the backend guard starts rejecting assignments that used to pass under the old flow (or opens up if the guard is also removed). **KEEP as-is until you decide whether/how to migrate the semantic.**
+
+**Commit 9 — Execution / planning surfaces** (`f7fcdf3`):
+- **PR-033** — day/week/month due filter, shared with Tzlil's My-Tasks note #5. **FIXED** — new `apps/web/src/lib/due-window.ts` with locked semantics: Day = end-of-today (local), Week = +7d, Month = +30d, overdue-open ALWAYS included, terminal-status tasks (completed / cancelled) drop out, missing-due tasks drop out when a window is active. Segmented `[All | Day | Week | Month]` control wired into both `my-tasks-kanban.tsx` and `execution-board-page.tsx`. Composes on top of the existing dueFrom/dueTo range. **Live-verified**: control renders on both `/my-tasks` and `/execution-board` with All selected by default; Week click flipped selection cleanly.
+- **PR-040** — zone delete guard. **FIXED** — `zones.service#remove` preflights TimeEntry count on all descendant tasks (recursive via existing `collectDescendantIds`). If any non-deleted TimeEntry sits on any non-deleted task under the zone, throws `ConflictException` with entry + task counts and a clear message ("Cannot delete: N logged time entries on M tasks under this zone. Move or delete the logged time first."). Empty zones + unlogged zones still soft-delete normally. Code-verified in the deployed bundle; live DELETE not executed to avoid destructive side effects on real staging data.
+- **PR-017** — extra grouping level. **VERIFIED** — Planning tab Group + Sub-group already in place (Wave-2 live check).
+- **PR-018** — chronological ordering. **VERIFIED** — no regression observed on Planning/Deliverable Planning surfaces.
+
+**Wave-3 commits shipped:**
+- `2b55348` — feat(projects,contacts): PR-028 widened role-cell picker + Contacts AMC toggle + Copy external emails
+- `f7fcdf3` — feat(tasks,zones): PR-033 day/week/month due filter + PR-040 zone delete guard
+
 ## 🚦 WAVE 2 — **CLOSED 2026-09-22 (HEAD `9b67e9b`)**
 
 Verify-first per `docs/bm2/qa3-wave2-run.md`. All items either VERIFIED
