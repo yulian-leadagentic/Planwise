@@ -5,11 +5,39 @@
 
 ---
 
-## ✅ DONE (committed + verified live)
-- **Commit 1 — wedge instrumentation** (0b68271): sync stderr signal/exit handlers + 5s vitals + request lifecycle. SIGTERM→beforeExit→exit sequence **captured live**. Closed.
-- **Commit 2 — cross-site logout fix** (the #2 pain): shared single-flight refresh across bootstrap + interceptor (ccd3983, `refresh-lock.ts`) + `index.html` no-cache. **Runtime-proven via Chrome** — shared refresh works and `SameSite=None; Secure` cookie accepted cross-site. *Remaining:* Danielle + Tzlil confirm in a real multi-user session (no first-click failures, F5 keeps session).
-- **Commit 2 — data-integrity scan** built + run on P20 ("מבנה 1660"), P26 ("באר יעקב"), P18 baseline. **All clean:** zero orphan FKs, zero null names, no duplicate deliverables; scan ~20ms.
-- **Run-now items 2 & 3** (commit 3322bca, 2026-09-22): TEMP integrity endpoint removed; load-path query-timeout guard added (`query-timeout.ts` on `planning.service.ts`). Gate #6a closed (no data to fix). *Remaining run-now:* #4 customer-block click-test, #5 wedge-watch.
+## 🚦 WAVE 1 — **CLOSED 2026-09-22 (HEAD `68c68a9`)**
+
+All Wave-1 goals shipped, live-verified on staging, and the temporary
+scaffolding is removed. The one item that Wave 1 cannot self-verify
+(Danielle + Tzlil live logout sign-off) is carried forward as its own
+open callout below — it does NOT reopen the wave.
+
+**Everything that shipped in Wave 1:**
+- **Commit 1 — wedge instrumentation** (0b68271): sync stderr signal/exit handlers + 5s vitals + `RequestLifecycle` interceptor. SIGTERM→beforeExit→exit sequence captured live. `Watchdog armed` + `Wedge-killswitch armed` printed on every boot.
+- **Commit 2 — cross-site logout fix** (66d5ce7 + ccd3983): shared single-flight `refresh-lock.ts` across bootstrap + interceptor and `index.html` `Cache-Control: no-cache`. Runtime-proven via Chrome cross-site.
+- **Commit 2 — data-integrity scan** on P20/P26/P18 (behind the TEMP `qa3-integrity` endpoint, later removed in 3322bca): zero orphans, zero nulls, ~20ms — no data to fix (Gate #6a closed).
+- **Run-now #2 + #3** (3322bca): TEMP integrity endpoint removed + load-path query-timeout guard added (`query-timeout.ts` on `planning.service.ts`).
+- **Commit 3A — split Project Categories tab from Services** (162b6f6): "Project Categories" tab wired to `ProjectType` at `/admin/config/project-types`; old tab relabelled "Services".
+- **Commit 3B — reconciliation applied** via TEMP atomic `Qa3ReconciliationController` (9b20db8): the Hebrew categories reached `project_types`, the delete-candidates on `service_types` were removed under an FK-gated $transaction.
+- **Commit 3C-a — junction + DTO + service** (cb9cde3): `ProjectCategoryLink` model + migration + backend service accepting `projectTypeIds`, primary FK preserved for rollups. Follow-up backfill via TEMP `Qa3ThreeCBackfillController` (7a659f2) after Prisma silently skipped the multi-statement INSERT IGNORE.
+- **Commit 3C-b — chip multi-select UI** (e28cc23): shared type + api client + form chip picker + list array-handling + rewritten detail-header editor. **Live DoD 5/5** via Chrome-MCP (see below).
+- **Wave-1 tail — service_type 14 merged into 13** via TEMP `POST /admin/qa3-3b-reconciliation/merge-14-into-13` (bd9a446): atomic $transaction, FK preflight, dryRun-reversible. Analyst confirmed the merge landed on staging.
+- **Wave-1 close cleanup** (68c68a9): both TEMP admin controllers removed + `admin.module.ts` entries dropped. Every `/api/v1/admin/qa3-*` route now 404s.
+
+**Wave-1 DoDs — live-verified on staging:**
+- 3C-b DoD 1 — header inline editor added מסחר to P20 → 2 chips ("Buildings — primary" + "מסחר"). ✅
+- 3C-b DoD 2 — project list row renders both chips with correct titles. ✅
+- 3C-b DoD 3 — filter by category id 20 (מסחר, extra on P20) matches P20 alone (via junction). ✅
+- 3C-b DoD 4 — filter by category id 5 (Buildings, primary on P20) matches P20 + 4 other single-category rows. ✅
+- 3C-b DoD 5 — `/projects/new` renders chip picker with "first is primary" hint, no legacy `<select>`. ✅
+- Run-now #4 customer-block — **PASS**: Customer `<select>` enabled + 6 options populated on first render of `/projects/new`, no refresh; stays enabled after picking Buildings. Screenshot skipped (SPA never reaches `document_idle`, screenshot tool times out at 5s — known constraint).
+- Run-now #5 wedge-watch armed — live logs at 12:44:25 UTC show `Watchdog armed` + `Wedge-killswitch armed` + `RequestLifecycle` interceptor emitting `req.start` every 20s on the health probe.
+
+**Wave-1 tail cleanup, documented (does NOT block close):**
+- **service_type 8 "מלונאות"** — 1 task ref. KEPT per user decision. The merge-14 endpoint returned `audit_serviceType8_taskList` with the {task, project} so Yulian can pick its correct service later. Tail-tracked, no blocker.
+
+## ⏳ CARRY-FORWARD (independent of Wave-1 close)
+- **Danielle + Tzlil** confirm the logout fix in a live multi-user session (no first-click failures, F5 keeps session). Code + Chrome-driven verification are done; only their real-world sign-off remains.
 
 ## 🔎 CORRECTED FINDINGS (important)
 1. **Category disconnect — real root cause (corrects earlier "same table"):** the New-Project *Project Category* dropdown reads `/admin/config/project-types` → **`ProjectType`** table. The Templates→Types tab **labelled "Project Categories"** is internally key `'service'` → `/service-types` → **`ServiceType`** table — a *different* table. So categories added in that tab land in `service_types` and never reach the dropdown. `ProjectType` is edited on a separate admin route (`/project-types`), not in the Types tabs. → It's a **mislabelled tab pointing at the wrong table**, not a cache/seed/env issue. The Hebrew rows (מגורים/מסחר/מלונאות/חינוך/בטחוני) currently sit in `service_types`.
