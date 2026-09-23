@@ -3715,6 +3715,19 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
     onError: (err: any) => notify.apiError(err, 'Failed to create zone'),
   });
 
+  // QA3 follow-up: inline zoneType edit on the Planning tree. Same
+  // shape as the rename mutation above — one field on the zone row,
+  // PATCH via zonesApi, cache invalidation swaps in the new label
+  // + color without a full page refetch.
+  const updateZoneTypeMutation = useMutation({
+    mutationFn: (nextType: string) => zonesApi.update(zone.id, { zoneType: nextType }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+      notify.success('Zone type updated', { code: 'ZONE-TYPE-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update zone type'),
+  });
+
   const ZONE_TYPES = ['site', 'building', 'level', 'zone', 'area', 'section', 'wing', 'floor'];
 
   const directTasks = allTasks.filter((t: any) => t.zoneId === zone.id);
@@ -3780,7 +3793,34 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           onChange={(e) => onToggleMany?.(allZoneTasks.map((t: any) => t.id), e.target.checked)}
           title={`Select all ${allZoneTasks.length} tasks in this zone`}
         />
-        <span className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide shrink-0', zc.bg, zc.text)}>{ZONE_DISPLAY[zone.zoneType]?.label ?? zone.zoneType}</span>
+        {/* Inline zoneType editor. Was a display-only span — now a
+            <select> that PATCHes the zone.zoneType so PMs can retag a
+            zone as Building / Level / Site without leaving the
+            Planning tree. Same color scheme as the display pill; the
+            <select> chrome is stripped so it reads like the pill. */}
+        <select
+          value={zone.zoneType}
+          onChange={(e) => {
+            const next = e.target.value;
+            if (next === zone.zoneType) return;
+            updateZoneTypeMutation.mutate(next);
+          }}
+          onClick={(e) => e.stopPropagation()}
+          disabled={updateZoneTypeMutation.isPending}
+          aria-label={`Zone type — currently ${ZONE_DISPLAY[zone.zoneType]?.label ?? zone.zoneType}`}
+          title="Change zone type"
+          className={cn(
+            'rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide shrink-0 cursor-pointer appearance-none border-none outline-none focus:ring-2 focus:ring-blue-400',
+            zc.bg, zc.text,
+            updateZoneTypeMutation.isPending && 'opacity-60 cursor-wait',
+          )}
+        >
+          {ZONE_TYPES.map((zt) => (
+            <option key={zt} value={zt}>
+              {ZONE_DISPLAY[zt]?.label ?? zt}
+            </option>
+          ))}
+        </select>
         <ZoneNameWithRename zone={zone} projectId={projectId} nameClassName={cn('font-semibold', depth === 0 ? 'text-[15px] text-slate-900 dark:text-slate-100' : 'text-[13px] text-slate-800 dark:text-slate-100')} />
         {hasChildren && <span className="text-[11px] text-slate-400 dark:text-slate-500">({zone.children.length} sub-zones)</span>}
         <div className="ml-auto flex items-center gap-3 shrink-0">
