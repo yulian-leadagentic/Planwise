@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProjectAccessService } from '../../common/services/project-access.service';
+import { withQueryTimeout } from '../../common/query-timeout';
 
 @Injectable()
 export class ExecutionBoardService {
@@ -10,6 +11,26 @@ export class ExecutionBoardService {
   ) {}
 
   async getData(
+    userId: number,
+    roleId: number | null | undefined,
+    projectId?: number,
+    serviceId?: number,
+  ) {
+    // QA3 follow-up (2026-09-23) — reproducible wedge on
+    // GET /execution-board?projectId=26 (network error after ~16s, no
+    // req.end line, container restart mid-request). Wrap the whole
+    // load path in withQueryTimeout so one bad project can't stall
+    // the event loop into a full-process wedge — a 10s deadline
+    // returns a clean 503 to the caller and lets the loop continue
+    // serving other requests while root-cause work proceeds.
+    return withQueryTimeout(
+      () => this.getDataImpl(userId, roleId, projectId, serviceId),
+      10_000,
+      `execution-board(projectId=${projectId ?? 'ALL'})`,
+    );
+  }
+
+  private async getDataImpl(
     userId: number,
     roleId: number | null | undefined,
     projectId?: number,
