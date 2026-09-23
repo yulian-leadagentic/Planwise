@@ -124,6 +124,11 @@ export class TemplatesService {
         category: body.category || null,
         description: body.description || null,
         phaseId: body.phaseId || null,
+        // QA3 follow-up: default zoneType tag applied when this
+        // template is referenced from another template or a project.
+        // Empty string treated as null so the form's "no default"
+        // option round-trips cleanly.
+        defaultZoneType: body.defaultZoneType || null,
         createdBy: userId,
       },
       include: {
@@ -207,6 +212,10 @@ export class TemplatesService {
         description: body.description,
         isActive: body.isActive,
         phaseId: body.phaseId !== undefined ? (body.phaseId || null) : undefined,
+        // QA3 follow-up: allow editing the default zoneType. undefined
+        // leaves the field alone; '' from the "— No default —" option
+        // sets it back to null so the template stops carrying a type.
+        defaultZoneType: body.defaultZoneType !== undefined ? (body.defaultZoneType || null) : undefined,
       },
       include: {
         creator: { select: { id: true, firstName: true, lastName: true } },

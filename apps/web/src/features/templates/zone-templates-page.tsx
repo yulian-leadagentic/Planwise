@@ -7,7 +7,7 @@ import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
-import { inputClass, btnPrimary, btnSecondary } from './zone-templates/constants';
+import { inputClass, btnPrimary, btnSecondary, ZONE_TYPES, ZONE_DISPLAY } from './zone-templates/constants';
 import { EditorView } from './zone-templates/editor-view';
 
 // ---------------------------------------------------------------------------
@@ -24,6 +24,10 @@ export function ZoneTemplatesPage() {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [description, setDescription] = useState('');
+  // QA3 follow-up: default zone type tag on the template itself. Empty
+  // string = "no default" (the template stays untyped and its
+  // references fall back to 'zone', same as historical behavior).
+  const [defaultZoneType, setDefaultZoneType] = useState<string>('');
 
   const { data: templates, isLoading } = useQuery({
     queryKey: ['templates', 'zone'],
@@ -32,7 +36,7 @@ export function ZoneTemplatesPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; code?: string; description?: string; type: string }) =>
+    mutationFn: (data: { name: string; code?: string; description?: string; type: string; defaultZoneType?: string }) =>
       client.post('/templates', data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates', 'zone'] });
@@ -41,6 +45,7 @@ export function ZoneTemplatesPage() {
       setName('');
       setCode('');
       setDescription('');
+      setDefaultZoneType('');
     },
     onError: (err: any) => notify.apiError(err, 'Failed to create'),
   });
@@ -62,6 +67,7 @@ export function ZoneTemplatesPage() {
       code: code.trim() || undefined,
       description: description.trim() || undefined,
       type: 'zone',
+      defaultZoneType: defaultZoneType || undefined,
     });
   };
 
@@ -92,7 +98,7 @@ export function ZoneTemplatesPage() {
 
       {showForm && (
         <form onSubmit={handleSubmit} className="rounded-lg border border-border bg-background p-4 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <div>
               <label className="block text-sm font-medium mb-1">Template Name *</label>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Office Tower Standard" className={inputClass} autoFocus />
@@ -100,6 +106,27 @@ export function ZoneTemplatesPage() {
             <div>
               <label className="block text-sm font-medium mb-1">Code</label>
               <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. ZT.OT.1" className={inputClass} />
+            </div>
+            <div>
+              <label
+                className="block text-sm font-medium mb-1"
+                title="Zone type this template represents (e.g. Level template, Building template). Applied automatically when this template is referenced from another template or a project."
+              >
+                Default Zone Type
+              </label>
+              <select
+                value={defaultZoneType}
+                onChange={(e) => setDefaultZoneType(e.target.value)}
+                className={inputClass}
+                aria-label="Default zone type for this template"
+              >
+                <option value="">— No default —</option>
+                {ZONE_TYPES.map((zt) => (
+                  <option key={zt} value={zt}>
+                    {ZONE_DISPLAY[zt]?.label ?? zt}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Description</label>
@@ -133,10 +160,26 @@ export function ZoneTemplatesPage() {
               onClick={() => setSelectedTemplateId(t.id)}
             >
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <Layers className="h-4 w-4 flex-shrink-0 text-green-600" />
                   <span className="text-sm font-medium">{t.name}</span>
                   {t.code && <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">{t.code}</span>}
+                  {/* Default zone type pill — surfaces the template's
+                      declared type so "this is my Level template" is
+                      visible without opening the editor. Hidden when
+                      the template has no default. */}
+                  {t.defaultZoneType && ZONE_DISPLAY[t.defaultZoneType] && (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:text-slate-200"
+                      title={`Default zone type: ${ZONE_DISPLAY[t.defaultZoneType].label}`}
+                    >
+                      <span
+                        className="h-2 w-2 rounded-full border border-slate-200 dark:border-slate-700"
+                        style={{ backgroundColor: ZONE_DISPLAY[t.defaultZoneType].color }}
+                      />
+                      {ZONE_DISPLAY[t.defaultZoneType].label}
+                    </span>
+                  )}
                 </div>
                 {t.description && <p className="mt-1 text-sm text-muted-foreground">{t.description}</p>}
                 <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">

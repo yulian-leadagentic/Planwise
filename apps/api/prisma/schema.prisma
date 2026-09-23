@@ -1540,6 +1540,15 @@ model Template {
   category    String?      @db.VarChar(100)
   description String?      @db.Text
   phaseId     Int?         @map("phase_id")
+  /// Default zone type applied to zones this template contributes to a
+  /// project. Set on Zone Templates (type='zone') so a template like
+  /// "Basement 3 Level" reads as a Level template — when it's
+  /// referenced via `Copy from Zone Template`, the target zone's
+  /// zoneType inherits this value instead of falling back to 'zone'.
+  /// Nullable so existing templates keep their historical behavior.
+  /// Values mirror the Zone.zoneType enum (site / building / level /
+  /// zone / area / section / wing / floor).
+  defaultZoneType String? @map("default_zone_type") @db.VarChar(32)
   isActive    Boolean      @default(true) @map("is_active")
   usageCount  Int          @default(0) @map("usage_count")
   createdBy   Int          @map("created_by")

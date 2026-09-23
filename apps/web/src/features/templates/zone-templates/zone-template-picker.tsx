@@ -80,7 +80,11 @@ export function ZoneTemplatePicker({
         await client.post(`/templates/${templateId}/zones`, {
           name: tpl.name,
           code: tpl.code || undefined,
-          zoneType: 'zone',
+          // QA3 follow-up: inherit the referenced template's
+          // defaultZoneType so a "Level" template creates a Level
+          // zone (not a generic 'zone'). Fallback to 'zone' preserves
+          // the historical behavior for untagged templates.
+          zoneType: tpl.defaultZoneType || 'zone',
           parentId: parentId ?? undefined,
           referencedTemplateId: tpl.id,
         });

@@ -12,6 +12,7 @@ import { RootManualTaskForm } from './root-manual-task-form';
 import { RootServicePickerModal } from './root-service-picker-modal';
 import { RootCatalogPickerModal } from './root-catalog-picker-modal';
 import { ManualZoneForm } from './manual-zone-form';
+import { ZONE_TYPES, ZONE_DISPLAY } from './constants';
 
 // ---------------------------------------------------------------------------
 // Editor View
@@ -70,7 +71,10 @@ export function EditorView({
 
   // ---- header editing ----
   const [editingHeader, setEditingHeader] = useState(false);
-  const [headerForm, setHeaderForm] = useState({ name: '', code: '', description: '' });
+  // QA3 follow-up: header edit picks up the template's defaultZoneType
+  // so users can retag a template as e.g. "Level" without recreating
+  // it. Empty string is the "— No default —" option (writes null).
+  const [headerForm, setHeaderForm] = useState({ name: '', code: '', description: '', defaultZoneType: '' });
 
   const updateTemplateMutation = useMutation({
     mutationFn: (data: Record<string, any>) =>
@@ -91,6 +95,10 @@ export function EditorView({
       name: headerForm.name.trim(),
       code: headerForm.code.trim() || undefined,
       description: headerForm.description.trim() || undefined,
+      // Send '' explicitly so the backend clears the field back to null
+      // when the user picks "— No default —". A missing key would be
+      // treated as "don't touch this field".
+      defaultZoneType: headerForm.defaultZoneType,
     });
   };
 
@@ -100,6 +108,7 @@ export function EditorView({
       name: template.name ?? '',
       code: template.code ?? '',
       description: template.description ?? '',
+      defaultZoneType: template.defaultZoneType ?? '',
     });
     setEditingHeader(true);
   };
@@ -152,7 +161,7 @@ export function EditorView({
       {/* Template header */}
       {editingHeader ? (
         <form onSubmit={handleSaveHeader} className="rounded-lg border border-border bg-background p-4 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <div>
               <label className="block text-sm font-medium mb-1">Name *</label>
               <input value={headerForm.name} onChange={(e) => setHeaderForm((p) => ({ ...p, name: e.target.value }))} className={inputClass} autoFocus />
@@ -160,6 +169,27 @@ export function EditorView({
             <div>
               <label className="block text-sm font-medium mb-1">Code</label>
               <input value={headerForm.code} onChange={(e) => setHeaderForm((p) => ({ ...p, code: e.target.value }))} className={inputClass} />
+            </div>
+            <div>
+              <label
+                className="block text-sm font-medium mb-1"
+                title="Zone type this template represents. Applied when it's referenced from another template or a project."
+              >
+                Default Zone Type
+              </label>
+              <select
+                value={headerForm.defaultZoneType}
+                onChange={(e) => setHeaderForm((p) => ({ ...p, defaultZoneType: e.target.value }))}
+                className={inputClass}
+                aria-label="Default zone type for this template"
+              >
+                <option value="">— No default —</option>
+                {ZONE_TYPES.map((zt) => (
+                  <option key={zt} value={zt}>
+                    {ZONE_DISPLAY[zt]?.label ?? zt}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Description</label>
@@ -177,10 +207,25 @@ export function EditorView({
         <div className="rounded-lg border border-border bg-background p-4">
           <div className="flex items-start justify-between">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <Layers className="h-5 w-5 text-green-600" />
                 <h2 className="text-lg font-semibold">{template.name}</h2>
                 {template.code && <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">{template.code}</span>}
+                {/* Default zone type pill — mirrors the badge on the
+                    list row so users can confirm the tag at a glance
+                    without re-entering the edit form. */}
+                {template.defaultZoneType && ZONE_DISPLAY[template.defaultZoneType] && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:text-slate-200"
+                    title={`Default zone type: ${ZONE_DISPLAY[template.defaultZoneType].label}`}
+                  >
+                    <span
+                      className="h-2 w-2 rounded-full border border-slate-200 dark:border-slate-700"
+                      style={{ backgroundColor: ZONE_DISPLAY[template.defaultZoneType].color }}
+                    />
+                    {ZONE_DISPLAY[template.defaultZoneType].label}
+                  </span>
+                )}
               </div>
               {template.description && <p className="mt-1 text-sm text-muted-foreground">{template.description}</p>}
               <p className="mt-1 text-xs text-muted-foreground">
