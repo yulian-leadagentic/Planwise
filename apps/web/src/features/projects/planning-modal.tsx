@@ -3360,6 +3360,97 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
   );
 }
 
+// ─── Inline Zone-type picker ────────────────────────────────────────────────
+// Custom popover replacing a native <select> so each option can carry its
+// own tinted pill from the same `zoneColors` map the row-border and closed
+// pill use. Native <option> styling is unreliable across browsers — Chrome
+// paints the OS highlight over inline background-color, and Safari/Firefox
+// diverge. The popover renders regular <button>s tinted per type so the
+// user sees the color palette at open time.
+function ZoneTypePicker({
+  zoneType,
+  zoneColors,
+  types,
+  pending,
+  onPick,
+}: {
+  zoneType: string;
+  zoneColors: Record<string, { border: string; bg: string; text: string }>;
+  types: string[];
+  pending: boolean;
+  onPick: (next: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const zc = zoneColors[zoneType] || zoneColors.zone;
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={wrapRef} className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={() => !pending && setOpen((v) => !v)}
+        disabled={pending}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`Zone type — currently ${ZONE_DISPLAY[zoneType]?.label ?? zoneType}`}
+        title="Change zone type"
+        className={cn(
+          'rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide cursor-pointer',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400',
+          zc.bg, zc.text,
+          pending && 'opacity-60 cursor-wait',
+        )}
+      >
+        {ZONE_DISPLAY[zoneType]?.label ?? zoneType}
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          className="absolute left-0 top-full z-40 mt-1 min-w-[8rem] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-[0_12px_40px_rgba(0,0,0,0.12)] p-1.5"
+        >
+          {types.map((zt) => {
+            const optZc = zoneColors[zt] || zoneColors.zone;
+            const selected = zt === zoneType;
+            return (
+              <button
+                key={zt}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => { setOpen(false); onPick(zt); }}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[12px] font-semibold',
+                  'hover:bg-slate-50 dark:hover:bg-slate-800/60',
+                  selected && 'ring-1 ring-blue-400',
+                )}
+              >
+                <span className={cn('inline-block rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide', optZc.bg, optZc.text)}>
+                  {ZONE_DISPLAY[zt]?.label ?? zt}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Inline Zone-name rename (used by ZoneGroup / HierarchicalZoneGroup) ────
 // Click the pencil → swap to an input. Enter / blur saves via PATCH /zones/:id;
 // Esc cancels. Click handlers stop-propagation so they don't toggle the
@@ -3793,34 +3884,21 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           onChange={(e) => onToggleMany?.(allZoneTasks.map((t: any) => t.id), e.target.checked)}
           title={`Select all ${allZoneTasks.length} tasks in this zone`}
         />
-        {/* Inline zoneType editor. Was a display-only span — now a
-            <select> that PATCHes the zone.zoneType so PMs can retag a
-            zone as Building / Level / Site without leaving the
-            Planning tree. Same color scheme as the display pill; the
-            <select> chrome is stripped so it reads like the pill. */}
-        <select
-          value={zone.zoneType}
-          onChange={(e) => {
-            const next = e.target.value;
+        {/* Inline zoneType editor. Custom popover (not a native <select>)
+            so each option can carry its own tinted color pill — native
+            <option> styling is unreliable across browsers. Same
+            zoneColors palette the row-border and closed pill use, so
+            the picker reads as the same object at every state. */}
+        <ZoneTypePicker
+          zoneType={zone.zoneType}
+          zoneColors={zoneColors}
+          types={ZONE_TYPES}
+          pending={updateZoneTypeMutation.isPending}
+          onPick={(next) => {
             if (next === zone.zoneType) return;
             updateZoneTypeMutation.mutate(next);
           }}
-          onClick={(e) => e.stopPropagation()}
-          disabled={updateZoneTypeMutation.isPending}
-          aria-label={`Zone type — currently ${ZONE_DISPLAY[zone.zoneType]?.label ?? zone.zoneType}`}
-          title="Change zone type"
-          className={cn(
-            'rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide shrink-0 cursor-pointer appearance-none border-none outline-none focus:ring-2 focus:ring-blue-400',
-            zc.bg, zc.text,
-            updateZoneTypeMutation.isPending && 'opacity-60 cursor-wait',
-          )}
-        >
-          {ZONE_TYPES.map((zt) => (
-            <option key={zt} value={zt}>
-              {ZONE_DISPLAY[zt]?.label ?? zt}
-            </option>
-          ))}
-        </select>
+        />
         <ZoneNameWithRename zone={zone} projectId={projectId} nameClassName={cn('font-semibold', depth === 0 ? 'text-[15px] text-slate-900 dark:text-slate-100' : 'text-[13px] text-slate-800 dark:text-slate-100')} />
         {hasChildren && <span className="text-[11px] text-slate-400 dark:text-slate-500">({zone.children.length} sub-zones)</span>}
         <div className="ml-auto flex items-center gap-3 shrink-0">
