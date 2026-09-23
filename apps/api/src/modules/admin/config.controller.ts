@@ -9,6 +9,7 @@ import {
   ParseIntPipe,
   UseGuards,
   Req,
+  ConflictException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { Prisma } from '@prisma/client';
@@ -60,6 +61,30 @@ export class ConfigController {
   @RequirePermissions({ module: 'admin', action: 'delete' })
   @ApiOperation({ summary: 'Delete project type' })
   async deleteProjectType(@Param('id', ParseIntPipe) id: number) {
+    // QA3 · category delete guard. project_type_id is referenced by
+    // (a) projects.projectTypeId (PRIMARY FK, non-nullable) and
+    // (b) project_category_links.projectTypeId (the QA3 Wave-1 multi-
+    // select junction). Either counts as "in use". Preflight both so
+    // the caller gets a clear 409 instead of a Prisma FK-violation 500
+    // (as seen live at 2026-09-23T05:14 on POST /admin/config/
+    // project-types/1).
+    const [asPrimaryCount, asExtraCount] = await Promise.all([
+      this.prisma.project.count({
+        where: { projectTypeId: id, deletedAt: null },
+      }),
+      this.prisma.projectCategoryLink.count({
+        where: { projectTypeId: id },
+      }),
+    ]);
+    // asExtraCount includes rows where this type is the PRIMARY too
+    // (the junction mirrors the primary FK). Report the distinct
+    // "projects touching this category" count, not the sum.
+    const distinctProjectCount = Math.max(asPrimaryCount, asExtraCount);
+    if (distinctProjectCount > 0) {
+      throw new ConflictException(
+        `Cannot delete: ${distinctProjectCount} project${distinctProjectCount === 1 ? '' : 's'} still use this category. Move ${distinctProjectCount === 1 ? 'that project' : 'those projects'} to another category first.`,
+      );
+    }
     await this.prisma.projectType.delete({ where: { id } });
     return { message: 'Project type deleted' };
   }

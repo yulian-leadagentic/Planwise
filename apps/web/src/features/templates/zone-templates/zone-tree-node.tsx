@@ -5,12 +5,12 @@ import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
-import { ZoneTypeBadge } from './zone-type-badge';
 import { InstanceCountStepper } from './instance-count-stepper';
 import { ZoneTemplatePicker } from './zone-template-picker';
 import { ServiceGroupItem } from './service-group-item';
 import { ReadOnlyZoneNode } from './read-only-zone-node';
 import { ManualZoneForm } from './manual-zone-form';
+import { ZONE_TYPES, ZONE_DISPLAY } from './constants';
 
 // ---------------------------------------------------------------------------
 // Zone Tree Node (recursive)
@@ -119,7 +119,33 @@ export function ZoneTreeNode({
         <button onClick={() => setExpanded(!expanded)} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground">
           {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
-        <ZoneTypeBadge zoneType={zone.zoneType} />
+        {/* Inline zoneType editor. Was a display-only ZoneTypeBadge —
+            now writable so template authors can retag Zone → Building
+            → Level without re-creating rows. PATCH goes through the
+            existing `updateMutation` (which already handles other
+            fields on the same zone). The `<select>` renders the
+            current color chip via `ZONE_DISPLAY`, matching the badge
+            look. Read-only view (ReadOnlyZoneNode) still uses the
+            plain badge. */}
+        <label className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 pl-2 pr-1 py-0.5 text-[11px] font-semibold cursor-pointer" title="Change zone type">
+          <span
+            className="h-2 w-2 rounded-full border border-slate-200 dark:border-slate-700"
+            style={{ backgroundColor: ZONE_DISPLAY[zone.zoneType]?.color ?? '#6B7280' }}
+          />
+          <select
+            value={zone.zoneType}
+            onChange={(e) => updateMutation.mutate({ zoneType: e.target.value })}
+            disabled={updateMutation.isPending}
+            className="bg-transparent border-none outline-none text-[11px] font-semibold text-slate-700 dark:text-slate-200 pr-1 cursor-pointer"
+            aria-label={`Zone type — currently ${ZONE_DISPLAY[zone.zoneType]?.label ?? zone.zoneType}`}
+          >
+            {ZONE_TYPES.map((zt) => (
+              <option key={zt} value={zt}>
+                {ZONE_DISPLAY[zt]?.label ?? zt}
+              </option>
+            ))}
+          </select>
+        </label>
         <span className="text-sm font-semibold truncate min-w-0">{zone.name}</span>
         {zone.code && <span className="text-xs text-muted-foreground">({zone.code})</span>}
         {(zone.referencedTemplate || refTemplateId) && (
@@ -141,22 +167,22 @@ export function ZoneTreeNode({
           onChange={(n) => updateMutation.mutate({ instanceCount: n })}
         />
 
-        {/* Add-child affordances — a compact manual "New" flow with a
-            zoneType picker (PR-032) and the legacy "From Template"
-            reference picker. Both drop into the expanded tree body. */}
+        {/* Add-child affordances — labels mirror the root menu so the
+            same distinction ("choose type" vs "copy from template")
+            reads the same at every depth. */}
         <button
           onClick={() => { setShowAddChildManual(true); setExpanded(true); }}
           className="ml-auto shrink-0 flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
-          title="Add new child zone"
+          title="Create a child zone and choose its type"
         >
-          <Plus className="h-3 w-3" /> New Zone
+          <Plus className="h-3 w-3" /> Add Zone (choose type)
         </button>
         <button
           onClick={() => { setShowAddChild(true); setExpanded(true); }}
           className="shrink-0 flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
-          title="Add child zone from an existing zone template"
+          title="Copy a child zone from an existing template — its type is carried over"
         >
-          <Plus className="h-3 w-3" /> From Template
+          <Plus className="h-3 w-3" /> Copy from Template
         </button>
 
         {/* Delete this zone. `shrink-0` keeps it visible even when the row

@@ -201,12 +201,34 @@ export function EditorView({
               <Plus className="h-4 w-4" /> Add
             </button>
             {showRootAddMenu && (
-              <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-md border border-border bg-background shadow-lg">
-                <button onClick={() => { setShowRootManualZone(true); setShowRootAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
-                  <Layers className="h-3.5 w-3.5 text-amber-600" /> Manual Zone
+              <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-md border border-border bg-background shadow-lg">
+                {/* QA3 follow-up: the "Manual Zone" flow is the one
+                    that carries a zoneType picker (Site / Building /
+                    Level / …). Rename + subtitle so users don't reach
+                    for "Copy from Template" and end up with the
+                    default `zone` type across every level. Menu is
+                    wider now so the second line fits. */}
+                <button
+                  onClick={() => { setShowRootManualZone(true); setShowRootAddMenu(false); }}
+                  className="flex w-full items-start gap-2 px-3 py-2 text-sm hover:bg-accent text-left"
+                  title="Create a new zone and choose its type (Site / Building / Level / …)"
+                >
+                  <Layers className="h-3.5 w-3.5 text-amber-600 mt-0.5 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="font-medium">Add Zone (choose type)</div>
+                    <div className="text-[11px] text-muted-foreground">Site · Building · Level · Zone · Area · …</div>
+                  </div>
                 </button>
-                <button onClick={() => { setShowAddRoot(true); setShowRootAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
-                  <Layers className="h-3.5 w-3.5 text-amber-500" /> Zone from Template
+                <button
+                  onClick={() => { setShowAddRoot(true); setShowRootAddMenu(false); }}
+                  className="flex w-full items-start gap-2 px-3 py-2 text-sm hover:bg-accent text-left"
+                  title="Reference another zone template — the referenced template's own zoneType is preserved"
+                >
+                  <Copy className="h-3.5 w-3.5 text-amber-500 mt-0.5 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="font-medium">Copy from Zone Template</div>
+                    <div className="text-[11px] text-muted-foreground">Reuse an existing template (its type is carried over)</div>
+                  </div>
                 </button>
                 <button onClick={() => { setShowRootServicePicker(true); setShowRootAddMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left">
                   <Copy className="h-3.5 w-3.5 text-blue-600" /> Deliverable
