@@ -495,9 +495,15 @@ function PersonForm({
         </p>
       )}
 
-      {/* Job Title (Profession) */}
+      {/* Job Title (Profession). QA3 · PR-039: kept as-is (load-bearing —
+          gates ProjectRoleType.requiredProfessionIds on both the picker
+          and the backend guard). Label + tooltip clarified so users
+          don't confuse it with Role(s) or Discipline. */}
       <div>
-        <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+        <label
+          className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block"
+          title="Determines which project roles this person can be assigned to."
+        >
           Job Title <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
         </label>
         <select
@@ -516,7 +522,8 @@ function PersonForm({
           ))}
         </select>
         <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
-          The person's actual profession (e.g. Architect, MEP Engineer). Used by project role pickers to suggest qualified candidates. Add more titles from the partner profile after creation.
+          <span className="font-semibold text-slate-500 dark:text-slate-400">Determines which project roles this person can be assigned to.</span>
+          {' '}The person's actual profession (e.g. Architect, MEP Engineer). Add more titles from the partner profile after creation.
         </p>
       </div>
 
@@ -528,7 +535,10 @@ function PersonForm({
           `project_partner_roles` reads the set (party.roles.some(...)) so
           any of the picks that matches passes the guard. */}
       <div>
-        <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+        <label
+          className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block"
+          title="Primary role used to filter and link this person to projects."
+        >
           Role(s) <span className="text-slate-400 dark:text-slate-500 font-normal">(optional, multi)</span>
         </label>
         <RoleMultiSelect
@@ -537,7 +547,8 @@ function PersonForm({
           options={personRoleTypes}
         />
         <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
-          Pick one or more categorizations (Customer, Supplier, Consultant…). The first pick is the primary. Project-level responsibilities are set via relationships.
+          <span className="font-semibold text-slate-500 dark:text-slate-400">Primary role used to filter and link this person to projects.</span>
+          {' '}Pick one or more categorizations (Customer, Supplier, Consultant…). The first pick is the primary.
         </p>
       </div>
 
@@ -547,7 +558,10 @@ function PersonForm({
           Profession + Role(s)). Sourced from /admin/config/disciplines
           managed via the /admin/disciplines admin page. */}
       <div>
-        <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+        <label
+          className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block"
+          title="Informational classification only — does not affect assignments."
+        >
           Discipline <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
         </label>
         <select
@@ -571,7 +585,8 @@ function PersonForm({
             ))}
         </select>
         <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
-          Branch of engineering (display + search only). Managed under Admin → Disciplines.
+          <span className="font-semibold text-slate-500 dark:text-slate-400">Informational classification only — does not affect assignments.</span>
+          {' '}Branch of engineering used for display and search. Managed under Admin → Disciplines.
         </p>
       </div>
 

@@ -868,7 +868,15 @@ function JobTitlesSection({ bpId, canWrite }: { bpId: number; canWrite: boolean 
 
   return (
     <div>
-      <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-2">Job titles</p>
+      <p
+        className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1"
+        title="Determines which project roles this person can be assigned to."
+      >
+        Job titles
+      </p>
+      <p className="text-[11px] text-slate-400 dark:text-slate-500 mb-2">
+        Determines which project roles this person can be assigned to.
+      </p>
       {isLoading ? (
         <p className="text-[11px] text-slate-400 dark:text-slate-500">Loading…</p>
       ) : current.length === 0 ? (
