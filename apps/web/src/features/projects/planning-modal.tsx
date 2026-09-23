@@ -13,6 +13,7 @@ import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { useColumnVisibility, ColumnVisibilityPicker } from '@/components/shared/column-visibility';
 import { STATUS_LABEL } from '@/lib/task-constants';
 import { rollupCompletion } from '@/lib/completion-rollup';
+import { ZONE_DISPLAY } from '@/features/templates/zone-templates/constants';
 import client from '@/api/client';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
@@ -328,7 +329,7 @@ function MoveToMenu({ taskId, currentZoneId, zones, projectId, onMoved }: {
               style={{ paddingLeft: `${12 + z.depth * 16}px` }}
             >
               <span className="text-slate-700 dark:text-slate-200">{z.name}</span>
-              <span className="text-[10px] text-slate-400 dark:text-slate-500">{z.zoneType}</span>
+              <span className="text-[10px] text-slate-400 dark:text-slate-500">{ZONE_DISPLAY[z.zoneType]?.label ?? z.zoneType}</span>
             </button>
           ))}
         </div>
@@ -3451,7 +3452,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
       <div className="flex items-center gap-2.5 px-5 py-2.5 bg-[#FAFBFC] cursor-pointer" onClick={() => setCollapsed(!collapsed)}>
         {collapsed ? <ChevronRight className="w-3 h-3 text-slate-400 dark:text-slate-500" /> : <ChevronDown className="w-3 h-3 text-slate-400 dark:text-slate-500" />}
         <ZoneNameWithRename zone={zone} projectId={projectId} nameClassName="text-[13px] font-semibold text-slate-900 dark:text-slate-100" />
-        <span className="rounded-[5px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[11px] font-bold text-slate-400 dark:text-slate-500">{zone.zoneType}</span>
+        <span className="rounded-[5px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[11px] font-bold text-slate-400 dark:text-slate-500">{ZONE_DISPLAY[zone.zoneType]?.label ?? zone.zoneType}</span>
         <span className="ml-auto text-[11px] font-medium text-slate-400 dark:text-slate-500">
           {tasks.length} tasks · {hours}h budget
           <span className={cn('ml-1 font-semibold', loggedHours === 0 ? 'text-slate-400 dark:text-slate-500' : loggedHours > hours && hours > 0 ? 'text-red-500' : 'text-blue-500')}>
@@ -3779,7 +3780,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
           onChange={(e) => onToggleMany?.(allZoneTasks.map((t: any) => t.id), e.target.checked)}
           title={`Select all ${allZoneTasks.length} tasks in this zone`}
         />
-        <span className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide shrink-0', zc.bg, zc.text)}>{zone.zoneType}</span>
+        <span className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide shrink-0', zc.bg, zc.text)}>{ZONE_DISPLAY[zone.zoneType]?.label ?? zone.zoneType}</span>
         <ZoneNameWithRename zone={zone} projectId={projectId} nameClassName={cn('font-semibold', depth === 0 ? 'text-[15px] text-slate-900 dark:text-slate-100' : 'text-[13px] text-slate-800 dark:text-slate-100')} />
         {hasChildren && <span className="text-[11px] text-slate-400 dark:text-slate-500">({zone.children.length} sub-zones)</span>}
         <div className="ml-auto flex items-center gap-3 shrink-0">
