@@ -1,4 +1,4 @@
-import { Pencil, KeyRound } from 'lucide-react';
+import { Coins, Pencil, KeyRound } from 'lucide-react';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { cn } from '@/lib/utils';
 import type { UserListItem } from '@/types';
@@ -12,6 +12,11 @@ export function getColumns(
   onEdit: (user: UserListItem) => void,
   onResetPassword: (user: UserListItem) => void,
   savingUserId: number | null,
+  // QA3 item 1 (2026-09-24) — per-employee cost-rate override. Opens
+  // the same modal that lists the user's override history and lets the
+  // admin set/change/remove it. Optional so the partners tab (external
+  // employees, no cost concept today) can omit the affordance.
+  onCostOverride?: (user: UserListItem) => void,
 ): ColumnDef<UserListItem, unknown>[] {
   const cols: ColumnDef<UserListItem, unknown>[] = [
     {
@@ -153,6 +158,16 @@ export function getColumns(
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
+          {onCostOverride && (
+            <button
+              type="button"
+              onClick={() => onCostOverride(row.original)}
+              className="p-1.5 rounded hover:bg-emerald-50 text-slate-400 dark:text-slate-500 hover:text-emerald-600"
+              title="Cost rate override (forward-effective; overrides the level rate globally across projects)"
+            >
+              <Coins className="h-3.5 w-3.5" />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onResetPassword(row.original)}

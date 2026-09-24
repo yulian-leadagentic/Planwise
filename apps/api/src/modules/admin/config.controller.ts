@@ -10,6 +10,7 @@ import {
   UseGuards,
   Req,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { Prisma } from '@prisma/client';
@@ -18,6 +19,28 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+
+// QA3 item 1 helpers — accept an ISO-date (YYYY-MM-DD) and return a
+// midnight-UTC Date. Rejects anything else so a bad payload never
+// silently writes a garbage row. Column type is DATE so time components
+// are dropped by MySQL, but we normalize here so the resolver's
+// startDate <= entry.date comparison is stable.
+function parseIsoDate(value: string, field: string): Date {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new BadRequestException(`${field} must be an ISO date (YYYY-MM-DD)`);
+  }
+  const d = new Date(value + 'T00:00:00.000Z');
+  if (Number.isNaN(d.getTime())) {
+    throw new BadRequestException(`${field} is not a valid date`);
+  }
+  return d;
+}
+
+function dayBefore(d: Date): Date {
+  const c = new Date(d);
+  c.setUTCDate(c.getUTCDate() - 1);
+  return c;
+}
 
 @ApiTags('Admin - Config')
 @ApiBearerAuth()
@@ -418,6 +441,117 @@ export class ConfigController {
   async deleteSeniorityLevel(@Param('id', ParseIntPipe) id: number) {
     await this.prisma.seniorityLevel.delete({ where: { id } });
     return { message: 'Seniority level deleted' };
+  }
+
+  // ─── QA3 item 1 (2026-09-24) — effective-dated rate history ─────────
+  //
+  // Cost engine reads rate history via `cost-rate-resolver.ts`. These
+  // endpoints back the admin surfaces (seniority-levels-page rate
+  // history + people-page override control).
+  //
+  // Semantics:
+  //   - "Change rate at date S": close the open-ended row at (S - 1 day),
+  //     insert a new open-ended row starting S. Forward-effective only.
+  //   - "Remove override at date S": close the open-ended override at
+  //     (S - 1 day), no new row. Person falls back to level rate from S.
+  //   - At most one open-ended row per level / per user is enforced by
+  //     the change endpoint (it closes the current one first).
+
+  @Get('seniority-levels/:id/rates')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'List rate history for a seniority level' })
+  async getSeniorityRates(@Param('id', ParseIntPipe) id: number) {
+    return this.prisma.seniorityRate.findMany({
+      where: { seniorityLevelId: id },
+      orderBy: { startDate: 'desc' },
+    });
+  }
+
+  @Post('seniority-levels/:id/rates/change')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Change level rate — close current + open new open-ended row' })
+  async changeSeniorityRate(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { hourlyCost: number | string; currency?: string | null; effectiveFrom: string },
+  ) {
+    const start = parseIsoDate(body.effectiveFrom, 'effectiveFrom');
+    if (body.hourlyCost == null || body.hourlyCost === '') {
+      throw new BadRequestException('hourlyCost is required');
+    }
+    // Ensure the level exists (fkey would 500 otherwise on a bad id).
+    await this.prisma.seniorityLevel.findFirstOrThrow({ where: { id } });
+    return this.prisma.$transaction(async (tx) => {
+      // Close the currently-open row (if any) at S - 1 day. Skips
+      // silently on first-ever change — that's how the migration
+      // backfill scenario reads.
+      await tx.seniorityRate.updateMany({
+        where: { seniorityLevelId: id, endDate: null },
+        data: { endDate: dayBefore(start) },
+      });
+      return tx.seniorityRate.create({
+        data: {
+          seniorityLevelId: id,
+          hourlyCost: new Prisma.Decimal(body.hourlyCost as any),
+          currency: body.currency?.trim().toUpperCase() || null,
+          startDate: start,
+          endDate: null,
+        },
+      });
+    });
+  }
+
+  @Get('user-rates/:userId')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'List per-employee rate override history' })
+  async getUserRates(@Param('userId', ParseIntPipe) userId: number) {
+    return this.prisma.userRate.findMany({
+      where: { userId },
+      orderBy: { startDate: 'desc' },
+    });
+  }
+
+  @Post('user-rates/:userId/change')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Set / change per-employee override — close current + open new' })
+  async changeUserRate(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body() body: { hourlyCost: number | string; currency?: string | null; effectiveFrom: string },
+  ) {
+    const start = parseIsoDate(body.effectiveFrom, 'effectiveFrom');
+    if (body.hourlyCost == null || body.hourlyCost === '') {
+      throw new BadRequestException('hourlyCost is required');
+    }
+    await this.prisma.user.findFirstOrThrow({ where: { id: userId } });
+    return this.prisma.$transaction(async (tx) => {
+      await tx.userRate.updateMany({
+        where: { userId, endDate: null },
+        data: { endDate: dayBefore(start) },
+      });
+      return tx.userRate.create({
+        data: {
+          userId,
+          hourlyCost: new Prisma.Decimal(body.hourlyCost as any),
+          currency: body.currency?.trim().toUpperCase() || null,
+          startDate: start,
+          endDate: null,
+        },
+      });
+    });
+  }
+
+  @Delete('user-rates/:userId/current')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Remove per-employee override — close current with no new row' })
+  async removeUserRate(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body() body: { effectiveFrom: string },
+  ) {
+    const cutoff = parseIsoDate(body.effectiveFrom, 'effectiveFrom');
+    const closed = await this.prisma.userRate.updateMany({
+      where: { userId, endDate: null },
+      data: { endDate: dayBefore(cutoff) },
+    });
+    return { closed: closed.count, effectiveFrom: cutoff.toISOString().slice(0, 10) };
   }
 
   // ─── Disciplines (BM2 QA-2 Commit 4, 2026-08-27) ───────────────────

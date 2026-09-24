@@ -18,6 +18,7 @@ import { getColumns } from './people-page/get-columns';
 import { emptyPerson } from './people-page/constants';
 import { EditPersonModal } from './people-page/edit-person-modal';
 import { ResetPasswordModal } from './people-page/reset-password-modal';
+import { UserRateModal } from './people-page/user-rate-modal';
 
 export function PeoplePage() {
   const queryClient = useQueryClient();
@@ -200,6 +201,8 @@ export function PeoplePage() {
   const [savingUserId, setSavingUserId] = useState<number | null>(null);
   const [editingUser, setEditingUser] = useState<UserListItem | null>(null);
   const [resettingUser, setResettingUser] = useState<UserListItem | null>(null);
+  // QA3 item 1 — cost-rate override modal targets one user at a time.
+  const [overrideUser, setOverrideUser] = useState<UserListItem | null>(null);
 
   const updateRole = useMutation({
     mutationFn: ({ userId, roleId }: { userId: number; roleId: number }) =>
@@ -234,6 +237,8 @@ export function PeoplePage() {
       (user) => setEditingUser(user),
       (user) => setResettingUser(user),
       savingUserId,
+      // Employees only — external partners don't carry cost overrides today.
+      isPartners ? undefined : (user) => setOverrideUser(user),
     ),
     [isPartners, roles, canEditPeople, savingUserId],
   );
@@ -850,6 +855,14 @@ export function PeoplePage() {
         <ResetPasswordModal
           user={resettingUser}
           onClose={() => setResettingUser(null)}
+        />
+      )}
+
+      {overrideUser && (
+        <UserRateModal
+          user={overrideUser}
+          currencies={[]}
+          onClose={() => setOverrideUser(null)}
         />
       )}
     </div>

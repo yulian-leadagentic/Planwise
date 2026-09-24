@@ -11,6 +11,7 @@ import { QueryProjectsDto } from './dto/query-projects.dto';
 import { ProjectPartnerRolesService } from '../project-partner-roles/project-partner-roles.service';
 import { NumberRangesService } from '../number-ranges/number-ranges.service';
 import { rollupTaskCompletion } from '../../common/task-completion';
+import { buildCostRateResolver, isRateableOutcome } from './cost-rate-resolver';
 import * as Sentry from '@sentry/node';
 
 /**
@@ -505,36 +506,13 @@ export class ProjectsService {
       },
     });
 
-    // Pre-load every contributor's seniority history in ONE query so
-    // the per-entry effective-level lookup runs entirely in memory.
-    // Shape mirrors `getLaborCost` (:1532–1543); kept inline (rather
-    // than extracted to a shared helper) because the per-row rollup
-    // here is narrower — we only need hourlyCost, not currency or the
-    // per-user breakdown — and coupling the list rollup to the detail
-    // aggregator would make future changes to either side awkward.
+    // Rate resolution goes through the shared `cost-rate-resolver` so
+    // all three cost surfaces (this list rollup, computeProjectActualCost,
+    // and getLaborCost) can never drift. See that module for the
+    // per-user_override → level_rate_history → level_default fallback
+    // chain (QA3 item 1, 2026-09-24).
     const contributorIds = Array.from(new Set(entries.map((e) => e.userId)));
-    const histories = contributorIds.length === 0 ? [] : await this.prisma.userSeniority.findMany({
-      where: { userId: { in: contributorIds } },
-      include: {
-        seniorityLevel: { select: { id: true, defaultHourlyCost: true } },
-      },
-      orderBy: { startDate: 'desc' },
-    });
-    const historyByUser = new Map<number, typeof histories>();
-    for (const h of histories) {
-      if (!historyByUser.has(h.userId)) historyByUser.set(h.userId, []);
-      historyByUser.get(h.userId)!.push(h);
-    }
-    const effectiveAt = (userId: number, date: Date) => {
-      const list = historyByUser.get(userId) ?? [];
-      // history is sorted descending by startDate; first match wins.
-      for (const row of list) {
-        if (row.startDate <= date && (row.endDate === null || row.endDate >= date)) {
-          return row.seniorityLevel;
-        }
-      }
-      return null;
-    };
+    const resolver = await buildCostRateResolver(this.prisma, contributorIds);
 
     const hoursByProject = new Map<number, number>();
     const costByProject = new Map<number, number>();
@@ -543,15 +521,15 @@ export class ProjectsService {
       if (projectId == null) continue;
       const hours = e.minutes / 60;
       // Hours always count — even for unrateable users (no seniority,
-      // or a seniority with no hourly cost). Same treatment as
-      // `getLaborCost`, which surfaces those minutes in a separate
-      // `unrateable` bucket but includes them in `totalLoggedHours`.
+      // or a seniority with no rate). Same treatment as `getLaborCost`,
+      // which surfaces those minutes in a separate `unrateable` bucket
+      // but includes them in `totalLoggedHours`.
       hoursByProject.set(projectId, (hoursByProject.get(projectId) ?? 0) + hours);
-      const level = effectiveAt(e.userId, e.date);
-      if (!level || level.defaultHourlyCost == null) continue;
+      const outcome = resolver.resolve(e.userId, e.date);
+      if (!isRateableOutcome(outcome)) continue;
       costByProject.set(
         projectId,
-        (costByProject.get(projectId) ?? 0) + hours * Number(level.defaultHourlyCost),
+        (costByProject.get(projectId) ?? 0) + hours * outcome.hourlyCost,
       );
     }
 
@@ -717,13 +695,13 @@ export class ProjectsService {
   }
 
   /**
-   * Sum labor cost for one project: Σ(logged hours × effective
-   * SeniorityLevel.defaultHourlyCost). Mirrors the list-path rollup
-   * (`getPaginated` :539–556) so both surfaces share semantics —
-   * project membership resolved via task.projectId (not the
-   * historically-nullable entry.projectId), unrateable entries drop
-   * from Cost but still count as hours elsewhere. Returns 0 when the
-   * project has no logged time.
+   * Sum labor cost for one project via the shared cost-rate-resolver —
+   * one place resolves user_override → level_rate_history → level_default
+   * for every cost surface (list rollup, this, and getLaborCost). Project
+   * membership goes through task.projectId (not the historically-nullable
+   * entry.projectId); unrateable entries drop from Cost but still count
+   * as hours on the other rollups. Returns 0 when the project has no
+   * logged time.
    */
   private async computeProjectActualCost(projectId: number): Promise<number> {
     const entries = await this.prisma.timeEntry.findMany({
@@ -732,30 +710,12 @@ export class ProjectsService {
     });
     if (entries.length === 0) return 0;
     const userIds = Array.from(new Set(entries.map((e) => e.userId)));
-    const histories = await this.prisma.userSeniority.findMany({
-      where: { userId: { in: userIds } },
-      include: { seniorityLevel: { select: { id: true, defaultHourlyCost: true } } },
-      orderBy: { startDate: 'desc' },
-    });
-    const historyByUser = new Map<number, typeof histories>();
-    for (const h of histories) {
-      if (!historyByUser.has(h.userId)) historyByUser.set(h.userId, []);
-      historyByUser.get(h.userId)!.push(h);
-    }
+    const resolver = await buildCostRateResolver(this.prisma, userIds);
     let total = 0;
     for (const e of entries) {
-      const list = historyByUser.get(e.userId) ?? [];
-      // history is sorted DESC by startDate; first row where the entry
-      // date falls in [startDate, endDate ?? +∞) is the effective level.
-      let level: { defaultHourlyCost: any } | null = null;
-      for (const row of list) {
-        if (row.startDate <= e.date && (row.endDate === null || row.endDate >= e.date)) {
-          level = row.seniorityLevel;
-          break;
-        }
-      }
-      if (!level || level.defaultHourlyCost == null) continue;
-      total += (e.minutes / 60) * Number(level.defaultHourlyCost);
+      const outcome = resolver.resolve(e.userId, e.date);
+      if (!isRateableOutcome(outcome)) continue;
+      total += (e.minutes / 60) * outcome.hourlyCost;
     }
     return +total.toFixed(2);
   }
@@ -2120,34 +2080,12 @@ export class ProjectsService {
       },
     });
 
-    // Pre-load every contributor's full seniority history in ONE query
-    // so the per-entry effective-level lookup runs entirely in memory.
-    // N+1 would explode quickly on large projects.
+    // One shared resolver for user_override → level_rate_history →
+    // level_default. See `cost-rate-resolver.ts` for the exact rules;
+    // the same helper powers the list rollup and computeProjectActualCost
+    // so all three surfaces agree by construction (QA3 item 1).
     const userIds = Array.from(new Set(entries.map((e) => e.userId)));
-    const histories = userIds.length === 0 ? [] : await this.prisma.userSeniority.findMany({
-      where: { userId: { in: userIds } },
-      include: {
-        seniorityLevel: { select: { id: true, name: true, defaultHourlyCost: true, currency: true } },
-      },
-      orderBy: { startDate: 'desc' },
-    });
-    const historyByUser = new Map<number, typeof histories>();
-    for (const h of histories) {
-      if (!historyByUser.has(h.userId)) historyByUser.set(h.userId, []);
-      historyByUser.get(h.userId)!.push(h);
-    }
-
-    /** Resolve the seniority level effective for userId on date. */
-    const effectiveAt = (userId: number, date: Date) => {
-      const list = historyByUser.get(userId) ?? [];
-      // history is sorted descending by startDate; first match wins.
-      for (const row of list) {
-        if (row.startDate <= date && (row.endDate === null || row.endDate >= date)) {
-          return row.seniorityLevel;
-        }
-      }
-      return null;
-    };
+    const resolver = await buildCostRateResolver(this.prisma, userIds);
 
     // Local snapshot type. Exported as a `type` (vs interface) so
     // TypeScript can synthesize a structural return type for
@@ -2172,11 +2110,15 @@ export class ProjectsService {
       }
     }
 
-    // Bucket per (userId, levelId). A user with multiple seniority
-    // periods on the same project shows as multiple rows.
+    // Bucket per (userId, levelId, hourlyCost) so a mid-project rate
+    // change (level or override) surfaces as separate rows on the
+    // breakdown ("Alice as Senior @ ₪450: 4h" + "Alice as Senior @ ₪500:
+    // 6h"). Same pattern the old code used for level changes; now also
+    // splits on rate changes because that's how forward-only pricing
+    // actually reads to the PM.
     interface RateableBucket {
       user: UserSnapshot;
-      seniorityLevel: { id: number; name: string };
+      seniorityLevel: { id: number; name: string } | null;
       hourlyCost: number;
       currency: string;
       minutes: number;
@@ -2185,30 +2127,28 @@ export class ProjectsService {
     const unrateableMinutes = new Map<number, { user: UserSnapshot; reason: string; minutes: number }>();
 
     for (const e of entries) {
-      const level = effectiveAt(e.userId, e.date);
       const user = userById.get(e.userId)!;
-      if (!level) {
-        const cur = unrateableMinutes.get(e.userId) ?? { user, reason: 'No seniority history covers the entry date', minutes: 0 };
+      const outcome = resolver.resolve(e.userId, e.date);
+      if (!isRateableOutcome(outcome)) {
+        const reason =
+          outcome.kind === 'no_seniority'
+            ? 'No seniority history covers the entry date'
+            : `Seniority "${outcome.seniorityLevel?.name ?? ''}" has no rate configured on the entry date`;
+        const cur = unrateableMinutes.get(e.userId) ?? { user, reason, minutes: 0 };
         cur.minutes += e.minutes;
         unrateableMinutes.set(e.userId, cur);
         continue;
       }
-      if (level.defaultHourlyCost == null) {
-        const cur = unrateableMinutes.get(e.userId) ?? { user, reason: `Seniority "${level.name}" has no hourly cost configured`, minutes: 0 };
-        cur.minutes += e.minutes;
-        unrateableMinutes.set(e.userId, cur);
-        continue;
-      }
-      const key = `${e.userId}|${level.id}`;
+      // (userId, levelId, hourlyCost) key: distinct rows for each rate
+      // window so promotions AND rate changes each split.
+      const key = `${e.userId}|${outcome.seniorityLevel?.id ?? 'none'}|${outcome.hourlyCost}`;
       let b = rateable.get(key);
       if (!b) {
         b = {
           user,
-          seniorityLevel: { id: level.id, name: level.name },
-          hourlyCost: Number(level.defaultHourlyCost),
-          // Currency on the SeniorityLevel is optional; tag 'UNK' so
-          // the UI can flag the data gap without dropping the row.
-          currency: level.currency || 'UNK',
+          seniorityLevel: outcome.seniorityLevel,
+          hourlyCost: outcome.hourlyCost,
+          currency: outcome.currency,
           minutes: 0,
         };
         rateable.set(key, b);

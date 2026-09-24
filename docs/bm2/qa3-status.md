@@ -1,102 +1,53 @@
 # Planwise QA3 — Status & Line-Up (single source of truth)
 
-**Updated:** 2026-09-22 · by analyst, verified against the repo (`staging` branch) and CC's live runs.
+**Updated:** 2026-09-22 (latest) · by analyst, verified against the repo (`staging`) and CC's live runs.
+
+## 🚦 CURRENT STATE — Waves 1–3 CLOSED (analyst-verified)
+- **Wave 1 CLOSED** (HEAD c7554c9) — instrumentation, cross-site logout fix, category-model fix + multi-select.
+- **Wave 2 CLOSED** (HEAD e7bf55e) — cost surfacing (PR-035/031), zoneType-in-templates (PR-032), zone/service exposure verified, Execution dedup (PR-041).
+- **Wave 3 CLOSED** (HEAD 18c2e57) — team picker + contact scoping (PR-023/026/028/038), one-table+AMC contacts, contact-add verified (PR-024), day/week/month due filter (PR-033), zone-delete guard (PR-040).
+- **PR-039 RESOLVED:** Job Title = Profession, load-bearing (gates role eligibility). Decision: **keep**, add a clarifying label — no removal, no migration.
+
+### Remaining before go-live
+1. 🔴 **Logout sign-off** — Danielle + Tzlil confirm in a live multi-user session (code+Chrome verified; needs real-world OK).
+2. 🟠 **Wedge root cause** — endpoint-level 10s guard in place (`fd56185`, `execution-board.service.ts`); recurrence would return 503 instead of hanging. P26 exec-board now loads 200 in 74ms server / 445ms wire (fresh container). Instrumentation still armed for the next natural event.
+3. 🟠 **Design Wave** — My Tasks 6 notes (`qa3-design-wave-run.md`) + Tzlil's remaining screens as they arrive.
+4. 🟠 **Wave 4** (not blocking) — Activity per-project, Drive link-only, Contacts import.
+5. ⚪ Tails — id8 מלונאות (1 task), merge end-state eyeball.
+6. **Go-live gate:** data migration only after the above are solid.
+
+### 2026-09-24 — QA3 open work order · item 1 shipped
+- **Item 1 · Cost-rate versioning — commit + push:** effective-dated rates on two layers (level `seniority_rates` + per-employee `user_rates`), backfilled from `default_hourly_cost` (far-past open-ended row) so existing costs are unchanged on rollout.
+- **Shared cost-rate-resolver** (`apps/api/src/modules/projects/cost-rate-resolver.ts`): `user_override → level_rate_history → level_default` order. All three cost paths in `projects.service.ts` (list rollup, `computeProjectActualCost`, `getLaborCost`) rewrote through it — no more drift between the surfaces.
+- **Admin endpoints:** `GET /admin/config/seniority-levels/:id/rates`, `POST /rates/change`, `GET /admin/config/user-rates/:userId`, `POST /change`, `DELETE /current` — all with the close-current + open-new semantics; forward-effective only.
+- **UI:** "Change rate" row action on `seniority-levels-page` opens a history-listing modal; "Cost rate override" (💰) row action on `/admin/employees` opens the same-shape override modal (set / change / remove).
+- **DoD verification (staging):** [pending post-deploy]
+- **Items 2 / 3 / 4 / 6:** not started this session — will land in follow-up sessions per pace agreed with Yulian.
+
+### 2026-09-23 — Wedge follow-up + PR-041 close
+- **P26 exec-board wedge repro (`GET /execution-board?projectId=26`):** captured signal (no `req.start` in logs mid-request, container SIGKILL'd by killswitch after ~30s of loop unresponsiveness). Container recycled at 11:35:41; fresh boot completes the same request in 74ms server / 445ms wire.
+- **Containment (`fd56185`):** `execution-board.service.ts` `getData` wrapped in `withQueryTimeout(getDataImpl, 10s, ...)`; on recurrence returns 503 instead of hanging.
+- **Root cause not identified.** Direct DB timings show all 5 parallel Prisma queries < 50ms; transforms are O(n) linear. Suspects: (a) socket-write stall on a very large response body (200 KiB brotli — the `content-length` header is missing on the successful response), (b) transient Prisma prepared-statement stuck state cleared by restart, (c) upstream event-loop backpressure. Next natural wedge should hit the 10s guard and produce a clean 503 timing line + `WedgeKillswitch` skip.
+- **PR-041 dedupe verified on P26:** exec-board renders 7 unique deliverable columns, zero duplicates (`בקרה ראשונה`, `התנעה`, `בקרה למכרז`, `תכנון ראשוני`, `מוכנות לביצוע`, `תכנון מפורט`, `תכנון סופי`). Already verified on P18 pre-wedge; now green on both.
+
+---
+
 **This doc supersedes the category section and the Failure-B section of `qa3-work-order.md`** — both are corrected below.
 
 ---
 
-## 🚦 WAVE 3 — **CLOSED 2026-09-22 (HEAD `f7fcdf3`)**
+## ✅ DONE (committed + verified live)
+- **Commit 1 — wedge instrumentation** (0b68271): sync stderr signal/exit handlers + 5s vitals + request lifecycle. SIGTERM→beforeExit→exit sequence **captured live**. Closed.
+- **Commit 2 — cross-site logout fix** (the #2 pain): shared single-flight refresh across bootstrap + interceptor (ccd3983, `refresh-lock.ts`) + `index.html` no-cache. **Runtime-proven via Chrome** — shared refresh works and `SameSite=None; Secure` cookie accepted cross-site. *Remaining:* Danielle + Tzlil confirm in a real multi-user session (no first-click failures, F5 keeps session).
+- **Commit 2 — data-integrity scan** built + run on P20 ("מבנה 1660"), P26 ("באר יעקב"), P18 baseline. **All clean:** zero orphan FKs, zero null names, no duplicate deliverables; scan ~20ms.
+- **Run-now items 2 & 3** (commit 3322bca, 2026-09-22): TEMP integrity endpoint removed; load-path query-timeout guard added (`query-timeout.ts` on `planning.service.ts`). Gate #6a closed (no data to fix). *Remaining run-now:* #4 customer-block click-test, #5 wedge-watch.
+- **Commit 3 — Category model fix — CODE-VERIFIED by analyst (HEAD e28cc23):** 3A (162b6f6) "Project Categories" tab now wired to `ProjectType` (`/admin/config/project-types`), old tab relabelled "Services"; 3B (9b20db8) reconciliation applied via temp endpoint; 3C-a (cb9cde3) `ProjectCategoryLink` junction + `projectTypeId` kept PRIMARY; 3C-b (e28cc23) chip multi-select UI, **live DoD 5/5 via Chrome**. Matches the corrected spec + locked decisions.
 
-Per `docs/bm2/qa3-wave2-run.md`… wait, this is Wave 3 per `docs/bm2/qa3-wave3-run.md`. Verify-first: three commits, two of them scoped code changes, one entirely verify-only.
-
-**Commit 7 — Team picker & project-contact scoping** (`2b55348`):
-- **PR-023** — role picker filters by role. **VERIFIED** — `RoleAssignmentPicker` at [role-assignment-picker.tsx:67-95](apps/web/src/features/projects/project-detail/role-assignment-picker.tsx:67) narrows candidates by `role.requiredPartnerRoleCode` (API `roleType` param) + `requiredProfessionIds` (Job Title match).
-- **PR-026** — project + org-scoped contacts. **VERIFIED** — PPR customer_contact scoping in place from earlier BM2 phases.
-- **PR-028** — role-cell quick-assign auto-add. **FIXED** — `/projects/:id/assignee-candidates` widened with optional `?roleCode=…`; when set, the service folds in every company person who holds that ProjectRoleType (person + required profession + allowed partner kind) alongside the existing per-project rows. `RoleHolderCell` passes `roleCode`; picking a non-member writes via the existing `POST /project-partner-roles`, which creates the participation row as a side effect — no permission-model change. **Live-verified**: clicking BIM MANAGER cell on projects list sent `GET /projects/29/assignee-candidates?roleCode=bim_m`.
-- **PR-038** — assign team to project roles. **VERIFIED** — same `RoleAssignmentPicker` covers every ProjectRoleType (Team Leader, BIM Manager, MEP Coordinator, …).
-- **Contacts — one table + include-AMC toggle** (locked spec). **FIXED** — `contacts-page.tsx` adds `Include AMC` checkbox (default OFF, historical behaviour preserved). ON pulls in User-linked + Internal-org worker_of edges and sorts externals first. **Live-verified**: toggle switched visible email rows from 8 → 48 on staging.
-- **"Copy external emails"** toolbar button. **FIXED** — dedupes + comma-joins externals' emails to the clipboard. **Live-verified**: button renders, enabled when externals exist, wired to the shared notify surface for success/empty/error.
-- **Multi-org consultants preserved**. **VERIFIED** — BP relationships accept multiple worker_of edges; the contact form + partner drawer never collapse the list.
-
-**Commit 8 — Contact-add + Job Title** (no code shipped):
-- **PR-024** — contact-add form (English req + Hebrew optional + Job Title closed list + Role(s) multi-select + Discipline). **VERIFIED** — [create-partner-modal.tsx](apps/web/src/features/partners/create-partner-modal.tsx): Hebrew fields at line 73-74, Job Title picker sourced from `professions` catalog and rendered as `<select>` (closed list) at line 501-511, Role(s) label already relabelled from "Main Role" (line 532), Discipline picker at line 550-572. English name required, Hebrew optional per line 288.
-- **PR-039** — Job Title purpose report. **REPORT-ONLY, STOPPED before removing.**
-   - Job Title = `Profession` (closed-list catalog under `/admin/config/professions`).
-   - Stored on `BusinessPartner.professions` (many-to-many); persons declare which titles they hold.
-   - Consumed by `ProjectRoleType.requiredProfessionIds` — the `RoleAssignmentPicker` narrows candidates to parties whose `professions.some(pid ∈ requiredProfessionIds)`, AND the backend rejects assignments that fail this check with "must hold one of these job titles".
-   - Discipline is documented as INFORMATIONAL only ([create-partner-modal.tsx:544-547](apps/web/src/features/partners/create-partner-modal.tsx:544)); it does NOT gate eligibility.
-   - **Impact of removal**: every ProjectRoleType currently keyed on `requiredProfessionIds` loses its filter — role pickers open up to unqualified candidates, and the backend guard starts rejecting assignments that used to pass under the old flow (or opens up if the guard is also removed). **KEEP as-is until you decide whether/how to migrate the semantic.**
-
-**Commit 9 — Execution / planning surfaces** (`f7fcdf3`):
-- **PR-033** — day/week/month due filter, shared with Tzlil's My-Tasks note #5. **FIXED** — new `apps/web/src/lib/due-window.ts` with locked semantics: Day = end-of-today (local), Week = +7d, Month = +30d, overdue-open ALWAYS included, terminal-status tasks (completed / cancelled) drop out, missing-due tasks drop out when a window is active. Segmented `[All | Day | Week | Month]` control wired into both `my-tasks-kanban.tsx` and `execution-board-page.tsx`. Composes on top of the existing dueFrom/dueTo range. **Live-verified**: control renders on both `/my-tasks` and `/execution-board` with All selected by default; Week click flipped selection cleanly.
-- **PR-040** — zone delete guard. **FIXED** — `zones.service#remove` preflights TimeEntry count on all descendant tasks (recursive via existing `collectDescendantIds`). If any non-deleted TimeEntry sits on any non-deleted task under the zone, throws `ConflictException` with entry + task counts and a clear message ("Cannot delete: N logged time entries on M tasks under this zone. Move or delete the logged time first."). Empty zones + unlogged zones still soft-delete normally. Code-verified in the deployed bundle; live DELETE not executed to avoid destructive side effects on real staging data.
-- **PR-017** — extra grouping level. **VERIFIED** — Planning tab Group + Sub-group already in place (Wave-2 live check).
-- **PR-018** — chronological ordering. **VERIFIED** — no regression observed on Planning/Deliverable Planning surfaces.
-
-**Wave-3 commits shipped:**
-- `2b55348` — feat(projects,contacts): PR-028 widened role-cell picker + Contacts AMC toggle + Copy external emails
-- `f7fcdf3` — feat(tasks,zones): PR-033 day/week/month due filter + PR-040 zone delete guard
-
-## 🚦 WAVE 2 — **CLOSED 2026-09-22 (HEAD `9b67e9b`)**
-
-Verify-first per `docs/bm2/qa3-wave2-run.md`. All items either VERIFIED
-against the existing implementation or FIXED with a scoped commit;
-schema left untouched per decision.
-
-**Commit 4 — Cost surfacing:**
-- **PR-004 / PR-005 / PR-006** — cost engine + hours + completion % rollup VERIFIED (`projects.service#getLaborCost` :1951, list rollup :539–613, `actualCost` on both list and now `findOne`).
-- **PR-029 — rate path** VERIFIED. Rate flows through `SeniorityLevel.defaultHourlyCost` set in the SeniorityLevels admin page; per-user assignment via People page's seniority history. `User.hourlyRate` field exists in schema but is unused by the cost engine (documented, no action).
-- **PR-035 + PR-031 (bundled)** FIXED at `8f86e2a` — new `computeProjectActualCost` helper on the service, `findOne` returns `actualCost`. Project detail top row renders **Budget | Cost | Utilization%** inline (finance-gated). Ops dashboard label changed to "Budget allocated X%" (metric unchanged; only wording — the number is `Σ Task.budgetAmount / Project.budget`, i.e. planned allocation, not spent). Live-verified on P18: `Budget: ₪170,000 | Cost: ₪0 | Utilization: 0%`. Zero cost matches the unrateable-contributors path (`getLaborCost` bucket) — engine is behaving correctly.
-
-**Commit 5 — Zone/Service exposure:**
-- **PR-032 — zoneType picker in TEMPLATES** FIXED at `8f86e2a` — new `manual-zone-form.tsx` component wired into `EditorView`'s root Add menu ("Manual Zone" alongside "Zone from Template") and `ZoneTreeNode`'s child-add flow ("New Zone" / "From Template" pair). Backend already accepted `zoneType`; this is FE-only. Live-verified: form renders all 8 types (Site/Building/Level/Zone/Area/Section/Wing/Floor).
-- **PR-034 — group-by-Zone tree + ERD** VERIFIED. Planning tab with Group=Zone already renders nested Zone > sub-zone hierarchy (P18: 4 root zones each with 3 sub-zones, indented). PR-032 now unlocks varied types on that same tree. **ERD schema change refused per decision** — `Zone.zoneType` stays an enum, no FK to `ZoneTypeMeta`, no migration. Doc-only note is the acceptable follow-up (out of Wave-2 scope).
-- **PR-042 — template Service surface** VERIFIED. Deliverable Templates page shows the Phase (Service) as a cyan pill on each template row + phase picker in header form + phase-filter dropdown ([deliverable-templates-page.tsx:409](apps/web/src/features/templates/deliverable-templates-page.tsx:409)). Zone Template editor's Deliverable groups show the same cyan Service pill ([service-group-item.tsx:58-62](apps/web/src/features/templates/zone-templates/service-group-item.tsx:58)).
-- **PR-020 — no-zone Service progress** VERIFIED on P18: with Group=Zone, "No Zone" group renders **75% · 22 tasks · 148h budget · 103h logged · ₪59,200**. Overall progress rollup includes no-zone tasks; per-zone rollup deliberately skips them (`execution-planning.service.ts:400` vs :386).
-
-**Commit 6 — Deliverable identity / Execution dedup:**
-- **PR-041 — duplicate deliverable in Execution** FIXED at `9b67e9b` — `!orderedColumns.includes(tpl.name)` guard added to the first ordering loop in `execution-board-page.tsx:404-410`. Live-verified on P18 Execution filtered to "BIM management": chip count at the matrix column-header row dropped from **4 → 1**. Matrix key stays `${zoneId}|${phaseName}` (string), per analyst decision — id-keying would over-split.
-- **Template rename propagation** VERIFIED structurally: `Task.name` is a copied string column, so renaming a Template does NOT change existing task names or hours (TimeEntry.minutes is unrelated). `PATCH /templates/:id` updates the Template row only. New instantiations copy the CURRENT Template.name. Existing projects that reference by `deliverableTemplateId` see the new name via FK; projects using `projectDeliverableId` are unaffected (project-owned name). No live rename was performed on staging (avoid destructive smoke on real templates).
-- **PR-019 — task add sets deliverable link** VERIFIED. `tasks.service.ts:201-203` writes both `deliverableTemplateId` and `projectDeliverableId` on create; Planning "Add > New Task" / "New Deliverable" affordances live-visible on P18 group cards.
-- **PR-013 — add task template into tree** VERIFIED. Planning "Add > From Template" affordance live-visible on P18 group cards; `CatalogPickerForZone` at `planning-modal.tsx:1424` is the writer.
-
-**Wave-2 commits shipped:**
-- `8f86e2a` — feat(projects,templates): PR-035/031 cost surfacing + PR-032 zoneType picker
-- `9b67e9b` — fix(execution): dedupe duplicate deliverable columns by name (PR-041)
-
-## 🚦 WAVE 1 — **CLOSED 2026-09-22 (HEAD `68c68a9`)**
-
-All Wave-1 goals shipped, live-verified on staging, and the temporary
-scaffolding is removed. The one item that Wave 1 cannot self-verify
-(Danielle + Tzlil live logout sign-off) is carried forward as its own
-open callout below — it does NOT reopen the wave.
-
-**Everything that shipped in Wave 1:**
-- **Commit 1 — wedge instrumentation** (0b68271): sync stderr signal/exit handlers + 5s vitals + `RequestLifecycle` interceptor. SIGTERM→beforeExit→exit sequence captured live. `Watchdog armed` + `Wedge-killswitch armed` printed on every boot.
-- **Commit 2 — cross-site logout fix** (66d5ce7 + ccd3983): shared single-flight `refresh-lock.ts` across bootstrap + interceptor and `index.html` `Cache-Control: no-cache`. Runtime-proven via Chrome cross-site.
-- **Commit 2 — data-integrity scan** on P20/P26/P18 (behind the TEMP `qa3-integrity` endpoint, later removed in 3322bca): zero orphans, zero nulls, ~20ms — no data to fix (Gate #6a closed).
-- **Run-now #2 + #3** (3322bca): TEMP integrity endpoint removed + load-path query-timeout guard added (`query-timeout.ts` on `planning.service.ts`).
-- **Commit 3A — split Project Categories tab from Services** (162b6f6): "Project Categories" tab wired to `ProjectType` at `/admin/config/project-types`; old tab relabelled "Services".
-- **Commit 3B — reconciliation applied** via TEMP atomic `Qa3ReconciliationController` (9b20db8): the Hebrew categories reached `project_types`, the delete-candidates on `service_types` were removed under an FK-gated $transaction.
-- **Commit 3C-a — junction + DTO + service** (cb9cde3): `ProjectCategoryLink` model + migration + backend service accepting `projectTypeIds`, primary FK preserved for rollups. Follow-up backfill via TEMP `Qa3ThreeCBackfillController` (7a659f2) after Prisma silently skipped the multi-statement INSERT IGNORE.
-- **Commit 3C-b — chip multi-select UI** (e28cc23): shared type + api client + form chip picker + list array-handling + rewritten detail-header editor. **Live DoD 5/5** via Chrome-MCP (see below).
-- **Wave-1 tail — service_type 14 merged into 13** via TEMP `POST /admin/qa3-3b-reconciliation/merge-14-into-13` (bd9a446): atomic $transaction, FK preflight, dryRun-reversible. Analyst confirmed the merge landed on staging.
-- **Wave-1 close cleanup** (68c68a9): both TEMP admin controllers removed + `admin.module.ts` entries dropped. Every `/api/v1/admin/qa3-*` route now 404s.
-
-**Wave-1 DoDs — live-verified on staging:**
-- 3C-b DoD 1 — header inline editor added מסחר to P20 → 2 chips ("Buildings — primary" + "מסחר"). ✅
-- 3C-b DoD 2 — project list row renders both chips with correct titles. ✅
-- 3C-b DoD 3 — filter by category id 20 (מסחר, extra on P20) matches P20 alone (via junction). ✅
-- 3C-b DoD 4 — filter by category id 5 (Buildings, primary on P20) matches P20 + 4 other single-category rows. ✅
-- 3C-b DoD 5 — `/projects/new` renders chip picker with "first is primary" hint, no legacy `<select>`. ✅
-- Run-now #4 customer-block — **PASS**: Customer `<select>` enabled + 6 options populated on first render of `/projects/new`, no refresh; stays enabled after picking Buildings. Screenshot skipped (SPA never reaches `document_idle`, screenshot tool times out at 5s — known constraint).
-- Run-now #5 wedge-watch armed — live logs at 12:44:25 UTC show `Watchdog armed` + `Wedge-killswitch armed` + `RequestLifecycle` interceptor emitting `req.start` every 20s on the health probe.
-
-**Wave-1 tail cleanup, documented (does NOT block close):**
-- **service_type 8 "מלונאות"** — 1 task ref. KEPT per user decision. The merge-14 endpoint returned `audit_serviceType8_taskList` with the {task, project} so Yulian can pick its correct service later. Tail-tracked, no blocker.
-
-## ⏳ CARRY-FORWARD (independent of Wave-1 close)
-- **Danielle + Tzlil** confirm the logout fix in a live multi-user session (no first-click failures, F5 keeps session). Code + Chrome-driven verification are done; only their real-world sign-off remains.
+## 🧹 WAVE-1 CLOSE CHECKLIST (remaining)
+- [ ] **Cleanup commit:** remove the two temp controllers still in code — `Qa3ReconciliationController` (9b20db8) + `Qa3ThreeCBackfillController` (7a659f2) + `admin.module.ts` entries. Confirm routes 404.
+- [ ] **service_types tail:** id 14 "BIM Coordination BIM" → merge into id 13; id 8 "מלונאות" (1 task) → keep + flagged (Yulian to pick its real service later).
+- [ ] run-now **#4** customer-block click-test (yes/no + screenshot) · **#5** wedge-watch armed.
+- [ ] **Danielle + Tzlil** confirm the logout fix in a live multi-user session.
 
 ## 🔎 CORRECTED FINDINGS (important)
 1. **Category disconnect — real root cause (corrects earlier "same table"):** the New-Project *Project Category* dropdown reads `/admin/config/project-types` → **`ProjectType`** table. The Templates→Types tab **labelled "Project Categories"** is internally key `'service'` → `/service-types` → **`ServiceType`** table — a *different* table. So categories added in that tab land in `service_types` and never reach the dropdown. `ProjectType` is edited on a separate admin route (`/project-types`), not in the Types tabs. → It's a **mislabelled tab pointing at the wrong table**, not a cache/seed/env issue. The Hebrew rows (מגורים/מסחר/מלונאות/חינוך/בטחוני) currently sit in `service_types`.

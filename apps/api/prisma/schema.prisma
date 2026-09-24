@@ -253,6 +253,12 @@ model User {
   seniorityLevel     SeniorityLevel? @relation("UserSeniorityLevel", fields: [seniorityLevelId], references: [id], onDelete: SetNull)
   // Full history of seniority assignments per user — see UserSeniority.
   seniorityHistory   UserSeniority[] @relation("UserSeniorityHistory")
+  // QA3 item 1 (2026-09-24) — per-employee cost rate override history.
+  // When a row covers the entry date, it WINS over the level's own rate
+  // history (SeniorityRate). Overrides are global (all projects). See
+  // `apps/api/src/modules/projects/cost-rate-resolver.ts` for the
+  // resolution order.
+  rateHistory        UserRate[]      @relation("UserRateHistory")
   website            String?
   otpCode            String?         @map("otp_code")
   otpExpiresAt       DateTime?       @map("otp_expires_at")
@@ -2150,8 +2156,44 @@ model SeniorityLevel {
   // orphan a row (but a level in use can't be hard-deleted from the UI
   // anyway).
   historicalAssignments UserSeniority[] @relation("SeniorityLevelHistory")
+  // QA3 item 1 (2026-09-24) — effective-dated rate history. Every rate
+  // change closes the current row (endDate = effectiveFrom) and inserts
+  // a new open-ended row. Cost engine picks the row covering each entry's
+  // date; `defaultHourlyCost` above stays as the pre-history fallback.
+  rateHistory           SeniorityRate[] @relation("SeniorityLevelRates")
 
   @@map("seniority_levels")
+}
+
+/// QA3 item 1 (2026-09-24) — effective-dated rate history per seniority
+/// level. Mirrors `UserSeniority`'s shape (startDate/endDate, null end =
+/// current). Cost is computed at read time: for each time entry at date D,
+/// the row where startDate ≤ D < (endDate ?? +∞) wins; falls back to
+/// SeniorityLevel.defaultHourlyCost if no history row covers D.
+///
+/// Constraints enforced by the service (not the DB) at save time:
+///   1. No overlapping ranges within a level.
+///   2. At most one open-ended (endDate=NULL) row per level.
+///   3. New open-ended row → previous open-ended row closed at (S - 1 day).
+///
+/// A backfill migration seeds one far-past row per level from the
+/// current `defaultHourlyCost`, so existing project costs are unchanged
+/// on rollout. See `20260924100000_seniority_rate_and_user_rate`.
+model SeniorityRate {
+  id               Int            @id @default(autoincrement())
+  seniorityLevelId Int            @map("seniority_level_id")
+  seniorityLevel   SeniorityLevel @relation("SeniorityLevelRates", fields: [seniorityLevelId], references: [id], onDelete: Cascade)
+  hourlyCost       Decimal        @map("hourly_cost") @db.Decimal(10, 2)
+  /// ISO-4217 code (FK currencies.code). Nullable — mirrors the level's
+  /// existing "unitless when NULL" semantics on defaultHourlyCost.
+  currency         String?        @db.VarChar(3)
+  startDate        DateTime       @map("start_date") @db.Date
+  endDate          DateTime?      @map("end_date") @db.Date
+  createdAt        DateTime       @default(now()) @map("created_at")
+
+  @@index([seniorityLevelId, startDate])
+  @@index([seniorityLevelId, endDate])
+  @@map("seniority_rates")
 }
 
 /// Date-effective seniority history per user. Each row says "user X
@@ -2192,6 +2234,43 @@ model UserSeniority {
   @@index([userId, startDate])
   @@index([userId, endDate])
   @@map("user_seniorities")
+}
+
+/// QA3 item 1 (2026-09-24) — per-employee cost-rate OVERRIDE history.
+/// When a row covers the entry date it WINS over the seniority level's
+/// own rate; when no override row covers the date the person falls back
+/// to the level rate. Overrides are global (all projects) — per-project
+/// overrides were considered and deferred.
+///
+/// Same effective-dated shape as `SeniorityRate` / `UserSeniority`
+/// (startDate/endDate, null end = current). "Remove override from date
+/// D" is a close-current row (endDate = D) with no new row.
+///
+/// Constraints enforced by the service:
+///   1. No overlapping ranges within a user.
+///   2. At most one open-ended (endDate=NULL) row per user.
+///   3. Adding a new open-ended row → previous open-ended closed at
+///      (S - 1 day).
+///
+/// No backfill: default state is "no override" and everyone derives
+/// from their level.
+model UserRate {
+  id         Int       @id @default(autoincrement())
+  userId     Int       @map("user_id")
+  user       User      @relation("UserRateHistory", fields: [userId], references: [id], onDelete: Cascade)
+  hourlyCost Decimal   @map("hourly_cost") @db.Decimal(10, 2)
+  /// ISO-4217 code (FK currencies.code). Nullable — matches the level's
+  /// "unitless when NULL" semantics; when null the override still wins
+  /// on rate but currency falls back to the level's currency for the
+  /// per-currency rollup.
+  currency   String?   @db.VarChar(3)
+  startDate  DateTime  @map("start_date") @db.Date
+  endDate    DateTime? @map("end_date") @db.Date
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([userId, startDate])
+  @@index([userId, endDate])
+  @@map("user_rates")
 }
 
 // ─── M3b — Party↔Party + Project-Party-Role tables ─────────────────────────
