@@ -93,8 +93,14 @@ export function AddMemberDialog({
     const added = results.filter((r) => r.status === 'fulfilled').length;
     const failed = results.length - added;
 
-    // Refresh the members list
+    // Refresh the members list. The Team tab actually reads from
+    // `['project-team', projectId]` (GET /projects/:id/team, see
+    // team-tab.tsx), NOT `['projects', projectId, 'members']` — so
+    // without invalidating THAT key the added rows never surfaced
+    // without a hard refresh (PR-038 / QA3 round-2).
     queryClient.invalidateQueries({ queryKey: ['projects', projectId, 'members'] });
+    queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
+    queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
     setApplying(false);
 
     if (added > 0 && failed === 0) {

@@ -17,6 +17,16 @@ export function getColumns(
   // admin set/change/remove it. Optional so the partners tab (external
   // employees, no cost concept today) can omit the affordance.
   onCostOverride?: (user: UserListItem) => void,
+  // QA3 round-2 item 4 (EMP-INLINE, 2026-09-25) — inline-edit callbacks
+  // for Department / Seniority / Active. Same shape as onChangeRole:
+  // each callback fires a single-field PATCH /users/:id. Optional so
+  // the partners tab (which has no seniority/department concept today)
+  // renders the columns as plain text.
+  departments: Array<{ id: number | string; name: string }> = [],
+  seniorityLevels: Array<{ id: number; name: string; defaultHourlyCost?: any; currency?: string | null }> = [],
+  onChangeDepartment?: (userId: number, department: string | null) => void,
+  onChangeSeniority?: (userId: number, seniorityLevelId: number | null) => void,
+  onChangeActive?: (userId: number, isActive: boolean) => void,
 ): ColumnDef<UserListItem, unknown>[] {
   const cols: ColumnDef<UserListItem, unknown>[] = [
     {
@@ -67,19 +77,86 @@ export function getColumns(
     {
       accessorKey: 'department',
       header: 'Department',
-      cell: ({ row }) => row.original.department ?? '-',
+      cell: ({ row }) => {
+        const user = row.original;
+        const currentDept = (user as any).department ?? '';
+        // Fall back to plain text when the callback isn't wired (e.g.
+        // partners tab, or a caller that just wants a read-only view).
+        if (!onChangeDepartment || !canEdit) {
+          return currentDept ? currentDept : '-';
+        }
+        const isSaving = savingUserId === user.id;
+        return (
+          <select
+            aria-label={`Department for ${user.firstName} ${user.lastName}`}
+            value={currentDept}
+            disabled={isSaving}
+            onChange={(e) => {
+              const next = e.target.value;
+              if (next === currentDept) return;
+              onChangeDepartment(user.id, next === '' ? null : next);
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className={cn(
+              'rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-sm focus:border-blue-400 focus:outline-none',
+              isSaving && 'opacity-50 cursor-wait',
+            )}
+          >
+            <option value="">— None —</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.name}>{d.name}</option>
+            ))}
+            {/* Preserve the current value even if the catalog no longer
+                contains it (legacy free-text departments) — otherwise
+                the select would show blank on load. */}
+            {currentDept && !departments.some((d) => d.name === currentDept) && (
+              <option value={currentDept}>{currentDept}</option>
+            )}
+          </select>
+        );
+      },
     },
     {
       // M5 — Seniority Level column. Renders the LEVEL NAME only (e.g.
       // "Senior") not the id, even though the API ships {id, code, name,
       // defaultHourlyCost, currency} — admins consume cost via the Cost
-      // tab; this column is for quick scan only.
+      // tab; this column is for quick scan only. QA3 round-2 item 4:
+      // wired inline via the same pattern as the Role cell.
       id: 'seniorityLevel',
       header: 'Seniority',
       cell: ({ row }) => {
-        const sl = (row.original as any).seniorityLevel as { name?: string } | null | undefined;
-        if (!sl?.name) return <span className="text-slate-300 dark:text-slate-600">—</span>;
-        return <span className="text-sm text-slate-700 dark:text-slate-200">{sl.name}</span>;
+        const user = row.original;
+        const sl = (user as any).seniorityLevel as { id?: number; name?: string } | null | undefined;
+        if (!onChangeSeniority || !canEdit) {
+          return sl?.name
+            ? <span className="text-sm text-slate-700 dark:text-slate-200">{sl.name}</span>
+            : <span className="text-slate-300 dark:text-slate-600">—</span>;
+        }
+        const currentId = sl?.id ?? '';
+        const isSaving = savingUserId === user.id;
+        return (
+          <select
+            aria-label={`Seniority for ${user.firstName} ${user.lastName}`}
+            value={currentId}
+            disabled={isSaving}
+            onChange={(e) => {
+              const raw = e.target.value;
+              const next = raw === '' ? null : Number(raw);
+              if (next === (sl?.id ?? null)) return;
+              onChangeSeniority(user.id, next);
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className={cn(
+              'rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-sm focus:border-blue-400 focus:outline-none',
+              isSaving && 'opacity-50 cursor-wait',
+            )}
+          >
+            <option value="">— None —</option>
+            {seniorityLevels.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        );
       },
     },
   ];
@@ -128,11 +205,44 @@ export function getColumns(
     {
       accessorKey: 'isActive',
       header: 'Status',
-      cell: ({ row }) => (
-        <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', row.original.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400')}>
-          {row.original.isActive ? 'Active' : 'Inactive'}
-        </span>
-      ),
+      cell: ({ row }) => {
+        const user = row.original;
+        const isActive = !!user.isActive;
+        // Fall back to a plain pill when inline toggle isn't wired.
+        if (!onChangeActive || !canEdit) {
+          return (
+            <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400')}>
+              {isActive ? 'Active' : 'Inactive'}
+            </span>
+          );
+        }
+        const isSaving = savingUserId === user.id;
+        return (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isActive}
+            aria-label={`${isActive ? 'Deactivate' : 'Activate'} ${user.firstName} ${user.lastName}`}
+            disabled={isSaving}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (isSaving) return;
+              onChangeActive(user.id, !isActive);
+            }}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium border transition-colors',
+              isActive
+                ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border-green-200 dark:border-green-800 hover:bg-green-200 dark:hover:bg-green-900/50'
+                : 'bg-gray-100 dark:bg-slate-800 text-gray-500 dark:text-slate-400 border-gray-200 dark:border-slate-700 hover:bg-gray-200 dark:hover:bg-slate-700',
+              isSaving && 'opacity-50 cursor-wait',
+            )}
+            title={isActive ? 'Click to deactivate' : 'Click to activate'}
+          >
+            <span className={cn('h-1.5 w-1.5 rounded-full', isActive ? 'bg-green-500' : 'bg-gray-400')} />
+            {isActive ? 'Active' : 'Inactive'}
+          </button>
+        );
+      },
     },
   );
 

@@ -217,6 +217,50 @@ export function PeoplePage() {
     onSettled: () => setSavingUserId(null),
   });
 
+  // QA3 round-2 item 4 (EMP-INLINE) — extend the inline-edit pattern
+  // from the Role cell to Department / Seniority / Active. Each fires a
+  // single-field PATCH /users/:id (partial update supported by
+  // UpdateUserDto) and reuses `savingUserId` for the "row locked" hint.
+  const updateDepartment = useMutation({
+    mutationFn: ({ userId, department }: { userId: number; department: string | null }) =>
+      client.patch(`/users/${userId}`, { department }).then((r) => r.data),
+    onMutate: ({ userId }) => setSavingUserId(userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      notify.success('Department updated', { code: 'USER-DEPARTMENT-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update department'),
+    onSettled: () => setSavingUserId(null),
+  });
+
+  const updateSeniority = useMutation({
+    mutationFn: ({ userId, seniorityLevelId }: { userId: number; seniorityLevelId: number | null }) =>
+      client.patch(`/users/${userId}`, { seniorityLevelId }).then((r) => r.data),
+    onMutate: ({ userId }) => setSavingUserId(userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      // Seniority feeds cost — nudge project surfaces that show actuals.
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      notify.success('Seniority updated', { code: 'USER-SENIORITY-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update seniority'),
+    onSettled: () => setSavingUserId(null),
+  });
+
+  const updateActive = useMutation({
+    mutationFn: ({ userId, isActive }: { userId: number; isActive: boolean }) =>
+      client.patch(`/users/${userId}`, { isActive }).then((r) => r.data),
+    onMutate: ({ userId }) => setSavingUserId(userId),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      notify.success(variables.isActive ? 'User activated' : 'User deactivated', {
+        code: variables.isActive ? 'USER-ACTIVATE-200' : 'USER-DEACTIVATE-200',
+      });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update active status'),
+    onSettled: () => setSavingUserId(null),
+  });
+
   const isPartners = peopleTab === 'partners';
   // The edit/reset-password buttons used to be gated on a non-existent
   // "partners" module permission, which made them invisible to every
@@ -239,8 +283,22 @@ export function PeoplePage() {
       savingUserId,
       // Employees only — external partners don't carry cost overrides today.
       isPartners ? undefined : (user) => setOverrideUser(user),
+      // QA3 round-2 item 4 — inline cells for Department / Seniority / Active.
+      // Only wire them on the Employees tab; external partners have no
+      // seniority or department concept today.
+      isPartners ? [] : departments,
+      isPartners ? [] : seniorityLevels,
+      isPartners
+        ? undefined
+        : (userId: number, department: string | null) => updateDepartment.mutate({ userId, department }),
+      isPartners
+        ? undefined
+        : (userId: number, seniorityLevelId: number | null) => updateSeniority.mutate({ userId, seniorityLevelId }),
+      isPartners
+        ? undefined
+        : (userId: number, isActive: boolean) => updateActive.mutate({ userId, isActive }),
     ),
-    [isPartners, roles, canEditPeople, savingUserId],
+    [isPartners, roles, canEditPeople, savingUserId, departments, seniorityLevels],
   );
 
   const userType = peopleTab === 'employees' ? 'employee' : 'partner';

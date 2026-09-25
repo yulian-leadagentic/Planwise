@@ -69,6 +69,43 @@ const GROUP_BY_LABEL: Record<GroupBy, string> = {
   status: 'Status',
 };
 
+// QA3 round-2 item 6a — near-due window filter. Overdue = endDate is
+// past. Today/Week/Month use a rolling window from local midnight so
+// "due this week" doesn't flip meaning on Sundays. Tasks with a null
+// endDate ("no due") show in All only.
+type DueWindow = 'all' | 'overdue' | 'today' | 'week' | 'month';
+
+const DUE_WINDOW_LABEL: Record<DueWindow, string> = {
+  all: 'All',
+  overdue: 'Overdue',
+  today: 'Due today',
+  week: 'Due this week',
+  month: 'Due this month',
+};
+
+function matchesDueWindow(endDate: string | null, window: DueWindow, now: Date): boolean {
+  if (window === 'all') return true;
+  if (!endDate) return false;
+  const due = new Date(endDate);
+  if (Number.isNaN(due.getTime())) return false;
+  // Normalize to local midnight so "today" isn't a partial-day window
+  // that depends on when the operator opens the tab.
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+  const dayMs = 86_400_000;
+  if (window === 'overdue') return dueDay.getTime() < startOfToday.getTime();
+  if (window === 'today') return dueDay.getTime() === startOfToday.getTime();
+  if (window === 'week') {
+    const weekEnd = startOfToday.getTime() + 7 * dayMs;
+    return dueDay.getTime() >= startOfToday.getTime() && dueDay.getTime() < weekEnd;
+  }
+  if (window === 'month') {
+    const monthEnd = startOfToday.getTime() + 30 * dayMs;
+    return dueDay.getTime() >= startOfToday.getTime() && dueDay.getTime() < monthEnd;
+  }
+  return true;
+}
+
 function groupKey(t: ExecTask, g: GroupBy): string {
   switch (g) {
     case 'project': return t.project?.name ?? '(no project)';
@@ -123,6 +160,13 @@ export function ExecutiveReviewTab({
   const [groupBy, setGroupBy] = useState<GroupBy>('none');
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState('');
+  // QA3 round-2 item 6 — due-window + per-column filters. All combine
+  // (AND) with the search; the same `filtered` set drives the table
+  // AND the CSV export, so what you see is what you export.
+  const [dueWindow, setDueWindow] = useState<DueWindow>('all');
+  const [projectFilter, setProjectFilter] = useState('');
+  const [serviceFilter, setServiceFilter] = useState('');
+  const [assigneeFilter, setAssigneeFilter] = useState('');
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<ExecutiveReviewResponse>({
     queryKey: ['dashboard', 'operations', 'executive-review', { myDeptOnly }],
@@ -160,18 +204,42 @@ export function ExecutiveReviewTab({
 
   const tasks = data?.tasks ?? [];
   const filtered = useMemo(() => {
-    if (!search) return tasks;
     const q = search.trim().toLowerCase();
+    const pf = projectFilter.trim().toLowerCase();
+    const sf = serviceFilter.trim().toLowerCase();
+    const af = assigneeFilter.trim().toLowerCase();
+    const now = new Date();
     return tasks.filter((t) => {
-      const hay = [
-        t.code, t.name, t.project?.name ?? '', t.project?.number ?? '',
-        t.zone?.name ?? '', t.service?.name ?? '',
-        t.assignees.map((a) => `${a.firstName ?? ''} ${a.lastName ?? ''}`).join(' '),
-        t.opsNote?.content ?? '',
-      ].join(' ').toLowerCase();
-      return hay.includes(q);
+      // Global search (unchanged shape) — combines with everything else via AND.
+      if (q) {
+        const hay = [
+          t.code, t.name, t.project?.name ?? '', t.project?.number ?? '',
+          t.zone?.name ?? '', t.service?.name ?? '',
+          t.assignees.map((a) => `${a.firstName ?? ''} ${a.lastName ?? ''}`).join(' '),
+          t.opsNote?.content ?? '',
+        ].join(' ').toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      // Due-window (item 6a).
+      if (!matchesDueWindow(t.endDate, dueWindow, now)) return false;
+      // Per-column filters (item 6b) — substring match, case-insensitive.
+      if (pf) {
+        const label = `${t.project?.name ?? ''} ${t.project?.number ?? ''}`.toLowerCase();
+        if (!label.includes(pf)) return false;
+      }
+      if (sf) {
+        if (!(t.service?.name ?? '').toLowerCase().includes(sf)) return false;
+      }
+      if (af) {
+        const label = t.assignees
+          .map((a) => `${a.firstName ?? ''} ${a.lastName ?? ''}`.trim())
+          .join(' ')
+          .toLowerCase();
+        if (!label.includes(af)) return false;
+      }
+      return true;
     });
-  }, [tasks, search]);
+  }, [tasks, search, dueWindow, projectFilter, serviceFilter, assigneeFilter]);
 
   const grouped = useMemo(() => {
     if (groupBy === 'none') return [{ key: '', tasks: filtered }];
@@ -249,6 +317,36 @@ export function ExecutiveReviewTab({
           </button>
         )}
         <div className="flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-3">
+          <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400" htmlFor="exec-due-window">
+            Due
+          </label>
+          <select
+            id="exec-due-window"
+            value={dueWindow}
+            onChange={(e) => setDueWindow(e.target.value as DueWindow)}
+            className="text-[12px] bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 focus:outline-none focus-visible:border-blue-500"
+            aria-label="Filter by due window"
+          >
+            {(Object.keys(DUE_WINDOW_LABEL) as DueWindow[]).map((w) => (
+              <option key={w} value={w}>{DUE_WINDOW_LABEL[w]}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-3">
+          <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400" htmlFor="exec-service">
+            Service
+          </label>
+          <input
+            id="exec-service"
+            type="text"
+            value={serviceFilter}
+            onChange={(e) => setServiceFilter(e.target.value)}
+            placeholder="Filter…"
+            aria-label="Filter by service"
+            className="w-[120px] text-[12px] bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 placeholder:text-slate-400 focus:outline-none focus-visible:border-blue-500"
+          />
+        </div>
+        <div className="flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-3">
           <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400" htmlFor="exec-group">
             Group
           </label>
@@ -317,6 +415,41 @@ export function ExecutiveReviewTab({
                         <th className="px-3 py-2 w-[110px]">Due</th>
                         <th className="px-3 py-2 w-[130px]">Assignee</th>
                         <th className="px-3 py-2 w-[260px]">Comment</th>
+                      </tr>
+                      {/* QA3 round-2 item 6b — per-column filter row.
+                          Project + Assignee sit under their own columns.
+                          Service isn't a visible column in this view;
+                          its filter lives in the toolbar (alongside the
+                          due-window select) so it's still one click away
+                          without inventing a column for it. */}
+                      <tr className="border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900/60">
+                        <th className="px-3 py-1.5" />
+                        <th className="px-3 py-1.5" />
+                        <th className="px-3 py-1.5">
+                          <input
+                            type="text"
+                            value={projectFilter}
+                            onChange={(e) => setProjectFilter(e.target.value)}
+                            placeholder="Filter project…"
+                            aria-label="Filter by project"
+                            className="w-full text-[11px] font-normal normal-case tracking-normal text-slate-700 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-md border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-0.5 focus:outline-none focus-visible:border-blue-500"
+                          />
+                        </th>
+                        <th className="px-3 py-1.5" />
+                        <th className="px-3 py-1.5" />
+                        <th className="px-3 py-1.5" />
+                        <th className="px-3 py-1.5" />
+                        <th className="px-3 py-1.5">
+                          <input
+                            type="text"
+                            value={assigneeFilter}
+                            onChange={(e) => setAssigneeFilter(e.target.value)}
+                            placeholder="Filter assignee…"
+                            aria-label="Filter by assignee"
+                            className="w-full text-[11px] font-normal normal-case tracking-normal text-slate-700 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-md border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-0.5 focus:outline-none focus-visible:border-blue-500"
+                          />
+                        </th>
+                        <th className="px-3 py-1.5" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
