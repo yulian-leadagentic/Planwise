@@ -125,6 +125,7 @@ export function UserRateModal({ user, onClose }: Props) {
             Cost rate override — {user.firstName} {user.lastName}
           </h3>
           <button
+            type="button"
             onClick={onClose}
             className="rounded p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
             aria-label="Close"
@@ -199,6 +200,7 @@ export function UserRateModal({ user, onClose }: Props) {
             </div>
             <div className="mt-3 flex items-center justify-between gap-2">
               <button
+                type="button"
                 onClick={async () => {
                   if (!canRemove) return;
                   if (
@@ -221,6 +223,7 @@ export function UserRateModal({ user, onClose }: Props) {
                 {removeMutation.isPending ? 'Removing…' : 'Remove override'}
               </button>
               <button
+                type="button"
                 onClick={() => changeMutation.mutate()}
                 disabled={!canSubmit}
                 className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
