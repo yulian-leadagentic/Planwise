@@ -227,6 +227,36 @@ export class ProjectPartnerRolesService {
       throw e;
     }
 
+    // People UX U7 (T-05) — team_leader assignments in the Team tab
+    // must set `Project.leaderId` too. `projects.service.syncTeamLeaderRole`
+    // handles the leaderId → team_leader direction; without this reverse
+    // hook, adding a team_leader here left leaderId stale, which broke
+    // project-list grouping, ProjectAccess (still consults leaderId), and
+    // the "Quick message to leader" affordance. syncTeamLeaderRole
+    // writes to ProjectPartnerRole via prisma.* directly (not through
+    // this service's create/remove), so this hook can't loop.
+    if (created.role.code === 'team_leader') {
+      const linkedUser = await this.prisma.user.findFirst({
+        where: { businessPartnerId: created.partyId },
+        select: { id: true },
+      });
+      if (linkedUser) {
+        await this.prisma.project.update({
+          where: { id: created.projectId },
+          data: { leaderId: linkedUser.id },
+        });
+        // Legacy ProjectMember row — every read path that still consults
+        // ProjectMember (planning selectors, some access checks) needs
+        // the leader listed with role='Project Leader'. Mirrors what
+        // ProjectsService.update() does when leaderId is set directly.
+        await this.prisma.projectMember.upsert({
+          where: { projectId_userId: { projectId: created.projectId, userId: linkedUser.id } },
+          create: { projectId: created.projectId, userId: linkedUser.id, role: 'Project Leader' },
+          update: { role: 'Project Leader' },
+        });
+      }
+    }
+
     // Audit — project-scoped participation. THIS is the whole reason for
     // logging this surface: the per-project Activity tab should show
     // "X was added as Y on this project", not just faceless writes.
@@ -297,6 +327,41 @@ export class ProjectPartnerRolesService {
       where: { id },
       data: { validTo: new Date(), status: 'ended' },
     });
+
+    // People UX U7 (T-05) — reverse hook, remove side. When we soft-end
+    // a team_leader assignment, clear `Project.leaderId` (and the legacy
+    // ProjectMember row when it belongs to this same leader). Same
+    // loop-safety as create above: syncTeamLeaderRole writes to
+    // ProjectPartnerRole via prisma.* directly (not this service),
+    // so we can't cycle.
+    if (existing.role.code === 'team_leader') {
+      const linkedUser = await this.prisma.user.findFirst({
+        where: { businessPartnerId: existing.partyId },
+        select: { id: true },
+      });
+      if (linkedUser) {
+        const project = await this.prisma.project.findUnique({
+          where: { id: existing.projectId },
+          select: { leaderId: true },
+        });
+        if (project?.leaderId === linkedUser.id) {
+          await this.prisma.project.update({
+            where: { id: existing.projectId },
+            data: { leaderId: null },
+          });
+          // Remove the legacy 'Project Leader' ProjectMember row for
+          // this user on this project. Best-effort delete — if the row
+          // doesn't exist (e.g. never mirrored) we swallow.
+          await this.prisma.projectMember.deleteMany({
+            where: {
+              projectId: existing.projectId,
+              userId: linkedUser.id,
+              role: 'Project Leader',
+            },
+          });
+        }
+      }
+    }
 
     try {
       await this.activityLog.write({
