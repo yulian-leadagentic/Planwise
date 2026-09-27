@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 interface ImportResult {
   summary: { total: number; created: number; skipped: number; errors: number };
@@ -19,10 +20,16 @@ organization,,,Municipality B,office@city-b.gov.example,+972-2-3333333,customer`
 
 export function ImportCsvModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
+  const confirm = useConfirm();
   const [file, setFile] = useState<File | null>(null);
   const [skipExisting, setSkipExisting] = useState(true);
   const [dryRun, setDryRun] = useState(true);
   const [result, setResult] = useState<ImportResult | null>(null);
+  // People UX U4 (P-18) · 2026-09-27 — track whether the currently
+  // selected file has a matching, error-free dry run. When it does, the
+  // "Import for real" button proceeds silently; otherwise the user must
+  // acknowledge the risk in a danger confirm before we write anything.
+  const [lastDryRun, setLastDryRun] = useState<{ file: File; errors: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -52,6 +59,11 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
     },
     onSuccess: (res: ImportResult, isDryRun: boolean) => {
       setResult(res);
+      if (isDryRun && file) {
+        // People UX U4 (P-18) · 2026-09-27 — record which File the dry
+        // run covered so we can gate the real import on it.
+        setLastDryRun({ file, errors: res.summary.errors });
+      }
       if (!isDryRun) {
         queryClient.invalidateQueries({ queryKey: ['business-partners'] });
         notify.success(`Imported ${res.summary.created} partner(s)`, { code: 'BP-IMPORT-200' });
@@ -65,7 +77,34 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
     if (f) {
       setFile(f);
       setResult(null);
+      // A new file invalidates any prior dry-run — force the user to
+      // dry-run again (or acknowledge) before writing.
+      setLastDryRun(null);
     }
+  };
+
+  // People UX U4 (P-18) · 2026-09-27 — the "Import for real" click.
+  // Only proceeds silently when we've dry-run THIS exact File with 0
+  // errors; anything else pops a danger confirm naming the error count
+  // (or the missing dry run).
+  const runRealImport = async () => {
+    const cleanDryRun =
+      !!lastDryRun && lastDryRun.file === file && lastDryRun.errors === 0;
+    if (!cleanDryRun) {
+      const missing = !lastDryRun || lastDryRun.file !== file;
+      const errorCount = lastDryRun && lastDryRun.file === file ? lastDryRun.errors : null;
+      const message = missing
+        ? "You haven't dry-run this file — importing writes rows without validating them first."
+        : `The last dry run of this file reported ${errorCount} error${errorCount === 1 ? '' : 's'}. Importing anyway will skip the failing rows.`;
+      const ok = await confirm(message, {
+        title: 'Import for real?',
+        confirmLabel: 'Import anyway',
+        variant: 'danger',
+      });
+      if (!ok) return;
+    }
+    setDryRun(false);
+    importMutation.mutate(false);
   };
 
   const downloadSample = () => {
@@ -193,15 +232,15 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
                   {importMutation.isPending && dryRun ? 'Validating…' : 'Run Dry Run'}
                 </button>
                 <button
-                  onClick={() => { setDryRun(false); importMutation.mutate(false); }}
+                  onClick={runRealImport}
                   disabled={importMutation.isPending}
                   className={cn(
                     'text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50',
                     // Pulse the green button when a clean dry-run just landed
                     // so users see what to click next.
                     result && result.summary.errors === 0 && result.summary.created > 0
-                      ? 'bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-200'
-                      : 'bg-blue-600 hover:bg-blue-700',
+                      ? 'bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500'
+                      : 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500',
                   )}
                   title="Actually create the rows"
                 >

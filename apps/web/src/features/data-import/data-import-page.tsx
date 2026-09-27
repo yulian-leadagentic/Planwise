@@ -19,6 +19,7 @@ import { Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, ArrowLeft, ArrowR
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { dataImportApi, type ImportTarget, type ImportMode, type ValidationResponse } from '@/api/data-import.api';
@@ -60,6 +61,7 @@ const TARGETS: Array<{
 
 export function DataImportPage() {
   const { can } = usePermissions();
+  const confirm = useConfirm();
   const [searchParams] = useSearchParams();
   const [step, setStep] = useState<WizardStep>('pick');
   const [target, setTarget] = useState<ImportTarget | null>(null);
@@ -73,6 +75,10 @@ export function DataImportPage() {
     errorCount: number;
     importId: number;
   } | null>(null);
+  // People UX U4 (P-20) · 2026-09-27 — the contacts wizard flips this
+  // when it has unsaved conflict decisions so the top-level Cancel
+  // button can confirm before wiping them.
+  const [wizardDirty, setWizardDirty] = useState(false);
 
   // Deep-link support: /admin/data-import?target=contacts&projectId=42
   // Auto-jumps to the contacts wizard and prefills the project on the
@@ -133,6 +139,25 @@ export function DataImportPage() {
     setMode('insert');
     setCommitResult(null);
     setStep('pick');
+    setWizardDirty(false);
+  };
+
+  // People UX U4 (P-20) · 2026-09-27 — top-level Cancel gate for the
+  // contacts wizard. If the wizard has unsaved decisions, ask before
+  // wiping them; anywhere else Cancel is a plain reset.
+  const cancelWithGuard = async () => {
+    if (wizardDirty) {
+      const ok = await confirm(
+        'Cancelling discards the row decisions you already made on the Preview step.',
+        {
+          title: 'Discard decisions?',
+          confirmLabel: 'Discard',
+          variant: 'danger',
+        },
+      );
+      if (!ok) return;
+    }
+    reset();
   };
 
   const canCommit = useMemo(() => {
@@ -176,22 +201,27 @@ export function DataImportPage() {
           in `docs/bm2/bp-import-methodology.md`. The users flow below
           keeps its template-driven 4-step wizard. */}
       {target === 'contacts' && step !== 'pick' && (
-        <div className="rounded-[14px] border border-slate-200 bg-white p-5">
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="text-[15px] font-bold text-slate-900">Customer Contacts import</h2>
-              <p className="text-[13px] text-slate-500 mt-0.5">
+              <h2 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Customer Contacts import</h2>
+              <p className="text-[13px] text-slate-500 dark:text-slate-400 mt-0.5">
                 6-stage pipeline. See docs/bm2/bp-import-methodology.md for the rules.
               </p>
             </div>
             <button
-              onClick={reset}
-              className="rounded-lg border border-slate-200 hover:border-slate-400 bg-white px-3 py-1.5 text-[12px] font-semibold text-slate-700"
+              type="button"
+              onClick={cancelWithGuard}
+              className="rounded-lg border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none"
             >
               Cancel
             </button>
           </div>
-          <ContactsImportWizard onDone={reset} defaultProjectId={defaultProjectId} />
+          <ContactsImportWizard
+            onDone={reset}
+            defaultProjectId={defaultProjectId}
+            onDirtyChange={setWizardDirty}
+          />
         </div>
       )}
 

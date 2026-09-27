@@ -41,6 +41,7 @@ import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useProject, useProjects } from '@/hooks/use-projects';
 import { useDebounce } from '@/hooks/use-debounce';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 import {
   contactsImportApi,
   CONTACT_FIELDS,
@@ -86,6 +87,7 @@ const STEP_LABELS: Record<WizardStep, string> = {
 export function ContactsImportWizard({
   onDone,
   defaultProjectId = null,
+  onDirtyChange,
 }: {
   onDone?: () => void;
   /**
@@ -95,8 +97,15 @@ export function ContactsImportWizard({
    * global import.
    */
   defaultProjectId?: number | null;
+  /**
+   * Fires whenever the wizard has unsaved conflict decisions the user
+   * would lose if the host page cancels the flow. People UX U4
+   * (P-20) — the host uses this to gate its top-level Cancel button.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  const confirm = useConfirm();
   const [step, setStep] = useState<WizardStep>('upload');
   const [file, setFile] = useState<File | null>(null);
   const [triage, setTriage] = useState<TriageResult | null>(null);
@@ -105,7 +114,14 @@ export function ContactsImportWizard({
   const [mapping, setMapping] = useState<ContactsMapping>({});
   const [headerRowIndex, setHeaderRowIndex] = useState<number | null>(null);
   const [preview, setPreview] = useState<SheetPreview | null>(null);
-  const [decisions, setDecisions] = useState<Record<number, RowDecision>>({});
+  // People UX U4 · 2026-09-27 — decisions are keyed by `${sheet}::${rowIndex}`
+  // so re-visiting the Preview step after a Map edit can preserve
+  // decisions whose source rows still exist (P-20).
+  const [decisions, setDecisions] = useState<Record<string, RowDecision>>({});
+  // Snapshot of `mapping` at the moment the first (unrefreshed) decision
+  // was made. Used to detect column-mapping edits that would invalidate
+  // stored decisions and prompt the reset dialog. People UX U4 · 2026-09-27
+  const [decidedMapping, setDecidedMapping] = useState<ContactsMapping | null>(null);
   // Attach-to-project selection lives at the wizard level so it survives
   // step navigation; both fields are optional end-to-end (null = today's
   // "BPs + worker_of only" behaviour).
@@ -199,7 +215,8 @@ export function ContactsImportWizard({
     },
     onSuccess: (data) => {
       setPreview(data);
-      setDecisions({});
+      // People UX U4 · 2026-09-27 — don't wipe decisions on every preview;
+      // `runPreview` below already asked for a reset if the mapping changed.
       setStep('preview');
     },
     onError: (err) => notify.apiError(err, 'Preview failed'),
@@ -254,6 +271,7 @@ export function ContactsImportWizard({
     setHeaderRowIndex(null);
     setPreview(null);
     setDecisions({});
+    setDecidedMapping(null);
     setCommitResult(null);
     // Re-apply prefill for "Import another file" — if the wizard was
     // deep-linked from a project, that context still holds. The role
@@ -261,6 +279,66 @@ export function ContactsImportWizard({
     setAttachToProjectId(defaultProjectId);
     setProjectRoleId(null);
     setStep('upload');
+  };
+
+  // People UX U4 · 2026-09-27
+  const decisionsCount = Object.keys(decisions).length;
+  const decisionKey = (rowIndex: number) =>
+    `${selectedSheet?.name ?? '_'}::${rowIndex}`;
+
+  // Bubble dirty state up so the host page (data-import-page.tsx) can
+  // gate its top-level Cancel button. Post-commit we treat the wizard
+  // as clean — the decisions were already committed to the server.
+  useEffect(() => {
+    onDirtyChange?.(decisionsCount > 0 && step !== 'commit');
+  }, [decisionsCount, step, onDirtyChange]);
+
+  /**
+   * Gate the Map → Preview transition on decision preservation (P-20).
+   * If any of the decided columns' mappings changed, ask before wiping
+   * the stored decisions. When the mapping is unchanged (or no
+   * decisions exist yet) fall through straight to the preview call.
+   */
+  const runPreview = async () => {
+    if (
+      decisionsCount > 0 &&
+      decidedMapping &&
+      !mappingsEqual(mapping, decidedMapping)
+    ) {
+      const ok = await confirm(
+        `Changing the column mapping will reset ${decisionsCount} conflict decision${
+          decisionsCount === 1 ? '' : 's'
+        } you already made.`,
+        {
+          title: 'Reset decisions?',
+          confirmLabel: 'Reset & preview',
+          variant: 'danger',
+        },
+      );
+      if (!ok) return;
+      setDecisions({});
+      setDecidedMapping(null);
+    }
+    previewMutation.mutate();
+  };
+
+  /**
+   * Discard decisions before jumping back to Upload/Sheet — the mapping
+   * step keeps them because Preview → Map → Preview is a supported
+   * round-trip, but Upload/Sheet reset the sheet identity entirely.
+   */
+  const confirmDiscardDecisions = async (message: string): Promise<boolean> => {
+    if (decisionsCount === 0) return true;
+    const ok = await confirm(message, {
+      title: 'Discard decisions?',
+      confirmLabel: 'Discard',
+      variant: 'danger',
+    });
+    if (ok) {
+      setDecisions({});
+      setDecidedMapping(null);
+    }
+    return ok;
   };
 
   // ─── Stepper ─────────────────────────────────────────────────────
@@ -286,7 +364,20 @@ export function ContactsImportWizard({
           grades={grades}
           selectedIdx={selectedSheetIdx}
           onSelect={setSelectedSheetIdx}
-          onBack={reset}
+          onBack={async () => {
+            // People UX U4 (P-20): back-to-upload from Sheet is only
+            // reachable via Preview → Map → Sheet, so decisions may
+            // exist; confirm before wiping them.
+            if (
+              await confirmDiscardDecisions(
+                `Cancelling discards ${decisionsCount} unsaved decision${
+                  decisionsCount === 1 ? '' : 's'
+                } and returns to Upload.`,
+              )
+            ) {
+              reset();
+            }
+          }}
           onNext={() => setStep('map')}
         />
       )}
@@ -308,22 +399,40 @@ export function ContactsImportWizard({
               notify.apiError(err, 'Could not save preset');
             }
           }}
-          onBack={() => setStep(sheets.length > 1 ? 'sheet' : 'upload')}
-          onNext={() => previewMutation.mutate()}
+          onBack={async () => {
+            // People UX U4 (P-20): going back past Map loses the row
+            // decisions unless the user has none.
+            if (
+              await confirmDiscardDecisions(
+                `Going back discards ${decisionsCount} unsaved decision${
+                  decisionsCount === 1 ? '' : 's'
+                }.`,
+              )
+            ) {
+              setStep(sheets.length > 1 ? 'sheet' : 'upload');
+            }
+          }}
+          onNext={runPreview}
           isBusy={previewMutation.isPending}
         />
       )}
 
-      {step === 'preview' && preview && (
+      {step === 'preview' && preview && selectedSheet && (
         <PreviewStep
           preview={preview}
+          sheetName={selectedSheet.name}
           decisions={decisions}
-          onDecide={(idx, patch) =>
+          onDecide={(rowIndex, patch) => {
+            const key = decisionKey(rowIndex);
             setDecisions((prev) => ({
               ...prev,
-              [idx]: { ...prev[idx], ...patch, sourceRowIndex: idx },
-            }))
-          }
+              [key]: { ...prev[key], ...patch, sourceRowIndex: rowIndex },
+            }));
+            // Snapshot the mapping on first decision (or after a reset)
+            // so mapping edits can be detected on the next Preview.
+            // People UX U4 · 2026-09-27
+            if (decidedMapping == null) setDecidedMapping({ ...mapping });
+          }}
           attachToProjectId={attachToProjectId}
           onAttachProjectChange={setAttachToProjectId}
           projectRoleId={projectRoleId}
@@ -393,21 +502,30 @@ function UploadStep({
   triage: TriageResult | null;
 }) {
   const [drag, setDrag] = useState(false);
+  // People UX U4 (P-21) · 2026-09-27 — hidden-inside-label pattern is
+  // unreachable by keyboard. `sr-only` on the input + a visible focusable
+  // "Choose file" button restores Tab + Enter, and the drop zone keeps
+  // its click-to-browse and drag-and-drop for mouse users.
+  const inputRef = useRef<HTMLInputElement>(null);
   return (
-    <div className="rounded-[14px] border border-slate-200 bg-white p-6 space-y-4">
+    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 space-y-4">
       <div>
-        <h2 className="text-[15px] font-bold text-slate-900">Upload a contacts sheet</h2>
-        <p className="text-[13px] text-slate-500 mt-1">
+        <h2 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Upload a contacts sheet</h2>
+        <p className="text-[13px] text-slate-500 dark:text-slate-400 mt-1">
           Any .xlsx, .xls (legacy), .csv, .docx, or .pdf — the wizard sniffs the real file type
           (not the extension) and picks the right reader. No pre-formatting; you'll map columns in
           the next step.
         </p>
       </div>
 
-      <label
+      <div
+        role="group"
+        aria-label="File drop zone"
         className={cn(
-          'block rounded-lg border-2 border-dashed p-10 text-center cursor-pointer transition-colors',
-          drag ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-slate-50 hover:border-slate-300',
+          'block rounded-lg border-2 border-dashed p-10 text-center transition-colors',
+          drag
+            ? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-950/30'
+            : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 hover:border-slate-300 dark:hover:border-slate-500',
           isBusy && 'cursor-wait',
         )}
         onDragOver={(e) => {
@@ -423,40 +541,58 @@ function UploadStep({
         }}
       >
         <input
+          ref={inputRef}
           type="file"
-          className="hidden"
+          className="sr-only"
+          tabIndex={-1}
           onChange={(e) => onFile(e.target.files?.[0] ?? null)}
           accept=".xlsx,.xls,.csv,.docx,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf"
+          aria-label="Contacts sheet file"
         />
         {file ? (
           <div className="flex items-center justify-center gap-3">
             <FileSpreadsheet className="h-8 w-8 text-emerald-600" />
             <div className="text-left">
-              <div className="text-sm font-semibold text-slate-800">{file.name}</div>
-              <div className="text-[11px] text-slate-500">{(file.size / 1024).toFixed(1)} KB</div>
+              <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{file.name}</div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400">{(file.size / 1024).toFixed(1)} KB</div>
             </div>
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              className="ml-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none"
+            >
+              Choose a different file
+            </button>
           </div>
         ) : (
           <div>
-            <Upload className="mx-auto h-10 w-10 text-slate-400" />
-            <p className="mt-2 text-sm font-semibold text-slate-700">
-              Drop your file here, or click to browse
+            <Upload className="mx-auto h-10 w-10 text-slate-400 dark:text-slate-500" />
+            <p className="mt-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+              Drop your file here, or use the button below
             </p>
-            <p className="text-[11px] text-slate-500 mt-1">Max 5 MB · triage never trusts the extension</p>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Max 5 MB · triage never trusts the extension</p>
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              disabled={isBusy}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50 focus:outline-none focus:border-blue-400"
+            >
+              <Upload className="h-3.5 w-3.5" aria-hidden="true" /> Choose file
+            </button>
           </div>
         )}
-      </label>
+      </div>
 
       {isBusy && (
-        <p className="text-[13px] text-slate-500 flex items-center gap-2">
+        <p className="text-[13px] text-slate-500 dark:text-slate-400 flex items-center gap-2">
           <Sparkles className="h-4 w-4 animate-pulse text-blue-500" /> Sniffing file type, extracting sheets…
         </p>
       )}
 
       {triage?.kind === 'reject' && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-3 flex items-start gap-2">
-          <XCircle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
-          <div className="text-[13px] text-red-800">
+        <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 p-3 flex items-start gap-2">
+          <XCircle className="h-4 w-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+          <div className="text-[13px] text-red-800 dark:text-red-200">
             <strong>Cannot import this file</strong>
             <p className="mt-0.5">{triage.reason}</p>
           </div>
@@ -464,14 +600,14 @@ function UploadStep({
       )}
 
       {triage && triage.kind !== 'reject' && (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 flex items-start gap-2">
-          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
-          <div className="text-[13px] text-emerald-800">
+        <div className="rounded-lg border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-950/30 p-3 flex items-start gap-2">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+          <div className="text-[13px] text-emerald-800 dark:text-emerald-200">
             Extracted{' '}
             <strong>{triage.sheets.length}</strong>{' '}
             {triage.kind === 'docx-tables' ? 'table' : 'sheet'}
             {triage.sheets.length === 1 ? '' : 's'} via the{' '}
-            <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-emerald-100">
+            <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40">
               {triage.reader}
             </span>{' '}
             reader
@@ -734,6 +870,7 @@ function MapStep({
 // ─── Step 4: Preview + conflict resolution ───────────────────────────
 function PreviewStep({
   preview,
+  sheetName,
   decisions,
   onDecide,
   attachToProjectId,
@@ -747,8 +884,9 @@ function PreviewStep({
   isBusy,
 }: {
   preview: SheetPreview;
-  decisions: Record<number, RowDecision>;
-  onDecide: (idx: number, patch: Partial<RowDecision>) => void;
+  sheetName: string;
+  decisions: Record<string, RowDecision>;
+  onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
   attachToProjectId: number | null;
   onAttachProjectChange: (id: number | null) => void;
   projectRoleId: number | null;
@@ -760,8 +898,31 @@ function PreviewStep({
   isBusy: boolean;
 }) {
   const s = preview.summary;
-  const conflicts = preview.decisions.filter((d) => d.org.action === 'conflict');
+  // People UX U4 (P-19) · 2026-09-27 — commit gate: split total conflicts
+  // (informational) from unresolved conflicts (blocks commit until the
+  // user picks skip / create / link on each).
+  const decisionKeyFor = (rowIndex: number) => `${sheetName}::${rowIndex}`;
+  const isRowResolved = (d: DedupDecision) => {
+    if (d.org.action !== 'conflict') return true;
+    const dec = decisions[decisionKeyFor(d.sourceRowIndex)];
+    return !!dec?.orgAction && dec.orgAction !== 'conflict';
+  };
+  const totalConflicts = preview.decisions.filter((d) => d.org.action === 'conflict').length;
+  const unresolvedConflicts = preview.decisions.filter((d) => !isRowResolved(d)).length;
+  const [conflictsOnly, setConflictsOnly] = useState(false);
   const zeroClickEligible = s.eligible === s.totalRows && s.orgConflicts === 0;
+
+  // Rows to show — filtered when the toggle is on. Resolved rows drop
+  // out too (their conflict is settled) so the filtered list shows the
+  // remaining work to do.
+  const visibleDecisions = conflictsOnly
+    ? preview.decisions.filter((d) => d.org.action === 'conflict')
+    : preview.decisions;
+  const rowByIndex = useMemo(() => {
+    const m = new Map<number, SheetPreview['resolvedRows'][number]>();
+    for (const r of preview.resolvedRows) m.set(r.sourceRowIndex, r);
+    return m;
+  }, [preview.resolvedRows]);
 
   return (
     <div className="space-y-4">
@@ -777,7 +938,7 @@ function PreviewStep({
       </div>
 
       {(s.emailSplitRows > 0 || s.phoneSplitRows > 0 || s.companyFilledRows > 0 || s.disciplineFilledRows > 0) && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 flex items-start gap-2 text-[12px] text-blue-800">
+        <div className="rounded-lg border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 p-3 flex items-start gap-2 text-[12px] text-blue-800 dark:text-blue-200">
           <Info className="h-4 w-4 shrink-0 mt-0.5" />
           <div>
             <strong>Structural fixes applied (visible per row below):</strong>{' '}
@@ -797,7 +958,7 @@ function PreviewStep({
       )}
 
       {zeroClickEligible && (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 flex items-center gap-2 text-[12px] text-emerald-800">
+        <div className="rounded-lg border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-950/30 p-3 flex items-center gap-2 text-[12px] text-emerald-800 dark:text-emerald-200">
           <Sparkles className="h-4 w-4" />
           <div>
             <strong>0-click eligible</strong> — every row meets the minimum contract and no
@@ -806,35 +967,65 @@ function PreviewStep({
         </div>
       )}
 
-      <div className="rounded-[14px] border border-slate-200 bg-white overflow-hidden">
-        <div className="bg-[#FAFBFC] border-b border-slate-100 px-3 py-1.5 text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">
-          Row-by-row preview
+      {/* People UX U4 (P-19) · 2026-09-27 — conflicts-only toggle + inline
+          counter above the row list. */}
+      {totalConflicts > 0 && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setConflictsOnly((v) => !v)}
+            aria-pressed={conflictsOnly}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[12px] font-semibold transition-colors focus:outline-none',
+              conflictsOnly
+                ? 'border-amber-400 bg-amber-50 text-amber-800 hover:border-amber-500 focus:border-amber-600 dark:border-amber-500/70 dark:bg-amber-900/30 dark:text-amber-100 dark:hover:border-amber-400'
+                : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500 dark:focus:border-blue-400',
+            )}
+          >
+            Conflicts ({totalConflicts})
+          </button>
+          {unresolvedConflicts > 0 ? (
+            <span className="text-[12px] text-amber-700 dark:text-amber-300 inline-flex items-center gap-1">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              <strong>{unresolvedConflicts}</strong>&nbsp;still need a decision
+            </span>
+          ) : (
+            <span className="text-[12px] text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              All conflicts resolved
+            </span>
+          )}
         </div>
-        <div className="max-h-[520px] overflow-y-auto divide-y divide-slate-50">
-          {preview.decisions.map((d, i) => {
-            const row = preview.resolvedRows[i];
-            const dec = decisions[d.sourceRowIndex];
-            const effectiveOrgAction = dec?.orgAction ?? d.org.action;
-            return (
-              <PreviewRow
-                key={d.sourceRowIndex}
-                dec={d}
-                row={row}
-                effectiveOrgAction={effectiveOrgAction}
-                onDecide={(patch) => onDecide(d.sourceRowIndex, patch)}
-              />
-            );
-          })}
+      )}
+
+      <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+        <div className="bg-[#FAFBFC] dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800 px-3 py-1.5 text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em]">
+          Row-by-row preview{conflictsOnly && ' — conflicts only'}
+        </div>
+        <div className="max-h-[520px] overflow-y-auto divide-y divide-slate-50 dark:divide-slate-800">
+          {visibleDecisions.length === 0 ? (
+            <div className="px-3 py-10 text-center text-[12px] text-slate-400 dark:text-slate-500">
+              No rows match this filter.
+            </div>
+          ) : (
+            visibleDecisions.map((d) => {
+              const row = rowByIndex.get(d.sourceRowIndex);
+              if (!row) return null;
+              const dec = decisions[decisionKeyFor(d.sourceRowIndex)];
+              const effectiveOrgAction = dec?.orgAction ?? d.org.action;
+              return (
+                <PreviewRow
+                  key={d.sourceRowIndex}
+                  dec={d}
+                  row={row}
+                  effectiveOrgAction={effectiveOrgAction}
+                  onDecide={(patch) => onDecide(d.sourceRowIndex, patch)}
+                />
+              );
+            })
+          )}
         </div>
       </div>
-
-      {conflicts.length > 0 && (
-        <p className="text-[12px] text-amber-700 flex items-center gap-1.5">
-          <AlertTriangle className="h-3.5 w-3.5" />{' '}
-          <strong>{conflicts.length}</strong> rows need a decision — pick create / link / skip on
-          each conflict below.
-        </p>
-      )}
 
       <ProjectAttachPanel
         attachToProjectId={attachToProjectId}
@@ -847,17 +1038,24 @@ function PreviewStep({
 
       <div className="flex items-center justify-between pt-2">
         <button
+          type="button"
           onClick={onBack}
-          className="flex items-center gap-1 text-[13px] font-semibold text-slate-500 hover:text-slate-700"
+          className="flex items-center gap-1 text-[13px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 focus:outline-none focus:text-slate-700 dark:focus:text-slate-200"
         >
           <ArrowLeft className="h-3.5 w-3.5" /> Back
         </button>
         <button
+          type="button"
           onClick={onCommit}
-          disabled={isBusy || s.eligible === 0}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50"
+          disabled={isBusy || s.eligible === 0 || unresolvedConflicts > 0}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50 focus:outline-none focus:border-blue-400"
         >
-          {isBusy ? 'Committing…' : `Commit ${s.eligible} rows`} <ArrowRight className="h-3.5 w-3.5" />
+          {isBusy
+            ? 'Committing…'
+            : unresolvedConflicts > 0
+              ? `Resolve ${unresolvedConflicts} conflict${unresolvedConflicts === 1 ? '' : 's'} to continue`
+              : `Commit ${s.eligible} rows`}{' '}
+          {unresolvedConflicts === 0 && <ArrowRight className="h-3.5 w-3.5" />}
         </button>
       </div>
     </div>
@@ -1461,4 +1659,20 @@ function indexMappingToHeaderMapping(
     if (cell) out[field as ContactField] = cell;
   }
   return out;
+}
+
+/**
+ * Two mappings are equivalent when every field maps to the same header
+ * (treating "unset" and "empty string" as identical). Used to decide
+ * whether a Map-step edit invalidates decisions already taken on
+ * Preview. People UX U4 (P-20) · 2026-09-27
+ */
+function mappingsEqual(a: ContactsMapping, b: ContactsMapping): boolean {
+  const fields = new Set<string>([...Object.keys(a), ...Object.keys(b)]);
+  for (const f of fields) {
+    const av = a[f as ContactField] ?? '';
+    const bv = b[f as ContactField] ?? '';
+    if (av !== bv) return false;
+  }
+  return true;
 }
