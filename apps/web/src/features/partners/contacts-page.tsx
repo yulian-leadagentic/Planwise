@@ -333,8 +333,8 @@ export function ContactsPage() {
   const shownContacts = useMemo(() => {
     if (!includeAmc) return externalContacts;
     return [...allContacts].sort((a, b) => {
-      const aInt = !!a.user ? 1 : 0;
-      const bInt = !!b.user ? 1 : 0;
+      const aInt = a.user ? 1 : 0;
+      const bInt = b.user ? 1 : 0;
       if (aInt !== bInt) return aInt - bInt; // externals (0) first
       return a.displayName.localeCompare(b.displayName);
     });
