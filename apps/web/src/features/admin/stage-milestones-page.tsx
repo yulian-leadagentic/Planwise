@@ -6,13 +6,19 @@
  * hard delete (with confirm). Sort order is the column order on the
  * board; admins move columns left/right by editing sortOrder.
  */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Trash2, ArrowLeft } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { EmptyState } from '@/components/shared/empty-state';
+import {
+  ClearColumnFilters,
+  ColumnFilter,
+  useColumnFilters,
+  type ColumnFilterConfig,
+} from '@/components/shared/column-filter';
 import { Flag } from 'lucide-react';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
@@ -57,6 +63,18 @@ export function StageMilestonesPage() {
     },
     onError: (err: any) => notify.apiError(err, 'Failed to add milestone'),
   });
+
+  // QA3 master-handoff · Part B3 — column filters.
+  const filterConfig = useMemo<ColumnFilterConfig<Milestone>[]>(() => [
+    { colKey: 'code', accessor: (r) => r.code, placeholder: 'Filter code…' },
+    { colKey: 'name', accessor: (r) => r.name, placeholder: 'Filter name…' },
+    { colKey: 'description', accessor: (r) => r.description ?? '', placeholder: 'Filter description…' },
+    { colKey: 'active', accessor: (r) => (r.isActive ? 'true' : 'false'), options: [
+      { value: 'true', label: 'Active' }, { value: 'false', label: 'Inactive' },
+    ]},
+  ], []);
+  const { filters, set, clear, activeCount, filtered: filteredMilestones } =
+    useColumnFilters(milestones, filterConfig);
 
   const update = useMutation({
     mutationFn: ({ id, ...data }: Partial<Milestone> & { id: number }) =>
@@ -109,7 +127,9 @@ export function StageMilestonesPage() {
           description="Add one above to create a Status Board column."
         />
       ) : (
-        <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+        <div>
+          <ClearColumnFilters activeCount={activeCount} onClear={clear} />
+          <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
           <table className="w-full text-[13px]">
             <thead className="bg-slate-50 dark:bg-slate-800/50 text-[10px] uppercase text-slate-500 dark:text-slate-400 tracking-wider">
               <tr>
@@ -120,12 +140,20 @@ export function StageMilestonesPage() {
                 <th className="px-3 py-2 text-center w-[90px]">Active</th>
                 <th className="px-3 py-2 text-right w-16"></th>
               </tr>
+              <tr className="border-t border-border/60 bg-white dark:bg-slate-900/60">
+                <th className="px-2 py-1.5" />
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[0]} value={filters.code ?? ''} onChange={(v) => set('code', v)} label="Code" /></th>
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[1]} value={filters.name ?? ''} onChange={(v) => set('name', v)} label="Name" /></th>
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[2]} value={filters.description ?? ''} onChange={(v) => set('description', v)} label="Description" /></th>
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[3]} value={filters.active ?? ''} onChange={(v) => set('active', v)} label="Active" /></th>
+                <th className="px-2 py-1.5" />
+              </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {isLoading ? (
                 <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400 dark:text-slate-500">Loading…</td></tr>
               ) : (
-                milestones.map((m) => (
+                filteredMilestones.map((m) => (
                   <MilestoneRow
                     key={m.id}
                     m={m}
@@ -140,6 +168,7 @@ export function StageMilestonesPage() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

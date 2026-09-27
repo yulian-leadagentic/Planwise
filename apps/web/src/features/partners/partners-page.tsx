@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Plus, Building2, Search, X, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams, Navigate, useNavigate } from 'react-router-dom';
@@ -6,6 +6,12 @@ import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
+import {
+  ClearColumnFilters,
+  ColumnFilter,
+  useColumnFilters,
+  type ColumnFilterConfig,
+} from '@/components/shared/column-filter';
 import { useDebounce } from '@/hooks/use-debounce';
 import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
@@ -313,8 +319,27 @@ export function PartnersPage() {
 
 function OrganizationsList({ partners, onSelect }: { partners: BusinessPartner[]; onSelect: (id: number) => void }) {
   const scrollRef = useStickyHScroll();
+  // QA3 master-handoff · Part B3 — client-side column filters over the
+  // loaded page. NOTE (per spec): the endpoint is server-paginated, so
+  // these filters only narrow the CURRENTLY loaded page — not all rows
+  // that would match on the server. That's a known trade-off; a proper
+  // server-side filter would need a separate task.
+  const filterConfig = useMemo<ColumnFilterConfig<BusinessPartner>[]>(() => [
+    { colKey: 'org', accessor: (r) => r.displayName ?? '', placeholder: 'Filter org…' },
+    { colKey: 'mainRole', accessor: (r) => r.mainRoleType?.name ?? '', placeholder: 'Filter role…' },
+    { colKey: 'email', accessor: (r) => r.email ?? '', placeholder: 'Filter email…' },
+    { colKey: 'phone', accessor: (r) => r.phone ?? '', placeholder: 'Filter phone…' },
+    { colKey: 'status', accessor: (r) => r.status ?? '', options: [
+      { value: 'active', label: 'active' }, { value: 'inactive', label: 'inactive' },
+      { value: 'lead', label: 'lead' }, { value: 'archived', label: 'archived' },
+    ]},
+  ], []);
+  const { filters, set, clear, activeCount, filtered: filteredPartners } =
+    useColumnFilters(partners, filterConfig);
   return (
-    <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+    <div>
+      <ClearColumnFilters activeCount={activeCount} onClear={clear} />
+      <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -324,9 +349,16 @@ function OrganizationsList({ partners, onSelect }: { partners: BusinessPartner[]
             <th className="px-4 py-2 text-left font-semibold w-32">Phone</th>
             <th className="px-4 py-2 text-center font-semibold w-20">Status</th>
           </tr>
+          <tr className="border-t border-border/60 bg-white dark:bg-slate-900/60">
+            <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[0]} value={filters.org ?? ''} onChange={(v) => set('org', v)} label="Organization" /></th>
+            <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[1]} value={filters.mainRole ?? ''} onChange={(v) => set('mainRole', v)} label="Main Role" /></th>
+            <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[2]} value={filters.email ?? ''} onChange={(v) => set('email', v)} label="Email" /></th>
+            <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[3]} value={filters.phone ?? ''} onChange={(v) => set('phone', v)} label="Phone" /></th>
+            <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[4]} value={filters.status ?? ''} onChange={(v) => set('status', v)} label="Status" /></th>
+          </tr>
         </thead>
         <tbody>
-          {partners.map((bp) => (
+          {filteredPartners.map((bp) => (
             <tr key={bp.id} onClick={() => onSelect(bp.id)} className="border-t border-slate-100 dark:border-slate-800 hover:bg-blue-50/30 cursor-pointer">
               <td className="px-4 py-2.5">
                 <div className="flex items-center gap-3">
@@ -348,6 +380,7 @@ function OrganizationsList({ partners, onSelect }: { partners: BusinessPartner[]
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

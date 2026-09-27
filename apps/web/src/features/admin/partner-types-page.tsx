@@ -1,10 +1,16 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Plus, Trash2, Pencil, Save, X, Tags, Lock } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
+import {
+  ClearColumnFilters,
+  ColumnFilter,
+  useColumnFilters,
+  type ColumnFilterConfig,
+} from '@/components/shared/column-filter';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -147,6 +153,20 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
     queryFn: () => client.get('/admin/partner-types/role-types').then((r) => r.data?.data ?? r.data ?? []),
   });
 
+  // QA3 master-handoff · Part B3 — column filters on RoleTypesTab.
+  const filterConfig = useMemo<ColumnFilterConfig<RoleType>[]>(() => [
+    { colKey: 'code', accessor: (r) => r.code, placeholder: 'Filter code…' },
+    { colKey: 'name', accessor: (r) => r.name, placeholder: 'Filter name…' },
+    { colKey: 'category', accessor: (r) => r.category ?? '', placeholder: 'Filter category…' },
+    { colKey: 'applies', accessor: (r) => (r as any).appliesTo ?? '', placeholder: 'Filter applies to…' },
+    { colKey: 'description', accessor: (r) => r.description ?? '', placeholder: 'Filter description…' },
+    { colKey: 'origin', accessor: (r) => (r.isSystem ? 'System' : 'Custom'), options: [
+      { value: 'System', label: 'System' }, { value: 'Custom', label: 'Custom' },
+    ]},
+  ], []);
+  const { filters, set, clear, activeCount, filtered: filteredTypes } =
+    useColumnFilters(types, filterConfig);
+
   // Catalog used to render coloured category chips next to each role.
   const { data: categories = [] } = useQuery<PartnerRoleCategory[]>({
     queryKey: ['partner-role-categories-catalog'],
@@ -186,7 +206,9 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
       {isLoading ? (
         <TableSkeleton rows={4} cols={3} />
       ) : (
-        <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+        <div>
+          <ClearColumnFilters activeCount={activeCount} onClear={clear} />
+          <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -198,12 +220,21 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
                 <th className="px-4 py-2 text-center font-semibold w-20">Origin</th>
                 <th className="px-4 py-2 text-right font-semibold w-32"></th>
               </tr>
+              <tr className="border-t border-border/60 bg-white dark:bg-slate-900/60">
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[0]} value={filters.code ?? ''} onChange={(v) => set('code', v)} label="Code" /></th>
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[1]} value={filters.name ?? ''} onChange={(v) => set('name', v)} label="Name" /></th>
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[2]} value={filters.category ?? ''} onChange={(v) => set('category', v)} label="Category" /></th>
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[3]} value={filters.applies ?? ''} onChange={(v) => set('applies', v)} label="Applies to" /></th>
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[4]} value={filters.description ?? ''} onChange={(v) => set('description', v)} label="Description" /></th>
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[5]} value={filters.origin ?? ''} onChange={(v) => set('origin', v)} label="Origin" /></th>
+                <th className="px-2 py-1.5" />
+              </tr>
             </thead>
             <tbody>
               {editingId === 'new' && (
                 <RoleTypeEditRow onClose={() => setEditingId(null)} />
               )}
-              {types.map((t) => (
+              {filteredTypes.map((t) => (
                 editingId === t.id
                   ? <RoleTypeEditRow key={t.id} type={t} onClose={() => setEditingId(null)} />
                   : (
@@ -267,6 +298,7 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>
@@ -421,6 +453,17 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
     queryFn: () => client.get('/admin/partner-types/relationship-types').then((r) => r.data?.data ?? r.data ?? []),
   });
 
+  // QA3 master-handoff · Part B3 — column filters on RelationshipTypesTab.
+  const filterConfig = useMemo<ColumnFilterConfig<RelationshipType>[]>(() => [
+    { colKey: 'code', accessor: (r) => r.code, placeholder: 'Filter code…' },
+    { colKey: 'name', accessor: (r) => r.name, placeholder: 'Filter name…' },
+    { colKey: 'origin', accessor: (r) => ((r as any).isSystem ? 'System' : 'Custom'), options: [
+      { value: 'System', label: 'System' }, { value: 'Custom', label: 'Custom' },
+    ]},
+  ], []);
+  const { filters, set, clear, activeCount, filtered: filteredTypes } =
+    useColumnFilters(types, filterConfig);
+
   const remove = useMutation({
     mutationFn: (id: number) => client.delete(`/admin/partner-types/relationship-types/${id}`).then((r) => r.data),
     onSuccess: () => {
@@ -473,7 +516,9 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
       {isLoading ? (
         <TableSkeleton rows={4} cols={4} />
       ) : (
-        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+        <div>
+          <ClearColumnFilters activeCount={activeCount} onClear={clear} />
+          <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -483,12 +528,19 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
                 <th className="px-4 py-2 text-center font-semibold w-20">Type</th>
                 <th className="px-4 py-2 text-right font-semibold w-32"></th>
               </tr>
+              <tr className="border-t border-border/60 bg-white dark:bg-slate-900/60">
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[0]} value={filters.code ?? ''} onChange={(v) => set('code', v)} label="Code" /></th>
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[1]} value={filters.name ?? ''} onChange={(v) => set('name', v)} label="Name" /></th>
+                <th className="px-2 py-1.5" />
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[2]} value={filters.origin ?? ''} onChange={(v) => set('origin', v)} label="Type" /></th>
+                <th className="px-2 py-1.5" />
+              </tr>
             </thead>
             <tbody>
               {editingId === 'new' && (
                 <RelationshipTypeEditRow onClose={() => setEditingId(null)} />
               )}
-              {types.map((t) => (
+              {filteredTypes.map((t) => (
                 editingId === t.id
                   ? <RelationshipTypeEditRow key={t.id} type={t} onClose={() => setEditingId(null)} />
                   : (
@@ -546,6 +598,7 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

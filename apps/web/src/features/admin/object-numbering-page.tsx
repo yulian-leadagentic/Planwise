@@ -1,8 +1,15 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import { Link as LinkIcon } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
+import {
+  ClearColumnFilters,
+  ColumnFilter,
+  useColumnFilters,
+  type ColumnFilterConfig,
+} from '@/components/shared/column-filter';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
@@ -54,6 +61,18 @@ export function ObjectNumberingPage() {
       }),
   });
 
+  // QA3 master-handoff · Part B3 — column filters on the hand-rolled
+  // Object/Description/Number-range table. All three columns are text
+  // filters (no fixed enum); the Assignment column is the same select
+  // used to write, so we don't filter that separately.
+  const filterConfig = useMemo<ColumnFilterConfig<EntityKindRow>[]>(() => [
+    { colKey: 'object', accessor: (r) => `${r.name} ${r.code}`, placeholder: 'Filter object…' },
+    { colKey: 'description', accessor: (r) => r.description ?? '', placeholder: 'Filter description…' },
+    { colKey: 'range', accessor: (r) => r.numberRangeCode ?? '', placeholder: 'Filter range…' },
+  ], []);
+  const { filters, set, clear, activeCount, filtered: filteredKinds } =
+    useColumnFilters(kinds, filterConfig);
+
   const assign = useMutation({
     mutationFn: (vars: { id: number; numberRangeCode: string | null }) =>
       client
@@ -90,7 +109,9 @@ export function ObjectNumberingPage() {
       {isLoading ? (
         <TableSkeleton rows={5} cols={4} />
       ) : (
-        <div ref={scrollRef} className="rounded-lg border border-border overflow-x-auto">
+        <div>
+          <ClearColumnFilters activeCount={activeCount} onClear={clear} />
+          <div ref={scrollRef} className="rounded-lg border border-border overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
@@ -99,9 +120,15 @@ export function ObjectNumberingPage() {
                 <th className="px-4 py-3 font-medium w-72">Number range</th>
                 <th className="px-4 py-3 font-medium w-48">Next code / shape</th>
               </tr>
+              <tr className="border-b border-border bg-white dark:bg-slate-900/60">
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[0]} value={filters.object ?? ''} onChange={(v) => set('object', v)} label="Object" /></th>
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[1]} value={filters.description ?? ''} onChange={(v) => set('description', v)} label="Description" /></th>
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[2]} value={filters.range ?? ''} onChange={(v) => set('range', v)} label="Number range" /></th>
+                <th className="px-2 py-1.5" />
+              </tr>
             </thead>
             <tbody>
-              {kinds.map((k) => (
+              {filteredKinds.map((k) => (
                 <tr key={k.id} className="border-b border-border last:border-0 hover:bg-muted/30">
                   <td className="px-4 py-3">
                     <div className="font-medium">{k.name}</div>
@@ -152,6 +179,7 @@ export function ObjectNumberingPage() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

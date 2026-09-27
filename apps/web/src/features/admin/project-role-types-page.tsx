@@ -1,10 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2, Pencil, Save, X, Briefcase, Lock } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
+import {
+  ClearColumnFilters,
+  ColumnFilter,
+  useColumnFilters,
+  type ColumnFilterConfig,
+} from '@/components/shared/column-filter';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -71,6 +77,22 @@ export function ProjectRoleTypesPage() {
       }),
   });
 
+  // QA3 master-handoff · Part B3 — column filters on the hand-rolled
+  // table. Same UX as the shared DataTable: text (contains) by default,
+  // <select> (exact) for enums. Feeds `filteredTypes` into the render.
+  const filterConfig = useMemo<ColumnFilterConfig<ProjectRoleType>[]>(() => [
+    { colKey: 'code',   accessor: (r) => r.code,   placeholder: 'Filter code…' },
+    { colKey: 'name',   accessor: (r) => r.name,   placeholder: 'Filter name…' },
+    { colKey: 'kind',   accessor: (r) => r.allowedPartnerKind, options: [
+      { value: 'person', label: 'person' }, { value: 'organization', label: 'organization' }, { value: 'any', label: 'any' },
+    ]},
+    { colKey: 'source', accessor: (r) => (r.isSystem ? 'System' : 'Custom'), options: [
+      { value: 'System', label: 'System' }, { value: 'Custom', label: 'Custom' },
+    ]},
+  ], []);
+  const { filters, set, clear, active, activeCount, filtered: filteredTypes } =
+    useColumnFilters(types, filterConfig);
+
   const remove = useMutation({
     mutationFn: (id: number) =>
       client.delete(`/admin/project-role-types/${id}`).then((r) => r.data),
@@ -126,7 +148,9 @@ export function ProjectRoleTypesPage() {
           description="Add one to get started."
         />
       ) : (
-        <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+        <div>
+          <ClearColumnFilters activeCount={activeCount} onClear={clear} />
+          <div ref={scrollRef} className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -136,10 +160,17 @@ export function ProjectRoleTypesPage() {
                 <th className="px-4 py-2 text-center font-semibold w-20">Type</th>
                 <th className="px-4 py-2 text-right font-semibold w-32"></th>
               </tr>
+              <tr className="border-t border-border/60 bg-white dark:bg-slate-900/60">
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[0]} value={filters.code ?? ''} onChange={(v) => set('code', v)} label="Code" /></th>
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[1]} value={filters.name ?? ''} onChange={(v) => set('name', v)} label="Name" /></th>
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[2]} value={filters.kind ?? ''} onChange={(v) => set('kind', v)} label="Kind" /></th>
+                <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[3]} value={filters.source ?? ''} onChange={(v) => set('source', v)} label="Type" /></th>
+                <th className="px-2 py-1.5" />
+              </tr>
             </thead>
             <tbody>
               {editingId === 'new' && <EditRow onClose={() => setEditingId(null)} />}
-              {types.map((t) =>
+              {filteredTypes.map((t) =>
                 editingId === t.id
                   ? <EditRow key={t.id} type={t} onClose={() => setEditingId(null)} />
                   : (
@@ -209,6 +240,7 @@ export function ProjectRoleTypesPage() {
                   at the outer level. */}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

@@ -5,6 +5,12 @@ import { ArrowLeft, Plus, Trash2, Pencil, BookOpen } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import {
+  ClearColumnFilters,
+  ColumnFilter,
+  useColumnFilters,
+  type ColumnFilterConfig,
+} from '@/components/shared/column-filter';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
@@ -137,18 +143,36 @@ export function TaskCatalogPage() {
   // ---- derived data ----
   const allTasks: any[] = catalogDetail?.templateTasks ?? [];
 
-  const filteredTasks = useMemo(() => {
+  const searchFilteredTasks = useMemo(() => {
     const q = search.toLowerCase().trim();
-    let result = allTasks;
-    if (q) {
-      result = allTasks.filter(
-        (t: any) =>
-          (t.code ?? '').toLowerCase().includes(q) ||
-          (t.name ?? '').toLowerCase().includes(q),
-      );
-    }
-    return [...result].sort((a, b) => compareTasks(a, b, sortField, sortDir));
-  }, [allTasks, search, sortField, sortDir]);
+    if (!q) return allTasks;
+    return allTasks.filter(
+      (t: any) =>
+        (t.code ?? '').toLowerCase().includes(q) ||
+        (t.name ?? '').toLowerCase().includes(q),
+    );
+  }, [allTasks, search]);
+
+  // QA3 master-handoff · Part B3 — per-column filters, stacked on top
+  // of the existing text search. `filteredTasks` = search-filter ∘
+  // column-filters ∘ sort, so the summary + CSV downstream both respect
+  // both filter surfaces.
+  const catalogFilterConfig = useMemo<ColumnFilterConfig<any>[]>(() => [
+    { colKey: 'code', accessor: (r) => r.code ?? '', placeholder: 'Filter code…' },
+    { colKey: 'name', accessor: (r) => r.name ?? '', placeholder: 'Filter name…' },
+  ], []);
+  const {
+    filters: catalogFilters,
+    set: setCatalogFilter,
+    clear: clearCatalogFilters,
+    activeCount: catalogActiveCount,
+    filtered: columnFilteredTasks,
+  } = useColumnFilters(searchFilteredTasks, catalogFilterConfig);
+
+  const filteredTasks = useMemo(
+    () => [...columnFilteredTasks].sort((a, b) => compareTasks(a, b, sortField, sortDir)),
+    [columnFilteredTasks, sortField, sortDir],
+  );
 
   const totals = useMemo(() => {
     let hours = 0;
@@ -289,7 +313,9 @@ export function TaskCatalogPage() {
       {isLoading ? (
         <TableSkeleton rows={5} cols={5} />
       ) : (
-        <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
+        <div>
+          <ClearColumnFilters activeCount={catalogActiveCount} onClear={clearCatalogFilters} />
+          <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50">
@@ -306,6 +332,13 @@ export function TaskCatalogPage() {
                   Amount{sortIcon('defaultBudgetAmount')}
                 </th>
                 <th className="px-3 py-2 text-center font-medium">Actions</th>
+              </tr>
+              <tr className="border-b border-border bg-white dark:bg-slate-900/60">
+                <th className="px-2 py-1.5"><ColumnFilter config={catalogFilterConfig[0]} value={catalogFilters.code ?? ''} onChange={(v) => setCatalogFilter('code', v)} label="Code" /></th>
+                <th className="px-2 py-1.5"><ColumnFilter config={catalogFilterConfig[1]} value={catalogFilters.name ?? ''} onChange={(v) => setCatalogFilter('name', v)} label="Name" /></th>
+                <th className="px-2 py-1.5" />
+                <th className="px-2 py-1.5" />
+                <th className="px-2 py-1.5" />
               </tr>
             </thead>
             <tbody>
@@ -390,6 +423,7 @@ export function TaskCatalogPage() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>
