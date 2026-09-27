@@ -238,8 +238,21 @@ export function PartnerDrawer({
   // resulting person is worker_of this org from the start.
   const [addContactOpen, setAddContactOpen] = useState(false);
 
+  // People UX U6 (P-07) — Escape should close only the TOP-most layer.
+  // Before: this listener closed the drawer regardless of what else was
+  // on top, so hitting Escape inside the "Add Relationship" modal shut
+  // the whole drawer instead of just the modal. Guard by checking if
+  // any [role="dialog"][aria-modal="true"] is currently open — the
+  // shared Modal shell owns Escape for that layer, so we bail here and
+  // let its own listener handle the close.
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // A shared Modal on top? Yield to its own Escape handler.
+      const openDialog = document.querySelector('[role="dialog"][aria-modal="true"]');
+      if (openDialog) return;
+      onClose();
+    };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [onClose]);
