@@ -42,6 +42,7 @@ import { cn } from '@/lib/utils';
 import { useProject, useProjects } from '@/hooks/use-projects';
 import { useDebounce } from '@/hooks/use-debounce';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { TextField } from '@/components/shared/field';
 import {
   contactsImportApi,
   CONTACT_FIELDS,
@@ -797,55 +798,62 @@ function MapStep({
       )}
 
       <div className="rounded-[14px] border border-slate-200 bg-white divide-y divide-slate-100">
-        {CONTACT_FIELDS.map((field) => (
-          <div key={field} className="grid grid-cols-[180px_1fr] items-center gap-4 px-4 py-3">
-            <div>
-              <label className="text-[13px] font-semibold text-slate-700">
-                {CONTACT_FIELD_LABELS[field]}
-              </label>
+        {CONTACT_FIELDS.map((field) => {
+          // People UX M5 — wire label to select with a real htmlFor/id
+          // pair so screen readers announce the field name when the
+          // select gets focus (was a floating <label> pointing nowhere).
+          const selectId = `contacts-map-${field}`;
+          return (
+            <div key={field} className="grid grid-cols-[180px_1fr] items-center gap-4 px-4 py-3">
+              <div>
+                <label htmlFor={selectId} className="text-[13px] font-semibold text-slate-700">
+                  {CONTACT_FIELD_LABELS[field]}
+                </label>
+              </div>
+              <select
+                id={selectId}
+                value={mapping[field] ?? ''}
+                onChange={(e) => onChange({ ...mapping, [field]: e.target.value || undefined })}
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+              >
+                <option value="">— skip —</option>
+                {headerCells.filter(Boolean).map((h, i) => (
+                  <option key={`${h}-${i}`} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
             </div>
-            <select
-              value={mapping[field] ?? ''}
-              onChange={(e) => onChange({ ...mapping, [field]: e.target.value || undefined })}
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
-            >
-              <option value="">— skip —</option>
-              {headerCells.filter(Boolean).map((h, i) => (
-                <option key={`${h}-${i}`} value={h}>
-                  {h}
-                </option>
-              ))}
-            </select>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="rounded-[14px] border border-slate-200 bg-white p-4">
         <div className="text-[13px] font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
-          <SaveIcon className="h-4 w-4 text-slate-500" /> Save this mapping as a preset
+          <SaveIcon className="h-4 w-4 text-slate-500" aria-hidden="true" /> Save this mapping as a preset
         </div>
-        <div className="flex gap-2">
-          <input
+        <div className="flex gap-2 items-end">
+          <TextField
+            className="flex-1"
+            label={<span className="sr-only">Preset name</span>}
+            name="import-preset-name"
             value={presetName}
             onChange={(e) => setPresetName(e.target.value)}
             placeholder="Preset name — e.g. Acme Q3 vendor list"
-            className="flex-1 px-3 py-2 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+            hint="Presets are shared across the org — the next sheet with the same headers becomes zero-click."
           />
           <button
+            type="button"
             disabled={!presetName.trim() || Object.keys(mapping).length === 0}
             onClick={async () => {
               await onSavePreset(presetName.trim());
               setPresetName('');
             }}
-            className="rounded-lg border border-slate-200 hover:border-slate-400 bg-white px-3.5 py-2 text-[13px] font-semibold text-slate-700 disabled:opacity-50"
+            className="mb-6 rounded-lg border border-slate-200 hover:border-slate-400 bg-white px-3.5 py-2 text-[13px] font-semibold text-slate-700 disabled:opacity-50"
           >
             Save preset
           </button>
         </div>
-        <p className="text-[11px] text-slate-500 mt-1.5">
-          Presets are shared across the org — next vendor sheet with the same headers becomes
-          0-click.
-        </p>
       </div>
 
       <div className="flex items-center justify-between pt-2">

@@ -279,12 +279,19 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
                       </td>
                       <td className="px-4 py-2.5 text-right">
                         {canWrite && (
-                          <button onClick={() => setEditingId(t.id)} className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100" title="Edit">
-                            <Pencil className="h-3.5 w-3.5" />
+                          <button
+                            type="button"
+                            onClick={() => setEditingId(t.id)}
+                            className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
+                            aria-label={`Edit role type ${t.name}`}
+                            title={`Edit ${t.name}`}
+                          >
+                            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                         )}
                         {canDelete && !t.isSystem && (
                           <button
+                            type="button"
                             onClick={async () => {
                               const ok = await confirm(
                                 `Any partner still holding this role will keep it as legacy data; new roles for that partner will use the remaining catalog.`,
@@ -296,10 +303,11 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
                               );
                               if (ok) remove.mutate(t.id);
                             }}
-                            className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
-                            title="Delete"
+                            className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
+                            aria-label={`Delete role type ${t.name}`}
+                            title={`Delete ${t.name}`}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                         )}
                       </td>
@@ -371,6 +379,20 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
     onError: (err: any) => notify.apiError(err, 'Failed to save'),
   });
 
+  // People UX M5 (E-19) — Enter saves, Escape cancels on every input
+  // in the inline edit row. Bailing out of a partially-filled row is a
+  // keyboard-only user's escape hatch; committing without reaching for
+  // the mouse mirrors the interaction on Google Sheets / Airtable.
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!save.isPending && form.name.trim() && (!isNew || form.code.trim())) save.mutate();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+    }
+  };
+
   return (
     <tr className="border-t border-slate-100 dark:border-slate-800 bg-blue-50/30">
       <td className="px-4 py-2">
@@ -380,8 +402,10 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
             setCodeTouched(true);
             setForm((f) => ({ ...f, code: e.target.value }));
           }}
+          onKeyDown={onKey}
           disabled={!isNew && type?.isSystem}
           placeholder="auto-fills from name"
+          aria-label="Role type code"
           className={cn(inputClass, 'font-mono text-[12px] disabled:bg-slate-100 disabled:cursor-not-allowed')}
         />
       </td>
@@ -397,6 +421,8 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
               code: codeTouched ? f.code : deriveCode(v),
             }));
           }}
+          onKeyDown={onKey}
+          aria-label="Role type name"
           className={inputClass}
           autoFocus
         />
@@ -408,6 +434,8 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
         <select
           value={form.category}
           onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+          onKeyDown={onKey}
+          aria-label="Role type category"
           className={cn(inputClass, 'text-[12px] py-1')}
           title="Coarse grouping of this role. Manage the list in the Categories tab."
         >
@@ -424,6 +452,8 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
         <select
           value={form.appliesToKind}
           onChange={(e) => setForm((f) => ({ ...f, appliesToKind: e.target.value as 'person' | 'organization' | 'any' }))}
+          onKeyDown={onKey}
+          aria-label="Applies to (person / organization / any)"
           className={cn(inputClass, 'text-[12px] py-1')}
         >
           <option value="any">any</option>
@@ -432,19 +462,33 @@ function RoleTypeEditRow({ type, onClose }: { type?: RoleType; onClose: () => vo
         </select>
       </td>
       <td className="px-4 py-2" colSpan={2}>
-        <input value={form.description} onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))} className={inputClass} />
+        <input
+          value={form.description}
+          onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))}
+          onKeyDown={onKey}
+          aria-label="Role type description"
+          className={inputClass}
+        />
       </td>
       <td className="px-4 py-2 text-right whitespace-nowrap">
-        <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100" title="Cancel">
-          <X className="h-3.5 w-3.5" />
+        <button
+          type="button"
+          onClick={onClose}
+          className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
+          aria-label={`Cancel ${isNew ? 'creating new role type' : `editing role type ${type?.name ?? type?.code ?? ''}`.trim()}`}
+          title="Cancel (Esc)"
+        >
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
         <button
+          type="button"
           onClick={() => save.mutate()}
           disabled={save.isPending || (!form.name.trim()) || (isNew && !form.code.trim())}
-          className="p-1.5 rounded hover:bg-blue-100 text-blue-600 hover:text-blue-700 disabled:opacity-30 disabled:cursor-not-allowed"
-          title="Save"
+          className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-blue-100 text-blue-600 hover:text-blue-700 disabled:opacity-30 disabled:cursor-not-allowed"
+          aria-label={isNew ? `Save new role type ${form.name || form.code || ''}`.trim() : `Save changes to role type ${type?.name ?? type?.code ?? ''}`.trim()}
+          title="Save (Enter)"
         >
-          <Save className="h-3.5 w-3.5" />
+          <Save className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
       </td>
     </tr>
@@ -589,12 +633,19 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
                       </td>
                       <td className="px-4 py-2.5 text-right">
                         {canWrite && (
-                          <button onClick={() => setEditingId(t.id)} className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100" title="Edit">
-                            <Pencil className="h-3.5 w-3.5" />
+                          <button
+                            type="button"
+                            onClick={() => setEditingId(t.id)}
+                            className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
+                            aria-label={`Edit relationship type ${t.name}`}
+                            title={`Edit ${t.name}`}
+                          >
+                            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                         )}
                         {canDelete && !t.isSystem && (
                           <button
+                            type="button"
                             onClick={async () => {
                               const ok = await confirm(
                                 `Existing relationships of this type stay in place; no new ones can be created.`,
@@ -606,8 +657,9 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
                               );
                               if (ok) remove.mutate(t.id);
                             }}
-                            className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
-                            title="Delete"
+                            className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
+                            aria-label={`Delete relationship type ${t.name}`}
+                            title={`Delete ${t.name}`}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -688,6 +740,19 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
     onError: (err: any) => notify.apiError(err, 'Failed to save'),
   });
 
+  // People UX M5 (E-19) — Enter saves, Escape cancels for the relationship
+  // types row. Skipped inside side-picker card inputs and the multi-line
+  // preview since Enter would still be handled naturally there.
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!save.isPending && form.name.trim() && (!isNew || form.code.trim())) save.mutate();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+    }
+  };
+
   return (
     <tr className="border-t border-slate-100 dark:border-slate-800 bg-blue-50/30">
       <td className="px-4 py-2">
@@ -697,8 +762,10 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
             setCodeTouched(true);
             setForm((f) => ({ ...f, code: e.target.value }));
           }}
+          onKeyDown={onKey}
           disabled={!isNew && type?.isSystem}
           placeholder="auto-fills from name"
+          aria-label="Relationship type code"
           className={cn(inputClass, 'font-mono text-[12px] disabled:bg-slate-100 disabled:cursor-not-allowed')}
         />
       </td>
@@ -709,6 +776,8 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
             const v = e.target.value;
             setForm((f) => ({ ...f, name: v, code: codeTouched ? f.code : deriveCode(v) }));
           }}
+          onKeyDown={onKey}
+          aria-label="Relationship type name"
           className={inputClass}
           autoFocus
         />
@@ -788,16 +857,24 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
       </td>
       <td />
       <td className="px-4 py-2 text-right whitespace-nowrap">
-        <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100" title="Cancel">
-          <X className="h-3.5 w-3.5" />
+        <button
+          type="button"
+          onClick={onClose}
+          className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
+          aria-label={`Cancel ${isNew ? 'creating new relationship type' : `editing relationship type ${type?.name ?? type?.code ?? ''}`.trim()}`}
+          title="Cancel (Esc)"
+        >
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
         <button
+          type="button"
           onClick={() => save.mutate()}
           disabled={save.isPending || !form.name.trim() || (isNew && !form.code.trim())}
-          className="p-1.5 rounded hover:bg-blue-100 text-blue-600 hover:text-blue-700 disabled:opacity-30 disabled:cursor-not-allowed"
-          title="Save"
+          className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-blue-100 text-blue-600 hover:text-blue-700 disabled:opacity-30 disabled:cursor-not-allowed"
+          aria-label={isNew ? `Save new relationship type ${form.name || form.code || ''}`.trim() : `Save changes to relationship type ${type?.name ?? type?.code ?? ''}`.trim()}
+          title="Save (Enter)"
         >
-          <Save className="h-3.5 w-3.5" />
+          <Save className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
       </td>
     </tr>
@@ -909,15 +986,18 @@ function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: 
                     <td className="px-4 py-2.5 text-right">
                       {canWrite && (
                         <button
+                          type="button"
                           onClick={() => setEditingId(c.id)}
-                          className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
-                          title="Edit"
+                          className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
+                          aria-label={`Edit category ${c.name}`}
+                          title={`Edit ${c.name}`}
                         >
-                          <Pencil className="h-3.5 w-3.5" />
+                          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                         </button>
                       )}
                       {canDelete && !c.isSystem && (
                         <button
+                          type="button"
                           onClick={async () => {
                             const ok = await confirm(
                               `Organizations and contacts in this category will fall back to no category.`,
@@ -929,10 +1009,11 @@ function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: 
                             );
                             if (ok) remove.mutate(c.id);
                           }}
-                          className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
-                          title="Delete"
+                          className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
+                          aria-label={`Delete category ${c.name}`}
+                          title={`Delete ${c.name}`}
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                         </button>
                       )}
                     </td>
@@ -984,14 +1065,28 @@ function CategoryEditRow({ category, onClose }: { category?: PartnerRoleCategory
     onError: (err: any) => notify.apiError(err, 'Failed to save'),
   });
 
+  // People UX M5 (E-19) — Enter saves, Escape cancels for the category
+  // edit row.
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!save.isPending && form.name.trim() && (!isNew || form.code.trim())) save.mutate();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+    }
+  };
+
   return (
     <tr className="border-t border-slate-100 dark:border-slate-800 bg-blue-50/30">
       <td className="px-4 py-2">
         <input
           value={form.code}
           onChange={(e) => { setCodeTouched(true); setForm((f) => ({ ...f, code: e.target.value })); }}
+          onKeyDown={onKey}
           disabled={!isNew && category?.isSystem}
           placeholder="auto-fills from name"
+          aria-label="Category code"
           className={cn(inputClass, 'font-mono text-[12px] disabled:bg-slate-100 disabled:cursor-not-allowed')}
         />
       </td>
@@ -1002,6 +1097,8 @@ function CategoryEditRow({ category, onClose }: { category?: PartnerRoleCategory
             const v = e.target.value;
             setForm((f) => ({ ...f, name: v, code: codeTouched ? f.code : deriveCode(v) }));
           }}
+          onKeyDown={onKey}
+          aria-label="Category name"
           className={inputClass}
           autoFocus
         />
@@ -1012,12 +1109,15 @@ function CategoryEditRow({ category, onClose }: { category?: PartnerRoleCategory
             type="color"
             value={form.color}
             onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
+            aria-label="Category colour"
             className="h-7 w-10 cursor-pointer rounded border border-slate-200 dark:border-slate-700"
           />
           <input
             value={form.color}
             onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
+            onKeyDown={onKey}
             placeholder="#3B82F6"
+            aria-label="Category colour hex value"
             className={cn(inputClass, 'font-mono text-[11px] py-1')}
           />
         </div>
@@ -1026,22 +1126,32 @@ function CategoryEditRow({ category, onClose }: { category?: PartnerRoleCategory
         <input
           value={form.description}
           onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+          onKeyDown={onKey}
           placeholder="(optional)"
+          aria-label="Category description"
           className={inputClass}
         />
       </td>
       <td />
       <td className="px-4 py-2 text-right whitespace-nowrap">
-        <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100" title="Cancel">
-          <X className="h-3.5 w-3.5" />
+        <button
+          type="button"
+          onClick={onClose}
+          className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
+          aria-label={`Cancel ${isNew ? 'creating new category' : `editing category ${category?.name ?? category?.code ?? ''}`.trim()}`}
+          title="Cancel (Esc)"
+        >
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
         <button
+          type="button"
           onClick={() => save.mutate()}
           disabled={save.isPending || !form.name.trim() || (isNew && !form.code.trim())}
-          className="p-1.5 rounded hover:bg-blue-100 text-blue-600 hover:text-blue-700 disabled:opacity-30 disabled:cursor-not-allowed"
-          title="Save"
+          className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-blue-100 text-blue-600 hover:text-blue-700 disabled:opacity-30 disabled:cursor-not-allowed"
+          aria-label={isNew ? `Save new category ${form.name || form.code || ''}`.trim() : `Save changes to category ${category?.name ?? category?.code ?? ''}`.trim()}
+          title="Save (Enter)"
         >
-          <Save className="h-3.5 w-3.5" />
+          <Save className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
       </td>
     </tr>

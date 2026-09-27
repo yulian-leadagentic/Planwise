@@ -213,15 +213,18 @@ export function ProjectRoleTypesPage() {
                       <td className="px-4 py-2.5 text-right">
                         {canWrite && (
                           <button
+                            type="button"
                             onClick={() => setEditingId(t.id)}
-                            className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
-                            title="Edit"
+                            className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
+                            aria-label={`Edit project role ${t.name}`}
+                            title={`Edit ${t.name}`}
                           >
-                            <Pencil className="h-3.5 w-3.5" />
+                            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                         )}
                         {canDelete && !t.isSystem && (
                           <button
+                            type="button"
                             onClick={async () => {
                               // People UX U2 — danger variant + verb button.
                               const ok = await confirm(
@@ -234,10 +237,11 @@ export function ProjectRoleTypesPage() {
                               );
                               if (ok) remove.mutate(t.id);
                             }}
-                            className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
-                            title="Delete"
+                            className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
+                            aria-label={`Delete project role ${t.name}`}
+                            title={`Delete ${t.name}`}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                         )}
                       </td>
@@ -348,14 +352,34 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
     onError: (err: any) => notify.apiError(err, 'Failed to save'),
   });
 
+  // People UX M5 (E-19) — Enter saves, Escape cancels. Applied to every
+  // text field in the inline edit row so keyboard-only users can commit
+  // or bail without touching the mouse. The Save handler here is idempotent
+  // with the button click (react-query dedupes concurrent mutations).
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      // A textarea would legitimately swallow Enter, but every text input
+      // in this row is single-line so bubble it up to Save.
+      e.preventDefault();
+      if (!save.isPending && form.name.trim() && (!isNew || form.code.trim())) {
+        save.mutate();
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+    }
+  };
+
   return (
     <tr className="border-t border-slate-100 dark:border-slate-800 bg-blue-50/30">
       <td className="px-4 py-2">
         <input
           value={form.code}
           onChange={(e) => setForm((f) => ({ ...f, code: e.target.value }))}
+          onKeyDown={onKey}
           disabled={!isNew && type?.isSystem}
           placeholder="e.g. lead_architect"
+          aria-label="Project role code"
           className={cn(inputClass, 'font-mono text-[12px] disabled:bg-slate-100 disabled:cursor-not-allowed')}
         />
       </td>
@@ -363,6 +387,8 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
         <input
           value={form.name}
           onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          onKeyDown={onKey}
+          aria-label="Project role name"
           className={inputClass}
           autoFocus
         />
@@ -485,22 +511,32 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
         <input
           value={form.description}
           onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+          onKeyDown={onKey}
           placeholder="Description (optional)"
+          aria-label="Project role description"
           className={cn(inputClass, 'text-[12px] py-1')}
         />
       </td>
       <td />
       <td className="px-4 py-2 text-right whitespace-nowrap">
-        <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100" title="Cancel">
-          <X className="h-3.5 w-3.5" />
+        <button
+          type="button"
+          onClick={onClose}
+          className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
+          aria-label={`Cancel ${isNew ? 'creating new project role' : `editing project role ${type?.name ?? type?.code ?? ''}`.trim()}`}
+          title="Cancel (Esc)"
+        >
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
         <button
+          type="button"
           onClick={() => save.mutate()}
           disabled={save.isPending || !form.name.trim() || (isNew && !form.code.trim())}
-          className="p-1.5 rounded hover:bg-blue-100 text-blue-600 hover:text-blue-700 disabled:opacity-30 disabled:cursor-not-allowed"
-          title="Save"
+          className="min-w-[24px] min-h-[24px] p-1.5 rounded hover:bg-blue-100 text-blue-600 hover:text-blue-700 disabled:opacity-30 disabled:cursor-not-allowed"
+          aria-label={isNew ? `Save new project role ${form.name || form.code || ''}`.trim() : `Save changes to project role ${type?.name ?? type?.code ?? ''}`.trim()}
+          title="Save (Enter)"
         >
-          <Save className="h-3.5 w-3.5" />
+          <Save className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
       </td>
     </tr>

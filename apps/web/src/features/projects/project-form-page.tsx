@@ -11,6 +11,7 @@ import { useProject, useCreateProject, useUpdateProject, useProjectTypes } from 
 import { usePermissions } from '@/hooks/use-permissions';
 import { notify } from '@/lib/notify';
 import { PeopleMultiSelect, type Person } from '@/components/shared/people-multi-select';
+import { Field, SelectField } from '@/components/shared/field';
 
 // Empty-string → undefined preprocessor. Lets `.optional()` pass for
 // blank fields without z.coerce.number() turning '' into NaN and
@@ -1187,47 +1188,53 @@ function TeamPicker({
 
       {adding && (
         <div className="mt-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-3 flex flex-col gap-2.5">
-          <div>
-            <label className={labelClass}>Role</label>
-            <select
-              value={draftRoleId ?? ''}
-              onChange={(e) => {
-                const next = e.target.value ? Number(e.target.value) : null;
-                setDraftRoleId(next);
-                // Reset the person selection when the role changes — the
-                // eligible-party pool differs across roles.
-                setDraftPartyIds([]);
-              }}
-              className={inputClass}
-              autoFocus
-            >
-              <option value="">Select a role…</option>
-              {roles.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* People UX M5 — team/customer pickers in the New Project form
+              use the shared Field wrapper so the Role <select> and Person
+              picker get an id + <label htmlFor> pair, and any future error
+              text is wired through aria-describedby / aria-invalid. */}
+          <SelectField
+            label="Role"
+            name="new-project-team-role"
+            required
+            value={draftRoleId ?? ''}
+            onChange={(e) => {
+              const next = e.target.value ? Number(e.target.value) : null;
+              setDraftRoleId(next);
+              // Reset the person selection when the role changes — the
+              // eligible-party pool differs across roles.
+              setDraftPartyIds([]);
+            }}
+            autoFocus
+          >
+            <option value="">Select a role…</option>
+            {roles.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </SelectField>
 
-          <div>
-            <label className={labelClass}>Person</label>
-            {draftRole ? (
-              <TeamPartyPicker
-                role={draftRole}
-                value={draftPartyIds}
-                onChange={(ids) => {
-                  // Single-select semantics: keep only the last picked id.
-                  // Passing `[]` (all cleared) also lands here.
-                  setDraftPartyIds(ids.length === 0 ? [] : [ids[ids.length - 1]!]);
-                }}
-              />
-            ) : (
-              <p className="text-[12px] text-slate-400 dark:text-slate-500 italic px-1">
-                Pick a role first.
-              </p>
+          <Field label="Person" htmlFor="new-project-team-person">
+            {({ id }) => (
+              draftRole ? (
+                <div id={id}>
+                  <TeamPartyPicker
+                    role={draftRole}
+                    value={draftPartyIds}
+                    onChange={(ids) => {
+                      // Single-select semantics: keep only the last picked id.
+                      // Passing `[]` (all cleared) also lands here.
+                      setDraftPartyIds(ids.length === 0 ? [] : [ids[ids.length - 1]!]);
+                    }}
+                  />
+                </div>
+              ) : (
+                <p id={id} className="text-[12px] text-slate-400 dark:text-slate-500 italic px-1">
+                  Pick a role first.
+                </p>
+              )
             )}
-          </div>
+          </Field>
 
           <div className="flex justify-end gap-2 pt-1">
             <button

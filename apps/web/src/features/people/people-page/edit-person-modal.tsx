@@ -1,13 +1,35 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Coins, X } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { usePermissions } from '@/hooks/use-permissions';
 import { notify } from '@/lib/notify';
 import client from '@/api/client';
 import type { UserListItem } from '@/types';
-import { inputClass } from './constants';
 import { SeniorityHistorySection } from './seniority-history-section';
 import { UserRateModal } from './user-rate-modal';
+import { TextField, SelectField } from '@/components/shared/field';
+
+/**
+ * People UX M5 — validation rules for the edit form.
+ *
+ *   • firstName / lastName: required, non-empty when trimmed.
+ *   • email: required + basic RFC-ish shape check (no toast, inline).
+ *   • roleId: required.
+ *
+ * Returns a partial map keyed by form field so <Field error> wiring stays
+ * flat. Password is not editable here (dedicated Reset flow).
+ */
+function validateEdit(
+  form: { firstName: string; lastName: string; email: string; roleId: string },
+): Partial<Record<'firstName' | 'lastName' | 'email' | 'roleId', string>> {
+  const errs: Partial<Record<'firstName' | 'lastName' | 'email' | 'roleId', string>> = {};
+  if (!form.firstName.trim()) errs.firstName = 'First name is required.';
+  if (!form.lastName.trim()) errs.lastName = 'Last name is required.';
+  if (!form.email.trim()) errs.email = 'Email is required.';
+  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) errs.email = 'Enter a valid email address.';
+  if (!form.roleId) errs.roleId = 'Access Role is required.';
+  return errs;
+}
 
 export function EditPersonModal({
   user,
@@ -59,6 +81,16 @@ export function EditPersonModal({
     seniorityLevelId: ((user as any).seniorityLevelId ?? '') as number | '',
     isActive: user.isActive,
   });
+  // People UX M5 — inline errors keyed by field. Fired on submit + cleared
+  // on the next change to that field so the user sees the fix take effect.
+  const [errors, setErrors] = useState<Partial<Record<'firstName' | 'lastName' | 'email' | 'roleId', string>>>({});
+  // Clear a specific field's error on change — the message shouldn't linger
+  // after the user has typed a fix.
+  const patch = (k: keyof typeof form, v: any) =>
+    setForm((f) => {
+      if (k in errors) setErrors((prev) => ({ ...prev, [k]: undefined }));
+      return { ...f, [k]: v };
+    });
 
   // Lock background scroll while open
   useEffect(() => {
@@ -80,10 +112,9 @@ export function EditPersonModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.email || !form.firstName || !form.lastName || !form.roleId) {
-      notify.warning('Please fill all required fields', { code: 'USER-UPDATE-400' });
-      return;
-    }
+    const errs = validateEdit(form);
+    setErrors(errs);
+    if (Object.keys(errs).length > 0) return;
     update.mutate({
       email: form.email,
       firstName: form.firstName,
@@ -106,76 +137,132 @@ export function EditPersonModal({
     });
   };
 
+  // D1 warning — for non-partner (Employees) tab, warn if the email is
+  // not on the AMEC domain. This is a warning, not a hard error.
+  const amecDomainWarning = useMemo(() => {
+    if (isPartner) return null;
+    const email = form.email.trim();
+    if (!email || errors.email) return null;
+    const domain = email.split('@')[1]?.toLowerCase() ?? '';
+    if (!domain) return null;
+    if (domain !== 'amec.co.il') {
+      return `Email domain "${domain}" is not on the AMEC domain — this employee may not authenticate via SSO.`;
+    }
+    return null;
+  }, [form.email, isPartner, errors.email]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[480px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Edit {isPartner ? 'Partner' : 'Employee'}</h2>
-          <button type="button" onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" aria-label="Close">
-            <X className="h-4 w-4"  aria-hidden="true" />
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Edit {isPartner ? 'External User' : 'Employee'}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200"
+            aria-label={`Close edit dialog for ${user.firstName ?? ''} ${user.lastName ?? ''}`.trim()}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+        <form onSubmit={handleSubmit} className="p-5 space-y-4" noValidate>
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">First Name *</label>
-              <input value={form.firstName} onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))} className={inputClass} />
-            </div>
-            <div>
-              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Last Name *</label>
-              <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className={inputClass} />
-            </div>
+            <TextField
+              label="First Name"
+              name="firstName"
+              required
+              value={form.firstName}
+              error={errors.firstName}
+              onChange={(e) => patch('firstName', e.target.value)}
+            />
+            <TextField
+              label="Last Name"
+              name="lastName"
+              required
+              value={form.lastName}
+              error={errors.lastName}
+              onChange={(e) => patch('lastName', e.target.value)}
+            />
           </div>
           {/* Hebrew name (T3.3, 2026-06-28). */}
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">שם פרטי (Hebrew first name)</label>
-              <input dir="rtl" value={form.firstNameHe} onChange={(e) => setForm(f => ({ ...f, firstNameHe: e.target.value }))} className={inputClass} />
-            </div>
-            <div>
-              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">שם משפחה (Hebrew last name)</label>
-              <input dir="rtl" value={form.lastNameHe} onChange={(e) => setForm(f => ({ ...f, lastNameHe: e.target.value }))} className={inputClass} />
-            </div>
+            <TextField
+              label="שם פרטי (Hebrew first name)"
+              name="firstNameHe"
+              dir="rtl"
+              value={form.firstNameHe}
+              onChange={(e) => patch('firstNameHe', e.target.value)}
+            />
+            <TextField
+              label="שם משפחה (Hebrew last name)"
+              name="lastNameHe"
+              dir="rtl"
+              value={form.lastNameHe}
+              onChange={(e) => patch('lastNameHe', e.target.value)}
+            />
           </div>
-          <div>
-            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="Email is the unique identifier for every person — used for login and as the dedupe key on imports.">
-              Email <span className="text-red-500">*</span>
-              <span className="ml-2 text-[10px] font-normal text-slate-400 dark:text-slate-500">(unique — login & identifier)</span>
-            </label>
-            <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} className={inputClass} />
+          <TextField
+            label={
+              <>
+                Email
+                <span className="ml-2 text-[10px] font-normal text-slate-400 dark:text-slate-500">
+                  (unique — login &amp; identifier)
+                </span>
+              </>
+            }
+            name="email"
+            type="email"
+            required
+            value={form.email}
+            error={errors.email}
+            hint={amecDomainWarning ?? undefined}
+            hintTone="warning"
+            onChange={(e) => patch('email', e.target.value)}
+          />
+          <div className="grid grid-cols-2 gap-4">
+            <SelectField
+              label="Access Role"
+              name="roleId"
+              required
+              value={form.roleId}
+              error={errors.roleId}
+              onChange={(e) => patch('roleId', e.target.value)}
+            >
+              <option value="">Select role</option>
+              {roles.map((r: any) => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </SelectField>
+            <TextField
+              label="Telephone"
+              name="phone"
+              value={form.phone}
+              onChange={(e) => patch('phone', e.target.value)}
+            />
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="Determines what the user can see and edit — separate from job title / profession.">
-                Access Role <span className="text-red-500">*</span>
-              </label>
-              <select value={form.roleId} onChange={(e) => setForm(f => ({ ...f, roleId: e.target.value }))} className={inputClass}>
-                <option value="">Select role</option>
-                {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Telephone</label>
-              <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className={inputClass} />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="What this person does by trade. Manage the list in /templates/types → Job Titles.">
-                Job Title
-              </label>
-              <select value={form.position} onChange={(e) => setForm(f => ({ ...f, position: e.target.value }))} className={inputClass}>
-                <option value="">Select job title</option>
-                {professions.map((p: any) => <option key={p.id} value={p.name}>{p.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Department</label>
-              <select value={form.department} onChange={(e) => setForm(f => ({ ...f, department: e.target.value }))} className={inputClass}>
-                <option value="">Select department</option>
-                {departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
-              </select>
-            </div>
+            <SelectField
+              label="Job Title"
+              name="position"
+              value={form.position}
+              onChange={(e) => patch('position', e.target.value)}
+            >
+              <option value="">Select job title</option>
+              {professions.map((p: any) => (
+                <option key={p.id} value={p.name}>{p.name}</option>
+              ))}
+            </SelectField>
+            <SelectField
+              label="Department"
+              name="department"
+              value={form.department}
+              onChange={(e) => patch('department', e.target.value)}
+            >
+              <option value="">Select department</option>
+              {departments.map((d: any) => (
+                <option key={d.id} value={d.name}>{d.name}</option>
+              ))}
+            </SelectField>
           </div>
           {/* Seniority History — replaces the single-level dropdown.
               The legacy users.seniority_level_id column is auto-synced
@@ -208,6 +295,7 @@ export function EditPersonModal({
                 type="button"
                 onClick={() => setShowOverrideModal(true)}
                 className="inline-flex items-center gap-1 rounded-md bg-emerald-600 hover:bg-emerald-700 px-3 py-1.5 text-[12px] font-semibold text-white"
+                aria-label={`Manage cost rate override for ${user.firstName ?? ''} ${user.lastName ?? ''}`.trim()}
               >
                 <Coins className="h-3 w-3" aria-hidden="true" />
                 Manage override
@@ -220,51 +308,45 @@ export function EditPersonModal({
               UX reads the same. */}
           {/* M4a.4 — Employment fields */}
           <div className="grid grid-cols-3 gap-4">
-            <div>
-              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Start date</label>
-              <input
-                type="date"
-                value={form.employmentDate}
-                onChange={(e) => setForm((f) => ({ ...f, employmentDate: e.target.value }))}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">End date</label>
-              <input
-                type="date"
-                value={form.employmentEndDate}
-                onChange={(e) => setForm((f) => ({ ...f, employmentEndDate: e.target.value }))}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="Standard daily hours used for cost & utilisation calculations.">
-                Daily standard hours
-              </label>
-              <input
-                type="number"
-                step="0.25"
-                min="0"
-                max="24"
-                value={form.dailyStandardHours}
-                onChange={(e) => setForm((f) => ({ ...f, dailyStandardHours: e.target.value }))}
-                placeholder="e.g. 8"
-                className={inputClass}
-              />
-            </div>
+            <TextField
+              label="Start date"
+              name="employmentDate"
+              type="date"
+              value={form.employmentDate}
+              onChange={(e) => patch('employmentDate', e.target.value)}
+            />
+            <TextField
+              label="End date"
+              name="employmentEndDate"
+              type="date"
+              value={form.employmentEndDate}
+              onChange={(e) => patch('employmentEndDate', e.target.value)}
+            />
+            <TextField
+              label="Daily standard hours"
+              name="dailyStandardHours"
+              type="number"
+              step="0.25"
+              min={0}
+              max={24}
+              value={form.dailyStandardHours}
+              onChange={(e) => patch('dailyStandardHours', e.target.value)}
+              placeholder="e.g. 8"
+            />
           </div>
           {isPartner && (
-            <div>
-              <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Company Name</label>
-              <input value={form.companyName} onChange={(e) => setForm(f => ({ ...f, companyName: e.target.value }))} className={inputClass} />
-            </div>
+            <TextField
+              label="Organization Name"
+              name="companyName"
+              value={form.companyName}
+              onChange={(e) => patch('companyName', e.target.value)}
+            />
           )}
           <label className="flex items-center gap-2 cursor-pointer pt-1">
             <input
               type="checkbox"
               checked={form.isActive}
-              onChange={(e) => setForm(f => ({ ...f, isActive: e.target.checked }))}
+              onChange={(e) => patch('isActive', e.target.checked)}
               className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-blue-600"
             />
             <span className="text-sm text-slate-700 dark:text-slate-200">Active</span>

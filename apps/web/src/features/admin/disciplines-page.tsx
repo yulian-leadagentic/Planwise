@@ -7,6 +7,7 @@ import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { DataTable } from '@/components/shared/data-table';
 import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge } from '@/components/shared/status-badge';
+import { TextField } from '@/components/shared/field';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
@@ -305,60 +306,50 @@ function FormCard({
   return (
     <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div>
-          <label className="mb-1 block text-[13px] font-semibold text-slate-700 dark:text-slate-200">
-            Code <span className="text-red-600 dark:text-red-400">*</span>
-          </label>
-          <input
-            value={form.code}
-            onChange={(e) => update('code', e.target.value.toLowerCase().replace(/\s+/g, '_'))}
-            placeholder="architecture"
-            className={`${inputClass} font-mono`}
-          />
-        </div>
-        <div className="sm:col-span-2">
-          <label className="mb-1 block text-[13px] font-semibold text-slate-700 dark:text-slate-200">
-            Name <span className="text-red-600 dark:text-red-400">*</span>
-          </label>
-          <input
-            value={form.name}
-            onChange={(e) => update('name', e.target.value)}
-            placeholder="Architecture"
-            className={inputClass}
-          />
-        </div>
-        <div className="sm:col-span-2">
-          <label className="mb-1 block text-[13px] font-semibold text-slate-700 dark:text-slate-200">
-            שם <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
-          </label>
-          <input
-            dir="rtl"
-            value={form.nameHe}
-            onChange={(e) => update('nameHe', e.target.value)}
-            placeholder="אדריכלות"
-            className={inputClass}
-          />
-        </div>
-        <div>
-          <label
-            className="mb-1 block text-[13px] font-semibold text-slate-700 dark:text-slate-200"
-            title="Display order in lists (low → high). Use 10 / 20 / 30 / … so you can insert new disciplines between existing ones without reshuffling the rest."
-          >
-            Sort order
-          </label>
-          <input
-            type="number"
-            value={form.sortOrder}
-            onChange={(e) => update('sortOrder', Number(e.target.value))}
-            className={inputClass}
-          />
-        </div>
+        <TextField
+          label="Code"
+          name={`discipline-code-${mode}`}
+          required
+          value={form.code}
+          onChange={(e) => update('code', e.target.value.toLowerCase().replace(/\s+/g, '_'))}
+          placeholder="architecture"
+          inputClassName="font-mono"
+        />
+        <TextField
+          className="sm:col-span-2"
+          label="Name"
+          name={`discipline-name-${mode}`}
+          required
+          value={form.name}
+          onChange={(e) => update('name', e.target.value)}
+          placeholder="Architecture"
+        />
+        <TextField
+          className="sm:col-span-2"
+          label={
+            <>
+              שם{' '}
+              <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
+            </>
+          }
+          name={`discipline-nameHe-${mode}`}
+          dir="rtl"
+          value={form.nameHe}
+          onChange={(e) => update('nameHe', e.target.value)}
+          placeholder="אדריכלות"
+        />
+        <TextField
+          label="Sort order"
+          name={`discipline-sortOrder-${mode}`}
+          type="number"
+          value={form.sortOrder}
+          onChange={(e) => update('sortOrder', Number(e.target.value))}
+          hint="Use 10 / 20 / 30 so new disciplines fit between existing ones."
+        />
         {mode === 'edit' && (
-          <div className="sm:col-span-3">
-            <label className="mb-1 block text-[13px] font-semibold text-slate-700 dark:text-slate-200">
-              Active
-            </label>
-            <label className="flex items-center gap-2 pt-1">
+          <div className="sm:col-span-3 flex flex-col gap-1.5">
+            <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">Active</span>
+            <label className="flex items-center gap-2">
               <input
                 type="checkbox"
                 checked={form.isActive}
@@ -375,16 +366,17 @@ function FormCard({
 
       <div className="flex justify-end gap-2 border-t border-slate-100 dark:border-slate-800 pt-3">
         <button
+          type="button"
           onClick={onCancel}
           className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3 py-1.5"
         >
           <X className="h-3 w-3" aria-hidden="true" /> Cancel
         </button>
         <button
+          type="button"
           onClick={onSave}
           disabled={saving || !form.code.trim() || !form.name.trim()}
           className="inline-flex items-center gap-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 disabled:opacity-50"
-          aria-label="Save"
         >
           <Save className="h-3 w-3" aria-hidden="true" /> {mode === 'create' ? 'Create' : 'Save'}
         </button>

@@ -116,8 +116,14 @@ export function ZoneTreeNode({
           get clipped off-screen; trailing buttons are `shrink-0` so they
           never collapse to zero width. */}
       <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-background px-3 py-2 mb-1">
-        <button onClick={() => setExpanded(!expanded)} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground">
-          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="flex h-6 w-6 min-w-[24px] min-h-[24px] shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+          aria-label={`${expanded ? 'Collapse' : 'Expand'} ${zone.name}`}
+          aria-expanded={expanded}
+        >
+          {expanded ? <ChevronDown className="h-4 w-4" aria-hidden="true" /> : <ChevronRight className="h-4 w-4" aria-hidden="true" />}
         </button>
         {/* Inline zoneType editor. Was a display-only ZoneTypeBadge —
             now writable so template authors can retag Zone → Building

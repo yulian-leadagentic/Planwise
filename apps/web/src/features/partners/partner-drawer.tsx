@@ -8,6 +8,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { formatDate } from '@/lib/date-utils';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { CreatePartnerModal } from './create-partner-modal';
+import { TextField, SelectField, TextAreaField } from '@/components/shared/field';
 
 const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
@@ -616,9 +617,13 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
     onError: (err: any) => notify.apiError(err, 'Failed to remove'),
   });
 
+  // Read-only display "label + value" pair. Not a form control — the value
+  // is rendered as static text — so a <span> heading is the correct
+  // semantics (a <label> without htmlFor trips axe / screen readers try to
+  // hunt for a control that isn't there).
   const Field = ({ label, value, render }: { label: string; value: string | null | undefined; render?: () => React.ReactNode }) => (
     <div>
-      <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase">{label}</label>
+      <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase block">{label}</span>
       <p className="mt-1 text-[13px] text-slate-700 dark:text-slate-200">{render ? render() : (value || <span className="italic text-slate-400 dark:text-slate-500">—</span>)}</p>
     </div>
   );
@@ -693,7 +698,7 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
         {/* Social / online presence — only show when at least one is set */}
         {(bp.linkedinUrl || bp.facebookUrl || bp.twitterUrl || bp.instagramUrl) && (
           <div>
-            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase">Online presence</label>
+            <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase block">Online presence</span>
             <div className="mt-1.5 flex items-center gap-2">
               {bp.linkedinUrl && (
                 <a href={bp.linkedinUrl} target="_blank" rel="noopener noreferrer" title={bp.linkedinUrl} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800">
@@ -721,7 +726,7 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
 
         {bp.notes && (
           <div>
-            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase">Notes</label>
+            <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase block">Notes</span>
             <p className="mt-1 text-[13px] text-slate-700 dark:text-slate-200 whitespace-pre-wrap">{bp.notes}</p>
           </div>
         )}
@@ -758,97 +763,128 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
     );
   }
 
-  // Editing mode
+  // Editing mode — People UX M5 (P-30) — every editable field uses the
+  // shared TextField/SelectField/TextAreaField wrapper so the label
+  // wires to the control via htmlFor/id, and any future validation
+  // error text can drop in behind aria-describedby / aria-invalid.
   return (
     <div className="space-y-3">
       {bp.partnerType === 'person' && (
         <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">First Name</label>
-            <input value={form.firstName} onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))} className={inputClass} />
-          </div>
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Last Name</label>
-            <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className={inputClass} />
-          </div>
+          <TextField
+            label="First Name"
+            name="drawer-firstName"
+            value={form.firstName}
+            onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))}
+          />
+          <TextField
+            label="Last Name"
+            name="drawer-lastName"
+            value={form.lastName}
+            onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))}
+          />
         </div>
       )}
       {bp.partnerType === 'organization' ? (
         <>
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Company Name</label>
-            <input value={form.companyName} onChange={(e) => setForm(f => ({ ...f, companyName: e.target.value }))} className={inputClass} />
-          </div>
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Tax ID</label>
-            <input value={form.taxId} onChange={(e) => setForm(f => ({ ...f, taxId: e.target.value }))} className={inputClass} />
-          </div>
+          <TextField
+            label="Organization Name"
+            name="drawer-companyName"
+            value={form.companyName}
+            onChange={(e) => setForm(f => ({ ...f, companyName: e.target.value }))}
+          />
+          <TextField
+            label="Tax ID"
+            name="drawer-taxId"
+            value={form.taxId}
+            onChange={(e) => setForm(f => ({ ...f, taxId: e.target.value }))}
+          />
         </>
       ) : (
-        <div>
-          <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Employer (organization)</label>
-          <select
-            value={form.employerOrgId ?? ''}
-            onChange={(e) => setForm(f => ({ ...f, employerOrgId: e.target.value ? Number(e.target.value) : null }))}
-            className={inputClass}
-          >
-            <option value="">— No employer —</option>
-            {employerOrg && !orgs.some((o) => o.id === employerOrg.id) && (
-              <option value={employerOrg.id}>{employerOrg.displayName}</option>
-            )}
-            {orgs.map((o) => (
-              <option key={o.id} value={o.id}>{o.displayName}</option>
-            ))}
-          </select>
-          <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-            Saving will link this contact to the selected organization.
-          </p>
-        </div>
+        <SelectField
+          label="Employer (organization)"
+          name="drawer-employer"
+          value={form.employerOrgId ?? ''}
+          onChange={(e) => setForm(f => ({ ...f, employerOrgId: e.target.value ? Number(e.target.value) : null }))}
+          hint="Saving will link this contact to the selected organization."
+        >
+          <option value="">— No employer —</option>
+          {employerOrg && !orgs.some((o) => o.id === employerOrg.id) && (
+            <option value={employerOrg.id}>{employerOrg.displayName}</option>
+          )}
+          {orgs.map((o) => (
+            <option key={o.id} value={o.id}>{o.displayName}</option>
+          ))}
+        </SelectField>
       )}
-      <div>
-        <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Email</label>
-        <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} className={inputClass} />
-      </div>
+      <TextField
+        label="Email"
+        name="drawer-email"
+        type="email"
+        value={form.email}
+        onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))}
+      />
       <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Phone</label>
-          <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className={inputClass} />
-        </div>
-        <div>
-          <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Mobile</label>
-          <input value={form.mobile} onChange={(e) => setForm(f => ({ ...f, mobile: e.target.value }))} className={inputClass} />
-        </div>
+        <TextField
+          label="Phone"
+          name="drawer-phone"
+          value={form.phone}
+          onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))}
+        />
+        <TextField
+          label="Mobile"
+          name="drawer-mobile"
+          value={form.mobile}
+          onChange={(e) => setForm(f => ({ ...f, mobile: e.target.value }))}
+        />
       </div>
-      <div>
-        <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Website</label>
-        <input value={form.website} onChange={(e) => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://..." className={inputClass} />
-      </div>
+      <TextField
+        label="Website"
+        name="drawer-website"
+        value={form.website}
+        onChange={(e) => setForm(f => ({ ...f, website: e.target.value }))}
+        placeholder="https://..."
+      />
       <div className="grid grid-cols-2 gap-3">
         <SocialEditField icon={<Linkedin className="h-3.5 w-3.5 text-[#0a66c2]" />} label="LinkedIn"   value={form.linkedinUrl}  onChange={(v) => setForm(f => ({ ...f, linkedinUrl: v }))}  />
         <SocialEditField icon={<Facebook className="h-3.5 w-3.5 text-[#1877f2]" />} label="Facebook"   value={form.facebookUrl}  onChange={(v) => setForm(f => ({ ...f, facebookUrl: v }))}  />
         <SocialEditField icon={<Twitter  className="h-3.5 w-3.5 text-[#1da1f2]" />} label="Twitter / X" value={form.twitterUrl}   onChange={(v) => setForm(f => ({ ...f, twitterUrl: v }))}   />
         <SocialEditField icon={<Instagram className="h-3.5 w-3.5 text-[#e4405f]" />} label="Instagram"  value={form.instagramUrl} onChange={(v) => setForm(f => ({ ...f, instagramUrl: v }))} />
       </div>
-      <div>
-        <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Address</label>
-        <input value={form.address} onChange={(e) => setForm(f => ({ ...f, address: e.target.value }))} className={inputClass} />
-      </div>
-      <div>
-        <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Status</label>
-        <select value={form.status} onChange={(e) => setForm(f => ({ ...f, status: e.target.value }))} className={inputClass}>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-        </select>
-      </div>
-      <div>
-        <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Notes</label>
-        <textarea value={form.notes} onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))} rows={3} className={cn(inputClass, 'resize-none')} />
-      </div>
+      <TextField
+        label="Address"
+        name="drawer-address"
+        value={form.address}
+        onChange={(e) => setForm(f => ({ ...f, address: e.target.value }))}
+      />
+      <SelectField
+        label="Status"
+        name="drawer-status"
+        value={form.status}
+        onChange={(e) => setForm(f => ({ ...f, status: e.target.value }))}
+      >
+        <option value="active">Active</option>
+        <option value="inactive">Inactive</option>
+      </SelectField>
+      <TextAreaField
+        label="Notes"
+        name="drawer-notes"
+        value={form.notes}
+        onChange={(e) => setForm(f => ({ ...f, notes: e.target.value }))}
+        rows={3}
+        textareaClassName="resize-none"
+      />
 
       <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
         <button type="button" onClick={() => setEditing(false)} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
-        <button onClick={() => update.mutate()} disabled={update.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50 flex items-center gap-1">
-          <Save className="h-3 w-3" /> {update.isPending ? 'Saving...' : 'Save'}
+        <button
+          type="button"
+          onClick={() => update.mutate()}
+          disabled={update.isPending}
+          className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50 flex items-center gap-1"
+          aria-label={`Save changes to ${bp.displayName ?? (bp.partnerType === 'person' ? 'contact' : 'organization')}`}
+        >
+          <Save className="h-3 w-3" aria-hidden="true" /> {update.isPending ? 'Saving...' : 'Save'}
         </button>
       </div>
     </div>

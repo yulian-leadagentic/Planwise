@@ -527,32 +527,61 @@ export function ContactsPage() {
         </span>
       </div>
 
-      {/* View toggle */}
-      <div className="border-b border-slate-200 dark:border-slate-700">
-        <div className="flex gap-1.5 flex-nowrap overflow-x-auto">
-          {VIEW_TABS.map((t) => {
-            const Icon = t.icon;
-            const active = view === t.key;
-            return (
-              <button
-                key={t.key}
-                onClick={() => switchView(t.key)}
-                className={cn(
-                  '-mb-px rounded-t-lg border border-b-2 px-4 py-2.5 text-sm font-bold transition-colors shrink-0 whitespace-nowrap inline-flex items-center gap-2',
-                  active
-                    ? 'border-slate-200 dark:border-slate-700 border-b-blue-600 bg-blue-50 text-blue-700'
-                    : 'border-transparent text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-100',
-                )}
-              >
-                <Icon className="h-4 w-4" />
-                {t.label}
-                <span className={cn('ml-1 text-[11px] font-medium', active ? 'text-blue-500' : 'text-slate-400 dark:text-slate-500')}>
-                  {t.sub}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+      {/* View toggle — People UX M5 (E-27). role=tablist + role=tab +
+          aria-selected, and arrow-key navigation via the shared Tabs
+          contract (`role="tab"` roving tabIndex is handled by the
+          hand-rolled markup below). The URL is already synchronized
+          via `switchView` writing `?view=` upstream. */}
+      <div
+        role="tablist"
+        aria-label="Contacts views"
+        className="flex gap-1.5 flex-nowrap overflow-x-auto border-b border-slate-200 dark:border-slate-700"
+      >
+        {VIEW_TABS.map((t, i) => {
+          const Icon = t.icon;
+          const active = view === t.key;
+          return (
+            <button
+              key={t.key}
+              role="tab"
+              type="button"
+              aria-selected={active}
+              tabIndex={active ? 0 : -1}
+              onClick={() => switchView(t.key)}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  const next = VIEW_TABS[(i + 1) % VIEW_TABS.length];
+                  if (next) switchView(next.key);
+                } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  const next = VIEW_TABS[(i - 1 + VIEW_TABS.length) % VIEW_TABS.length];
+                  if (next) switchView(next.key);
+                } else if (e.key === 'Home') {
+                  e.preventDefault();
+                  const next = VIEW_TABS[0];
+                  if (next) switchView(next.key);
+                } else if (e.key === 'End') {
+                  e.preventDefault();
+                  const next = VIEW_TABS[VIEW_TABS.length - 1];
+                  if (next) switchView(next.key);
+                }
+              }}
+              className={cn(
+                '-mb-px rounded-t-lg border border-b-2 px-4 py-2.5 text-sm font-bold transition-colors shrink-0 whitespace-nowrap inline-flex items-center gap-2',
+                active
+                  ? 'border-slate-200 dark:border-slate-700 border-b-blue-600 bg-blue-50 text-blue-700'
+                  : 'border-transparent text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-100',
+              )}
+            >
+              <Icon className="h-4 w-4" aria-hidden="true" />
+              {t.label}
+              <span className={cn('ml-1 text-[11px] font-medium', active ? 'text-blue-500' : 'text-slate-400 dark:text-slate-500')}>
+                {t.sub}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {/* View body */}

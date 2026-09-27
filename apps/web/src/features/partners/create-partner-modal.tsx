@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
+import { TextField, SelectField, TextAreaField } from '@/components/shared/field';
 
 /**
  * Canonical Business Partner creation modal.
@@ -100,6 +101,15 @@ export function CreatePartnerModal({
     // Person-facing only; INFORMATIONAL, does not gate role eligibility.
     disciplineId: '' as string,
   });
+  // People UX M5 (P-12 / P-30 / P-31 / P-32) — inline errors, keyed by
+  // field. Person path: `name` is a single combined error for the
+  // "first-or-last" rule so we only carry ONE marker in the UI.
+  // Person-org-employee path: `nameHe` covers the Hebrew requirement.
+  // Org path: `companyName` is required.
+  type FormErrors = Partial<Record<'name' | 'nameHe' | 'companyName' | 'email', string>>;
+  const [errors, setErrors] = useState<FormErrors>({});
+  const clearError = (k: keyof FormErrors) =>
+    setErrors((prev) => (k in prev ? { ...prev, [k]: undefined } : prev));
 
   // Lock background scroll while open — matches the previous behaviour
   // of both wrappers.
@@ -278,12 +288,14 @@ export function CreatePartnerModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // People UX M5 — inline errors per Field; a single validation pass
+    // sets everything at once so the user sees the full picture without
+    // having to re-submit.
+    const nextErrors: FormErrors = {};
     if (partnerType === 'person') {
-      // English name — REQUIRED. Accept either a first or a last name so a
-      // single-name contact (e.g. an anglicised mononym) still saves.
+      // P-12 — combined "first or last name" rule with a single marker.
       if (!form.firstName.trim() && !form.lastName.trim()) {
-        notify.warning('Enter at least a first or last name (English)', { code: 'CONTACT-CREATE-400' });
-        return;
+        nextErrors.name = 'Enter at least a first or last name.';
       }
       // BM2 QA-2 Commit 4 (2026-08-27) — Hebrew is normally OPTIONAL, but
       // becomes REQUIRED when the contact is an organization employee
@@ -294,17 +306,16 @@ export function CreatePartnerModal({
       // surfaces render correctly in Hebrew-first workflows.
       const isOrgEmployee = form.employerOrgId.trim().length > 0;
       if (isOrgEmployee && !form.firstNameHe.trim() && !form.lastNameHe.trim()) {
-        notify.warning('Hebrew name is required for organization employees', {
-          code: 'CONTACT-CREATE-400-HE',
-        });
-        return;
+        nextErrors.nameHe = 'Hebrew name is required for organization employees.';
       }
-    } else {
-      if (!form.companyName.trim()) {
-        notify.warning('Organization name is required', { code: 'ORG-CREATE-400' });
-        return;
-      }
+    } else if (!form.companyName.trim()) {
+      nextErrors.companyName = 'Organization name is required.';
     }
+    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      nextErrors.email = 'Enter a valid email address.';
+    }
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
     create.mutate();
   };
 
@@ -368,12 +379,16 @@ export function CreatePartnerModal({
               personRoleTypes={applicableRoles}
               disciplines={disciplines}
               lockEmployer={!!lockEmployer}
+              errors={errors}
+              clearError={clearError}
             />
           ) : (
             <OrganizationForm
               form={form}
               setForm={setForm}
               orgRoleTypes={applicableRoles}
+              errors={errors}
+              clearError={clearError}
             />
           )}
 
@@ -413,6 +428,8 @@ function PersonForm({
   personRoleTypes,
   disciplines,
   lockEmployer,
+  errors,
+  clearError,
 }: {
   form: any;
   setForm: React.Dispatch<React.SetStateAction<any>>;
@@ -421,6 +438,8 @@ function PersonForm({
   personRoleTypes: RoleType[];
   disciplines: Array<{ id: number; name: string; nameHe: string | null; isActive: boolean }>;
   lockEmployer: boolean;
+  errors: Partial<Record<'name' | 'nameHe' | 'companyName' | 'email', string>>;
+  clearError: (k: 'name' | 'nameHe' | 'companyName' | 'email') => void;
 }) {
   void ({} as FormState);
   // BM2 QA-2 Commit 4 (2026-08-27) — Hebrew is REQUIRED when the contact
@@ -441,59 +460,100 @@ function PersonForm({
         </div>
       )}
 
-      {/* Identity — English name is REQUIRED (at least one of first / last);
-          Hebrew is optional except when the contact is an org employee
-          (worker_of an org), where both English AND Hebrew are required.
-          The conditional-required label mirrors the state used by the
-          submit-time guardrail. */}
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
-            First Name <span className="text-red-600 dark:text-red-400">*</span>
-          </label>
-          <input value={form.firstName} onChange={(e) => setForm((f: any) => ({ ...f, firstName: e.target.value }))} className={inputClass} autoFocus />
+      {/* Identity — People UX M5 (P-12): "first or last name" rule is
+          rendered with ONE required marker in a single label, backed by
+          a single inline error under both inputs (rather than two
+          per-input markers implying both are separately required). */}
+      <div>
+        <div className="mb-1.5 flex items-center gap-1">
+          <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">
+            Name (English)
+          </span>
+          <span aria-hidden="true" className="text-red-600 dark:text-red-400">*</span>
         </div>
-        <div>
-          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
-            Last Name <span className="text-red-600 dark:text-red-400">*</span>
-          </label>
-          <input value={form.lastName} onChange={(e) => setForm((f: any) => ({ ...f, lastName: e.target.value }))} className={inputClass} />
+        <div className="grid grid-cols-2 gap-3">
+          <input
+            aria-label="First name (English)"
+            aria-required="true"
+            aria-invalid={errors.name ? true : undefined}
+            aria-describedby={errors.name ? 'partner-name-err' : 'partner-name-hint'}
+            value={form.firstName}
+            onChange={(e) => { setForm((f: any) => ({ ...f, firstName: e.target.value })); clearError('name'); }}
+            placeholder="First"
+            className={cn(inputClass, errors.name && 'border-red-400 dark:border-red-500')}
+            autoFocus
+          />
+          <input
+            aria-label="Last name (English)"
+            aria-required="true"
+            aria-invalid={errors.name ? true : undefined}
+            aria-describedby={errors.name ? 'partner-name-err' : 'partner-name-hint'}
+            value={form.lastName}
+            onChange={(e) => { setForm((f: any) => ({ ...f, lastName: e.target.value })); clearError('name'); }}
+            placeholder="Last"
+            className={cn(inputClass, errors.name && 'border-red-400 dark:border-red-500')}
+          />
         </div>
+        {errors.name ? (
+          <p id="partner-name-err" role="alert" className="mt-1 text-[12px] text-red-600 dark:text-red-400">
+            {errors.name}
+          </p>
+        ) : (
+          <p id="partner-name-hint" className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+            Enter a first and/or last name in English (at least one).
+          </p>
+        )}
       </div>
-      <p className="text-[11px] text-slate-400 dark:text-slate-500">Enter a first and/or last name in English (at least one).</p>
       {/* Hebrew names — bilingual search picks these up so contacts are
           findable in either language. Required for org employees, optional
           otherwise — the required marker + helper copy switches on
-          `isOrgEmployee`. */}
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
-            שם פרטי{' '}
-            {isOrgEmployee ? (
-              <span className="text-red-600 dark:text-red-400">*</span>
-            ) : (
-              <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
-            )}
-          </label>
-          <input dir="rtl" value={form.firstNameHe} onChange={(e) => setForm((f: any) => ({ ...f, firstNameHe: e.target.value }))} className={inputClass} />
+          `isOrgEmployee`. Uses the same "one marker per rule" pattern
+          as the English name above (P-12). */}
+      <div>
+        <div className="mb-1.5 flex items-center gap-1">
+          <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">
+            שם (Hebrew name){' '}
+          </span>
+          {isOrgEmployee ? (
+            <span aria-hidden="true" className="text-red-600 dark:text-red-400">*</span>
+          ) : (
+            <span className="text-slate-400 dark:text-slate-500 text-[11px] font-normal">(optional)</span>
+          )}
         </div>
-        <div>
-          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
-            שם משפחה{' '}
-            {isOrgEmployee ? (
-              <span className="text-red-600 dark:text-red-400">*</span>
-            ) : (
-              <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
-            )}
-          </label>
-          <input dir="rtl" value={form.lastNameHe} onChange={(e) => setForm((f: any) => ({ ...f, lastNameHe: e.target.value }))} className={inputClass} />
+        <div className="grid grid-cols-2 gap-3">
+          <input
+            aria-label="שם פרטי (Hebrew first name)"
+            aria-required={isOrgEmployee || undefined}
+            aria-invalid={errors.nameHe ? true : undefined}
+            aria-describedby={errors.nameHe ? 'partner-nameHe-err' : undefined}
+            dir="rtl"
+            value={form.firstNameHe}
+            onChange={(e) => { setForm((f: any) => ({ ...f, firstNameHe: e.target.value })); clearError('nameHe'); }}
+            placeholder="שם פרטי"
+            className={cn(inputClass, errors.nameHe && 'border-red-400 dark:border-red-500')}
+          />
+          <input
+            aria-label="שם משפחה (Hebrew last name)"
+            aria-required={isOrgEmployee || undefined}
+            aria-invalid={errors.nameHe ? true : undefined}
+            aria-describedby={errors.nameHe ? 'partner-nameHe-err' : undefined}
+            dir="rtl"
+            value={form.lastNameHe}
+            onChange={(e) => { setForm((f: any) => ({ ...f, lastNameHe: e.target.value })); clearError('nameHe'); }}
+            placeholder="שם משפחה"
+            className={cn(inputClass, errors.nameHe && 'border-red-400 dark:border-red-500')}
+          />
         </div>
+        {errors.nameHe ? (
+          <p id="partner-nameHe-err" role="alert" className="mt-1 text-[12px] text-red-600 dark:text-red-400">
+            {errors.nameHe}
+          </p>
+        ) : isOrgEmployee ? (
+          <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+            Hebrew name is required because this contact is being tagged as an organization employee.
+          </p>
+        ) : null}
       </div>
-      {isOrgEmployee && (
-        <p className="text-[11px] text-amber-700 dark:text-amber-300">
-          Hebrew name is required because this contact is being tagged as an organization employee.
-        </p>
-      )}
 
       {/* Job Title (Profession). QA3 · PR-039: kept as-is (load-bearing —
           gates ProjectRoleType.requiredProfessionIds on both the picker
@@ -591,9 +651,11 @@ function PersonForm({
       </div>
 
       {/* Employer + role-in-context */}
-      <div>
-        <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Employer (organization)</label>
-        {lockEmployer && form.employerOrgId ? (
+      {lockEmployer && form.employerOrgId ? (
+        <div>
+          <div className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+            Employer (organization)
+          </div>
           <div className={`${inputClass} bg-slate-50 dark:bg-slate-800/50 text-slate-700 dark:text-slate-200 cursor-not-allowed flex items-center justify-between`}>
             <span className="font-medium">
               {orgs.find((o) => String(o.id) === String(form.employerOrgId))?.displayName
@@ -601,46 +663,58 @@ function PersonForm({
             </span>
             <span className="text-[10px] uppercase tracking-wider text-slate-400 dark:text-slate-500">Locked</span>
           </div>
-        ) : (
-          <select value={form.employerOrgId} onChange={(e) => setForm((f: any) => ({ ...f, employerOrgId: e.target.value }))} className={inputClass}>
-            <option value="">— None / unaffiliated —</option>
-            {orgs.map((o) => (
-              <option key={o.id} value={o.id}>{o.displayName}</option>
-            ))}
-          </select>
-        )}
-        <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-          Links this contact to their employer organization — the contact's context is defined here.
-        </p>
-      </div>
-      {form.employerOrgId && (
-        <div>
-          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Role at the organization (optional)</label>
-          <input
-            value={form.roleInContext}
-            onChange={(e) => setForm((f: any) => ({ ...f, roleInContext: e.target.value }))}
-            placeholder='e.g. "Operations Manager", "Buyer"'
-            className={inputClass}
-          />
+          <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+            Links this contact to their employer organization — the contact's context is defined here.
+          </p>
         </div>
+      ) : (
+        <SelectField
+          label="Employer (organization)"
+          name="person-employer"
+          value={form.employerOrgId}
+          onChange={(e) => setForm((f: any) => ({ ...f, employerOrgId: e.target.value }))}
+          hint="Links this contact to their employer organization — the contact's context is defined here."
+        >
+          <option value="">— None / unaffiliated —</option>
+          {orgs.map((o) => (
+            <option key={o.id} value={o.id}>{o.displayName}</option>
+          ))}
+        </SelectField>
+      )}
+      {form.employerOrgId && (
+        <TextField
+          label="Title at the organization (optional)"
+          name="person-roleInContext"
+          value={form.roleInContext}
+          onChange={(e) => setForm((f: any) => ({ ...f, roleInContext: e.target.value }))}
+          placeholder='e.g. "Operations Manager", "Buyer"'
+        />
       )}
 
       {/* Contact details */}
       <div className="space-y-3">
         <h3 className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Contact details</h3>
-        <div>
-          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Email</label>
-          <input type="email" value={form.email} onChange={(e) => setForm((f: any) => ({ ...f, email: e.target.value }))} className={inputClass} />
-        </div>
+        <TextField
+          label="Email"
+          name="person-email"
+          type="email"
+          value={form.email}
+          error={errors.email}
+          onChange={(e) => { setForm((f: any) => ({ ...f, email: e.target.value })); clearError('email'); }}
+        />
         <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Phone</label>
-            <input value={form.phone} onChange={(e) => setForm((f: any) => ({ ...f, phone: e.target.value }))} className={inputClass} />
-          </div>
-          <div>
-            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Mobile</label>
-            <input value={form.mobile} onChange={(e) => setForm((f: any) => ({ ...f, mobile: e.target.value }))} className={inputClass} />
-          </div>
+          <TextField
+            label="Phone"
+            name="person-phone"
+            value={form.phone}
+            onChange={(e) => setForm((f: any) => ({ ...f, phone: e.target.value }))}
+          />
+          <TextField
+            label="Mobile"
+            name="person-mobile"
+            value={form.mobile}
+            onChange={(e) => setForm((f: any) => ({ ...f, mobile: e.target.value }))}
+          />
         </div>
       </div>
 
@@ -651,17 +725,24 @@ function PersonForm({
         <SocialField icon={<Facebook className="h-4 w-4 text-[#1877f2]" />} label="Facebook"  value={form.facebookUrl}  onChange={(v) => setForm((f: any) => ({ ...f, facebookUrl: v }))}  placeholder="https://facebook.com/..." />
         <SocialField icon={<Twitter  className="h-4 w-4 text-[#1da1f2]" />} label="Twitter / X" value={form.twitterUrl}   onChange={(v) => setForm((f: any) => ({ ...f, twitterUrl: v }))}   placeholder="https://x.com/..." />
         <SocialField icon={<Instagram className="h-4 w-4 text-[#e4405f]" />} label="Instagram" value={form.instagramUrl} onChange={(v) => setForm((f: any) => ({ ...f, instagramUrl: v }))} placeholder="https://instagram.com/..." />
-        <div>
-          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Website</label>
-          <input value={form.website} onChange={(e) => setForm((f: any) => ({ ...f, website: e.target.value }))} placeholder="https://example.com" className={inputClass} />
-        </div>
+        <TextField
+          label="Website"
+          name="person-website"
+          value={form.website}
+          onChange={(e) => setForm((f: any) => ({ ...f, website: e.target.value }))}
+          placeholder="https://example.com"
+        />
       </div>
 
       {/* Notes */}
-      <div>
-        <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Notes</label>
-        <textarea value={form.notes} onChange={(e) => setForm((f: any) => ({ ...f, notes: e.target.value }))} rows={3} className={cn(inputClass, 'resize-none')} />
-      </div>
+      <TextAreaField
+        label="Notes"
+        name="person-notes"
+        value={form.notes}
+        onChange={(e) => setForm((f: any) => ({ ...f, notes: e.target.value }))}
+        rows={3}
+        textareaClassName="resize-none"
+      />
     </>
   );
 }
@@ -670,10 +751,14 @@ function OrganizationForm({
   form,
   setForm,
   orgRoleTypes,
+  errors,
+  clearError,
 }: {
   form: any;
   setForm: React.Dispatch<React.SetStateAction<any>>;
   orgRoleTypes: RoleType[];
+  errors: Partial<Record<'name' | 'nameHe' | 'companyName' | 'email', string>>;
+  clearError: (k: 'name' | 'nameHe' | 'companyName' | 'email') => void;
 }) {
   return (
     <>
@@ -681,36 +766,53 @@ function OrganizationForm({
         Companies, customers, suppliers, municipalities, partner firms — anything that has its own legal identity.
       </p>
 
-      <div>
-        <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Organization Name *</label>
-        <input value={form.companyName} onChange={(e) => setForm((f: any) => ({ ...f, companyName: e.target.value }))} className={inputClass} autoFocus />
-      </div>
+      <TextField
+        label="Organization Name"
+        name="companyName"
+        required
+        autoFocus
+        value={form.companyName}
+        error={errors.companyName}
+        onChange={(e) => { setForm((f: any) => ({ ...f, companyName: e.target.value })); clearError('companyName'); }}
+      />
 
-      <div>
-        <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Tax ID</label>
-        <input value={form.taxId} onChange={(e) => setForm((f: any) => ({ ...f, taxId: e.target.value }))} className={inputClass} />
-      </div>
+      <TextField
+        label="Tax ID"
+        name="taxId"
+        value={form.taxId}
+        onChange={(e) => setForm((f: any) => ({ ...f, taxId: e.target.value }))}
+      />
 
       <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Email</label>
-          <input type="email" value={form.email} onChange={(e) => setForm((f: any) => ({ ...f, email: e.target.value }))} className={inputClass} />
-        </div>
-        <div>
-          <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Phone</label>
-          <input value={form.phone} onChange={(e) => setForm((f: any) => ({ ...f, phone: e.target.value }))} className={inputClass} />
-        </div>
+        <TextField
+          label="Email"
+          name="org-email"
+          type="email"
+          value={form.email}
+          error={errors.email}
+          onChange={(e) => { setForm((f: any) => ({ ...f, email: e.target.value })); clearError('email'); }}
+        />
+        <TextField
+          label="Phone"
+          name="org-phone"
+          value={form.phone}
+          onChange={(e) => setForm((f: any) => ({ ...f, phone: e.target.value }))}
+        />
       </div>
 
-      <div>
-        <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Website</label>
-        <input value={form.website} onChange={(e) => setForm((f: any) => ({ ...f, website: e.target.value }))} className={inputClass} />
-      </div>
+      <TextField
+        label="Website"
+        name="org-website"
+        value={form.website}
+        onChange={(e) => setForm((f: any) => ({ ...f, website: e.target.value }))}
+      />
 
-      <div>
-        <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Address</label>
-        <input value={form.address} onChange={(e) => setForm((f: any) => ({ ...f, address: e.target.value }))} className={inputClass} />
-      </div>
+      <TextField
+        label="Address"
+        name="org-address"
+        value={form.address}
+        onChange={(e) => setForm((f: any) => ({ ...f, address: e.target.value }))}
+      />
 
       {/* BM2 QA-2 Commit 4 (2026-08-27) — Role(s), multi-select (org side).
           Same multi-role model as the person form so organizations that
@@ -718,9 +820,12 @@ function OrganizationForm({
           Discipline is deliberately NOT rendered on the org form — per
           the spec Discipline is a person-facing classification only. */}
       <div>
-        <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+        {/* Non-<label> heading — the RoleMultiSelect below is a group of
+            buttons, not a single form control, so labeling via <label> +
+            htmlFor doesn't fit; a descriptive heading is enough. */}
+        <div className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
           Role(s) <span className="text-slate-400 dark:text-slate-500 font-normal">(optional, multi)</span>
-        </label>
+        </div>
         <RoleMultiSelect
           value={form.mainRoleTypeIds}
           onChange={(next) => setForm((f: any) => ({ ...f, mainRoleTypeIds: next }))}
@@ -731,10 +836,14 @@ function OrganizationForm({
         </p>
       </div>
 
-      <div>
-        <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Notes</label>
-        <textarea value={form.notes} onChange={(e) => setForm((f: any) => ({ ...f, notes: e.target.value }))} rows={3} className={cn(inputClass, 'resize-none')} />
-      </div>
+      <TextAreaField
+        label="Notes"
+        name="org-notes"
+        value={form.notes}
+        onChange={(e) => setForm((f: any) => ({ ...f, notes: e.target.value }))}
+        rows={3}
+        textareaClassName="resize-none"
+      />
     </>
   );
 }
@@ -747,13 +856,13 @@ function SocialField({ icon, label, value, onChange, placeholder }: {
   placeholder: string;
 }) {
   return (
-    <div>
-      <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 flex items-center gap-1.5">
-        {icon}
-        {label}
-      </label>
-      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={inputClass} />
-    </div>
+    <TextField
+      label={<span className="flex items-center gap-1.5">{icon}{label}</span>}
+      name={`social-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+    />
   );
 }
 

@@ -7,6 +7,7 @@ import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { DataTable } from '@/components/shared/data-table';
 import { EmptyState } from '@/components/shared/empty-state';
 import { ColorPalettePicker } from '@/components/shared/color-palette-picker';
+import { TextField, Field } from '@/components/shared/field';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
@@ -18,6 +19,9 @@ export function LabelTypesPage() {
   const [name, setName] = useState('');
   const [color, setColor] = useState('#3B82F6');
   const [icon, setIcon] = useState('');
+  // People UX M5 — inline error on the name field. Cleared on the next
+  // change so the message doesn't stick after the user has typed a fix.
+  const [nameError, setNameError] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'label-types'],
@@ -50,7 +54,11 @@ export function LabelTypesPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim()) {
+      setNameError('Name is required.');
+      return;
+    }
+    setNameError(null);
     createMutation.mutate({ name: name.trim(), color, icon: icon.trim() || undefined });
   };
 
@@ -97,30 +105,31 @@ export function LabelTypesPage() {
       />
 
       {showForm && (
-        <form onSubmit={handleSubmit} className="rounded-lg border border-border bg-background p-4 space-y-3">
+        <form onSubmit={handleSubmit} className="rounded-lg border border-border bg-background p-4 space-y-3" noValidate>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-sm font-medium mb-1">Name *</label>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Phase, Category"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Color</label>
-              <ColorPalettePicker value={color} onChange={setColor} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Icon</label>
-              <input
-                value={icon}
-                onChange={(e) => setIcon(e.target.value)}
-                placeholder="e.g. Layers, FolderTree"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
+            <TextField
+              label="Name"
+              name="label-type-name"
+              required
+              value={name}
+              onChange={(e) => { setName(e.target.value); if (nameError) setNameError(null); }}
+              placeholder="e.g. Phase, Category"
+              error={nameError}
+            />
+            <Field label="Color">
+              {({ id }) => (
+                <div id={id}>
+                  <ColorPalettePicker value={color} onChange={setColor} />
+                </div>
+              )}
+            </Field>
+            <TextField
+              label="Icon"
+              name="label-type-icon"
+              value={icon}
+              onChange={(e) => setIcon(e.target.value)}
+              placeholder="e.g. Layers, FolderTree"
+            />
           </div>
           <div className="flex gap-2">
             <button

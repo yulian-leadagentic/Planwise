@@ -500,11 +500,12 @@ function RangeFormCard({ mode, form, setForm, onSave, onCancel, saving }: FormCa
           <X className="h-3 w-3" /> Cancel
         </button>
         <button
+          type="button"
           onClick={onSave}
           disabled={saving || !form.code.trim()}
           className="inline-flex items-center gap-1 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-         aria-label="Save">
-          <Save className="h-3 w-3"  aria-hidden="true" /> {mode === 'create' ? 'Create' : 'Save'}
+        >
+          <Save className="h-3 w-3" aria-hidden="true" /> {mode === 'create' ? 'Create' : 'Save'}
         </button>
       </div>
     </div>

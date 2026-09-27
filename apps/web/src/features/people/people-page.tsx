@@ -6,6 +6,8 @@ import { FilterBar } from '@/components/shared/filter-bar';
 import { DataTable } from '@/components/shared/data-table';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { EmptyState } from '@/components/shared/empty-state';
+import { Tabs, tabPanelId, tabTriggerId } from '@/components/shared/tabs';
+import { TextField, SelectField } from '@/components/shared/field';
 import { useUsers } from '@/hooks/use-users';
 import { useFilterStore } from '@/stores/filter.store';
 import { useDebounce } from '@/hooks/use-debounce';
@@ -21,11 +23,47 @@ import { ResetPasswordModal } from './people-page/reset-password-modal';
 import { UserRateModal } from './people-page/user-rate-modal';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 
+/**
+ * People UX M5 — validation rules for create-employee/external-user.
+ *
+ * Kept module-scope so the same rules cover employer picker page + form
+ * without prop-drilling. Password rule tightened to ≥6 chars per the
+ * work order; email must at minimum parse as user@host.tld.
+ */
+type CreatePersonErrors = Partial<Record<
+  'firstName' | 'lastName' | 'email' | 'password' | 'roleId' | 'code',
+  string
+>>;
+function validateCreatePerson(form: {
+  firstName: string; lastName: string; email: string; password: string; roleId: string; code: string;
+}, opts: { needsCode: boolean; codeMode: 'auto' | 'manual' | 'external' | null; rangeCode?: string }): CreatePersonErrors {
+  const errs: CreatePersonErrors = {};
+  if (!form.firstName.trim()) errs.firstName = 'First name is required.';
+  if (!form.lastName.trim()) errs.lastName = 'Last name is required.';
+  if (!form.email.trim()) errs.email = 'Email is required.';
+  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) errs.email = 'Enter a valid email address.';
+  if (!form.password) errs.password = 'Password is required.';
+  else if (form.password.length < 6) errs.password = 'Password must be at least 6 characters.';
+  if (!form.roleId) errs.roleId = 'Access Role is required.';
+  if (opts.needsCode && !form.code.trim()) {
+    errs.code = `Employee Code is required (range "${opts.rangeCode ?? ''}" is ${opts.codeMode} mode).`;
+  }
+  return errs;
+}
+
 export function PeoplePage() {
   const queryClient = useQueryClient();
   const { peopleTab, peopleSearch, peopleStatus, setPeopleFilters } = useFilterStore();
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ ...emptyPerson });
+  // People UX M5 — inline errors keyed by form field. Cleared on the
+  // next change to that field so the message doesn't linger past the
+  // user's fix.
+  const [createErrors, setCreateErrors] = useState<CreatePersonErrors>({});
+  const patchCreate = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => {
+    setForm((f) => ({ ...f, [k]: v }));
+    setCreateErrors((prev) => (k in prev ? { ...prev, [k]: undefined } : prev));
+  };
   // Picker for "Link to existing partner" — opens a searchable list of
   // person BPs without a User account (dedupe path for the create flow).
   const [partnerPickerOpen, setPartnerPickerOpen] = useState(false);
@@ -130,18 +168,15 @@ export function PeoplePage() {
 
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.email || !form.firstName || !form.lastName || !form.password || !form.roleId) {
-      notify.warning('Please fill all required fields', { code: 'USER-CREATE-400' });
-      return;
-    }
-    // M1.1 — Code is required when the EMPLOYEE range is manual/external;
-    // server allocates on auto. Block submit if missing.
-    if (employeeRange && employeeRange.mode !== 'auto' && !form.code.trim()) {
-      notify.warning(`Enter an Employee Code (range "${employeeRange.code}" is ${employeeRange.mode} mode)`, {
-        code: 'USER-CREATE-400',
-      });
-      return;
-    }
+    // People UX M5 — inline per-field validation. Blocks submit and
+    // renders red text under each offending Field. No generic toast.
+    const errs = validateCreatePerson(form, {
+      needsCode: !!(employeeRange && employeeRange.mode !== 'auto'),
+      codeMode: employeeRange?.mode ?? null,
+      rangeCode: employeeRange?.code,
+    });
+    setCreateErrors(errs);
+    if (Object.keys(errs).length > 0) return;
     const payload: any = {
       ...form,
       roleId: Number(form.roleId),
@@ -383,9 +418,12 @@ export function PeoplePage() {
   // (userType / isActiveParam / useUsers hoisted above the columns memo
   // for the U2 confirm callbacks to resolve the person by id.)
 
-  const tabs = [
-    { key: 'employees' as const, label: 'Employees' },
-    { key: 'partners' as const, label: 'External Users' },
+  // People UX M5 (E-27) — tab items are consumed by the shared Tabs
+  // component below, which renders role=tab / aria-selected / arrow-key
+  // navigation, and mirrors the active tab to `?tab=` in the URL.
+  const tabItems = [
+    { value: 'employees' as const, label: 'Employees' },
+    { value: 'partners' as const, label: 'External Users' },
   ];
 
   return (
@@ -401,23 +439,15 @@ export function PeoplePage() {
         }
       />
 
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-border">
-        {tabs.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setPeopleFilters({ peopleTab: tab.key })}
-            className={cn(
-              'border-b-2 px-4 py-2.5 text-sm font-medium transition-colors',
-              peopleTab === tab.key
-                ? 'border-brand-600 text-brand-600'
-                : 'border-transparent text-muted-foreground hover:text-foreground',
-            )}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      {/* Tabs — People UX M5 (E-27). Renders role=tablist/tab, aria-selected,
+          arrow-key navigation, and keeps the active tab in `?tab=`. */}
+      <Tabs
+        idBase="people"
+        ariaLabel="People views"
+        value={peopleTab}
+        onChange={(v) => setPeopleFilters({ peopleTab: v })}
+        items={tabItems}
+      />
 
       <FilterBar
         search={peopleSearch}
@@ -429,24 +459,33 @@ export function PeoplePage() {
        *  relies on the backend's active-only default; this page is the
        *  one exception (admins need to find deactivated users to
        *  reactivate or delete them). */}
-      <div className="flex items-center gap-1.5">
-        {(['active', 'inactive', 'all'] as const).map((status) => (
-          <button
-            key={status}
-            type="button"
-            onClick={() => setPeopleFilters({ peopleStatus: status })}
-            className={cn(
-              'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-              peopleStatus === status
-                ? 'border-brand-600 bg-brand-50 text-brand-700'
-                : 'border-border bg-background text-muted-foreground hover:bg-muted/50',
-            )}
-          >
-            {status === 'active' ? 'Active' : status === 'inactive' ? 'Inactive' : 'All'}
-          </button>
-        ))}
+      <div className="flex items-center gap-1.5" role="group" aria-label="Filter by status">
+        {(['active', 'inactive', 'all'] as const).map((status) => {
+          const pressed = peopleStatus === status;
+          return (
+            <button
+              key={status}
+              type="button"
+              aria-pressed={pressed}
+              onClick={() => setPeopleFilters({ peopleStatus: status })}
+              className={cn(
+                'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                pressed
+                  ? 'border-brand-600 bg-brand-50 text-brand-700'
+                  : 'border-border bg-background text-muted-foreground hover:bg-muted/50',
+              )}
+            >
+              {status === 'active' ? 'Active' : status === 'inactive' ? 'Inactive' : 'All'}
+            </button>
+          );
+        })}
       </div>
 
+      <div
+        role="tabpanel"
+        id={tabPanelId('people', peopleTab)}
+        aria-labelledby={tabTriggerId('people', peopleTab)}
+      >
       {!isLoading && users.length === 0 ? (
         <EmptyState
           icon={Users}
@@ -493,6 +532,7 @@ export function PeoplePage() {
           emptyMessage="No users found"
         />
       )}
+      </div>
 
       {/* Create Person Modal */}
       {showCreate && (
@@ -514,9 +554,12 @@ export function PeoplePage() {
                   (see UsersService.create #3). */}
               {isPartners && (
                 <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3">
-                  <label className="text-[12px] font-semibold text-slate-700 dark:text-slate-200 mb-1 block">
+                  {/* Not <label> — the following control is a <button> that
+                      opens the picker modal, not a form input. Labels
+                      without htmlFor trip axe's label rule. */}
+                  <div className="text-[12px] font-semibold text-slate-700 dark:text-slate-200 mb-1 block">
                     Employer Organization <span className="text-slate-400 dark:text-slate-500 font-normal">(customer / supplier they work at)</span>
-                  </label>
+                  </div>
                   {form.employerOrgId === '' ? (
                     <button
                       type="button"
@@ -563,7 +606,11 @@ export function PeoplePage() {
                   This is a DEDUPE path — separate from the Employer org
                   picker above (which is about org context, not identity). */}
               <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 p-3">
-                <label className="text-[12px] font-semibold text-slate-700 dark:text-slate-200 mb-1 block">Link to existing person record <span className="text-slate-400 dark:text-slate-500 font-normal">(optional — avoids duplicates)</span></label>
+                {/* Non-<label> heading — the following control is a picker
+                    button, not a form input; keeps axe happy. */}
+                <div className="text-[12px] font-semibold text-slate-700 dark:text-slate-200 mb-1 block">
+                  Link to existing person record <span className="text-slate-400 dark:text-slate-500 font-normal">(optional — avoids duplicates)</span>
+                </div>
                 {form.businessPartnerId === '' ? (
                   <button
                     type="button"
@@ -607,189 +654,223 @@ export function PeoplePage() {
                   manual / external : input the admin fills in.
                   no range bound: hidden — admins wire one up in /admin/object-numbering. */}
               {employeeRange && (
-                <div>
-                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title={`From range ${employeeRange.code} (${employeeRange.mode} mode)`}>
-                    Employee Code
-                    {employeeRange.mode !== 'auto' && <span className="text-red-500"> *</span>}
-                    <span className="ml-2 text-[10px] font-normal text-slate-400 dark:text-slate-500">
-                      {employeeRange.mode === 'auto'
-                        ? `auto from range ${employeeRange.code}`
-                        : employeeRange.mode === 'manual'
-                          ? `you type it — range ${employeeRange.code}`
-                          : `external — range ${employeeRange.code}${employeeRange.externalPattern ? ` (pattern: ${employeeRange.externalPattern})` : ''}`}
-                    </span>
-                  </label>
-                  {employeeRange.mode === 'auto' ? (
-                    <input
-                      value={employeeRange.preview ?? ''}
-                      disabled
-                      placeholder="(allocated on save)"
-                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-sm font-mono text-slate-500 dark:text-slate-400 cursor-not-allowed"
-                    />
-                  ) : (
-                    <input
-                      value={form.code}
-                      onChange={(e) => setForm((f) => ({ ...f, code: e.target.value }))}
-                      placeholder={employeeRange.prefix ? `e.g. ${employeeRange.prefix}…` : 'Enter the code'}
-                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-mono text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-                    />
-                  )}
-                </div>
+                <TextField
+                  label={
+                    <>
+                      Employee Code
+                      <span className="ml-2 text-[10px] font-normal text-slate-400 dark:text-slate-500">
+                        {employeeRange.mode === 'auto'
+                          ? `auto from range ${employeeRange.code}`
+                          : employeeRange.mode === 'manual'
+                            ? `you type it — range ${employeeRange.code}`
+                            : `external — range ${employeeRange.code}${employeeRange.externalPattern ? ` (pattern: ${employeeRange.externalPattern})` : ''}`}
+                      </span>
+                    </>
+                  }
+                  name="code"
+                  required={employeeRange.mode !== 'auto'}
+                  value={employeeRange.mode === 'auto' ? (employeeRange.preview ?? '') : form.code}
+                  onChange={(e) => patchCreate('code', e.target.value)}
+                  disabled={employeeRange.mode === 'auto'}
+                  placeholder={
+                    employeeRange.mode === 'auto'
+                      ? '(allocated on save)'
+                      : (employeeRange.prefix ? `e.g. ${employeeRange.prefix}…` : 'Enter the code')
+                  }
+                  error={createErrors.code}
+                  inputClassName="font-mono"
+                />
               )}
 
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">First Name *</label>
-                  <input value={form.firstName} onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
-                </div>
-                <div>
-                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Last Name *</label>
-                  <input value={form.lastName} onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
-                </div>
+                <TextField
+                  label="First Name"
+                  name="firstName"
+                  required
+                  value={form.firstName}
+                  error={createErrors.firstName}
+                  onChange={(e) => patchCreate('firstName', e.target.value)}
+                />
+                <TextField
+                  label="Last Name"
+                  name="lastName"
+                  required
+                  value={form.lastName}
+                  error={createErrors.lastName}
+                  onChange={(e) => patchCreate('lastName', e.target.value)}
+                />
               </div>
               {/* Hebrew name (T3.3, 2026-06-28). Optional — when filled
                   the bilingual search hits these too. RTL on the inputs
                   so the cursor sits where Hebrew typists expect. */}
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">שם פרטי (Hebrew first name)</label>
-                  <input dir="rtl" value={form.firstNameHe ?? ''} onChange={(e) => setForm(f => ({ ...f, firstNameHe: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
-                </div>
-                <div>
-                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">שם משפחה (Hebrew last name)</label>
-                  <input dir="rtl" value={form.lastNameHe ?? ''} onChange={(e) => setForm(f => ({ ...f, lastNameHe: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
-                </div>
+                <TextField
+                  label="שם פרטי (Hebrew first name)"
+                  name="firstNameHe"
+                  dir="rtl"
+                  value={form.firstNameHe ?? ''}
+                  onChange={(e) => patchCreate('firstNameHe', e.target.value)}
+                />
+                <TextField
+                  label="שם משפחה (Hebrew last name)"
+                  name="lastNameHe"
+                  dir="rtl"
+                  value={form.lastNameHe ?? ''}
+                  onChange={(e) => patchCreate('lastNameHe', e.target.value)}
+                />
               </div>
-              <div>
-                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="Email is the unique identifier for every person — used for login and as the dedupe key.">
-                  Email <span className="text-red-500">*</span>
-                  <span className="ml-2 text-[10px] font-normal text-slate-400 dark:text-slate-500">(unique — login & identifier)</span>
-                </label>
-                <input type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
-              </div>
-              <div>
-                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Password *</label>
-                <input type="password" value={form.password} onChange={(e) => setForm(f => ({ ...f, password: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
+              <TextField
+                label={
+                  <>
+                    Email
+                    <span className="ml-2 text-[10px] font-normal text-slate-400 dark:text-slate-500">
+                      (unique — login &amp; identifier)
+                    </span>
+                  </>
+                }
+                name="email"
+                type="email"
+                required
+                value={form.email}
+                error={createErrors.email}
+                hint={(() => {
+                  // People UX M5 (D1) — on the Employees tab, warn (do NOT
+                  // block) when the entered email is not on the AMEC domain.
+                  if (isPartners) return undefined;
+                  const email = form.email.trim();
+                  if (!email || createErrors.email) return undefined;
+                  const domain = email.split('@')[1]?.toLowerCase() ?? '';
+                  if (!domain || domain === 'amec.co.il') return undefined;
+                  return `Email domain "${domain}" is not on the AMEC domain — this employee may not authenticate via SSO.`;
+                })()}
+                hintTone="warning"
+                onChange={(e) => patchCreate('email', e.target.value)}
+              />
+              <TextField
+                label="Password"
+                name="password"
+                type="password"
+                required
+                autoComplete="new-password"
+                value={form.password}
+                error={createErrors.password}
+                hint={createErrors.password ? undefined : 'Minimum 6 characters.'}
+                onChange={(e) => patchCreate('password', e.target.value)}
+              />
+              <div className="grid grid-cols-2 gap-4">
+                <SelectField
+                  label="Access Role"
+                  name="roleId"
+                  required
+                  value={form.roleId}
+                  error={createErrors.roleId}
+                  onChange={(e) => patchCreate('roleId', e.target.value)}
+                >
+                  <option value="">Select role</option>
+                  {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </SelectField>
+                <TextField
+                  label="Telephone"
+                  name="phone"
+                  value={form.phone}
+                  onChange={(e) => patchCreate('phone', e.target.value)}
+                />
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="Determines what the user can see and edit — separate from job title.">
-                    Access Role <span className="text-red-500">*</span>
-                  </label>
-                  <select value={form.roleId} onChange={(e) => setForm(f => ({ ...f, roleId: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none">
-                    <option value="">Select role</option>
-                    {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Telephone</label>
-                  <input value={form.phone} onChange={(e) => setForm(f => ({ ...f, phone: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="What this person does by trade. Manage the list in /templates/types → Job Titles.">
-                    Job Title
-                  </label>
-                  <select value={form.position} onChange={(e) => setForm(f => ({ ...f, position: e.target.value }))}
-                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none">
-                    <option value="">Select job title</option>
-                    {professions.map((p: any) => <option key={p.id} value={p.name}>{p.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Department</label>
-                  <select value={form.department} onChange={(e) => setForm(f => ({ ...f, department: e.target.value }))}
-                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none">
-                    <option value="">Select department</option>
-                    {departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
-                  </select>
-                </div>
+                <SelectField
+                  label="Job Title"
+                  name="position"
+                  value={form.position}
+                  onChange={(e) => patchCreate('position', e.target.value)}
+                >
+                  <option value="">Select job title</option>
+                  {professions.map((p: any) => <option key={p.id} value={p.name}>{p.name}</option>)}
+                </SelectField>
+                <SelectField
+                  label="Department"
+                  name="department"
+                  value={form.department}
+                  onChange={(e) => patchCreate('department', e.target.value)}
+                >
+                  <option value="">Select department</option>
+                  {departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
+                </SelectField>
               </div>
               {/* M5a — Seniority Level (drives default hourly cost).
                   Cost preview + price tags on each option are gated
                   by finance:read so non-finance users see only the
                   level name. */}
-              <div>
-                <label
-                  className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block"
-                  title="Determines the employee's default hourly cost for project labor calculations. Manage the catalog at /admin/seniority-levels."
-                >
-                  Seniority Level
-                  {/* Finance gate — no admin short-circuit; admins must
-                      hold the explicit Finance grant in /admin/roles. */}
-                  {can('finance', 'read') && (() => {
-                    const sel = seniorityLevels.find((s: any) => String(s.id) === String(form.seniorityLevelId));
-                    return sel && sel.defaultHourlyCost != null ? (
-                      <span className="ml-2 text-[11px] font-normal text-slate-500 dark:text-slate-400">
-                        → {sel.defaultHourlyCost}{sel.currency ? ` ${sel.currency}` : ''}/h
-                      </span>
-                    ) : null;
-                  })()}
-                </label>
-                <select
-                  value={form.seniorityLevelId}
-                  onChange={(e) => setForm((f) => ({ ...f, seniorityLevelId: e.target.value === '' ? '' : Number(e.target.value) }))}
-                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-                >
-                  <option value="">— Pick a seniority level —</option>
-                  {seniorityLevels.map((s: any) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                      {can('finance', 'read') && s.defaultHourlyCost != null
-                        ? ` — ${s.defaultHourlyCost}${s.currency ? ` ${s.currency}` : ''}/h`
-                        : ''}
-                    </option>
-                  ))}
-                </select>
-                {seniorityLevels.length === 0 && (
-                  <p className="text-[11px] text-amber-700 mt-1">
-                    No seniority levels defined yet. Add some in <a className="text-blue-600 hover:underline" href="/admin/seniority-levels" target="_blank" rel="noreferrer">/admin/seniority-levels</a>.
-                  </p>
-                )}
-              </div>
+              <SelectField
+                label={
+                  <>
+                    Seniority Level
+                    {/* Finance gate — no admin short-circuit; admins must
+                        hold the explicit Finance grant in /admin/roles. */}
+                    {can('finance', 'read') && (() => {
+                      const sel = seniorityLevels.find((s: any) => String(s.id) === String(form.seniorityLevelId));
+                      return sel && sel.defaultHourlyCost != null ? (
+                        <span className="ml-2 text-[11px] font-normal text-slate-500 dark:text-slate-400">
+                          → {sel.defaultHourlyCost}{sel.currency ? ` ${sel.currency}` : ''}/h
+                        </span>
+                      ) : null;
+                    })()}
+                  </>
+                }
+                name="seniorityLevelId"
+                value={form.seniorityLevelId}
+                onChange={(e) => setForm((f) => ({ ...f, seniorityLevelId: e.target.value === '' ? '' : Number(e.target.value) }))}
+              >
+                <option value="">— Pick a seniority level —</option>
+                {seniorityLevels.map((s: any) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                    {can('finance', 'read') && s.defaultHourlyCost != null
+                      ? ` — ${s.defaultHourlyCost}${s.currency ? ` ${s.currency}` : ''}/h`
+                      : ''}
+                  </option>
+                ))}
+              </SelectField>
+              {seniorityLevels.length === 0 && (
+                <p className="text-[11px] text-amber-700 mt-1">
+                  No seniority levels defined yet. Add some in <a className="text-blue-600 hover:underline" href="/admin/seniority-levels" target="_blank" rel="noreferrer">/admin/seniority-levels</a>.
+                </p>
+              )}
 
               {/* M4a.4 — Employment fields */}
               <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Start date</label>
-                  <input
-                    type="date"
-                    value={form.employmentDate}
-                    onChange={(e) => setForm((f) => ({ ...f, employmentDate: e.target.value }))}
-                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">End date</label>
-                  <input
-                    type="date"
-                    value={form.employmentEndDate}
-                    onChange={(e) => setForm((f) => ({ ...f, employmentEndDate: e.target.value }))}
-                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="Standard daily hours used for cost & utilisation calculations.">
-                    Daily standard hours
-                  </label>
-                  <input
-                    type="number"
-                    step="0.25"
-                    min="0"
-                    max="24"
-                    value={form.dailyStandardHours}
-                    onChange={(e) => setForm((f) => ({ ...f, dailyStandardHours: e.target.value }))}
-                    placeholder="e.g. 8"
-                    className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
+                <TextField
+                  label="Start date"
+                  name="employmentDate"
+                  type="date"
+                  value={form.employmentDate}
+                  onChange={(e) => patchCreate('employmentDate', e.target.value)}
+                />
+                <TextField
+                  label="End date"
+                  name="employmentEndDate"
+                  type="date"
+                  value={form.employmentEndDate}
+                  onChange={(e) => patchCreate('employmentEndDate', e.target.value)}
+                />
+                <TextField
+                  label="Daily standard hours"
+                  name="dailyStandardHours"
+                  type="number"
+                  step="0.25"
+                  min={0}
+                  max={24}
+                  value={form.dailyStandardHours}
+                  onChange={(e) => patchCreate('dailyStandardHours', e.target.value)}
+                  placeholder="e.g. 8"
+                />
               </div>
               {peopleTab === 'partners' && (
-                <div>
-                  <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Company Name</label>
-                  <input value={form.companyName} onChange={(e) => setForm(f => ({ ...f, companyName: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
-                </div>
+                <TextField
+                  label="Organization Name"
+                  name="companyName"
+                  value={form.companyName}
+                  onChange={(e) => patchCreate('companyName', e.target.value)}
+                />
               )}
               <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                 <button type="button" onClick={() => setShowCreate(false)} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>

@@ -317,23 +317,30 @@ export function SeniorityHistorySection({
                   <span className="text-slate-400 dark:text-slate-500">· ₪{hourlyCost}/h</span>
                 )}
                 <div className="ml-auto flex items-center gap-1">
+                  {/* People UX M5 (T-29) — icon-only buttons get ≥ 24×24 touch
+                      area (min-w/min-h override the previous p-1 flex box
+                      which resolved to ~20×20 in practice) and an aria-label
+                      naming the exact row so screen readers can distinguish
+                      one entry from another in the history list. */}
                   <button
                     type="button"
                     onClick={() => startEdit(row)}
-                    className="text-slate-400 dark:text-slate-500 hover:text-blue-600 p-1 rounded"
+                    className="text-slate-400 dark:text-slate-500 hover:text-blue-600 min-w-[24px] min-h-[24px] p-1.5 rounded inline-flex items-center justify-center"
+                    aria-label={`Edit seniority entry starting ${fmtDate(row.startDate)}`}
                     title="Edit"
                   >
-                    <Pencil className="h-3 w-3" />
+                    <Pencil className="h-3 w-3" aria-hidden="true" />
                   </button>
                   <button
                     type="button"
                     onClick={async () => {
                       if (await confirm(`Remove this seniority entry?`)) removeEntry.mutate(row.id);
                     }}
-                    className="text-slate-400 dark:text-slate-500 hover:text-red-600 p-1 rounded"
+                    className="text-slate-400 dark:text-slate-500 hover:text-red-600 min-w-[24px] min-h-[24px] p-1.5 rounded inline-flex items-center justify-center"
+                    aria-label={`Remove seniority entry starting ${fmtDate(row.startDate)}`}
                     title="Remove"
                   >
-                    <X className="h-3 w-3" />
+                    <X className="h-3 w-3" aria-hidden="true" />
                   </button>
                 </div>
               </div>

@@ -7,6 +7,7 @@ import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { DataTable } from '@/components/shared/data-table';
 import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge } from '@/components/shared/status-badge';
+import { TextField } from '@/components/shared/field';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
@@ -368,30 +369,27 @@ function RateHistoryModal({
               Change rate — forward effective
             </h4>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">New rate</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={hourlyCost}
-                  onChange={(e) => setHourlyCost(e.target.value)}
-                  placeholder="e.g. 500"
-                  className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm font-mono"
-                />
-              </div>
+              <TextField
+                label="New rate"
+                name="seniority-rate-new"
+                type="number"
+                step="0.01"
+                min={0}
+                value={hourlyCost}
+                onChange={(e) => setHourlyCost(e.target.value)}
+                placeholder="e.g. 500"
+                inputClassName="font-mono"
+              />
               {/* QA3 round-3 item 5 — currency selector removed
                   (system is ₪-only). DB column stays nullable; we
                   submit null on change. */}
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Effective from</label>
-                <input
-                  type="date"
-                  value={effectiveFrom}
-                  onChange={(e) => setEffectiveFrom(e.target.value)}
-                  className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-                />
-              </div>
+              <TextField
+                label="Effective from"
+                name="seniority-rate-effective-from"
+                type="date"
+                value={effectiveFrom}
+                onChange={(e) => setEffectiveFrom(e.target.value)}
+              />
             </div>
             <div className="mt-3 flex justify-end">
               <button
@@ -479,67 +477,51 @@ function FormCard({
   return (
     <div className="rounded-lg border border-border bg-card p-4 space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-muted-foreground">
-            Code <span className="text-red-600">*</span>
-          </label>
-          <input
-            value={form.code}
-            onChange={(e) => update('code', e.target.value.toLowerCase().replace(/\s+/g, '_'))}
-            placeholder="senior"
-            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm font-mono"
-          />
-        </div>
-        <div className="sm:col-span-2">
-          <label className="mb-1 block text-xs font-medium text-muted-foreground">
-            Name <span className="text-red-600">*</span>
-          </label>
-          <input
-            value={form.name}
-            onChange={(e) => update('name', e.target.value)}
-            placeholder="Senior"
-            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-          />
-        </div>
-        <div>
-          <label
-            className="mb-1 block text-xs font-medium text-muted-foreground"
-            title="Display order in lists (low → high). Use 10 / 20 / 30 / … so you can insert new levels between existing ones (e.g. add Mid-Senior=25 between Mid=20 and Senior=30) without reshuffling the rest."
-          >
-            Sort order
-          </label>
-          <input
-            type="number"
-            value={form.sortOrder}
-            onChange={(e) => update('sortOrder', Number(e.target.value))}
-            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-          />
-        </div>
-        <div>
-          <label
-            className="mb-1 block text-xs font-medium text-muted-foreground"
-            title="Default hourly cost for employees at this seniority level. Used by project labor-cost calculations: cost = logged hours × rate. Leave blank if this level has no fixed cost."
-          >
-            Hourly Cost
-          </label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={form.defaultHourlyCost}
-            onChange={(e) => update('defaultHourlyCost', e.target.value)}
-            placeholder="e.g. 80.00"
-            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm font-mono"
-          />
-        </div>
+        <TextField
+          label="Code"
+          name={`seniority-code-${mode}`}
+          required
+          value={form.code}
+          onChange={(e) => update('code', e.target.value.toLowerCase().replace(/\s+/g, '_'))}
+          placeholder="senior"
+          inputClassName="font-mono"
+        />
+        <TextField
+          className="sm:col-span-2"
+          label="Name"
+          name={`seniority-name-${mode}`}
+          required
+          value={form.name}
+          onChange={(e) => update('name', e.target.value)}
+          placeholder="Senior"
+        />
+        <TextField
+          label="Sort order"
+          name={`seniority-sortOrder-${mode}`}
+          type="number"
+          value={form.sortOrder}
+          onChange={(e) => update('sortOrder', Number(e.target.value))}
+          hint="Use 10 / 20 / 30 so new levels fit between existing ones."
+        />
+        <TextField
+          label="Hourly Cost"
+          name={`seniority-cost-${mode}`}
+          type="number"
+          step="0.01"
+          min={0}
+          value={form.defaultHourlyCost}
+          onChange={(e) => update('defaultHourlyCost', e.target.value)}
+          placeholder="e.g. 80.00"
+          inputClassName="font-mono"
+        />
         {/* QA3 round-3 item 5 — Currency picker removed; system is
             ₪-only. DB column stays nullable; the form submits with the
             currency state (defaults to '' → null on the wire), which
             keeps write compatibility. */}
         {mode === 'edit' && (
-          <div className="sm:col-span-2">
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">Active</label>
-            <label className="flex items-center gap-2 pt-1">
+          <div className="sm:col-span-2 flex flex-col gap-1.5">
+            <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">Active</span>
+            <label className="flex items-center gap-2">
               <input
                 type="checkbox"
                 checked={form.isActive}
@@ -554,17 +536,19 @@ function FormCard({
 
       <div className="flex justify-end gap-2 border-t border-border pt-3">
         <button
+          type="button"
           onClick={onCancel}
           className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent"
         >
-          <X className="h-3 w-3" /> Cancel
+          <X className="h-3 w-3" aria-hidden="true" /> Cancel
         </button>
         <button
+          type="button"
           onClick={onSave}
           disabled={saving || !form.code.trim() || !form.name.trim()}
           className="inline-flex items-center gap-1 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-         aria-label="Save">
-          <Save className="h-3 w-3"  aria-hidden="true" /> {mode === 'create' ? 'Create' : 'Save'}
+        >
+          <Save className="h-3 w-3" aria-hidden="true" /> {mode === 'create' ? 'Create' : 'Save'}
         </button>
       </div>
     </div>

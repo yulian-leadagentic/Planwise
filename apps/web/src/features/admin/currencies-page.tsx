@@ -7,6 +7,7 @@ import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { DataTable } from '@/components/shared/data-table';
 import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge } from '@/components/shared/status-badge';
+import { TextField } from '@/components/shared/field';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
@@ -250,62 +251,52 @@ function FormCard({
   return (
     <div className="rounded-lg border border-border bg-card p-4 space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-muted-foreground">
-            ISO code <span className="text-red-600">*</span>
-          </label>
-          <input
-            value={form.code}
-            onChange={(e) => update('code', e.target.value.toUpperCase().slice(0, 3))}
-            placeholder="USD"
-            disabled={mode === 'edit'}
-            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm font-mono uppercase disabled:opacity-50"
-          />
-        </div>
-        <div className="lg:col-span-2">
-          <label className="mb-1 block text-xs font-medium text-muted-foreground">
-            Name <span className="text-red-600">*</span>
-          </label>
-          <input
-            value={form.name}
-            onChange={(e) => update('name', e.target.value)}
-            placeholder="US Dollar"
-            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-muted-foreground">Symbol</label>
-          <input
-            value={form.symbol}
-            onChange={(e) => update('symbol', e.target.value)}
-            placeholder="$"
-            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-muted-foreground">Decimals</label>
-          <input
-            type="number"
-            min={0}
-            max={6}
-            value={form.decimals}
-            onChange={(e) => update('decimals', Number(e.target.value))}
-            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-muted-foreground">Order</label>
-          <input
-            type="number"
-            value={form.sortOrder}
-            onChange={(e) => update('sortOrder', Number(e.target.value))}
-            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-          />
-        </div>
+        <TextField
+          label="ISO code"
+          name={`currency-code-${mode}`}
+          required
+          value={form.code}
+          onChange={(e) => update('code', e.target.value.toUpperCase().slice(0, 3))}
+          placeholder="USD"
+          disabled={mode === 'edit'}
+          inputClassName="font-mono uppercase"
+        />
+        <TextField
+          className="lg:col-span-2"
+          label="Name"
+          name={`currency-name-${mode}`}
+          required
+          value={form.name}
+          onChange={(e) => update('name', e.target.value)}
+          placeholder="US Dollar"
+        />
+        <TextField
+          label="Symbol"
+          name={`currency-symbol-${mode}`}
+          value={form.symbol}
+          onChange={(e) => update('symbol', e.target.value)}
+          placeholder="$"
+        />
+        <TextField
+          label="Decimals"
+          name={`currency-decimals-${mode}`}
+          type="number"
+          min={0}
+          max={6}
+          value={form.decimals}
+          onChange={(e) => update('decimals', Number(e.target.value))}
+        />
+        <TextField
+          label="Order"
+          name={`currency-order-${mode}`}
+          type="number"
+          value={form.sortOrder}
+          onChange={(e) => update('sortOrder', Number(e.target.value))}
+        />
         {mode === 'edit' && (
-          <div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">Active</label>
-            <label className="flex items-center gap-2 pt-1">
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">Active</span>
+            <label className="flex items-center gap-2">
               <input
                 type="checkbox"
                 checked={form.isActive}
@@ -320,17 +311,19 @@ function FormCard({
 
       <div className="flex justify-end gap-2 border-t border-border pt-3">
         <button
+          type="button"
           onClick={onCancel}
           className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent"
         >
-          <X className="h-3 w-3" /> Cancel
+          <X className="h-3 w-3" aria-hidden="true" /> Cancel
         </button>
         <button
+          type="button"
           onClick={onSave}
           disabled={saving || !form.code.trim() || !form.name.trim()}
           className="inline-flex items-center gap-1 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-         aria-label="Save">
-          <Save className="h-3 w-3"  aria-hidden="true" /> {mode === 'create' ? 'Create' : 'Save'}
+        >
+          <Save className="h-3 w-3" aria-hidden="true" /> {mode === 'create' ? 'Create' : 'Save'}
         </button>
       </div>
     </div>
