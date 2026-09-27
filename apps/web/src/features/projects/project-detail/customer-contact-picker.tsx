@@ -1,35 +1,16 @@
-import { X } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { Modal } from '@/components/shared/modal';
 import { inputClass } from './constants';
 
 /* ─── Customer Contact Picker ───────────────────────────────────────────────
    Attaches a person to THIS project as a customer contact.
 
-   PR-026 (2026-08-27, docs/bm2/bm2-qa2-cc-specs.md Commit 3) — write path
-   changed from the org-wide `partner_relationships` edge to a
-   project-scoped `project_partner_role` row so the contact only appears
-   on the project it was attached to (not on every project of the same
-   customer). The row shape:
-     projectId       = this project
-     partyId         = the customer organisation
-     roleId          = the 'customer_contact' project role type
-     contactPartyId  = the selected person
-   Mirrors the existing "org party + contact person" convention read by
-   getAssigneeCandidates and enforced by ProjectPartnerRolesService.create
-   (which requires party.partnerType === 'organization' when
-   contactPartyId is set).
-
-   QA3 Commit D (Item 5, 2026-09-01) — candidate list is now SCOPED:
-   the picker only surfaces persons whose active `worker_of` targets
-   this customer org, AND who are NOT internal staff (no login user and
-   not worker_of the "Internal" seed org). Enforced server-side via the
-   `employerId=customerOrgId&excludeInternal=true` filter on
-   /business-partners (see QueryBusinessPartnersDto). This matches
-   Yulian's rule "no internal users; no employees of other customers".
-   */
+   People UX M1 (E-05) — the shell (dialog role, aria-modal, Tab trap,
+   Escape, focus return, dirty guard) now comes from the shared Modal.
+   The picker owns just the form + mutation. */
 
 export function CustomerContactPicker({
   projectId,
@@ -50,19 +31,7 @@ export function CustomerContactPicker({
   const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
   const [titleAtCustomer, setTitleAtCustomer] = useState('');
 
-  useEffect(() => {
-    const original = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = original; };
-  }, []);
-
-  // People UX U5 (T-13) — expose isLoading so the empty-state below
-  // waits for the fetch to resolve before claiming there are no
-  // contacts.
   const { data: persons = [], isLoading: personsLoading } = useQuery<any[]>({
-    // QA3 Commit D (Item 5): scope to this customer org's workers only,
-    // exclude internal staff. Query-key includes the org id so switching
-    // to a different customer refetches instead of showing stale rows.
     queryKey: ['bp-persons-for-customer-contact', customerOrgId],
     queryFn: () => client.get('/business-partners', {
       params: {
@@ -83,10 +52,6 @@ export function CustomerContactPicker({
       if (!selectedPersonId) {
         throw new Error('Missing person');
       }
-      // PR-026: write a project-scoped project_partner_role row.
-      // party = customer org, role = 'customer_contact',
-      // contactParty = the person. The backend enforces the shape
-      // (organization party + person contact) and rejects mismatches.
       return client.post('/project-partner-roles', {
         projectId,
         partyId: customerOrgId,
@@ -98,8 +63,6 @@ export function CustomerContactPicker({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-team'] });
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });
-      // Branch 2 · fix/assignee-source — keep the task-tree picker
-      // in sync when a customer contact is added.
       queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
       notify.success('Contact added', { code: 'CUSTOMER-CONTACT-200' });
       onClose();
@@ -107,58 +70,69 @@ export function CustomerContactPicker({
     onError: (err: any) => notify.apiError(err, 'Failed to add contact'),
   });
 
+  const isDirty = selectedPersonId != null || titleAtCustomer.trim().length > 0;
+
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[440px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Add Contact at {customerName}</h3>
-          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" aria-label="Close">
-            <X className="h-4 w-4"  aria-hidden="true" />
+    <Modal
+      open
+      onClose={onClose}
+      title={`Add Contact at ${customerName}`}
+      widthClass="w-[440px] max-w-[92vw]"
+      isDirty={isDirty}
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg"
+          >
+            Cancel
           </button>
-        </div>
-        <div className="p-5 space-y-3">
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Person</label>
-            <select
-              value={selectedPersonId ?? ''}
-              onChange={(e) => setSelectedPersonId(Number(e.target.value) || null)}
-              className={inputClass}
-            >
-              <option value="">
-                {personsLoading ? 'Loading…' : 'Select a person...'}
+          <button
+            type="button"
+            onClick={() => create.mutate()}
+            disabled={create.isPending || !selectedPersonId}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
+          >
+            {create.isPending ? 'Adding...' : 'Add Contact'}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <div>
+          <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Person</label>
+          <select
+            value={selectedPersonId ?? ''}
+            onChange={(e) => setSelectedPersonId(Number(e.target.value) || null)}
+            className={inputClass}
+          >
+            <option value="">
+              {personsLoading ? 'Loading…' : 'Select a person...'}
+            </option>
+            {filtered.map((p: any) => (
+              <option key={p.id} value={p.id}>
+                {p.displayName}{p.email ? ` — ${p.email}` : ''}
               </option>
-              {filtered.map((p: any) => (
-                <option key={p.id} value={p.id}>{p.displayName}{p.email ? ` — ${p.email}` : ''}</option>
-              ))}
-            </select>
-            {!personsLoading && filtered.length === 0 && (
-              <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
-                No contacts at {customerName} yet. Add one from the customer's card
-                (Contacts → By Customer → this org → Add contact) first.
-              </p>
-            )}
-          </div>
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Title at customer (optional)</label>
-            <input
-              value={titleAtCustomer}
-              onChange={(e) => setTitleAtCustomer(e.target.value)}
-              placeholder='e.g. "CFO", "Operations Manager"'
-              className={inputClass}
-            />
-          </div>
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <button onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
-            <button
-              onClick={() => create.mutate()}
-              disabled={create.isPending || !selectedPersonId}
-              className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
-            >
-              {create.isPending ? 'Adding...' : 'Add Contact'}
-            </button>
-          </div>
+            ))}
+          </select>
+          {!personsLoading && filtered.length === 0 && (
+            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+              No contacts at {customerName} yet. Add one from the customer's card
+              (Contacts → By Customer → this org → Add contact) first.
+            </p>
+          )}
+        </div>
+        <div>
+          <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Title at customer (optional)</label>
+          <input
+            value={titleAtCustomer}
+            onChange={(e) => setTitleAtCustomer(e.target.value)}
+            placeholder='e.g. "CFO", "Operations Manager"'
+            className={inputClass}
+          />
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Coins, X } from 'lucide-react';
+import { useState, useMemo, useRef } from 'react';
+import { Coins } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { usePermissions } from '@/hooks/use-permissions';
 import { notify } from '@/lib/notify';
@@ -7,6 +7,7 @@ import client from '@/api/client';
 import type { UserListItem } from '@/types';
 import { SeniorityHistorySection } from './seniority-history-section';
 import { UserRateModal } from './user-rate-modal';
+import { Modal } from '@/components/shared/modal';
 import { TextField, SelectField } from '@/components/shared/field';
 
 /**
@@ -49,14 +50,12 @@ export function EditPersonModal({
   const queryClient = useQueryClient();
   const { can } = usePermissions();
   const isPartner = user.userType === 'partner';
-  // QA3 round-3 item 3a — cost-rate override entry point next to
-  // Seniority History. Employees only + finance-gated so admins
-  // without the finance grant don't see it.
+  // QA3 round-3 item 3a — cost-rate override entry point.
   const showCostOverride = !isPartner && can('finance', 'read');
   const [showOverrideModal, setShowOverrideModal] = useState(false);
   // M4a.4 — toDateInput slices ISO to YYYY-MM-DD so <input type=date> accepts it.
   const toDateInput = (v: string | null | undefined) => (v ? String(v).slice(0, 10) : '');
-  const [form, setForm] = useState({
+  const initialForm = useMemo(() => ({
     email: user.email ?? '',
     firstName: user.firstName ?? '',
     lastName: user.lastName ?? '',
@@ -67,37 +66,31 @@ export function EditPersonModal({
     position: user.position ?? '',
     department: user.department ?? '',
     companyName: user.companyName ?? '',
-    // Employment fields — applicable to employees primarily. Surfaced on
-    // partners too because the same person may later become an employee
-    // (the model is a single User record; the userType flag just
-    // categorises them on this list).
     employmentDate: toDateInput((user as any).employmentDate),
-    // On edit, fall back to the open-ended sentinel when the stored
-    // end date is null so the field reads "currently employed" and
-    // matches the create-form default.
     employmentEndDate: toDateInput((user as any).employmentEndDate) || '9999-12-31',
     dailyStandardHours:
       (user as any).dailyStandardHours != null ? String((user as any).dailyStandardHours) : '',
     seniorityLevelId: ((user as any).seniorityLevelId ?? '') as number | '',
     isActive: user.isActive,
-  });
-  // People UX M5 — inline errors keyed by field. Fired on submit + cleared
-  // on the next change to that field so the user sees the fix take effect.
+  }), [user]);
+  const [form, setForm] = useState(initialForm);
+  // People UX M5 — inline errors keyed by field.
   const [errors, setErrors] = useState<Partial<Record<'firstName' | 'lastName' | 'email' | 'roleId', string>>>({});
-  // Clear a specific field's error on change — the message shouldn't linger
-  // after the user has typed a fix.
   const patch = (k: keyof typeof form, v: any) =>
     setForm((f) => {
       if (k in errors) setErrors((prev) => ({ ...prev, [k]: undefined }));
       return { ...f, [k]: v };
     });
-
-  // Lock background scroll while open
-  useEffect(() => {
-    const original = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = original; };
-  }, []);
+  // People UX M1 — dirty flag for the shared Modal's discard-changes
+  // guard. Any field diverging from the initial values counts.
+  const isDirty = useMemo(() => {
+    return (Object.keys(initialForm) as Array<keyof typeof initialForm>).some(
+      (k) => (form as any)[k] !== (initialForm as any)[k],
+    );
+  }, [form, initialForm]);
+  // Focus the first editable field on open — the shared Modal's own
+  // "first focusable" would land on the close-X button.
+  const firstFieldRef = useRef<HTMLInputElement>(null);
 
   const update = useMutation({
     mutationFn: (payload: any) => client.patch(`/users/${user.id}`, payload).then((r) => r.data),
@@ -129,10 +122,6 @@ export function EditPersonModal({
       employmentDate: form.employmentDate || undefined,
       employmentEndDate: form.employmentEndDate || undefined,
       dailyStandardHours: form.dailyStandardHours ? Number(form.dailyStandardHours) : undefined,
-      // seniorityLevelId intentionally NOT spread here. The current
-      // level is derived from the seniority-history rows and synced
-      // server-side by UserSenioritiesService whenever an entry is
-      // added/edited/removed via SeniorityHistorySection below.
       isActive: form.isActive,
     });
   };
@@ -152,22 +141,43 @@ export function EditPersonModal({
   }, [form.email, isPartner, errors.email]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[480px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Edit {isPartner ? 'External User' : 'Employee'}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200"
-            aria-label={`Close edit dialog for ${user.firstName ?? ''} ${user.lastName ?? ''}`.trim()}
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </button>
-        </div>
-        <form onSubmit={handleSubmit} className="p-5 space-y-4" noValidate>
+    <>
+      <Modal
+        open
+        onClose={onClose}
+        title={`Edit ${isPartner ? 'External User' : 'Employee'}`}
+        closeLabel={`Close edit dialog for ${user.firstName ?? ''} ${user.lastName ?? ''}`.trim()}
+        widthClass="w-[480px] max-w-[92vw]"
+        isDirty={isDirty}
+        initialFocusRef={firstFieldRef}
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={onClose}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              form="edit-person-form"
+              disabled={update.isPending}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
+            >
+              {update.isPending ? 'Saving...' : 'Save Changes'}
+            </button>
+          </>
+        }
+      >
+        {/* People UX U1 (E-01) — the override modal is rendered OUTSIDE
+            this <form> (as a sibling of the outer Modal below) so its
+            buttons can never submit the employee form. Every button in
+            UserRateModal is type="button" for the same reason. */}
+        <form id="edit-person-form" onSubmit={handleSubmit} className="space-y-4" noValidate>
           <div className="grid grid-cols-2 gap-4">
             <TextField
+              ref={firstFieldRef}
               label="First Name"
               name="firstName"
               required
@@ -240,18 +250,6 @@ export function EditPersonModal({
               onChange={(e) => patch('phone', e.target.value)}
             />
           </div>
-          {/* People UX M2d (E-08) — orphan handling for the two
-              legacy string columns. When the user's stored department
-              or job title (a plain string on the User row) no longer
-              exists in the current catalog, we still render it here
-              as a "(legacy)" option so:
-                • the value survives an accidental "Save Changes";
-                • the admin sees the stored value clearly labelled;
-                • picking a live catalog value overwrites the legacy
-                  string cleanly.
-              The M4 label sweep uses the same pattern for the People
-              filter chips. Stage 2 (OrgUnit) will replace both
-              columns with FKs and this whole path drops. */}
           <div className="grid grid-cols-2 gap-4">
             <SelectField
               label="Job Title"
@@ -284,20 +282,12 @@ export function EditPersonModal({
                 )}
             </SelectField>
           </div>
-          {/* Seniority History — replaces the single-level dropdown.
-              The legacy users.seniority_level_id column is auto-synced
-              by the service after each add/edit/remove (always = the
-              current open-ended row), so existing reads keep working.
-              Project cost calculations now resolve the level effective
-              on each TimeEntry's date — see UserSenioritiesService. */}
+          {/* Seniority History — replaces the single-level dropdown. */}
           <SeniorityHistorySection
             userId={user.id}
             seniorityLevels={seniorityLevels}
           />
-          {/* QA3 round-3 item 3a — Cost rate override entry point.
-              Same modal as the 💰 row action; surfaced here because
-              admins look for it inside the edit dialog. Finance-gated,
-              employees only. */}
+          {/* QA3 round-3 item 3a — Cost rate override entry point. */}
           {showCostOverride && (
             <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 p-3 flex items-center justify-between">
               <div>
@@ -314,7 +304,7 @@ export function EditPersonModal({
               <button
                 type="button"
                 onClick={() => setShowOverrideModal(true)}
-                className="inline-flex items-center gap-1 rounded-md bg-emerald-600 hover:bg-emerald-700 px-3 py-1.5 text-[12px] font-semibold text-white"
+                className="inline-flex items-center gap-1 rounded-md bg-blue-600 hover:bg-blue-700 px-3 py-1.5 text-[12px] font-semibold text-white"
                 aria-label={`Manage cost rate override for ${user.firstName ?? ''} ${user.lastName ?? ''}`.trim()}
               >
                 <Coins className="h-3 w-3" aria-hidden="true" />
@@ -322,10 +312,6 @@ export function EditPersonModal({
               </button>
             </div>
           )}
-          {/* People UX U1 (E-01) — the override modal is rendered OUTSIDE
-              the <form> below so its buttons can't accidentally submit
-              the employee form. Kept the trigger button in place so the
-              UX reads the same. */}
           {/* M4a.4 — Employment fields */}
           <div className="grid grid-cols-3 gap-4">
             <TextField
@@ -371,20 +357,16 @@ export function EditPersonModal({
             />
             <span className="text-sm text-slate-700 dark:text-slate-200">Active</span>
           </label>
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <button type="button" onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
-            <button type="submit" disabled={update.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
-              {update.isPending ? 'Saving...' : 'Save Changes'}
-            </button>
-          </div>
         </form>
-      </div>
-      {/* People UX U1 (E-01) — rendered as a sibling of the form's
-          container, not inside the <form>. Any submit-typed button
-          inside UserRateModal now belongs to its own scope only. */}
+      </Modal>
+      {/* People UX U1 (E-01) — rendered as a sibling of the outer Modal,
+          not inside it. Modal renders a portal-like top-level div and
+          UserRateModal follows as a sibling so the nested modal's
+          submit-typed buttons (there are none anyway) can't reach the
+          employee form. */}
       {showOverrideModal && (
         <UserRateModal user={user} onClose={() => setShowOverrideModal(false)} />
       )}
-    </div>
+    </>
   );
 }

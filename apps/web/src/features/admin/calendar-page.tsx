@@ -3,6 +3,7 @@ import { Plus, ChevronLeft, ChevronRight, X, Trash2, Download, Calendar, Check, 
 import { useState, useMemo } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
+import { Modal } from '@/components/shared/modal';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
@@ -600,36 +601,53 @@ export function CalendarDaysPage() {
         </div>
       )}
 
-      {/* Working hours modal for holidays */}
+      {/* Working hours modal for holidays — People UX M1 on shared Modal. */}
       {workingDayEdit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setWorkingDayEdit(null)}>
-          <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700" onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Set Working Hours on Holiday</h3>
-              <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-1">
-                Mark <strong>{workingDayEdit.name}</strong> as a working day with reduced hours.
-                It will still display as a holiday.
-              </p>
-            </div>
-            <div className="px-5 py-4">
-              <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1.5 block">Working Hours</label>
-              <div className="flex items-center gap-2">
-                <input type="number" min="1" max="12" step="0.5" value={workingDayEdit.hours}
-                  onChange={(e) => setWorkingDayEdit({ ...workingDayEdit, hours: e.target.value })}
-                  className="w-20 rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm font-mono focus:border-blue-500 focus:outline-none" autoFocus />
-                <span className="text-[13px] text-slate-500 dark:text-slate-400">hours (standard day = 8h)</span>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-100 dark:border-slate-800">
-              <button onClick={() => setWorkingDayEdit(null)}
-                className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-[13px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">Cancel</button>
-              <button onClick={saveWorkingDay} disabled={updateMutation.isPending}
-                className="rounded-lg bg-blue-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+        <Modal
+          open
+          onClose={() => setWorkingDayEdit(null)}
+          title="Set Working Hours on Holiday"
+          description={
+            <>
+              Mark <strong>{workingDayEdit.name}</strong> as a working day with reduced hours. It will still display as a holiday.
+            </>
+          }
+          widthClass="w-full max-w-sm"
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() => setWorkingDayEdit(null)}
+                className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-[13px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveWorkingDay}
+                disabled={updateMutation.isPending}
+                className="rounded-lg bg-blue-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+              >
                 {updateMutation.isPending ? 'Saving...' : 'Set Working Hours'}
               </button>
-            </div>
+            </>
+          }
+        >
+          <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1.5 block">Working Hours</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min="1"
+              max="12"
+              step="0.5"
+              value={workingDayEdit.hours}
+              onChange={(e) => setWorkingDayEdit({ ...workingDayEdit, hours: e.target.value })}
+              className="w-20 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-mono text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none"
+              autoFocus
+            />
+            <span className="text-[13px] text-slate-500 dark:text-slate-400">hours (standard day = 8h)</span>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* All Non-Working Days list */}

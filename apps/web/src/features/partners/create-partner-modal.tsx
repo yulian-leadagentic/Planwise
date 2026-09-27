@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
-import { X, User as UserIcon, Building2, AlertCircle, Linkedin, Facebook, Twitter, Instagram } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { User as UserIcon, Building2, AlertCircle, Linkedin, Facebook, Twitter, Instagram } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { TextField, SelectField, TextAreaField } from '@/components/shared/field';
+import { Modal } from '@/components/shared/modal';
 
 /**
  * Canonical Business Partner creation modal.
@@ -67,7 +68,7 @@ export function CreatePartnerModal({
   // One flat state object for both modes so switching the toggle
   // doesn't lose whatever the user already typed. Fields simply aren't
   // rendered in the wrong mode.
-  const [form, setForm] = useState({
+  const emptyForm = useMemo(() => ({
     // Person
     firstName: '',
     lastName: '',
@@ -90,17 +91,10 @@ export function CreatePartnerModal({
     phone: '',
     website: '',
     notes: '',
-    // BM2 QA-2 Commit 4 (2026-08-27) — Role(s) is now MULTI-select. The
-    // array holds the chosen role-type ids in the order the user picked
-    // them; the first pick is the primary. On submit we send
-    // `initialRoleTypeIds: [...]` (the whole set) + `mainRoleTypeId`
-    // (the primary) so the backend syncs one businessPartnerRole row per
-    // pick and marks the primary via `syncMainRoleIntoRoles`.
     mainRoleTypeIds: [] as string[],
-    // BM2 QA-2 Commit 4 (2026-08-27) — Discipline classification lookup.
-    // Person-facing only; INFORMATIONAL, does not gate role eligibility.
     disciplineId: '' as string,
-  });
+  }), [preselectEmployerOrgId]);
+  const [form, setForm] = useState(emptyForm);
   // People UX M5 (P-12 / P-30 / P-31 / P-32) — inline errors, keyed by
   // field. Person path: `name` is a single combined error for the
   // "first-or-last" rule so we only carry ONE marker in the UI.
@@ -111,13 +105,16 @@ export function CreatePartnerModal({
   const clearError = (k: keyof FormErrors) =>
     setErrors((prev) => (k in prev ? { ...prev, [k]: undefined } : prev));
 
-  // Lock background scroll while open — matches the previous behaviour
-  // of both wrappers.
-  useEffect(() => {
-    const original = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = original; };
-  }, []);
+  // People UX M1 — dirty flag for the shared Modal's discard-changes
+  // guard. Any diverging field counts.
+  const isDirty = useMemo(() => {
+    return (Object.keys(emptyForm) as Array<keyof typeof emptyForm>).some((k) => {
+      const a = (form as any)[k];
+      const b = (emptyForm as any)[k];
+      if (Array.isArray(a) && Array.isArray(b)) return a.length !== b.length;
+      return a !== b;
+    });
+  }, [form, emptyForm]);
 
   // ── Data queries ────────────────────────────────────────────────
   const { data: roleTypes = [] } = useQuery<RoleType[]>({
@@ -330,87 +327,84 @@ export function CreatePartnerModal({
   const submitLabel = isPerson ? 'Create Contact' : 'Create Organization';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[560px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900 z-10">
-          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            {titleIcon}
-            {titleText}
-          </h2>
+    <Modal
+      open
+      onClose={onClose}
+      title={
+        <span className="flex items-center gap-2">
+          {titleIcon}
+          {titleText}
+        </span>
+      }
+      widthClass="w-[560px] max-w-[92vw]"
+      className="max-h-[90vh]"
+      isDirty={isDirty}
+      footer={
+        <>
           <button
+            type="button"
             onClick={onClose}
-            aria-label="Close"
-            className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200"
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
           >
-            <X className="h-4 w-4" aria-hidden="true" />
+            Cancel
           </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          {/* Person/org toggle — hidden when the caller has locked the
-              type via the wrappers (CreateContactModal / CreateOrganizationModal). */}
-          {!lockPartnerType && (
-            <div className="grid grid-cols-2 gap-2">
-              {(['person', 'organization'] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setPartnerType(t)}
-                  className={cn(
-                    'flex items-center justify-center gap-2 rounded-lg border-2 px-4 py-3 text-sm font-medium transition-colors',
-                    partnerType === t
-                      ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                      : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600',
-                  )}
-                >
-                  {t === 'person' ? <UserIcon className="h-4 w-4" aria-hidden="true" /> : <Building2 className="h-4 w-4" aria-hidden="true" />}
-                  {t === 'person' ? 'Person' : 'Organization'}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {isPerson ? (
-            <PersonForm
-              form={form}
-              setForm={setForm}
-              orgs={orgs}
-              professions={professions}
-              personRoleTypes={applicableRoles}
-              disciplines={disciplines}
-              lockEmployer={!!lockEmployer}
-              errors={errors}
-              clearError={clearError}
-            />
-          ) : (
-            <OrganizationForm
-              form={form}
-              setForm={setForm}
-              orgRoleTypes={applicableRoles}
-              errors={errors}
-              clearError={clearError}
-            />
-          )}
-
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 sticky bottom-0 bg-white dark:bg-slate-900">
-            <button
-              type="button"
-              onClick={onClose}
-              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={create.isPending}
-              className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
-            >
-              {create.isPending ? 'Creating...' : submitLabel}
-            </button>
+          <button
+            type="submit"
+            form="create-partner-form"
+            disabled={create.isPending}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
+          >
+            {create.isPending ? 'Creating...' : submitLabel}
+          </button>
+        </>
+      }
+    >
+      <form id="create-partner-form" onSubmit={handleSubmit} className="space-y-4">
+        {/* Person/org toggle — hidden when the caller has locked the type. */}
+        {!lockPartnerType && (
+          <div className="grid grid-cols-2 gap-2">
+            {(['person', 'organization'] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setPartnerType(t)}
+                className={cn(
+                  'flex items-center justify-center gap-2 rounded-lg border-2 px-4 py-3 text-sm font-medium transition-colors',
+                  partnerType === t
+                    ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                    : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600',
+                )}
+              >
+                {t === 'person' ? <UserIcon className="h-4 w-4" aria-hidden="true" /> : <Building2 className="h-4 w-4" aria-hidden="true" />}
+                {t === 'person' ? 'Person' : 'Organization'}
+              </button>
+            ))}
           </div>
-        </form>
-      </div>
-    </div>
+        )}
+
+        {isPerson ? (
+          <PersonForm
+            form={form}
+            setForm={setForm}
+            orgs={orgs}
+            professions={professions}
+            personRoleTypes={applicableRoles}
+            disciplines={disciplines}
+            lockEmployer={!!lockEmployer}
+            errors={errors}
+            clearError={clearError}
+          />
+        ) : (
+          <OrganizationForm
+            form={form}
+            setForm={setForm}
+            orgRoleTypes={applicableRoles}
+            errors={errors}
+            clearError={clearError}
+          />
+        )}
+      </form>
+    </Modal>
   );
 }
 

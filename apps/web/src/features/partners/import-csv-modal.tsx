@@ -1,10 +1,11 @@
-import { useState, useRef, useEffect } from 'react';
-import { X, Upload, AlertCircle, CheckCircle, Download } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { Upload, AlertCircle, CheckCircle, Download } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { Modal } from '@/components/shared/modal';
 
 interface ImportResult {
   summary: { total: number; created: number; skipped: number; errors: number };
@@ -25,25 +26,11 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
   const [skipExisting, setSkipExisting] = useState(true);
   const [dryRun, setDryRun] = useState(true);
   const [result, setResult] = useState<ImportResult | null>(null);
-  // People UX U4 (P-18) · 2026-09-27 — track whether the currently
-  // selected file has a matching, error-free dry run. When it does, the
-  // "Import for real" button proceeds silently; otherwise the user must
-  // acknowledge the risk in a danger confirm before we write anything.
+  // People UX U4 (P-18) — track whether the currently selected file has
+  // a matching, error-free dry run.
   const [lastDryRun, setLastDryRun] = useState<{ file: File; errors: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    const original = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = original; };
-  }, []);
-
-  // dryRun is passed as the mutation VARIABLE, not read from component state.
-  // Previously mutationFn/onSuccess closed over the `dryRun` state, but the
-  // "Import for real" button called setDryRun(false) and mutate() synchronously
-  // — React hadn't re-rendered yet, so the closure still saw dryRun=true. Result:
-  // the real import ran as a dry run AND onSuccess skipped invalidate + the
-  // success toast. Threading the flag through mutate() removes the race.
   const importMutation = useMutation({
     mutationFn: async (isDryRun: boolean) => {
       if (!file) throw new Error('No file selected');
@@ -60,8 +47,6 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
     onSuccess: (res: ImportResult, isDryRun: boolean) => {
       setResult(res);
       if (isDryRun && file) {
-        // People UX U4 (P-18) · 2026-09-27 — record which File the dry
-        // run covered so we can gate the real import on it.
         setLastDryRun({ file, errors: res.summary.errors });
       }
       if (!isDryRun) {
@@ -77,16 +62,10 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
     if (f) {
       setFile(f);
       setResult(null);
-      // A new file invalidates any prior dry-run — force the user to
-      // dry-run again (or acknowledge) before writing.
       setLastDryRun(null);
     }
   };
 
-  // People UX U4 (P-18) · 2026-09-27 — the "Import for real" click.
-  // Only proceeds silently when we've dry-run THIS exact File with 0
-  // errors; anything else pops a danger confirm naming the error count
-  // (or the missing dry run).
   const runRealImport = async () => {
     const cleanDryRun =
       !!lastDryRun && lastDryRun.file === file && lastDryRun.errors === 0;
@@ -117,144 +96,147 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[640px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Import Organizations & Contacts (CSV)</h2>
-          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" aria-label="Close">
-            <X className="h-4 w-4"  aria-hidden="true" />
+    <Modal
+      open
+      onClose={onClose}
+      title="Import Organizations & Contacts (CSV)"
+      widthClass="w-[640px] max-w-[92vw]"
+      className="max-h-[90vh]"
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+          >
+            Close
+          </button>
+          {!file ? (
+            <span className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 dark:bg-amber-900/30 dark:border-amber-800 dark:text-amber-300 rounded-md px-3 py-1.5 font-medium">
+              Choose a CSV file first ↑
+            </span>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => { setDryRun(true); importMutation.mutate(true); }}
+                disabled={importMutation.isPending}
+                className="bg-slate-700 dark:bg-slate-600 hover:bg-slate-800 dark:hover:bg-slate-500 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
+                title="Validate the file without writing anything"
+              >
+                {importMutation.isPending && dryRun ? 'Validating…' : 'Run Dry Run'}
+              </button>
+              <button
+                type="button"
+                onClick={runRealImport}
+                disabled={importMutation.isPending}
+                className={cn(
+                  'text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50',
+                  'bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500',
+                )}
+                title="Actually create the rows"
+              >
+                {importMutation.isPending && !dryRun
+                  ? 'Importing…'
+                  : result && result.summary.errors === 0
+                    ? `Import ${result.summary.created} rows`
+                    : 'Import'}
+              </button>
+            </>
+          )}
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 p-3 text-[12px] text-slate-600 dark:text-slate-300 space-y-2">
+          <p>
+            <strong>Required columns:</strong>{' '}
+            <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">partner_type</code> ({'"person"'} or {'"organization"'}).
+          </p>
+          <p>
+            <strong>Optional:</strong>{' '}
+            <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">first_name</code>,{' '}
+            <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">last_name</code>,{' '}
+            <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">company_name</code>,{' '}
+            <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">tax_id</code>,{' '}
+            <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">email</code>,{' '}
+            <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">phone</code>,{' '}
+            <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">mobile</code>,{' '}
+            <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">address</code>,{' '}
+            <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">website</code>,{' '}
+            <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">notes</code>,{' '}
+            <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">roles</code> (comma-separated codes like {'"employee,consultant"'}).
+          </p>
+          <button
+            type="button"
+            onClick={downloadSample}
+            className="text-blue-600 hover:underline text-[12px] font-semibold flex items-center gap-1"
+          >
+            <Download className="h-3 w-3" /> Download sample CSV
           </button>
         </div>
 
-        <div className="p-5 space-y-4">
-          <div className="rounded-lg bg-slate-50 dark:bg-slate-800/50 p-3 text-[12px] text-slate-600 dark:text-slate-300 space-y-2">
-            <p>
-              <strong>Required columns:</strong> <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">partner_type</code> ({'"person"'} or {'"organization"'}).
-            </p>
-            <p>
-              <strong>Optional:</strong> <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">first_name</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">last_name</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">company_name</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">tax_id</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">email</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">phone</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">mobile</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">address</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">website</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">notes</code>, <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">roles</code> (comma-separated codes like {'"employee,consultant"'}).
-            </p>
-            <button
-              type="button"
-              onClick={downloadSample}
-              className="text-blue-600 hover:underline text-[12px] font-semibold flex items-center gap-1"
-            >
-              <Download className="h-3 w-3" /> Download sample CSV
-            </button>
-          </div>
+        <div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            onChange={handleFile}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full rounded-lg border-2 border-dashed border-slate-200 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50/30 dark:hover:bg-blue-900/20 p-6 flex flex-col items-center gap-2 text-slate-600 dark:text-slate-300"
+          >
+            <Upload className="h-6 w-6 text-slate-400 dark:text-slate-500" />
+            <span className="text-sm font-medium">{file ? file.name : 'Click to choose a CSV file'}</span>
+            {file && <span className="text-[11px] text-slate-400 dark:text-slate-500">{(file.size / 1024).toFixed(1)} KB</span>}
+          </button>
+        </div>
 
-          <div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,text/csv"
-              onChange={handleFile}
-              className="hidden"
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="w-full rounded-lg border-2 border-dashed border-slate-200 dark:border-slate-700 hover:border-blue-400 hover:bg-blue-50/30 p-6 flex flex-col items-center gap-2 text-slate-600 dark:text-slate-300"
-            >
-              <Upload className="h-6 w-6 text-slate-400 dark:text-slate-500" />
-              <span className="text-sm font-medium">{file ? file.name : 'Click to choose a CSV file'}</span>
-              {file && <span className="text-[11px] text-slate-400 dark:text-slate-500">{(file.size / 1024).toFixed(1)} KB</span>}
-            </button>
-          </div>
+        <div className="flex flex-col gap-2 text-sm text-slate-700 dark:text-slate-200">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-blue-600" />
+            <span><strong>Dry run</strong> — validate only, don't write anything</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={skipExisting} onChange={(e) => setSkipExisting(e.target.checked)} className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-blue-600" />
+            <span>Skip rows whose email already exists (otherwise treat as errors)</span>
+          </label>
+        </div>
 
-          <div className="flex flex-col gap-2 text-sm text-slate-700 dark:text-slate-200">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-blue-600" />
-              <span><strong>Dry run</strong> — validate only, don't write anything</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={skipExisting} onChange={(e) => setSkipExisting(e.target.checked)} className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-blue-600" />
-              <span>Skip rows whose email already exists (otherwise treat as errors)</span>
-            </label>
-          </div>
-
-          {result && (
-            <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2">
-              <div className="flex items-center gap-4 text-[13px]">
-                <div className="flex items-center gap-1.5">
-                  <CheckCircle className="h-4 w-4 text-emerald-600" />
-                  <span><strong>{result.summary.created}</strong> {dryRun ? 'would be created' : 'created'}</span>
-                </div>
-                <div className="text-slate-500 dark:text-slate-400">
-                  · {result.summary.skipped} skipped
-                </div>
-                {result.summary.errors > 0 && (
-                  <div className="flex items-center gap-1.5 text-red-600">
-                    <AlertCircle className="h-4 w-4" />
-                    <span><strong>{result.summary.errors}</strong> errors</span>
-                  </div>
-                )}
-                <div className="ml-auto text-slate-500 dark:text-slate-400">{result.summary.total} rows total</div>
+        {result && (
+          <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+            <div className="flex items-center gap-4 text-[13px]">
+              <div className="flex items-center gap-1.5">
+                <CheckCircle className="h-4 w-4 text-emerald-600" />
+                <span><strong>{result.summary.created}</strong> {dryRun ? 'would be created' : 'created'}</span>
               </div>
-              {result.errors.length > 0 && (
-                <div className="max-h-40 overflow-y-auto rounded bg-red-50 px-3 py-2 text-[12px] text-red-700 space-y-0.5">
-                  {result.errors.slice(0, 25).map((e, i) => (
-                    <div key={i}>
-                      <span className="font-mono">row {e.row}:</span> {e.reason}
-                    </div>
-                  ))}
-                  {result.errors.length > 25 && <div className="italic text-red-500">… and {result.errors.length - 25} more</div>}
+              <div className="text-slate-500 dark:text-slate-400">
+                · {result.summary.skipped} skipped
+              </div>
+              {result.summary.errors > 0 && (
+                <div className="flex items-center gap-1.5 text-red-600">
+                  <AlertCircle className="h-4 w-4" />
+                  <span><strong>{result.summary.errors}</strong> errors</span>
                 </div>
               )}
+              <div className="ml-auto text-slate-500 dark:text-slate-400">{result.summary.total} rows total</div>
             </div>
-          )}
-
-          {/* Footer:
-             • Always show Close + the main action button
-             • When a dry run came back clean (no errors, has would-create rows)
-               surface a prominent green "Import for real" button next to
-               the dry-run button so the user doesn't have to find the
-               checkbox to flip dryRun off.
-             • If no file is picked, the main button shows a HINT
-               instead of being silently dim — that was the "press it and
-               nothing happens" complaint (user thought it was broken).
-          */}
-          <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <button onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Close</button>
-
-            {!file ? (
-              <span className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-1.5 font-medium">
-                Choose a CSV file first ↑
-              </span>
-            ) : (
-              <>
-                <button
-                  onClick={() => { setDryRun(true); importMutation.mutate(true); }}
-                  disabled={importMutation.isPending}
-                  className="bg-slate-700 dark:bg-slate-600 hover:bg-slate-800 dark:hover:bg-slate-500 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
-                  title="Validate the file without writing anything"
-                >
-                  {importMutation.isPending && dryRun ? 'Validating…' : 'Run Dry Run'}
-                </button>
-                <button
-                  onClick={runRealImport}
-                  disabled={importMutation.isPending}
-                  className={cn(
-                    'text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50',
-                    // Pulse the green button when a clean dry-run just landed
-                    // so users see what to click next.
-                    result && result.summary.errors === 0 && result.summary.created > 0
-                      ? 'bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500'
-                      : 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500',
-                  )}
-                  title="Actually create the rows"
-                >
-                  {importMutation.isPending && !dryRun
-                    ? 'Importing…'
-                    : result && result.summary.errors === 0
-                      ? `Import ${result.summary.created} rows`
-                      : 'Import'}
-                </button>
-              </>
+            {result.errors.length > 0 && (
+              <div className="max-h-40 overflow-y-auto rounded bg-red-50 dark:bg-red-950/30 px-3 py-2 text-[12px] text-red-700 dark:text-red-300 space-y-0.5">
+                {result.errors.slice(0, 25).map((e, i) => (
+                  <div key={i}>
+                    <span className="font-mono">row {e.row}:</span> {e.reason}
+                  </div>
+                ))}
+                {result.errors.length > 25 && <div className="italic text-red-500 dark:text-red-400">… and {result.errors.length - 25} more</div>}
+              </div>
             )}
           </div>
-        </div>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }

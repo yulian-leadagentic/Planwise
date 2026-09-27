@@ -1,9 +1,10 @@
-import { X, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
+import { Modal } from '@/components/shared/modal';
 import { CreateContactModal } from '@/features/partners/create-contact-modal';
 import type { PickerMode } from './types';
 
@@ -155,17 +156,38 @@ export function ProjectBpPicker({
       ? 'Pick a supplier from the project first, then add its workers.'
       : null;
 
+  const isDirty = selectedBpId != null || roleInContext.trim().length > 0;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[560px] max-w-[92vw] max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{config.title}</h2>
-          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" aria-label="Close">
-            <X className="h-4 w-4"  aria-hidden="true" />
+    <Modal
+      open
+      onClose={onClose}
+      title={config.title}
+      widthClass="w-[560px] max-w-[92vw]"
+      className="max-h-[90vh]"
+      isDirty={isDirty}
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg"
+          >
+            Cancel
           </button>
-        </div>
-        <div className="p-5 space-y-4">
-          <p className="text-[12px] text-slate-500 dark:text-slate-400">{config.blurb}</p>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={create.isPending || !selectedBpId || !!blockedReason}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
+          >
+            {create.isPending ? 'Adding...' : 'Add to Project'}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-[12px] text-slate-500 dark:text-slate-400">{config.blurb}</p>
 
           {blockedReason ? (
             <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-[12px] text-amber-700">
@@ -241,17 +263,6 @@ export function ProjectBpPicker({
             </>
           )}
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <button onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
-            <button
-              onClick={handleSubmit}
-              disabled={create.isPending || !selectedBpId || !!blockedReason}
-              className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
-            >
-              {create.isPending ? 'Adding...' : 'Add to Project'}
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* In-line "create new contact pinned to this customer/supplier" modal.
@@ -269,6 +280,6 @@ export function ProjectBpPicker({
           }}
         />
       )}
-    </div>
+    </Modal>
   );
 }

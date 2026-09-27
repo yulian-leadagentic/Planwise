@@ -1,22 +1,22 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Coins, Save, Trash2, X } from 'lucide-react';
+import { Coins, Save, Trash2 } from 'lucide-react';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { Modal } from '@/components/shared/modal';
+import { TextField } from '@/components/shared/field';
 import type { UserListItem } from '@/types';
 
 // QA3 round-3 items 3b + 5 — per-employee cost-rate override modal.
 //
-// Changes vs round-1:
-//   • End date (effectiveTo) added. Empty = "Current" (open-ended);
-//     any date = bounded [start, end] window. Bounded windows do NOT
-//     close the current open-ended row — the resolver picks by
-//     desc-startDate during the bounded window and falls back to the
-//     open-ended row outside it.
-//   • Currency field removed everywhere (system is ₪-only). The DB
-//     `currency` column stays nullable; we submit null.
-//   • Every rendered rate uses the ₪ prefix.
+// People UX M1 (E-05) — the shell (dialog role, aria-modal, Tab trap,
+// Escape, focus return) now comes from the shared Modal. This
+// component owns just the form + mutations.
+//
+// U1 note: every internal button already carries type="button" so it
+// stays clear of any outer form (edit-person-modal renders us as a
+// sibling to its own <form>).
 
 type UserRateRow = {
   id: number;
@@ -65,8 +65,6 @@ export function UserRateModal({ user, onClose }: Props) {
           hourlyCost,
           currency: null,
           effectiveFrom,
-          // Only send effectiveTo when the operator entered one; the
-          // backend interprets absence as "open-ended, close current".
           ...(effectiveTo ? { effectiveTo } : {}),
         })
         .then((r) => r.data),
@@ -113,168 +111,149 @@ export function UserRateModal({ user, onClose }: Props) {
 
   const fmt = (iso: string | null) => (iso ? iso.slice(0, 10) : '— now');
 
+  const isDirty = hourlyCost.trim().length > 0 || effectiveTo.trim().length > 0;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div
-        className="w-full max-w-lg rounded-xl bg-white dark:bg-slate-900 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-5 py-4">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <Coins className="h-4 w-4 text-emerald-600" aria-hidden="true" />
-            Cost rate override — {user.firstName} {user.lastName}
-          </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
-            aria-label="Close"
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </button>
+    <Modal
+      open
+      onClose={onClose}
+      title={
+        <span className="flex items-center gap-2">
+          <Coins className="h-4 w-4 text-blue-600" aria-hidden="true" />
+          Cost rate override — {user.firstName} {user.lastName}
+        </span>
+      }
+      widthClass="w-full max-w-lg"
+      isDirty={isDirty}
+    >
+      <div className="space-y-4">
+        <div className="rounded-md bg-slate-50 dark:bg-slate-800/60 px-3 py-2 text-xs text-slate-600 dark:text-slate-300">
+          {currentOverride ? (
+            <>
+              <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+                Active override:
+              </span>{' '}
+              <span className="font-mono">₪{currentOverride.hourlyCost}</span>/h — since{' '}
+              {fmt(currentOverride.startDate)}. Wins over the level rate on entries from that date on.
+            </>
+          ) : (
+            <>
+              No override active. This user derives their rate from their seniority level (see the
+              Seniority Levels admin page).
+            </>
+          )}
         </div>
 
-        <div className="p-5 space-y-4">
-          <div className="rounded-md bg-slate-50 dark:bg-slate-800/60 px-3 py-2 text-xs text-slate-600 dark:text-slate-300">
-            {currentOverride ? (
-              <>
-                <span className="font-semibold text-emerald-700 dark:text-emerald-400">
-                  Active override:
-                </span>{' '}
-                <span className="font-mono">₪{currentOverride.hourlyCost}</span>/h — since {fmt(currentOverride.startDate)}. Wins over
-                the level rate on entries from that date on.
-              </>
-            ) : (
-              <>
-                No override active. This user derives their rate from their seniority level (see the
-                Seniority Levels admin page).
-              </>
-            )}
+        <div>
+          <h4 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+            Set / change override — forward effective
+          </h4>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <TextField
+              label="Rate (₪/h)"
+              name="user-rate-hourly"
+              type="number"
+              step="0.01"
+              min={0}
+              value={hourlyCost}
+              onChange={(e) => setHourlyCost(e.target.value)}
+              placeholder="e.g. 550"
+              inputClassName="font-mono"
+            />
+            <TextField
+              label="Effective from"
+              name="user-rate-effective-from"
+              type="date"
+              value={effectiveFrom}
+              onChange={(e) => setEffectiveFrom(e.target.value)}
+            />
+            <TextField
+              label="End (optional)"
+              name="user-rate-effective-to"
+              type="date"
+              value={effectiveTo}
+              onChange={(e) => setEffectiveTo(e.target.value)}
+              min={effectiveFrom || undefined}
+              placeholder="Current"
+              hint="Leave empty = current"
+            />
           </div>
-
-          <div>
-            <h4 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-              Set / change override — forward effective
-            </h4>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Rate (₪/h)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={hourlyCost}
-                  onChange={(e) => setHourlyCost(e.target.value)}
-                  placeholder="e.g. 550"
-                  className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm font-mono"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                  Effective from
-                </label>
-                <input
-                  type="date"
-                  value={effectiveFrom}
-                  onChange={(e) => setEffectiveFrom(e.target.value)}
-                  className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-                />
-              </div>
-              <div>
-                <label
-                  className="mb-1 block text-xs font-medium text-muted-foreground whitespace-nowrap"
-                  title="Empty = open-ended (Current). Enter a date to bound the override to [start, end]; the person reverts to their level rate after that date."
-                >
-                  End (optional)
-                </label>
-                <input
-                  type="date"
-                  value={effectiveTo}
-                  onChange={(e) => setEffectiveTo(e.target.value)}
-                  min={effectiveFrom || undefined}
-                  placeholder="Current"
-                  className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-                />
-                <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">leave empty = current</div>
-              </div>
-            </div>
-            <div className="mt-3 flex items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={async () => {
-                  if (!canRemove) return;
-                  if (
-                    await confirm(
-                      `Remove override for ${user.firstName} ${user.lastName} from ${effectiveFrom}?\n\nEntries from that date on will use the level rate again.`,
-                    )
-                  ) {
-                    removeMutation.mutate();
-                  }
-                }}
-                disabled={!canRemove}
-                className="inline-flex items-center gap-1 rounded-md border border-red-200 dark:border-red-900 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-40 disabled:cursor-not-allowed"
-                title={
-                  currentOverride
-                    ? 'Close the current override — user reverts to level rate'
-                    : 'No active override to remove'
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={async () => {
+                if (!canRemove) return;
+                if (
+                  await confirm(
+                    `Remove override for ${user.firstName} ${user.lastName} from ${effectiveFrom}?\n\nEntries from that date on will use the level rate again.`,
+                  )
+                ) {
+                  removeMutation.mutate();
                 }
-              >
-                <Trash2 className="h-3 w-3" aria-hidden="true" />
-                {removeMutation.isPending ? 'Removing…' : 'Remove override'}
-              </button>
-              <button
-                type="button"
-                onClick={() => changeMutation.mutate()}
-                disabled={!canSubmit}
-                className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-              >
-                <Save className="h-3 w-3" aria-hidden="true" />
-                {changeMutation.isPending ? 'Saving…' : currentOverride ? 'Change override' : 'Set override'}
-              </button>
-            </div>
+              }}
+              disabled={!canRemove}
+              className="inline-flex items-center gap-1 rounded-md border border-red-200 dark:border-red-900 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={
+                currentOverride
+                  ? 'Close the current override — user reverts to level rate'
+                  : 'No active override to remove'
+              }
+            >
+              <Trash2 className="h-3 w-3" aria-hidden="true" />
+              {removeMutation.isPending ? 'Removing…' : 'Remove override'}
+            </button>
+            <button
+              type="button"
+              onClick={() => changeMutation.mutate()}
+              disabled={!canSubmit}
+              className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              <Save className="h-3 w-3" aria-hidden="true" />
+              {changeMutation.isPending ? 'Saving…' : currentOverride ? 'Change override' : 'Set override'}
+            </button>
           </div>
+        </div>
 
-          <div>
-            <h4 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-              History
-            </h4>
-            {isLoading ? (
-              <p className="text-xs text-slate-400">Loading…</p>
-            ) : rates.length === 0 ? (
-              <p className="text-xs text-slate-400 italic">No override history yet.</p>
-            ) : (
-              <div className="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700">
-                <table className="w-full text-xs">
-                  <thead className="bg-slate-50 dark:bg-slate-800/60">
-                    <tr>
-                      <th className="px-3 py-1.5 text-left font-medium">Rate</th>
-                      <th className="px-3 py-1.5 text-left font-medium">From</th>
-                      <th className="px-3 py-1.5 text-left font-medium">To</th>
+        <div>
+          <h4 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+            History
+          </h4>
+          {isLoading ? (
+            <p className="text-xs text-slate-400">Loading…</p>
+          ) : rates.length === 0 ? (
+            <p className="text-xs text-slate-400 italic">No override history yet.</p>
+          ) : (
+            <div className="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 dark:bg-slate-800/60">
+                  <tr>
+                    <th className="px-3 py-1.5 text-left font-medium">Rate</th>
+                    <th className="px-3 py-1.5 text-left font-medium">From</th>
+                    <th className="px-3 py-1.5 text-left font-medium">To</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rates.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100 dark:border-slate-800">
+                      <td className="px-3 py-1.5 font-mono">₪{r.hourlyCost}/h</td>
+                      <td className="px-3 py-1.5 text-slate-500">{fmt(r.startDate)}</td>
+                      <td className="px-3 py-1.5 text-slate-500">
+                        {r.endDate === null ? (
+                          <span className="rounded bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">
+                            Current
+                          </span>
+                        ) : (
+                          fmt(r.endDate)
+                        )}
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {rates.map((r) => (
-                      <tr key={r.id} className="border-t border-slate-100 dark:border-slate-800">
-                        <td className="px-3 py-1.5 font-mono">₪{r.hourlyCost}/h</td>
-                        <td className="px-3 py-1.5 text-slate-500">{fmt(r.startDate)}</td>
-                        <td className="px-3 py-1.5 text-slate-500">
-                          {r.endDate === null ? (
-                            <span className="rounded bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">
-                              Current
-                            </span>
-                          ) : (
-                            fmt(r.endDate)
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

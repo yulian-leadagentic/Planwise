@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Plus, Users, X } from 'lucide-react';
+import { Plus, Users } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
 import { FilterBar } from '@/components/shared/filter-bar';
@@ -8,6 +8,7 @@ import { UserAvatar } from '@/components/shared/user-avatar';
 import { EmptyState } from '@/components/shared/empty-state';
 import { Tabs, tabPanelId, tabTriggerId } from '@/components/shared/tabs';
 import { TextField, SelectField } from '@/components/shared/field';
+import { Modal } from '@/components/shared/modal';
 import { useUsers } from '@/hooks/use-users';
 import { useFilterStore } from '@/stores/filter.store';
 import { useDebounce } from '@/hooks/use-debounce';
@@ -534,17 +535,34 @@ export function PeoplePage() {
       )}
       </div>
 
-      {/* Create Person Modal */}
+      {/* Create Person Modal — People UX M1: on the shared Modal shell. */}
       {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={() => setShowCreate(false)}>
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[480px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Add {isPartners ? 'External User' : 'Employee'}</h2>
-              <button onClick={() => setShowCreate(false)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
-                <X className="h-4 w-4" />
+        <Modal
+          open
+          onClose={() => setShowCreate(false)}
+          title={`Add ${isPartners ? 'External User' : 'Employee'}`}
+          widthClass="w-[480px] max-w-[92vw]"
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() => setShowCreate(false)}
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+              >
+                Cancel
               </button>
-            </div>
-            <form onSubmit={handleCreateSubmit} className="p-5 space-y-4">
+              <button
+                type="submit"
+                form="create-person-form"
+                disabled={createUser.isPending}
+                className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
+              >
+                {createUser.isPending ? 'Creating...' : 'Create'}
+              </button>
+            </>
+          }
+        >
+          <form id="create-person-form" onSubmit={handleCreateSubmit} className="space-y-4">
               {/* External Employees only: Employer Organization picker.
                   The form intent on this tab is "this person works at
                   one of our customer/supplier orgs" so the org IS the
@@ -872,178 +890,140 @@ export function PeoplePage() {
                   onChange={(e) => patchCreate('companyName', e.target.value)}
                 />
               )}
-              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                <button type="button" onClick={() => setShowCreate(false)} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
-                <button type="submit" disabled={createUser.isPending} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
-                  {createUser.isPending ? 'Creating...' : 'Create'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+          </form>
+        </Modal>
       )}
 
       {/* Partner picker — opens from the "Link to existing partner" button
-          in the create modal. Stacked above the create modal (z-60) so
-          clicks here don't dismiss the form behind it. */}
+          in the create modal. Stacked ABOVE the create Modal so Escape
+          closes only the picker (the shared Modal owns "top layer only"). */}
       {partnerPickerOpen && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/35 backdrop-blur-sm"
-          onClick={() => setPartnerPickerOpen(false)}
+        <Modal
+          open
+          onClose={() => setPartnerPickerOpen(false)}
+          title="Select a contact"
+          widthClass="w-[520px] max-w-[92vw]"
+          className="max-h-[80vh]"
         >
-          <div
-            className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[520px] max-w-[92vw] max-h-[80vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Select a contact</h2>
-              <button
-                type="button"
-                onClick={() => setPartnerPickerOpen(false)}
-                className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="p-4 border-b border-slate-100 dark:border-slate-800">
-              <input
-                autoFocus
-                value={partnerPickerSearch}
-                onChange={(e) => setPartnerPickerSearch(e.target.value)}
-                placeholder="Search by name, email, or company..."
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-              />
-              <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
-                Only contacts without an existing login are shown.
-              </p>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              {(() => {
-                const q = partnerPickerSearch.trim().toLowerCase();
-                const filtered = q
-                  ? linkableBps.filter((bp: any) => {
-                      const haystack = `${bp.displayName ?? ''} ${bp.email ?? ''} ${bp.companyName ?? ''}`.toLowerCase();
-                      return haystack.includes(q);
-                    })
-                  : linkableBps;
-                if (filtered.length === 0) {
-                  return (
-                    <p className="px-5 py-6 text-center text-sm text-slate-500 dark:text-slate-400">
-                      {linkableBps.length === 0
-                        ? 'No linkable contacts — every person already has a login.'
-                        : 'No matches for that search.'}
-                    </p>
-                  );
-                }
+          <div className="flex flex-col gap-3">
+            <input
+              autoFocus
+              value={partnerPickerSearch}
+              onChange={(e) => setPartnerPickerSearch(e.target.value)}
+              placeholder="Search by name, email, or company..."
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 focus:border-blue-500 focus:outline-none"
+            />
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              Only contacts without an existing login are shown.
+            </p>
+            {(() => {
+              const q = partnerPickerSearch.trim().toLowerCase();
+              const filtered = q
+                ? linkableBps.filter((bp: any) => {
+                    const haystack = `${bp.displayName ?? ''} ${bp.email ?? ''} ${bp.companyName ?? ''}`.toLowerCase();
+                    return haystack.includes(q);
+                  })
+                : linkableBps;
+              if (filtered.length === 0) {
                 return (
-                  <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {filtered.map((bp: any) => (
-                      <li key={bp.id}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            handleLinkExistingBp(String(bp.id));
-                            setPartnerPickerOpen(false);
-                          }}
-                          className="w-full text-left px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                        >
-                          <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{bp.displayName}</p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">
-                            {bp.email ?? '—'}
-                            {bp.companyName ? ` · ${bp.companyName}` : ''}
-                          </p>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+                  <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                    {linkableBps.length === 0
+                      ? 'No linkable contacts — every person already has a login.'
+                      : 'No matches for that search.'}
+                  </p>
                 );
-              })()}
-            </div>
+              }
+              return (
+                <ul className="divide-y divide-slate-100 dark:divide-slate-800 -mx-5">
+                  {filtered.map((bp: any) => (
+                    <li key={bp.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleLinkExistingBp(String(bp.id));
+                          setPartnerPickerOpen(false);
+                        }}
+                        className="w-full text-left px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                      >
+                        <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{bp.displayName}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          {bp.email ?? '—'}
+                          {bp.companyName ? ` · ${bp.companyName}` : ''}
+                        </p>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              );
+            })()}
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* Employer organization picker — opens from "Employer Organization"
-          on the External Employees form. Lists ALL organization-type BPs
-          (customers, suppliers, subcontractors, etc.) so admins can pick
-          which org the new contact works at. Searchable; same stacking
-          rules as the person picker above (z-60 over the create modal). */}
+          on the External Employees form. */}
       {employerPickerOpen && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/35 backdrop-blur-sm"
-          onClick={() => setEmployerPickerOpen(false)}
+        <Modal
+          open
+          onClose={() => setEmployerPickerOpen(false)}
+          title="Select an organization"
+          widthClass="w-[520px] max-w-[92vw]"
+          className="max-h-[80vh]"
         >
-          <div
-            className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[520px] max-w-[92vw] max-h-[80vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Select an organization</h2>
-              <button
-                type="button"
-                onClick={() => setEmployerPickerOpen(false)}
-                className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="p-4 border-b border-slate-100 dark:border-slate-800">
-              <input
-                autoFocus
-                value={employerPickerSearch}
-                onChange={(e) => setEmployerPickerSearch(e.target.value)}
-                placeholder="Search by name, tax ID, or email..."
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-              />
-              <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
-                Customers, suppliers, subcontractors — every organization in the system.
-              </p>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              {(() => {
-                const q = employerPickerSearch.trim().toLowerCase();
-                const filtered = q
-                  ? employerOrgs.filter((o: any) => {
-                      const haystack = `${o.displayName ?? ''} ${o.taxId ?? ''} ${o.email ?? ''} ${o.companyName ?? ''}`.toLowerCase();
-                      return haystack.includes(q);
-                    })
-                  : employerOrgs;
-                if (filtered.length === 0) {
-                  return (
-                    <p className="px-5 py-6 text-center text-sm text-slate-500 dark:text-slate-400">
-                      {employerOrgs.length === 0
-                        ? 'No organizations yet — add one from Organizations first.'
-                        : 'No matches for that search.'}
-                    </p>
-                  );
-                }
+          <div className="flex flex-col gap-3">
+            <input
+              autoFocus
+              value={employerPickerSearch}
+              onChange={(e) => setEmployerPickerSearch(e.target.value)}
+              placeholder="Search by name, tax ID, or email..."
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 focus:border-blue-500 focus:outline-none"
+            />
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              Customers, suppliers, subcontractors — every organization in the system.
+            </p>
+            {(() => {
+              const q = employerPickerSearch.trim().toLowerCase();
+              const filtered = q
+                ? employerOrgs.filter((o: any) => {
+                    const haystack = `${o.displayName ?? ''} ${o.taxId ?? ''} ${o.email ?? ''} ${o.companyName ?? ''}`.toLowerCase();
+                    return haystack.includes(q);
+                  })
+                : employerOrgs;
+              if (filtered.length === 0) {
                 return (
-                  <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {filtered.map((org: any) => (
-                      <li key={org.id}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setForm((f) => ({ ...f, employerOrgId: org.id }));
-                            setEmployerPickerOpen(false);
-                          }}
-                          className="w-full text-left px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                        >
-                          <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{org.displayName}</p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">
-                            {org.mainRoleType?.name ?? 'No main role'}
-                            {org.taxId ? ` · Tax ID: ${org.taxId}` : ''}
-                            {org.email ? ` · ${org.email}` : ''}
-                          </p>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+                  <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                    {employerOrgs.length === 0
+                      ? 'No organizations yet — add one from Organizations first.'
+                      : 'No matches for that search.'}
+                  </p>
                 );
-              })()}
-            </div>
+              }
+              return (
+                <ul className="divide-y divide-slate-100 dark:divide-slate-800 -mx-5">
+                  {filtered.map((org: any) => (
+                    <li key={org.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setForm((f) => ({ ...f, employerOrgId: org.id }));
+                          setEmployerPickerOpen(false);
+                        }}
+                        className="w-full text-left px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                      >
+                        <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{org.displayName}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          {org.mainRoleType?.name ?? 'No main role'}
+                          {org.taxId ? ` · Tax ID: ${org.taxId}` : ''}
+                          {org.email ? ` · ${org.email}` : ''}
+                        </p>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              );
+            })()}
           </div>
-        </div>
+        </Modal>
       )}
 
       {editingUser && (

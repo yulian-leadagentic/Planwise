@@ -6,9 +6,10 @@
  */
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, RotateCcw, Download, ChevronRight, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, RotateCcw, Download, AlertTriangle } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
+import { Modal, Sheet } from '@/components/shared/modal';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-utils';
@@ -203,24 +204,42 @@ function DetailDrawer({ importId, onClose }: { importId: number; onClose: () => 
   };
 
   return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/20" onClick={onClose} />
-      <div className="fixed inset-y-0 right-0 z-50 w-[640px] max-w-[90vw] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700 shadow-2xl flex flex-col">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700">
-          <h2 className="text-sm font-bold">Import #{importId} — per-row outcomes</h2>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={exportCsv}
-              disabled={rows.length === 0}
-              className="flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 disabled:opacity-50"
-            >
-              <Download className="h-3 w-3" />
-              CSV
-            </button>
-            <button onClick={onClose} className="rounded p-1 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">×</button>
-          </div>
+    <Sheet
+      open
+      onClose={onClose}
+      widthClass="w-[640px] max-w-[90vw]"
+      hideCloseButton
+      bodyClassName="p-0"
+      footer={
+        <p className="flex-1 text-[11px] text-slate-500 dark:text-slate-400 text-left">
+          Generated passwords are visible here so you can distribute them to the new employees. Recipients should
+          change their password on first login.
+        </p>
+      }
+    >
+      <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-900 z-10">
+        <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">Import #{importId} — per-row outcomes</h2>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={exportCsv}
+            disabled={rows.length === 0}
+            className="flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 disabled:opacity-50"
+          >
+            <Download className="h-3 w-3" />
+            CSV
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={`Close import #${importId} details`}
+            className="rounded p-1 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            <span aria-hidden="true">×</span>
+          </button>
         </div>
-        <div className="flex-1 overflow-y-auto">
+      </div>
+      <div>
           {isLoading ? (
             <div className="px-5 py-8 text-center text-[12px] text-slate-400 dark:text-slate-500">Loading…</div>
           ) : (
@@ -276,12 +295,7 @@ function DetailDrawer({ importId, onClose }: { importId: number; onClose: () => 
             </table>
           )}
         </div>
-        <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-[11px] text-slate-500 dark:text-slate-400">
-          Generated passwords are visible here so you can distribute them to the new employees. Recipients should
-          change their password on first login.
-        </div>
-      </div>
-    </>
+    </Sheet>
   );
 }
 
@@ -297,38 +311,50 @@ function RollbackDialog({
   onConfirm: () => void;
 }) {
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
-      onClick={() => !submitting && onCancel()}
-      role="dialog"
-      aria-modal="true"
-    >
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-lg bg-white dark:bg-slate-900 shadow-2xl overflow-hidden">
-        <div className="flex items-start gap-3 px-5 py-4 bg-red-50 border-b border-red-200">
-          <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
-          <div>
-            <h2 className="text-sm font-bold text-red-900">Roll back import #{imp.id}?</h2>
-            <p className="mt-1 text-[12px] text-red-800">
-              This will permanently delete <strong>{imp.createdCount}</strong> {imp.target} created by this import.
-              Skipped rows are not affected.
-            </p>
-          </div>
-        </div>
-        <div className="px-5 py-3 text-[12px] text-slate-700 dark:text-slate-200 space-y-2">
-          <p>
-            <strong>Note:</strong> any work done on the deleted records since the import (time entries, project
-            memberships, etc.) will also be removed via cascade. Make sure no one is depending on this data.
-          </p>
-        </div>
-        <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-end gap-2">
-          <button onClick={onCancel} disabled={submitting} className="rounded-md px-3 py-1.5 text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50">
+    <Modal
+      open
+      onClose={() => !submitting && onCancel()}
+      escapeDisabled={submitting}
+      title={
+        <span className="flex items-center gap-2">
+          <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/40" aria-hidden="true">
+            <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400" />
+          </span>
+          Roll back import #{imp.id}?
+        </span>
+      }
+      description={
+        <>
+          This will permanently delete <strong>{imp.createdCount}</strong> {imp.target} created by this import.
+          Skipped rows are not affected.
+        </>
+      }
+      widthClass="w-full max-w-md"
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={submitting}
+            className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+          >
             Cancel
           </button>
-          <button onClick={onConfirm} disabled={submitting} className="rounded-md bg-red-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-red-700 disabled:opacity-50">
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={submitting}
+            className="rounded-lg bg-red-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+          >
             {submitting ? 'Rolling back…' : 'Confirm rollback'}
           </button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <p className="text-[12px] text-slate-700 dark:text-slate-200">
+        <strong>Note:</strong> any work done on the deleted records since the import (time entries, project
+        memberships, etc.) will also be removed via cascade. Make sure no one is depending on this data.
+      </p>
+    </Modal>
   );
 }

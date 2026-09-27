@@ -8,6 +8,7 @@ import { DataTable } from '@/components/shared/data-table';
 import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { TextField, Field } from '@/components/shared/field';
+import { Modal } from '@/components/shared/modal';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
@@ -401,113 +402,101 @@ function RateHistoryModal({
 
   const fmt = (iso: string | null) => (iso ? iso.slice(0, 10) : '— now');
 
+  const isDirty = hourlyCost.trim().length > 0;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div
-        className="w-full max-w-lg rounded-xl bg-white dark:bg-slate-900 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-5 py-4">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-            Rate history — {level.name}
-          </h3>
-          <button
-            onClick={onClose}
-            className="rounded p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
-            aria-label="Close"
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </button>
+    <Modal
+      open
+      onClose={onClose}
+      title={`Rate history — ${level.name}`}
+      widthClass="w-full max-w-lg"
+      isDirty={isDirty}
+    >
+      <div className="space-y-4">
+        <div>
+          <h4 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+            Change rate — forward effective
+          </h4>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <TextField
+              label="New rate"
+              name="seniority-rate-new"
+              type="number"
+              step="0.01"
+              min={0}
+              value={hourlyCost}
+              onChange={(e) => setHourlyCost(e.target.value)}
+              placeholder="e.g. 500"
+              inputClassName="font-mono"
+            />
+            <TextField
+              label="Effective from"
+              name="seniority-rate-effective-from"
+              type="date"
+              value={effectiveFrom}
+              onChange={(e) => setEffectiveFrom(e.target.value)}
+            />
+          </div>
+          <div className="mt-3 flex justify-end">
+            <button
+              type="button"
+              onClick={() => changeMutation.mutate()}
+              disabled={!canSubmit}
+              className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              <Save className="h-3 w-3" aria-hidden="true" />
+              {changeMutation.isPending ? 'Saving…' : 'Change rate'}
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+            Closes the current row at the day before, opens a new row starting {effectiveFrom || '…'}.
+            Entries before that date keep the prior rate.
+          </p>
         </div>
 
-        <div className="p-5 space-y-4">
-          <div>
-            <h4 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-              Change rate — forward effective
-            </h4>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <TextField
-                label="New rate"
-                name="seniority-rate-new"
-                type="number"
-                step="0.01"
-                min={0}
-                value={hourlyCost}
-                onChange={(e) => setHourlyCost(e.target.value)}
-                placeholder="e.g. 500"
-                inputClassName="font-mono"
-              />
-              {/* QA3 round-3 item 5 — currency selector removed
-                  (system is ₪-only). DB column stays nullable; we
-                  submit null on change. */}
-              <TextField
-                label="Effective from"
-                name="seniority-rate-effective-from"
-                type="date"
-                value={effectiveFrom}
-                onChange={(e) => setEffectiveFrom(e.target.value)}
-              />
-            </div>
-            <div className="mt-3 flex justify-end">
-              <button
-                onClick={() => changeMutation.mutate()}
-                disabled={!canSubmit}
-                className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-              >
-                <Save className="h-3 w-3" aria-hidden="true" />
-                {changeMutation.isPending ? 'Saving…' : 'Change rate'}
-              </button>
-            </div>
-            <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
-              Closes the current row at the day before, opens a new row starting {effectiveFrom || '…'}.
-              Entries before that date keep the prior rate.
+        <div>
+          <h4 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+            History
+          </h4>
+          {isLoading ? (
+            <p className="text-xs text-slate-400">Loading…</p>
+          ) : rates.length === 0 ? (
+            <p className="text-xs text-slate-400 italic">
+              No rate history yet — the level uses its default hourly cost until you set one.
             </p>
-          </div>
-
-          <div>
-            <h4 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-              History
-            </h4>
-            {isLoading ? (
-              <p className="text-xs text-slate-400">Loading…</p>
-            ) : rates.length === 0 ? (
-              <p className="text-xs text-slate-400 italic">
-                No rate history yet — the level uses its default hourly cost until you set one.
-              </p>
-            ) : (
-              <div className="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700">
-                <table className="w-full text-xs">
-                  <thead className="bg-slate-50 dark:bg-slate-800/60">
-                    <tr>
-                      <th className="px-3 py-1.5 text-left font-medium">Rate</th>
-                      <th className="px-3 py-1.5 text-left font-medium">From</th>
-                      <th className="px-3 py-1.5 text-left font-medium">To</th>
+          ) : (
+            <div className="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 dark:bg-slate-800/60">
+                  <tr>
+                    <th className="px-3 py-1.5 text-left font-medium">Rate</th>
+                    <th className="px-3 py-1.5 text-left font-medium">From</th>
+                    <th className="px-3 py-1.5 text-left font-medium">To</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rates.map((r) => (
+                    <tr key={r.id} className="border-t border-slate-100 dark:border-slate-800">
+                      <td className="px-3 py-1.5 font-mono">₪{r.hourlyCost}/h</td>
+                      <td className="px-3 py-1.5 text-slate-500">{fmt(r.startDate)}</td>
+                      <td className="px-3 py-1.5 text-slate-500">
+                        {r.endDate === null ? (
+                          <span className="rounded bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">
+                            Current
+                          </span>
+                        ) : (
+                          fmt(r.endDate)
+                        )}
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {rates.map((r) => (
-                      <tr key={r.id} className="border-t border-slate-100 dark:border-slate-800">
-                        <td className="px-3 py-1.5 font-mono">₪{r.hourlyCost}/h</td>
-                        <td className="px-3 py-1.5 text-slate-500">{fmt(r.startDate)}</td>
-                        <td className="px-3 py-1.5 text-slate-500">
-                          {r.endDate === null ? (
-                            <span className="rounded bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">
-                              Current
-                            </span>
-                          ) : (
-                            fmt(r.endDate)
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 

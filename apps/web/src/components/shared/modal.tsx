@@ -65,6 +65,9 @@ export interface ModalProps {
   widthClass?: string;
   /** Extra classes on the panel container. */
   className?: string;
+  /** Overrides the body wrapper's classes (default `p-5`). Used by
+   *  modals whose contents own their own padding (e.g. tabs strips). */
+  bodyClassName?: string;
 }
 
 export function Modal({
@@ -83,6 +86,7 @@ export function Modal({
   escapeDisabled = false,
   widthClass = 'w-[440px] max-w-[92vw]',
   className,
+  bodyClassName,
 }: ModalProps) {
   // Stable id for aria-labelledby / aria-describedby.
   const titleId = useId();
@@ -216,7 +220,7 @@ export function Modal({
           )}
         </header>
 
-        <div className="flex-1 overflow-y-auto p-5">{children}</div>
+        <div className={cn('flex-1 overflow-y-auto', bodyClassName ?? 'p-5')}>{children}</div>
 
         {footer && (
           <footer className="flex items-center justify-end gap-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-800/40 px-5 py-3">
@@ -225,5 +229,202 @@ export function Modal({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Sheet — side-panel variant of Modal (People UX M1 · P-07 / P-08).
+ *
+ * A right-anchored slide-out with the exact same WCAG semantics as
+ * Modal: role="dialog", aria-modal="true", trapped Tab focus, Escape
+ * closes only the top layer, focus returns to the trigger, and a
+ * dirty-form guard on Escape / backdrop dismiss. The only differences
+ * from Modal are:
+ *
+ *   • Anchored to the right edge, full viewport height, animates in
+ *     from the right.
+ *   • Header is optional (the drawer sometimes renders its own custom
+ *     header with an avatar cluster); when a `title` is provided we
+ *     render the shared header for consistency.
+ *   • Escape yields to any nested [role="dialog"][aria-modal="true"]
+ *     mounted on top — a Modal launched from inside the Sheet handles
+ *     its own close, so hitting Escape in that nested Modal doesn't
+ *     also dismiss the Sheet behind it. This is the exact rule the
+ *     partner-drawer used to enforce with a hand-rolled listener; the
+ *     shared shell now owns it.
+ *
+ * Not built on Radix / shadcn — same reason as Modal (no new dep).
+ */
+export interface SheetProps {
+  open: boolean;
+  onClose: () => void;
+  /** Optional title rendered in the shared header. Omit to render your own. */
+  title?: React.ReactNode;
+  description?: React.ReactNode;
+  children: React.ReactNode;
+  /** Right-aligned footer buttons. */
+  footer?: React.ReactNode;
+  closeLabel?: string;
+  hideCloseButton?: boolean;
+  initialFocusRef?: React.RefObject<HTMLElement>;
+  restoreFocusRef?: React.RefObject<HTMLElement>;
+  isDirty?: boolean;
+  dirtyWarning?: string;
+  escapeDisabled?: boolean;
+  /** Tailwind width class on the panel; defaults to a comfortable drawer width. */
+  widthClass?: string;
+  /** Extra classes on the panel container. */
+  className?: string;
+  /** Extra classes on the content wrapper (defaults to p-5 with vertical scroll). */
+  bodyClassName?: string;
+}
+
+export function Sheet({
+  open,
+  onClose,
+  title,
+  description,
+  children,
+  footer,
+  closeLabel = 'Close',
+  hideCloseButton = false,
+  initialFocusRef,
+  restoreFocusRef,
+  isDirty = false,
+  dirtyWarning = 'Discard your unsaved changes?',
+  escapeDisabled = false,
+  widthClass = 'w-[560px] max-w-[92vw]',
+  className,
+  bodyClassName,
+}: SheetProps) {
+  const titleId = useId();
+  const descId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const previouslyFocused = useRef<HTMLElement | null>(null);
+
+  const requestClose = useCallback(() => {
+    if (isDirty) {
+      const ok = window.confirm(dirtyWarning);
+      if (!ok) return;
+    }
+    onClose();
+  }, [isDirty, dirtyWarning, onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    previouslyFocused.current = (document.activeElement as HTMLElement | null) ?? null;
+    const focus = () => {
+      if (initialFocusRef?.current) {
+        initialFocusRef.current.focus();
+        return;
+      }
+      const focusables = getFocusable(panelRef.current);
+      if (focusables.length > 0) {
+        focusables[0].focus();
+        return;
+      }
+      panelRef.current?.focus();
+    };
+    const raf = requestAnimationFrame(focus);
+    return () => {
+      cancelAnimationFrame(raf);
+      const target = restoreFocusRef?.current ?? previouslyFocused.current;
+      requestAnimationFrame(() => {
+        try { target?.focus(); } catch { /* target may have unmounted; no-op */ }
+      });
+    };
+  }, [open, initialFocusRef, restoreFocusRef]);
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [open]);
+
+  useFocusTrap(open, panelRef);
+
+  useEffect(() => {
+    if (!open || escapeDisabled) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // Yield to any nested Modal/Sheet mounted on top of us: it owns
+      // its own Escape handler and should close ITSELF first, not the
+      // Sheet behind it. We detect the topmost dialog by comparing the
+      // node the browser reports vs our panel.
+      const dialogs = Array.from(
+        document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]'),
+      );
+      const topmost = dialogs[dialogs.length - 1];
+      if (topmost && topmost !== panelRef.current) return;
+      e.stopPropagation();
+      requestClose();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [open, escapeDisabled, requestClose]);
+
+  if (!open) return null;
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 z-40 bg-black/20"
+        onClick={requestClose}
+        aria-hidden="true"
+      />
+      {/* Panel */}
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
+        aria-describedby={description ? descId : undefined}
+        tabIndex={-1}
+        className={cn(
+          'fixed inset-y-0 right-0 z-50 flex flex-col bg-white dark:bg-slate-900',
+          'border-l border-slate-200 dark:border-slate-700 shadow-2xl',
+          'animate-in slide-in-from-right duration-200',
+          widthClass,
+          className,
+        )}
+      >
+        {title !== undefined && (
+          <header className="flex items-start gap-3 border-b border-slate-100 dark:border-slate-800 px-5 py-4">
+            <div className="min-w-0 flex-1">
+              <h2 id={titleId} className="text-base font-bold text-slate-900 dark:text-slate-100">
+                {title}
+              </h2>
+              {description && (
+                <p id={descId} className="mt-1 text-[13px] text-slate-500 dark:text-slate-400">
+                  {description}
+                </p>
+              )}
+            </div>
+            {!hideCloseButton && (
+              <button
+                type="button"
+                onClick={requestClose}
+                aria-label={closeLabel}
+                className="w-8 h-8 shrink-0 rounded-md flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            )}
+          </header>
+        )}
+
+        <div className={cn('flex-1 overflow-y-auto', bodyClassName ?? 'p-5')}>
+          {children}
+        </div>
+
+        {footer && (
+          <footer className="flex items-center justify-end gap-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-800/40 px-5 py-3">
+            {footer}
+          </footer>
+        )}
+      </div>
+    </>
   );
 }

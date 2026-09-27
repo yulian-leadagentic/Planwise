@@ -1,8 +1,9 @@
 import { useState, useMemo } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { X, Search } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Search } from 'lucide-react';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { Modal } from '@/components/shared/modal';
 import { inputClass, btnPrimary, btnSecondary } from './constants';
 
 // ---------------------------------------------------------------------------
@@ -107,105 +108,97 @@ export function ZoneCatalogPickerModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div
-        className="relative mx-4 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-lg border border-border bg-background shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="text-lg font-semibold">Pick Tasks from Catalog</h2>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-accent" aria-label="Close">
-            <X className="h-5 w-5"  aria-hidden="true" />
+    <Modal
+      open
+      onClose={onClose}
+      title="Pick Tasks from Catalog"
+      widthClass="mx-4 w-full max-w-3xl"
+      className="max-h-[80vh]"
+      isDirty={selected.size > 0}
+      bodyClassName="p-0 flex flex-col"
+      footer={
+        <>
+          <span className="mr-auto text-xs text-muted-foreground">{filteredTasks.length} tasks{search ? ` matching "${search}"` : ''}</span>
+          <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
+          <button type="button" onClick={handleAddSelected} disabled={selected.size === 0 || adding} className={btnPrimary}>
+            {adding ? 'Adding...' : `Add ${selected.size} Selected Task${selected.size !== 1 ? 's' : ''}`}
           </button>
-        </div>
-
-        {/* Search */}
-        <div className="border-b border-border px-5 py-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search tasks by name or code..."
-              className={`${inputClass} pl-9`}
-              autoFocus
-            />
-          </div>
-        </div>
-
-        {/* Task table */}
-        <div className="flex-1 overflow-y-auto">
-          {catalogLoading || !catalogEntry ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">
-              {!catalogEntry && !catalogLoading
-                ? 'No task catalog found. Create tasks in the Task Catalog first.'
-                : 'Loading catalog...'}
-            </div>
-          ) : filteredTasks.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">
-              {search ? 'No tasks match your search.' : 'The catalog has no tasks yet.'}
-            </div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/50 text-xs">
-                  <th className="px-3 py-2 text-left font-medium w-10"></th>
-                  <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('code')}>Code{sortIcon('code')}</th>
-                  <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('name')}>Name{sortIcon('name')}</th>
-                  <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
-                  <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
-                  <th className="px-3 py-2 text-left font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredTasks.map((task: any) => {
-                  const alreadyExists = task.code ? existingTaskCodes.has(task.code) : false;
-                  const isSelected = selected.has(task.id);
-                  return (
-                    <tr
-                      key={task.id}
-                      className={`border-b border-border last:border-0 cursor-pointer ${isSelected ? 'bg-brand-50' : 'hover:bg-muted/30'} ${alreadyExists ? 'opacity-50' : ''}`}
-                      onClick={() => !alreadyExists && toggleTask(task.id)}
-                    >
-                      {/* Checkbox cell — stop click bubbling so the row's onClick doesn't double-toggle. */}
-                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          disabled={alreadyExists}
-                          onChange={() => !alreadyExists && toggleTask(task.id)}
-                          className="h-4 w-4 rounded border-gray-300 dark:border-slate-600"
-                        />
-                      </td>
-                      <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{task.code || '-'}</td>
-                      <td className="px-3 py-2 font-medium">{task.name}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetHours != null ? Number(task.defaultBudgetHours).toFixed(0) : '-'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString() : '-'}</td>
-                      <td className="px-3 py-2">
-                        {alreadyExists && (
-                          <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">already added</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between border-t border-border px-5 py-4">
-          <span className="text-xs text-muted-foreground">{filteredTasks.length} tasks{search ? ` matching "${search}"` : ''}</span>
-          <div className="flex gap-3">
-            <button onClick={onClose} className={btnSecondary}>Cancel</button>
-            <button onClick={handleAddSelected} disabled={selected.size === 0 || adding} className={btnPrimary}>
-              {adding ? 'Adding...' : `Add ${selected.size} Selected Task${selected.size !== 1 ? 's' : ''}`}
-            </button>
-          </div>
+        </>
+      }
+    >
+      {/* Search */}
+      <div className="border-b border-border px-5 py-3">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search tasks by name or code..."
+            className={`${inputClass} pl-9`}
+            autoFocus
+          />
         </div>
       </div>
-    </div>
+
+      {/* Task table */}
+      <div className="flex-1 overflow-y-auto">
+        {catalogLoading || !catalogEntry ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            {!catalogEntry && !catalogLoading
+              ? 'No task catalog found. Create tasks in the Task Catalog first.'
+              : 'Loading catalog...'}
+          </div>
+        ) : filteredTasks.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            {search ? 'No tasks match your search.' : 'The catalog has no tasks yet.'}
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/50 text-xs">
+                <th className="px-3 py-2 text-left font-medium w-10"></th>
+                <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('code')}>Code{sortIcon('code')}</th>
+                <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('name')}>Name{sortIcon('name')}</th>
+                <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
+                <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
+                <th className="px-3 py-2 text-left font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredTasks.map((task: any) => {
+                const alreadyExists = task.code ? existingTaskCodes.has(task.code) : false;
+                const isSelected = selected.has(task.id);
+                return (
+                  <tr
+                    key={task.id}
+                    className={`border-b border-border last:border-0 cursor-pointer ${isSelected ? 'bg-brand-50 dark:bg-blue-900/30' : 'hover:bg-muted/30'} ${alreadyExists ? 'opacity-50' : ''}`}
+                    onClick={() => !alreadyExists && toggleTask(task.id)}
+                  >
+                    <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        disabled={alreadyExists}
+                        onChange={() => !alreadyExists && toggleTask(task.id)}
+                        className="h-4 w-4 rounded border-gray-300 dark:border-slate-600"
+                      />
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{task.code || '-'}</td>
+                    <td className="px-3 py-2 font-medium">{task.name}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetHours != null ? Number(task.defaultBudgetHours).toFixed(0) : '-'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString() : '-'}</td>
+                    <td className="px-3 py-2">
+                      {alreadyExists && (
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">already added</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </Modal>
   );
 }

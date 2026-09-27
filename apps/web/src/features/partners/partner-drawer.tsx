@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { X, User as UserIcon, Building2, Pencil, Trash2, Plus, Save, ChevronRight, Briefcase, FolderKanban, Linkedin, Facebook, Twitter, Instagram, Check, Search } from 'lucide-react';
+import { User as UserIcon, Building2, Pencil, Trash2, Plus, Save, ChevronRight, Briefcase, FolderKanban, Linkedin, Facebook, Twitter, Instagram, Check, Search } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
@@ -9,6 +9,7 @@ import { formatDate } from '@/lib/date-utils';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { CreatePartnerModal } from './create-partner-modal';
 import { TextField, SelectField, TextAreaField, Field } from '@/components/shared/field';
+import { Modal, Sheet } from '@/components/shared/modal';
 
 const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
@@ -247,24 +248,10 @@ export function PartnerDrawer({
   // resulting person is worker_of this org from the start.
   const [addContactOpen, setAddContactOpen] = useState(false);
 
-  // People UX U6 (P-07) — Escape should close only the TOP-most layer.
-  // Before: this listener closed the drawer regardless of what else was
-  // on top, so hitting Escape inside the "Add Relationship" modal shut
-  // the whole drawer instead of just the modal. Guard by checking if
-  // any [role="dialog"][aria-modal="true"] is currently open — the
-  // shared Modal shell owns Escape for that layer, so we bail here and
-  // let its own listener handle the close.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      // A shared Modal on top? Yield to its own Escape handler.
-      const openDialog = document.querySelector('[role="dialog"][aria-modal="true"]');
-      if (openDialog) return;
-      onClose();
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [onClose]);
+  // People UX M1 (P-07 / P-08) — Escape/backdrop/focus-trap semantics
+  // now come from the shared Sheet shell. The shell yields Escape to
+  // any Modal mounted on top, so hitting Escape inside "Add Relationship"
+  // closes only that modal, not the drawer behind it.
 
   const { data: bp, isLoading, isError, refetch } = useQuery<BusinessPartnerFull>({
     queryKey: ['business-partners', partnerId],
@@ -272,27 +259,37 @@ export function PartnerDrawer({
   });
 
   return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/20" onClick={onClose} />
-      <div className="fixed inset-y-0 right-0 z-50 w-[560px] max-w-[92vw] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
-        {/* Header */}
-        <div className="flex items-start gap-3 border-b border-slate-200 dark:border-slate-700 px-5 py-4">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50 text-blue-700 shrink-0">
-            {bp?.partnerType === 'organization' ? <Building2 className="h-5 w-5" /> : <UserIcon className="h-5 w-5" />}
-          </div>
-          <div className="flex-1 min-w-0">
-            <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 truncate">{bp?.displayName ?? '...'}</h2>
-            <p className="text-[11px] text-slate-400 dark:text-slate-500">
-              {bp?.partnerType === 'organization' ? 'Organization' : 'Person'}
-              {bp?.user && ' · Has login account'}
-            </p>
-          </div>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 shrink-0" aria-label="Close">
-            <X className="h-4 w-4"  aria-hidden="true" />
-          </button>
+    <Sheet
+      open
+      onClose={onClose}
+      widthClass="w-[560px] max-w-[92vw]"
+      bodyClassName="p-0"
+    >
+      {/* Custom header — the drawer wants an avatar cluster next to the
+          title, so we omit Sheet's default title/close-X and render our
+          own header inside children. */}
+      <div className="flex items-start gap-3 border-b border-slate-200 dark:border-slate-700 px-5 py-4">
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 shrink-0">
+          {bp?.partnerType === 'organization' ? <Building2 className="h-5 w-5" /> : <UserIcon className="h-5 w-5" />}
         </div>
+        <div className="flex-1 min-w-0">
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 truncate">{bp?.displayName ?? '...'}</h2>
+          <p className="text-[11px] text-slate-400 dark:text-slate-500">
+            {bp?.partnerType === 'organization' ? 'Organization' : 'Person'}
+            {bp?.user && ' · Has login account'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 shrink-0"
+          aria-label={`Close details for ${bp?.displayName ?? 'partner'}`}
+        >
+          <span aria-hidden="true" className="text-lg leading-none">×</span>
+        </button>
+      </div>
 
-        {/* Main Role strip — single primary categorization. Always
+      {/* Main Role strip — single primary categorization. Always
             visible (header-adjacent) so a missing value is obvious
             and one click sets it. Sits BETWEEN the header and the
             tab bar so it doesn't compete with tab navigation. */}
@@ -336,21 +333,20 @@ export function PartnerDrawer({
           ))}
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto px-5 py-4">
-          {isError ? (
-            <div className="text-sm text-slate-400 dark:text-slate-500 text-center py-8">
-              Couldn't load this partner.{' '}
-              <button onClick={() => refetch()} className="font-medium text-blue-600 hover:underline">Retry</button>
-            </div>
-          ) : isLoading || !bp ? (
-            <div className="text-sm text-slate-400 dark:text-slate-500 text-center py-8">Loading...</div>
-          ) : tab === 'details' ? (
-            <DetailsTab bp={bp} canWrite={canWrite} canDelete={canDelete} onClose={onClose} />
-          ) : (
-            <RelationshipsTab bp={bp} canWrite={canWrite} canDelete={canDelete} />
-          )}
-        </div>
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        {isError ? (
+          <div className="text-sm text-slate-400 dark:text-slate-500 text-center py-8">
+            Couldn't load this partner.{' '}
+            <button type="button" onClick={() => refetch()} className="font-medium text-blue-600 hover:underline">Retry</button>
+          </div>
+        ) : isLoading || !bp ? (
+          <div className="text-sm text-slate-400 dark:text-slate-500 text-center py-8">Loading...</div>
+        ) : tab === 'details' ? (
+          <DetailsTab bp={bp} canWrite={canWrite} canDelete={canDelete} onClose={onClose} />
+        ) : (
+          <RelationshipsTab bp={bp} canWrite={canWrite} canDelete={canDelete} />
+        )}
       </div>
 
       {/* QA3 Commit D (Item 6a) — the person-create modal launched from
@@ -367,7 +363,7 @@ export function PartnerDrawer({
           onCreated={() => setAddContactOpen(false)}
         />
       )}
-    </>
+    </Sheet>
   );
 }
 
@@ -1881,12 +1877,6 @@ function AddRelationshipModal({
     return null;
   };
 
-  useEffect(() => {
-    const original = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = original; };
-  }, []);
-
   const { data: allRelTypes = [] } = useQuery<RelationshipType[]>({
     queryKey: ['partner-relationship-types'],
     staleTime: 10 * 60 * 1000,
@@ -2042,16 +2032,36 @@ function AddRelationshipModal({
     kinds.length > 0 &&
     kinds.every((k) => (candidates[k] ?? []).length === 0);
 
+  const isDirty = relationshipTypeId != null || targetId != null || roleInContext.trim().length > 0;
+
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[480px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-          <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Add Relationship</h3>
-          <button onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" aria-label="Close">
-            <X className="h-4 w-4"  aria-hidden="true" />
+    <Modal
+      open
+      onClose={onClose}
+      title="Add Relationship"
+      widthClass="w-[480px] max-w-[92vw]"
+      isDirty={isDirty}
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg"
+          >
+            Cancel
           </button>
-        </div>
-        <form onSubmit={handleSubmit} className="p-5 space-y-3">
+          <button
+            type="submit"
+            form="add-relationship-form"
+            disabled={create.isPending || !selectedType || !targetId}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
+          >
+            {create.isPending ? 'Adding...' : 'Add'}
+          </button>
+        </>
+      }
+    >
+      <form id="add-relationship-form" onSubmit={handleSubmit} className="space-y-3">
           <div>
             <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Relationship type</label>
             <select
@@ -2172,15 +2182,8 @@ function AddRelationshipModal({
             </>
           )}
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <button type="button" onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
-            <button type="submit" disabled={create.isPending || !selectedType || !targetId} className="bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50">
-              {create.isPending ? 'Adding...' : 'Add'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+      </form>
+    </Modal>
   );
 }
 

@@ -1,11 +1,15 @@
-import { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { notify } from '@/lib/notify';
 import client from '@/api/client';
 import type { UserListItem } from '@/types';
-import { inputClass } from './constants';
+import { Modal } from '@/components/shared/modal';
+import { TextField } from '@/components/shared/field';
 
+// People UX M1 (E-05) — the shell (dialog role, aria-modal, focus trap,
+// Escape, focus return, dirty guard) comes from the shared Modal.
+// This component owns just the form + mutation; a dirty flag drives the
+// backdrop/Escape "discard changes?" prompt.
 export function ResetPasswordModal({
   user,
   onClose,
@@ -16,12 +20,6 @@ export function ResetPasswordModal({
   const queryClient = useQueryClient();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
-
-  useEffect(() => {
-    const original = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = original; };
-  }, []);
 
   const reset = useMutation({
     mutationFn: () => client.patch(`/users/${user.id}`, { password }).then((r) => r.data),
@@ -46,36 +44,63 @@ export function ResetPasswordModal({
     reset.mutate();
   };
 
+  const isDirty = password.length > 0 || confirm.length > 0;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[420px] max-w-[92vw]" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Reset Password</h2>
-          <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" aria-label="Close">
-            <X className="h-4 w-4"  aria-hidden="true" />
+    <Modal
+      open
+      onClose={onClose}
+      title="Reset Password"
+      widthClass="w-[420px] max-w-[92vw]"
+      isDirty={isDirty}
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+          >
+            Cancel
           </button>
-        </div>
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <p className="text-[13px] text-slate-600 dark:text-slate-300">
-            Set a new password for <span className="font-semibold text-slate-900 dark:text-slate-100">{user.firstName} {user.lastName}</span>.
-            They'll need to use this password on their next login.
-          </p>
-          <div>
-            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">New Password *</label>
-            <input type="password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} minLength={6} className={inputClass} />
-          </div>
-          <div>
-            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Confirm Password *</label>
-            <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} minLength={6} className={inputClass} />
-          </div>
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <button type="button" onClick={onClose} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg">Cancel</button>
-            <button type="submit" disabled={reset.isPending} className="bg-amber-600 hover:bg-amber-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50">
-              {reset.isPending ? 'Resetting...' : 'Reset Password'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+          <button
+            type="submit"
+            form="reset-password-form"
+            disabled={reset.isPending}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
+          >
+            {reset.isPending ? 'Resetting...' : 'Reset Password'}
+          </button>
+        </>
+      }
+    >
+      <form id="reset-password-form" onSubmit={handleSubmit} className="space-y-4">
+        <p className="text-[13px] text-slate-600 dark:text-slate-300">
+          Set a new password for{' '}
+          <span className="font-semibold text-slate-900 dark:text-slate-100">
+            {user.firstName} {user.lastName}
+          </span>
+          . They'll need to use this password on their next login.
+        </p>
+        <TextField
+          label="New Password"
+          name="password"
+          type="password"
+          autoFocus
+          required
+          minLength={6}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        <TextField
+          label="Confirm Password"
+          name="passwordConfirm"
+          type="password"
+          required
+          minLength={6}
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+        />
+      </form>
+    </Modal>
   );
 }
