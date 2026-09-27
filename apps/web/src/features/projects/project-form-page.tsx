@@ -1255,21 +1255,23 @@ function TeamPartyPicker({
   onChange: (ids: number[]) => void;
 }) {
   const { data: candidates = [] } = useQuery<any[]>({
-    // Same query key/shape the old TeamRolePicker used, so any cached
-    // response is reused here. staleTime matches the previous minute.
+    // QA3 round-5 (PR-023): switched from /business-partners
+    // (partnerType + roleType filters only) to the dedicated
+    // eligible-parties endpoint, which enforces all three checks the
+    // write path enforces: allowedPartnerKind + requiredPartnerRoleCode
+    // + requiredProfessionIds. Previously the picker showed people
+    // missing the job-title check, who then 400'd on submit
+    // ("requires job title BIM manager"). Now the picker list ==
+    // exactly the set project-partner-roles.create() accepts.
     queryKey: ['team-role-candidates', role.id],
     staleTime: 60 * 1000,
     queryFn: () =>
-      client.get('/business-partners', {
-        params: {
-          partnerType: role.allowedPartnerKind === 'any' ? undefined : role.allowedPartnerKind,
-          roleType: role.requiredPartnerRoleCode ?? undefined,
-          perPage: 500,
-        },
-      }).then((r) => {
-        const d = r.data?.data ?? r.data;
-        return Array.isArray(d) ? d : (d?.data ?? []);
-      }),
+      client
+        .get(`/admin/project-role-types/${encodeURIComponent(role.code)}/eligible-parties`)
+        .then((r) => {
+          const d = r.data?.data ?? r.data;
+          return Array.isArray(d) ? d : [];
+        }),
   });
 
   const people: Person[] = useMemo(
@@ -1323,20 +1325,19 @@ function PartyName({
   partyId: number;
 }) {
   const { data: candidates = [] } = useQuery<any[]>({
+    // Shares the cache key with the picker above so the response is a
+    // zero-cost read for any row the user just clicked on. Same
+    // eligible-parties endpoint = same set the write path accepts.
     queryKey: ['team-role-candidates', role?.id ?? 0],
     enabled: !!role,
     staleTime: 60 * 1000,
     queryFn: () =>
-      client.get('/business-partners', {
-        params: {
-          partnerType: role && role.allowedPartnerKind !== 'any' ? role.allowedPartnerKind : undefined,
-          roleType: role?.requiredPartnerRoleCode ?? undefined,
-          perPage: 500,
-        },
-      }).then((r) => {
-        const d = r.data?.data ?? r.data;
-        return Array.isArray(d) ? d : (d?.data ?? []);
-      }),
+      client
+        .get(`/admin/project-role-types/${encodeURIComponent(role!.code)}/eligible-parties`)
+        .then((r) => {
+          const d = r.data?.data ?? r.data;
+          return Array.isArray(d) ? d : [];
+        }),
   });
   const bp = candidates.find((c: any) => c.id === partyId);
   return (

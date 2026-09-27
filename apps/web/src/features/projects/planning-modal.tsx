@@ -5347,7 +5347,36 @@ function PlanningView({ projectId }: { projectId: number }) {
   );
 
   const deleteZone = useMutation({
-    mutationFn: (id: number) => zonesApi.remove(id),
+    // QA3 round-5 (point 4): the intermittent "Unable to connect to
+    // server" toast on zone delete is a network-level drop (the request
+    // fails mid-flight, no HTTP status). Delete is idempotent — if the
+    // first call already committed and only the response got lost, a
+    // retry sees the zone gone and returns 404, which we can safely
+    // treat as success. We do NOT auto-retry on any HTTP response
+    // (including 409 from the logged-time guard); those must surface
+    // as-is with the server's message.
+    mutationFn: async (id: number) => {
+      try {
+        return await zonesApi.remove(id);
+      } catch (err: any) {
+        // A real 4xx/5xx has err.response. Absence of it means the
+        // socket dropped before the server answered (axios exposes this
+        // as err.code === 'ERR_NETWORK' / err.message === 'Network Error').
+        const isNetworkDrop = !err?.response && !err?.status;
+        if (!isNetworkDrop) throw err;
+        try {
+          return await zonesApi.remove(id);
+        } catch (retryErr: any) {
+          // First call likely committed; the retry now sees the zone
+          // already soft-deleted. Treat 404 as success so the UI matches
+          // the actual server state.
+          if (retryErr?.response?.status === 404) {
+            return { message: 'Zone deleted', deletedZoneCount: 0 };
+          }
+          throw retryErr;
+        }
+      }
+    },
     onSuccess: () => { invalidate(); notify.success('Zone deleted', { code: 'ZONE-DELETE-200' }); },
     onError: (err: any) => notify.apiError(err, 'Failed to delete zone'),
   });

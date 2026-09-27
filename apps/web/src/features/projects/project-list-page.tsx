@@ -635,7 +635,15 @@ export function ProjectListPage() {
     // allSettled — one failure shouldn't block the rest from writing;
     // the failing mutation toasts on its own.
     await Promise.allSettled(ops);
+    // Refresh the projects LIST so the row's role holder(s) update.
     queryClient.invalidateQueries({ queryKey: ['projects'] });
+    // QA3 round-5 (PR-028.2 · auto-add to team): POST /project-partner-roles
+    // creates a project participation row as a side effect (see
+    // projects.service ~:1785). Nudge the same two keys the PR-038 fix
+    // uses so the target project's Team tab + assignee picker refresh
+    // the moment the operator navigates into the project — no F5.
+    queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
+    queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
   };
 
   return (

@@ -12,6 +12,7 @@ import { ProjectPartnerRolesService } from '../project-partner-roles/project-par
 import { NumberRangesService } from '../number-ranges/number-ranges.service';
 import { rollupTaskCompletion } from '../../common/task-completion';
 import { buildCostRateResolver, isRateableOutcome } from './cost-rate-resolver';
+import { buildEligibleWhere, extractEligibilityRule } from './role-eligibility';
 import * as Sentry from '@sentry/node';
 
 /**
@@ -1798,30 +1799,22 @@ export class ProjectsService {
           name: true,
           requiredProfessionIds: true,
           allowedPartnerKind: true,
+          // QA3 round-5 fix: the write path in
+          // project-partner-roles.service.create (:117-146) enforces
+          // this too — without it the picker showed non-employees who
+          // then 400'd on add ("requires the 'employee' partner-role
+          // first"). Pull it here and feed it into the eligibility
+          // helper so the picker list == the set create() accepts.
+          requiredPartnerRoleCode: true,
         },
       });
       if (projectRoleType) {
-        // Same profession/kind filters the RoleAssignmentPicker uses on
-        // the project-detail add-role flow (role-assignment-picker.tsx
-        // :85-95). Any party who holds AT LEAST ONE required Job Title
-        // AND matches allowedPartnerKind qualifies.
-        const requiredProfIds: number[] = Array.isArray(projectRoleType.requiredProfessionIds)
-          ? (projectRoleType.requiredProfessionIds as number[])
-          : [];
-        const kind = projectRoleType.allowedPartnerKind ?? 'any';
-        const partnerTypeFilter = kind === 'any' ? undefined
-          : kind === 'person' ? 'person'
-          : kind === 'organization' ? 'organization'
-          : undefined;
-
+        // One eligibility rule (kind + role + job-title) shared with the
+        // write-side and the new project-role-types eligible-parties
+        // endpoint. See role-eligibility.ts for the full semantics.
+        const rule = extractEligibilityRule(projectRoleType);
         const roleQualified = await this.prisma.businessPartner.findMany({
-          where: {
-            deletedAt: null,
-            ...(partnerTypeFilter ? { partnerType: partnerTypeFilter } : {}),
-            ...(requiredProfIds.length > 0
-              ? { professions: { some: { professionId: { in: requiredProfIds } } } }
-              : {}),
-          },
+          where: buildEligibleWhere(rule),
           select: {
             id: true,
             partnerType: true,

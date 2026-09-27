@@ -18,6 +18,10 @@ import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  buildEligibleWhere,
+  extractEligibilityRule,
+} from '../projects/role-eligibility';
 
 interface UpsertProjectRoleTypeDto {
   code?: string;
@@ -109,6 +113,67 @@ export class ProjectRoleTypesController {
       data.code = body.code.trim().toLowerCase();
     }
     return this.prisma.projectRoleType.update({ where: { id }, data });
+  }
+
+  // QA3 round-5 (PR-023) — project-independent eligible-parties list.
+  //
+  // Used by the New-Project picker (where there's no projectId yet) and
+  // any picker that wants to show ONLY the parties `create()` on
+  // ProjectPartnerRole would accept. The FE previously called
+  // `/business-partners` with `partnerType + roleType` params, missing
+  // the requiredProfessionIds filter — so ineligible people surfaced
+  // and then 400'd on add. This endpoint returns exactly the set the
+  // write-side accepts.
+  //
+  // Gate: `partners:read`, same as the /business-partners endpoint the
+  // picker was previously calling. Anyone who can pick a party can call
+  // this. Response shape mirrors /business-partners so the picker's
+  // existing consumer code doesn't have to change.
+  @Get(':code/eligible-parties')
+  @RequirePermissions({ module: 'partners', action: 'read' })
+  @ApiOperation({ summary: 'List parties eligible for a project role (all three checks combined)' })
+  async eligibleParties(@Param('code') rawCode: string) {
+    const code = rawCode?.trim().toLowerCase();
+    if (!code) throw new BadRequestException('code is required');
+    const role = await this.prisma.projectRoleType.findUnique({
+      where: { code },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        allowedPartnerKind: true,
+        requiredPartnerRoleCode: true,
+        requiredProfessionIds: true,
+      },
+    });
+    if (!role) {
+      throw new NotFoundException(`Project role type '${code}' not found`);
+    }
+    const rule = extractEligibilityRule(role);
+    const parties = await this.prisma.businessPartner.findMany({
+      where: buildEligibleWhere(rule),
+      select: {
+        id: true,
+        partnerType: true,
+        displayName: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        user: { select: { id: true, avatarUrl: true, position: true, department: true } },
+      },
+      orderBy: [{ displayName: 'asc' }],
+    });
+    return parties.map((p) => ({
+      id: p.id,
+      partnerType: p.partnerType,
+      displayName: p.displayName,
+      firstName: p.firstName,
+      lastName: p.lastName,
+      email: p.email,
+      avatarUrl: p.user?.avatarUrl ?? null,
+      position: p.user?.position ?? null,
+      department: p.user?.department ?? null,
+    }));
   }
 
   @Delete(':id')

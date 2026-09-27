@@ -9,6 +9,7 @@ import {
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { withQueryTimeout } from '../../common/query-timeout';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
 import { buildCatalogMap, resolveBudget as resolveBudgetUtil } from './zones.util';
@@ -170,6 +171,22 @@ export class ZonesService {
   }
 
   async remove(id: number) {
+    // QA3 round-5 (point 4): intermittent "Unable to connect to server"
+    // on zone delete — network-level socket drop mid-request, same
+    // signature as the project-26 wedge. Wrap the whole delete path in
+    // the shared 10s guard so a slow/hung query fails fast with a clean
+    // 503 instead of dropping the socket. The BFS `collectDescendantIds`
+    // (which fired N sequential queries per tree depth) is now a single
+    // recursive CTE round-trip, shrinking the window where a wedge can
+    // land.
+    return withQueryTimeout(
+      () => this.removeImpl(id),
+      10_000,
+      `zone.remove(id=${id})`,
+    );
+  }
+
+  private async removeImpl(id: number) {
     await this.findOne(id);
 
     // Cascade soft-delete: previously this only flagged the SINGLE zone
@@ -239,24 +256,33 @@ export class ZonesService {
   }
 
   /**
-   * BFS over the zone tree starting at `rootId`, collecting every
-   * not-yet-deleted descendant id. Returns [] when `rootId` is a leaf.
-   * Used by remove() for cascade soft-delete.
+   * Collect every not-yet-deleted descendant id under `rootId`. Returns
+   * [] when `rootId` is a leaf. Used by remove() for cascade soft-delete.
+   *
+   * QA3 round-5 (point 4): the previous BFS fired one query per tree
+   * depth level (parent → children → grandchildren → …), which for a
+   * modestly deep zone tree meant many sequential round-trips and a
+   * wider window for a socket drop / timeout. This is now a single
+   * MySQL 8 recursive CTE — one round-trip regardless of depth. Matches
+   * the semantics exactly: only walks non-deleted rows, only returns
+   * strict descendants (root is excluded).
    */
   private async collectDescendantIds(rootId: number): Promise<number[]> {
-    const all: number[] = [];
-    let frontier = [rootId];
-    while (frontier.length > 0) {
-      const children = await this.prisma.zone.findMany({
-        where: { parentId: { in: frontier }, deletedAt: null },
-        select: { id: true },
-      });
-      const childIds = children.map((c) => c.id);
-      if (childIds.length === 0) break;
-      all.push(...childIds);
-      frontier = childIds;
-    }
-    return all;
+    const rows = await this.prisma.$queryRaw<Array<{ id: number }>>`
+      WITH RECURSIVE zone_tree AS (
+        SELECT id, parent_id
+          FROM zones
+         WHERE parent_id = ${rootId}
+           AND deleted_at IS NULL
+        UNION ALL
+        SELECT z.id, z.parent_id
+          FROM zones z
+          INNER JOIN zone_tree zt ON z.parent_id = zt.id
+         WHERE z.deleted_at IS NULL
+      )
+      SELECT id FROM zone_tree
+    `;
+    return rows.map((r) => Number(r.id));
   }
 
   async copyStructure(id: number, newParentId: number) {
