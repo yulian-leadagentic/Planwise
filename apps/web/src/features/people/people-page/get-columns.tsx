@@ -34,8 +34,19 @@ export function getColumns(
 ): ColumnDef<UserListItem, unknown>[] {
   const cols: ColumnDef<UserListItem, unknown>[] = [
     {
-      accessorKey: 'name',
+      // QA3 master-handoff fix (2026-09-27) — the row's User model has
+      // firstName + lastName (plus Hebrew renditions), not `name`, so
+      // `accessorKey: 'name'` returned undefined and every non-empty
+      // filter matched nothing ("Nitz" showed 'No users found' even
+      // though Nitzan was on the page). accessorFn concatenates the
+      // English + Hebrew names so both scripts search naturally.
+      id: 'name',
       header: 'Name',
+      accessorFn: (row: any) => {
+        const parts = [row.firstName, row.lastName, row.firstNameHe, row.lastNameHe]
+          .filter((s) => s && String(s).trim().length > 0);
+        return parts.join(' ');
+      },
       cell: ({ row }) => (
         <div className="flex items-center gap-3 group/row">
           <UserAvatar firstName={row.original.firstName} lastName={row.original.lastName} avatarUrl={row.original.avatarUrl} size="sm" />
