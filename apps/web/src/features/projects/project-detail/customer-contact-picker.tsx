@@ -56,7 +56,10 @@ export function CustomerContactPicker({
     return () => { document.body.style.overflow = original; };
   }, []);
 
-  const { data: persons = [] } = useQuery<any[]>({
+  // People UX U5 (T-13) — expose isLoading so the empty-state below
+  // waits for the fetch to resolve before claiming there are no
+  // contacts.
+  const { data: persons = [], isLoading: personsLoading } = useQuery<any[]>({
     // QA3 Commit D (Item 5): scope to this customer org's workers only,
     // exclude internal staff. Query-key includes the org id so switching
     // to a different customer refetches instead of showing stale rows.
@@ -121,12 +124,14 @@ export function CustomerContactPicker({
               onChange={(e) => setSelectedPersonId(Number(e.target.value) || null)}
               className={inputClass}
             >
-              <option value="">Select a person...</option>
+              <option value="">
+                {personsLoading ? 'Loading…' : 'Select a person...'}
+              </option>
               {filtered.map((p: any) => (
                 <option key={p.id} value={p.id}>{p.displayName}{p.email ? ` — ${p.email}` : ''}</option>
               ))}
             </select>
-            {filtered.length === 0 && (
+            {!personsLoading && filtered.length === 0 && (
               <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
                 No contacts at {customerName} yet. Add one from the customer's card
                 (Contacts → By Customer → this org → Add contact) first.

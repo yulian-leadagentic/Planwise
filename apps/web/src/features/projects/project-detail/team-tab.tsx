@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
 import { useRemoveProjectMember } from '@/hooks/use-projects';
 import { PartnerDrawer } from '@/features/partners/partner-drawer';
@@ -40,6 +41,14 @@ export function TeamTab({
   const queryClient = useQueryClient();
   const removeMember = useRemoveProjectMember();
   const confirm = useConfirm();
+  // People UX U5 (T-12) — same permission model as the project-list role
+  // cell (`canWritePartners`): admin bypasses, non-admin needs the
+  // `partners:write` grant. When false, the section-level Add buttons
+  // are hidden entirely (rather than disabled) so read-only users see a
+  // clean roster instead of a row of greyed affordances. Row-level X
+  // buttons are kept and the backend rejects the DELETE with a 403.
+  const { isAdmin, can: canPerm } = usePermissions();
+  const canWritePartners = isAdmin || canPerm('partners', 'write');
   // M4a — pickers are now driven by the role catalog. Two kinds of add flows:
   //   - customerContact: adds a person → customer-org partner-relationship.
   //   - roleAssignment:  adds a party → project_partner_role for a specific
@@ -50,7 +59,10 @@ export function TeamTab({
   // than navigating to /partners. Shared state across all team rows.
   const [focusedPartnerId, setFocusedPartnerId] = useState<number | null>(null);
 
-  const { data: team, isLoading } = useQuery<ProjectTeamData>({
+  // People UX U5 (T-07) — expose isError + refetch so the render path
+  // below can distinguish "still loading" from "loaded and failed" and
+  // offer a Retry, instead of pretending it's still loading forever.
+  const { data: team, isLoading, isError, refetch: refetchTeam } = useQuery<ProjectTeamData>({
     queryKey: ['project-team', projectId],
     queryFn: () => client.get(`/projects/${projectId}/team`).then((r) => r.data?.data ?? r.data),
   });
@@ -147,11 +159,15 @@ export function TeamTab({
     // find — producing the "Failed to remove member" error users were
     // seeing on the Team tab. Pass the user ID instead.
     if (row.userId) {
+      // People UX U5 (T-14) — the useRemoveProjectMember hook already
+      // toasts on error (`use-projects.ts` onError → notify.apiError),
+      // so a call-site onError here caused a double-toast. Keep the
+      // per-call onSuccess for the extra query invalidation; drop the
+      // duplicate error toast.
       removeMember.mutate(
         { projectId, memberId: row.userId },
         {
           onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project-team', projectId] }),
-          onError: () => notify.error('Failed to remove member'),
         },
       );
       return;
@@ -187,8 +203,25 @@ export function TeamTab({
     return names;
   }, [roleFilter, roleFilterActive, roleCatalog]);
 
-  if (isLoading || !team) {
-    return <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">Loading team...</p>;
+  // People UX U5 (T-07) — split loading and error paths so a failed GET
+  // /projects/:id/team stops looking like an eternal spinner. The error
+  // state offers a Retry that re-fires the same query.
+  if (isLoading) {
+    return <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">Loading team…</p>;
+  }
+  if (isError || !team) {
+    return (
+      <div className="py-8 flex flex-col items-center gap-3 text-sm">
+        <p className="text-red-600 dark:text-red-400 font-medium">Couldn't load the team for this project.</p>
+        <button
+          type="button"
+          onClick={() => refetchTeam()}
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[13px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
+        >
+          Retry
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -302,7 +335,12 @@ export function TeamTab({
             label={rt.name}
             count={assignments.length}
             accent="emerald"
-            action={(
+            /* People UX U5 (T-12) — Add gate uses the same permission
+               model as the project-list role cell. When the user has no
+               `partners:write`, the button is hidden entirely so the
+               row-actions section stays neat instead of showing a
+               disabled affordance. */
+            action={canWritePartners ? (
               <button
                 onClick={() => setRoleAssignmentTarget(rt)}
                 className="flex items-center gap-1.5 rounded-md bg-white dark:bg-slate-900 border border-amber-300 bg-amber-50 hover:border-amber-400 px-3 py-1.5 text-xs font-semibold text-amber-800 transition-colors"
@@ -310,7 +348,7 @@ export function TeamTab({
                 <UserPlus className="h-3.5 w-3.5" />
                 Add {rt.name}
               </button>
-            )}
+            ) : undefined}
           >
             {assignments.length === 0 ? (
               <p className="text-[12px] text-amber-700 italic">
@@ -368,7 +406,7 @@ export function TeamTab({
             label="Project Team"
             count={visibleTeam.length}
             accent="blue"
-            action={(
+            action={canWritePartners ? (
               <button
                 onClick={() => onToggleAddMember(true)}
                 className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
@@ -376,7 +414,7 @@ export function TeamTab({
                 <UserPlus className="h-3.5 w-3.5" />
                 Add Team Member
               </button>
-            )}
+            ) : undefined}
           >
             {visibleTeam.length === 0 ? (
               <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">No internal members yet.</p>
@@ -438,7 +476,7 @@ export function TeamTab({
           label={team.customer ? `${team.customer.displayName} Contacts` : 'Customer Contacts'}
           count={team.customerContacts.length}
           accent="violet"
-          action={(
+          action={canWritePartners ? (
             <button
               onClick={() => setShowCustomerContactPicker(true)}
               disabled={!team.customer || !customerContactRoleType}
@@ -454,7 +492,7 @@ export function TeamTab({
               <UserPlus className="h-3.5 w-3.5" />
               Add Customer Contact
             </button>
-          )}
+          ) : undefined}
         >
           {team.customerContacts.length === 0 ? (
             <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">No customer contacts yet.</p>
@@ -505,7 +543,7 @@ export function TeamTab({
             label={rt.name}
             count={assignments.length}
             accent="emerald"
-            action={(
+            action={canWritePartners ? (
               <button
                 onClick={() => setRoleAssignmentTarget(rt)}
                 className="flex items-center gap-1.5 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors"
@@ -513,7 +551,7 @@ export function TeamTab({
                 <UserPlus className="h-3.5 w-3.5" />
                 Add {rt.name}
               </button>
-            )}
+            ) : undefined}
           >
             {assignments.length === 0 ? (
               <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">

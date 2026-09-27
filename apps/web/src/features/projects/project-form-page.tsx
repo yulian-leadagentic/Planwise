@@ -158,8 +158,19 @@ export function ProjectFormPage() {
         return Array.isArray(d) ? d : [];
       }),
   });
+  // People UX U5 (T-15) — exclude the same three system roles that the
+  // Team tab excludes (see team-tab.tsx :73-74): `customer` (locked, own
+  // section), `participant` (handled by the internal Project Team
+  // section) and `customer_contact` (handled by the dedicated Customer
+  // Contacts card). Previously only `customer` was excluded, so the
+  // New Project role dropdown offered Participant / Customer Contact
+  // slots that had no valid picker feeding them.
   const teamRoles = useMemo(
-    () => projectRoleTypes.filter((rt: any) => rt.code !== 'customer'),
+    () => projectRoleTypes.filter((rt: any) =>
+      rt.code !== 'customer'
+      && rt.code !== 'participant'
+      && rt.code !== 'customer_contact',
+    ),
     [projectRoleTypes],
   );
 
@@ -1254,7 +1265,9 @@ function TeamPartyPicker({
   value: number[];
   onChange: (ids: number[]) => void;
 }) {
-  const { data: candidates = [] } = useQuery<any[]>({
+  // People UX U5 (T-13) — expose isLoading so the empty-state below
+  // waits for the fetch to resolve before claiming there are none.
+  const { data: candidates = [], isLoading: candidatesLoading } = useQuery<any[]>({
     // QA3 round-5 (PR-023): switched from /business-partners
     // (partnerType + roleType filters only) to the dedicated
     // eligible-parties endpoint, which enforces all three checks the
@@ -1290,6 +1303,11 @@ function TeamPartyPicker({
     [candidates],
   );
 
+  if (candidatesLoading) {
+    return (
+      <p className="text-[11px] text-slate-400 dark:text-slate-500 px-1 italic">Loading eligible parties…</p>
+    );
+  }
   if (candidates.length === 0) {
     return (
       <p className="text-[11px] text-amber-700 dark:text-amber-400 px-1">

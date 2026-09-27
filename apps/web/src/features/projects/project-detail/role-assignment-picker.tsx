@@ -64,7 +64,11 @@ export function RoleAssignmentPicker({
     return () => { document.body.style.overflow = original; };
   }, []);
 
-  const { data: candidates = [] } = useQuery<BpForPicker[]>({
+  // People UX U5 (T-13) — expose isLoading so the picker can distinguish
+  // "we're still fetching candidates" from "the query landed and there
+  // are none". The empty-state below reads "No eligible parties" only
+  // when isLoading is false.
+  const { data: candidates = [], isLoading: candidatesLoading } = useQuery<BpForPicker[]>({
     queryKey: ['bp-candidates-for-role', role.id],
     queryFn: () => client.get('/business-partners', {
       params: {
@@ -207,13 +211,19 @@ export function RoleAssignmentPicker({
               onChange={(e) => setSelectedPartyId(Number(e.target.value) || null)}
               className={inputClass}
             >
-              <option value="">Select...</option>
+              <option value="">
+                {candidatesLoading ? 'Loading…' : 'Select...'}
+              </option>
               {filtered.map((p) => (
                 <option key={p.id} value={p.id}>{p.displayName}</option>
               ))}
             </select>
-            {filtered.length === 0 && (
-              <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded mt-1">
+            {/* People UX U5 (T-13) — the "No eligible parties" callout
+                used to render the instant the query was still pending
+                (candidates=[] default). Now it waits for the fetch to
+                resolve before claiming nothing matched. */}
+            {!candidatesLoading && filtered.length === 0 && (
+              <p className="text-[12px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 px-2 py-1.5 rounded mt-1">
                 No eligible parties. Add a {role.allowedPartnerKind}
                 {role.requiredPartnerRoleCode ? ` with role "${role.requiredPartnerRoleCode}"` : ''}
                 {requiredProfIds.length > 0 ? ' who holds a required job title (see /partners → Job Titles)' : ''}
