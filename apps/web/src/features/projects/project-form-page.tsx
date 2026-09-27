@@ -1265,17 +1265,13 @@ function TeamPartyPicker({
   value: number[];
   onChange: (ids: number[]) => void;
 }) {
-  // People UX U5 (T-13) — expose isLoading so the empty-state below
-  // waits for the fetch to resolve before claiming there are none.
+  // People UX M3 (T-02): single eligibility source shared with the
+  // Team tab picker and the project-list role cell. The response now
+  // includes ineligible parties annotated with `eligible=false` +
+  // `reasons[]` — we render them via PeopleMultiSelect's disabled/
+  // disabledReason row (same pattern as AssigneeManager "External")
+  // instead of hiding them, so users see WHY someone is missing.
   const { data: candidates = [], isLoading: candidatesLoading } = useQuery<any[]>({
-    // QA3 round-5 (PR-023): switched from /business-partners
-    // (partnerType + roleType filters only) to the dedicated
-    // eligible-parties endpoint, which enforces all three checks the
-    // write path enforces: allowedPartnerKind + requiredPartnerRoleCode
-    // + requiredProfessionIds. Previously the picker showed people
-    // missing the job-title check, who then 400'd on submit
-    // ("requires job title BIM manager"). Now the picker list ==
-    // exactly the set project-partner-roles.create() accepts.
     queryKey: ['team-role-candidates', role.id],
     staleTime: 60 * 1000,
     queryFn: () =>
@@ -1293,12 +1289,17 @@ function TeamPartyPicker({
         userId: c.id,
         displayName: c.displayName,
         avatarUrl: c.avatarUrl ?? null,
-        // Small subtitle so the row disambiguates person-vs-org and
-        // exposes the party's own role/type. Falls back to empty.
         subtitle:
           c.partnerType === 'organization'
             ? 'Organization'
             : c.email ?? null,
+        disabled: c.eligible === false,
+        disabledReason:
+          Array.isArray(c.reasons) && c.reasons.length > 0
+            ? c.reasons.join(', ')
+            : c.eligible === false
+              ? 'Not eligible'
+              : null,
       })),
     [candidates],
   );
@@ -1311,9 +1312,8 @@ function TeamPartyPicker({
   if (candidates.length === 0) {
     return (
       <p className="text-[11px] text-amber-700 dark:text-amber-400 px-1">
-        No eligible {role.allowedPartnerKind === 'any' ? 'parties' : `${role.allowedPartnerKind}s`}
-        {role.requiredPartnerRoleCode ? ` with role "${role.requiredPartnerRoleCode}"` : ''}
-        . Ask an admin to add one under Admin → Employees first, or skip
+        No {role.allowedPartnerKind === 'any' ? 'people or Organizations' : role.allowedPartnerKind === 'organization' ? 'Organizations' : 'people'} in the directory yet.
+        Ask an admin to add one under Employees or Partners first, or skip
         this role and assign later from the project's Team tab.
       </p>
     );
@@ -1324,9 +1324,9 @@ function TeamPartyPicker({
       people={people}
       value={value}
       onChange={onChange}
-      placeholder={`Select ${role.allowedPartnerKind === 'organization' ? 'organization' : 'person'}…`}
+      placeholder={`Select ${role.allowedPartnerKind === 'organization' ? 'Organization' : 'person'}…`}
       triggerClassName="w-full"
-      title={`${role.name} — pick a ${role.allowedPartnerKind === 'organization' ? 'organization' : 'person'}`}
+      title={`${role.name} — pick a ${role.allowedPartnerKind === 'organization' ? 'Organization' : 'person'}`}
     />
   );
 }

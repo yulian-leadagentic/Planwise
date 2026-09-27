@@ -28,6 +28,20 @@ export interface Person {
   avatarUrl?: string | null;
   /** Small secondary line — role, discipline, department, ... */
   subtitle?: string | null;
+  /**
+   * People UX M3 (T-02) — when true, the row renders non-clickable
+   * with an amber "reason" chip visible in the row (not just a
+   * tooltip). Used by project-role pickers to show ineligible
+   * candidates instead of hiding them, matching the AssigneeManager
+   * "External" pattern.
+   */
+  disabled?: boolean;
+  /**
+   * Plain-English reason to display next to the name when
+   * `disabled=true` (e.g. "Must be an Employee", "Needs job title:
+   * BIM Manager"). Rendered as an inline chip on the option row.
+   */
+  disabledReason?: string | null;
 }
 
 interface PeopleMultiSelectProps {
@@ -115,6 +129,11 @@ export function PeopleMultiSelect({
   }, [open]);
 
   const toggle = (id: number) => {
+    // People UX M3 — disabled rows (ineligible for the current role)
+    // never enter or leave the selection. Guard here so keyboard-Enter
+    // and mouse-click both respect the block.
+    const person = sortedPeople.find((p) => p.userId === id);
+    if (person?.disabled) return;
     if (selectedSet.has(id)) {
       onChange(value.filter((v) => v !== id));
     } else {
@@ -257,6 +276,7 @@ export function PeopleMultiSelect({
               filtered.map((p, i) => {
                 const isOn = selectedSet.has(p.userId);
                 const isHighlighted = i === highlightIdx;
+                const isDisabled = !!p.disabled;
                 const initialsSource = p.displayName.split(/\s+/).filter(Boolean);
                 const first = initialsSource[0] ?? '';
                 const last = initialsSource.slice(1).join(' ');
@@ -266,23 +286,32 @@ export function PeopleMultiSelect({
                     type="button"
                     role="option"
                     aria-selected={isOn}
+                    aria-disabled={isDisabled || undefined}
+                    disabled={isDisabled}
                     onMouseEnter={() => setHighlightIdx(i)}
                     onClick={() => toggle(p.userId)}
+                    title={isDisabled ? p.disabledReason ?? undefined : undefined}
                     className={cn(
                       'flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px]',
-                      isHighlighted ? 'bg-slate-100 dark:bg-slate-800/60' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50',
-                      isOn && 'bg-blue-50/40 dark:bg-blue-900/20',
+                      isDisabled
+                        ? 'cursor-not-allowed opacity-70'
+                        : isHighlighted
+                          ? 'bg-slate-100 dark:bg-slate-800/60'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-800/50',
+                      isOn && !isDisabled && 'bg-blue-50/40 dark:bg-blue-900/20',
                     )}
                   >
                     <div
                       className={cn(
                         'flex h-4 w-4 shrink-0 items-center justify-center rounded border-2',
-                        isOn
-                          ? 'border-blue-500 bg-blue-500 text-white'
-                          : 'border-slate-400 dark:border-slate-500 bg-slate-50 dark:bg-slate-800/50',
+                        isDisabled
+                          ? 'border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-800/50'
+                          : isOn
+                            ? 'border-blue-500 bg-blue-500 text-white'
+                            : 'border-slate-400 dark:border-slate-500 bg-slate-50 dark:bg-slate-800/50',
                       )}
                     >
-                      {isOn && <Check className="h-3 w-3" strokeWidth={3} aria-hidden="true" />}
+                      {isOn && !isDisabled && <Check className="h-3 w-3" strokeWidth={3} aria-hidden="true" />}
                     </div>
                     <UserAvatar
                       firstName={first}
@@ -291,7 +320,14 @@ export function PeopleMultiSelect({
                       size="xs"
                     />
                     <span className="flex-1 min-w-0">
-                      <span className="block truncate text-slate-700 dark:text-slate-200">{p.displayName}</span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate text-slate-700 dark:text-slate-200">{p.displayName}</span>
+                        {isDisabled && p.disabledReason && (
+                          <span className="shrink-0 rounded bg-amber-100 dark:bg-amber-900/40 px-1 py-[1px] text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+                            {p.disabledReason}
+                          </span>
+                        )}
+                      </span>
                       {p.subtitle && (
                         <span className="block truncate text-[11px] text-slate-400 dark:text-slate-500">
                           {p.subtitle}

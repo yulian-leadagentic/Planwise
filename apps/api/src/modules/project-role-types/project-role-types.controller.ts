@@ -9,6 +9,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -18,10 +19,7 @@ import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { PrismaService } from '../../prisma/prisma.service';
-import {
-  buildEligibleWhere,
-  extractEligibilityRule,
-} from '../projects/role-eligibility';
+import { extractEligibilityRule } from '../projects/role-eligibility';
 
 interface UpsertProjectRoleTypeDto {
   code?: string;
@@ -117,22 +115,36 @@ export class ProjectRoleTypesController {
 
   // QA3 round-5 (PR-023) — project-independent eligible-parties list.
   //
-  // Used by the New-Project picker (where there's no projectId yet) and
-  // any picker that wants to show ONLY the parties `create()` on
-  // ProjectPartnerRole would accept. The FE previously called
-  // `/business-partners` with `partnerType + roleType` params, missing
-  // the requiredProfessionIds filter — so ineligible people surfaced
-  // and then 400'd on add. This endpoint returns exactly the set the
-  // write-side accepts.
+  // Used by every project-role picker in the app: the Team tab
+  // (RoleAssignmentPicker), New Project (TeamRolePicker), and the
+  // project-list role cell (RoleHolderCell). See docs/bm2/people-ux-work-order.md §M3.
+  //
+  // People UX M3 (2026-09-27, T-02/T-03/T-20/T-21):
+  //   1. Optional `projectId` query param — when provided, parties
+  //      already actively assigned to that project on ANY role are
+  //      excluded, so the picker doesn't offer names the write path
+  //      would reject with a unique-constraint violation. Backward-
+  //      compatible: omit it and the list is the project-independent
+  //      set (used by New Project where no project exists yet).
+  //   2. Returns INELIGIBLE parties too, annotated with
+  //      `eligible: false` + `reasons: string[]` in plain English
+  //      ("Needs job title: BIM Manager", "Must be an employee").
+  //      The FE renders them disabled with the reason visible, so
+  //      users see WHY someone is missing instead of just missing them.
+  //   3. `userId` (nullable) is included so the project-list role cell
+  //      — which keys PeopleMultiSelect on User.id — can key off the
+  //      same payload without a second lookup.
   //
   // Gate: `partners:read`, same as the /business-partners endpoint the
   // picker was previously calling. Anyone who can pick a party can call
-  // this. Response shape mirrors /business-partners so the picker's
-  // existing consumer code doesn't have to change.
+  // this.
   @Get(':code/eligible-parties')
   @RequirePermissions({ module: 'partners', action: 'read' })
-  @ApiOperation({ summary: 'List parties eligible for a project role (all three checks combined)' })
-  async eligibleParties(@Param('code') rawCode: string) {
+  @ApiOperation({ summary: 'List parties for a project role, annotated with eligibility + reasons' })
+  async eligibleParties(
+    @Param('code') rawCode: string,
+    @Query() query: { projectId?: string },
+  ) {
     const code = rawCode?.trim().toLowerCase();
     if (!code) throw new BadRequestException('code is required');
     const role = await this.prisma.projectRoleType.findUnique({
@@ -150,8 +162,42 @@ export class ProjectRoleTypesController {
       throw new NotFoundException(`Project role type '${code}' not found`);
     }
     const rule = extractEligibilityRule(role);
+
+    // Kind is a hard filter — a person-role can never accept an org,
+    // and vice versa. Showing wrong-kind parties as "ineligible" would
+    // pollute the picker with hundreds of unrelated names. The other
+    // two checks (required partner-role, required professions) are soft
+    // — parties that fail them are still returned, annotated.
+    const kindWhere: Prisma.BusinessPartnerWhereInput = { deletedAt: null };
+    if (rule.allowedPartnerKind === 'person' || rule.allowedPartnerKind === 'organization') {
+      kindWhere.partnerType = rule.allowedPartnerKind;
+    }
+
+    // Optional projectId scope — exclude parties already assigned to
+    // this project on ANY active role. Matches the FE's previous
+    // client-side `existingPartyIds` filter, moved to the server so
+    // every picker gets the same set without duplicating the join.
+    const projectIdNum = query.projectId ? Number(query.projectId) : NaN;
+    let alreadyAssigned: Set<number> = new Set();
+    if (Number.isFinite(projectIdNum) && projectIdNum > 0) {
+      const now = new Date();
+      const existing = await this.prisma.projectPartnerRole.findMany({
+        where: {
+          projectId: projectIdNum,
+          status: 'active',
+          validFrom: { lte: now },
+          validTo: { gt: now },
+        },
+        select: { partyId: true },
+      });
+      alreadyAssigned = new Set(existing.map((r) => r.partyId));
+    }
+    if (alreadyAssigned.size > 0) {
+      kindWhere.id = { notIn: Array.from(alreadyAssigned) };
+    }
+
     const parties = await this.prisma.businessPartner.findMany({
-      where: buildEligibleWhere(rule),
+      where: kindWhere,
       select: {
         id: true,
         partnerType: true,
@@ -159,21 +205,110 @@ export class ProjectRoleTypesController {
         firstName: true,
         lastName: true,
         email: true,
-        user: { select: { id: true, avatarUrl: true, position: true, department: true } },
+        user: {
+          select: {
+            id: true,
+            avatarUrl: true,
+            position: true,
+            department: true,
+          },
+        },
+        // Match the write path: it just does `party.roles.some(...)`
+        // with no validTo filter (project-partner-roles.service :124),
+        // so we mirror that here to avoid the picker rejecting parties
+        // the write side accepts.
+        roles: {
+          select: { roleType: { select: { code: true } } },
+        },
+        professions: {
+          select: { professionId: true },
+        },
       },
       orderBy: [{ displayName: 'asc' }],
     });
-    return parties.map((p) => ({
-      id: p.id,
-      partnerType: p.partnerType,
-      displayName: p.displayName,
-      firstName: p.firstName,
-      lastName: p.lastName,
-      email: p.email,
-      avatarUrl: p.user?.avatarUrl ?? null,
-      position: p.user?.position ?? null,
-      department: p.user?.department ?? null,
-    }));
+
+    // Fetch the human-readable profession names once so we can quote
+    // them in the "Needs job title: …" reason. Cheap: typical catalogs
+    // have <100 rows.
+    const profNameById = new Map<number, string>();
+    if (rule.requiredProfessionIds.length > 0) {
+      const rows = await this.prisma.profession.findMany({
+        where: { id: { in: rule.requiredProfessionIds } },
+        select: { id: true, name: true },
+      });
+      for (const r of rows) profNameById.set(r.id, r.name);
+    }
+    const requiredProfLabel = rule.requiredProfessionIds.length > 0
+      ? rule.requiredProfessionIds
+          .map((id) => profNameById.get(id))
+          .filter((n): n is string => !!n)
+          .join(' or ')
+      : null;
+
+    // People UX M4 glossary — surface "Employee" / "Organization" /
+    // "Contact" in reasons, never the raw partner-role code / raw
+    // partnerType. Matches the wording on the picker banner so the
+    // criteria and the row-level reason read as one voice.
+    const roleCodeToLabel: Record<string, string> = {
+      employee: 'Employee',
+      customer: 'Customer',
+      supplier: 'Supplier',
+      partner: 'Partner',
+    };
+    const humaniseRoleCode = (c: string): string =>
+      roleCodeToLabel[c] ?? c.replace(/_/g, ' ');
+
+    return parties.map((p) => {
+      const reasons: string[] = [];
+      // Rule 1 — allowedPartnerKind. Filtered out server-side, but the
+      // annotation stays in case a future call widens the query.
+      if (
+        rule.allowedPartnerKind
+        && rule.allowedPartnerKind !== 'any'
+        && rule.allowedPartnerKind !== p.partnerType
+      ) {
+        reasons.push(
+          rule.allowedPartnerKind === 'organization'
+            ? 'Must be an Organization'
+            : 'Must be a person Contact',
+        );
+      }
+      // Rule 2 — requiredPartnerRoleCode.
+      if (rule.requiredPartnerRoleCode) {
+        const holds = p.roles.some(
+          (r) => r.roleType.code === rule.requiredPartnerRoleCode,
+        );
+        if (!holds) {
+          reasons.push(`Must be an ${humaniseRoleCode(rule.requiredPartnerRoleCode)}`);
+        }
+      }
+      // Rule 3 — requiredProfessionIds (Job Titles).
+      if (rule.requiredProfessionIds.length > 0) {
+        const partyProfIds = new Set(p.professions.map((x) => x.professionId));
+        const hit = rule.requiredProfessionIds.some((id) => partyProfIds.has(id));
+        if (!hit) {
+          reasons.push(
+            requiredProfLabel
+              ? `Needs job title: ${requiredProfLabel}`
+              : 'Needs a required job title',
+          );
+        }
+      }
+      return {
+        id: p.id,
+        userId: p.user?.id ?? null,
+        partnerType: p.partnerType,
+        displayName: p.displayName,
+        firstName: p.firstName,
+        lastName: p.lastName,
+        email: p.email,
+        avatarUrl: p.user?.avatarUrl ?? null,
+        position: p.user?.position ?? null,
+        department: p.user?.department ?? null,
+        eligible: reasons.length === 0,
+        reasons,
+      };
+    });
   }
 
   @Delete(':id')

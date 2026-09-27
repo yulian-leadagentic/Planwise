@@ -644,6 +644,10 @@ export function ProjectListPage() {
     // the moment the operator navigates into the project — no F5.
     queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
     queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
+    // People UX M3 — the eligible-parties response is now `projectId`-
+    // scoped (already-assigned parties are excluded server-side), so
+    // the cached list needs refreshing after adds/removes.
+    queryClient.invalidateQueries({ queryKey: ['project-role-eligible-parties'] });
   };
 
   return (
@@ -1655,19 +1659,18 @@ function CategoryCell({
  * column, and swaps to an in-cell PeopleMultiSelect when the user
  * clicks (if they hold partners:write).
  *
- * Candidates fetch is lazy — /projects/:id/assignee-candidates
- * only fires the first time the user opens THIS cell, so we don't
- * spam the API with N×M requests for every row × role column on
- * page load. Cached under ['assignee-candidates', projectId] so
- * multiple role columns on the same row share the same fetch.
+ * Candidates fetch is lazy — the eligible-parties endpoint only
+ * fires the first time the user opens THIS cell, so we don't spam
+ * the API with N×M requests for every row × role column on page
+ * load.
  *
- * canAssign=false candidates (external contacts with no linked User
- * — TaskAssignee.userId still writes to User.id, so they cannot be
- * chosen as an assignee). PeopleMultiSelect keys on `userId` and
- * has no disabled-option affordance today, so we filter them out
- * before feeding the picker — see "Follow-up" in the branch report.
- * Once the picker grows a `disabled` prop, drop the filter and pass
- * the full list with a disabled reason.
+ * People UX M3 (2026-09-27, T-02): the cell reads from the same
+ * `/admin/project-role-types/:code/eligible-parties?projectId=…`
+ * endpoint used by the Team-tab RoleAssignmentPicker and the New
+ * Project TeamRolePicker. The response includes ineligible parties
+ * annotated with `reasons[]`; we render them via PeopleMultiSelect's
+ * disabled row (reason chip inline), matching the AssigneeManager
+ * "External" pattern.
  *
  * Save flow:
  *   1. On popover close (blur / outside-click), diff nextValue
@@ -1688,11 +1691,11 @@ function RoleHolderCell({
   projectId: number;
   roleName: string;
   /**
-   * ProjectRoleType.code — passed to `/assignee-candidates?roleCode=…`
-   * so the backend widens the picker to every company person who holds
-   * this role (QA3 Wave-3 Commit 7 · PR-028). Picking a non-member
-   * auto-adds them via the existing POST /project-partner-roles write
-   * path (which creates the participation row as a side effect).
+   * ProjectRoleType.code — passed to the eligible-parties endpoint
+   * so the candidate list matches the write path's checks exactly.
+   * Picking a non-member auto-adds them via the existing POST
+   * /project-partner-roles write path (which creates the
+   * participation row as a side effect).
    */
   roleCode: string;
   assignments: any[];
@@ -1720,46 +1723,69 @@ function RoleHolderCell({
   );
 
   // Lazy candidates fetch — only kick off when the user opens the
-  // picker on this row. Shared across role columns on the same
-  // project via the query key.
+  // picker on this row. Note: `projectId` scopes the endpoint so
+  // already-assigned parties on this project are excluded (no need
+  // to filter here).
   const { data: candidates = [] } = useQuery<
     Array<{
+      id: number;
       userId: number | null;
-      partyId: number | null;
+      partnerType: 'person' | 'organization';
       displayName: string;
       avatarUrl: string | null;
-      role: string | null;
-      discipline: string | null;
-      canAssign: boolean;
+      position: string | null;
+      department: string | null;
+      email: string | null;
+      eligible: boolean;
+      reasons: string[];
     }>
   >({
-    // Cache key includes roleCode so each role column keeps its own
-    // widened list (Team Leader → team leaders, BIM Manager → BIM
-    // managers, …). Adjacent columns for the same project don't share
-    // a fetch anymore, but the request is still lazy per open.
-    queryKey: ['assignee-candidates', projectId, roleCode],
+    // Query key mirrors the Team-tab picker's cache key so both
+    // surfaces share the same fetch when both are open for the same
+    // (role, project) pair.
+    queryKey: ['project-role-eligible-parties', roleCode, projectId],
     enabled: open,
     staleTime: 60 * 1000,
     queryFn: () =>
-      client.get(`/projects/${projectId}/assignee-candidates`, {
-        params: { roleCode },
-      }).then((r) => {
+      client.get(
+        `/admin/project-role-types/${encodeURIComponent(roleCode)}/eligible-parties`,
+        { params: { projectId } },
+      ).then((r) => {
         const d = r.data?.data ?? r.data;
         return Array.isArray(d) ? d : [];
       }),
   });
 
-  // Only assignable rows go into the picker (see docstring). Map to
-  // the PeopleMultiSelect `Person` shape.
+  // PeopleMultiSelect keys on `userId`. Parties without a linked
+  // User can't be represented in the picker (there is no id to key
+  // on), so we surface them as disabled rows via a synthetic
+  // negative userId derived from the partyId. That preserves the
+  // spec ("show ineligible rows disabled with the reason visible")
+  // without introducing a NaN row that other consumers would trip on.
   const people = useMemo(
-    () => candidates
-      .filter((c) => c.canAssign && c.userId != null)
-      .map((c) => ({
-        userId: c.userId as number,
+    () => candidates.map((c) => {
+      const disabled = c.eligible === false || c.userId == null;
+      const reasons = [
+        ...(Array.isArray(c.reasons) ? c.reasons : []),
+        ...(c.userId == null ? ['No login account'] : []),
+      ];
+      return {
+        userId: (c.userId ?? -c.id) as number,
         displayName: c.displayName,
         avatarUrl: c.avatarUrl,
-        subtitle: c.discipline ?? c.role ?? null,
-      })),
+        subtitle: c.position ?? c.department ?? c.email ?? null,
+        disabled,
+        disabledReason: reasons.length > 0 ? reasons.join(', ') : null,
+      };
+    }),
+    [candidates],
+  );
+
+  // Save-path adapter: `saveRoleHolders` still uses userId→partyId
+  // translation, so we map the eligible-parties payload into the
+  // shape it expects.
+  const saveCandidates = useMemo(
+    () => candidates.map((c) => ({ userId: c.userId, partyId: c.id })),
     [candidates],
   );
 
@@ -1820,7 +1846,7 @@ function RoleHolderCell({
               const nextIds = buffer ?? currentUserIds;
               setOpen(false);
               setBuffer(null);
-              await onSave(nextIds, candidates);
+              await onSave(nextIds, saveCandidates);
             }}
             className="rounded-lg bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-blue-700"
           >
