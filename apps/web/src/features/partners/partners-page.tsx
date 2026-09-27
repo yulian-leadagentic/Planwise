@@ -344,14 +344,14 @@ function OrganizationsList({ partners, onSelect }: { partners: BusinessPartner[]
         <thead>
           <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
             <th className="px-4 py-2 text-left font-semibold">Organization</th>
-            <th className="px-4 py-2 text-left font-semibold">Main Role</th>
+            <th className="px-4 py-2 text-left font-semibold">Type</th>
             <th className="px-4 py-2 text-left font-semibold">Email</th>
             <th className="px-4 py-2 text-left font-semibold w-32">Phone</th>
             <th className="px-4 py-2 text-center font-semibold w-20">Status</th>
           </tr>
           <tr className="border-t border-border/60 bg-white dark:bg-slate-900/60">
             <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[0]} value={filters.org ?? ''} onChange={(v) => set('org', v)} label="Organization" /></th>
-            <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[1]} value={filters.mainRole ?? ''} onChange={(v) => set('mainRole', v)} label="Main Role" /></th>
+            <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[1]} value={filters.mainRole ?? ''} onChange={(v) => set('mainRole', v)} label="Type" /></th>
             <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[2]} value={filters.email ?? ''} onChange={(v) => set('email', v)} label="Email" /></th>
             <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[3]} value={filters.phone ?? ''} onChange={(v) => set('phone', v)} label="Phone" /></th>
             <th className="px-2 py-1.5"><ColumnFilter config={filterConfig[4]} value={filters.status ?? ''} onChange={(v) => set('status', v)} label="Status" /></th>

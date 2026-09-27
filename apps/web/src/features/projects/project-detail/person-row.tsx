@@ -35,7 +35,7 @@ export function PersonRow({ row, onRemove, accent, compact = false, onOpenProfil
             type="button"
             onClick={() => onOpenProfile?.(row.businessPartnerId)}
             className={cn('font-medium text-slate-900 dark:text-slate-100 hover:underline truncate text-left', compact ? 'text-[13px]' : 'text-sm')}
-            title="Open partner profile"
+            title="Open profile"
           >
             {row.displayName}
           </button>

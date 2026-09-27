@@ -407,10 +407,10 @@ function MainRoleHeaderField({ bp, canWrite }: { bp: BusinessPartnerFull; canWri
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });
       queryClient.invalidateQueries({ queryKey: ['business-partners', bp.id] });
-      notify.success('Main role updated', { code: 'BP-MAINROLE-200' });
+      notify.success('Type updated', { code: 'BP-MAINROLE-200' });
       setPicking(false);
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to update main role'),
+    onError: (err: any) => notify.apiError(err, 'Failed to update type'),
   });
 
   // Inline dropdown view — used by both the soft-prompt and the
@@ -425,9 +425,9 @@ function MainRoleHeaderField({ bp, canWrite }: { bp: BusinessPartnerFull; canWri
         // team/project pickers filter on it). Ask before wiping it.
         if (v === '' && bp.mainRoleTypeId) {
           const ok = await confirm(
-            `${bp.displayName} will no longer have a main role — pickers that filter by main role will stop offering them.`,
+            `${bp.displayName} will no longer have a type — pickers that filter by type will stop offering them.`,
             {
-              title: 'Clear Main Role?',
+              title: 'Clear Type?',
               variant: 'danger',
               confirmLabel: 'Clear',
             },
@@ -600,20 +600,20 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });
-      notify.success('Partner updated', { code: 'BP-UPDATE-200' });
+      notify.success('Updated', { code: 'BP-UPDATE-200' });
       setEditing(false);
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to update partner'),
+    onError: (err: any) => notify.apiError(err, 'Failed to update'),
   });
 
   const remove = useMutation({
     mutationFn: () => client.delete(`/business-partners/${bp.id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });
-      notify.success('Partner removed', { code: 'BP-DELETE-200' });
+      notify.success('Removed', { code: 'BP-DELETE-200' });
       onClose();
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to remove partner'),
+    onError: (err: any) => notify.apiError(err, 'Failed to remove'),
   });
 
   const Field = ({ label, value, render }: { label: string; value: string | null | undefined; render?: () => React.ReactNode }) => (
@@ -801,7 +801,7 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
             ))}
           </select>
           <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-            Saving will sync the <code>worker_of</code> relationship to this organization.
+            Saving will link this contact to the selected organization.
           </p>
         </div>
       )}
@@ -1259,7 +1259,7 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
         <div>
           <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-2 flex items-center gap-1.5">
             <ChevronRight className="h-3 w-3 rotate-180" />
-            Pointing at this partner ({incoming.length})
+            Pointing at this record ({incoming.length})
           </p>
           <div className="space-y-1.5">
             {incoming.map((r) => (
@@ -1586,13 +1586,13 @@ function AddRelationshipModal({
             </select>
             {hiddenTypeCount > 0 && (
               <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
-                {hiddenTypeCount} type{hiddenTypeCount > 1 ? 's' : ''} hidden — neither side accepts this partner ({partnerKind}
+                {hiddenTypeCount} type{hiddenTypeCount > 1 ? 's' : ''} hidden — neither side accepts this record ({partnerKind}
                 {partnerRoleCodes.length > 0 ? ` with roles: ${partnerRoleCodes.join(', ')}` : ''}).
               </p>
             )}
             {annotatedRelTypes.length === 0 && (
               <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded mt-1">
-                No relationship types accept this partner on either side. Configure a type whose Side A or Side B matches this partner's kind/roles.
+                No relationship types accept this record on either side. Configure a type whose first or second party matches this record's kind or roles.
               </p>
             )}
           </div>

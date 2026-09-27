@@ -78,7 +78,7 @@ const ROUTE_LABELS: Record<string, string> = {
   calendar: 'Calendar Days',
   'notification-settings': 'Notification Settings',
   'time-note-phrases': 'Time-log Phrases',
-  'partner-types': 'Partner Types',
+  'partner-types': 'Contact & Organization Types',
   'number-ranges': 'Number Ranges',
   'object-numbering': 'Object Numbering',
   currencies: 'Currencies',

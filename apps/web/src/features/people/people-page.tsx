@@ -385,14 +385,14 @@ export function PeoplePage() {
 
   const tabs = [
     { key: 'employees' as const, label: 'Employees' },
-    { key: 'partners' as const, label: 'External Employees' },
+    { key: 'partners' as const, label: 'External Users' },
   ];
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Employees"
-        description="Internal staff with login accounts — manage details, roles and access"
+        description="Employees with login accounts — manage details, roles and access"
         actions={
           <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-[13px] font-semibold text-white">
             <Plus className="h-4 w-4" />
@@ -422,7 +422,7 @@ export function PeoplePage() {
       <FilterBar
         search={peopleSearch}
         onSearchChange={(v) => setPeopleFilters({ peopleSearch: v })}
-        searchPlaceholder={isPartners ? 'Search external employees...' : 'Search employees...'}
+        searchPlaceholder={isPartners ? 'Search external users...' : 'Search employees...'}
       />
 
       {/* Status filter — defaults to Active. The whole rest of the app
@@ -450,8 +450,8 @@ export function PeoplePage() {
       {!isLoading && users.length === 0 ? (
         <EmptyState
           icon={Users}
-          title={isPartners ? 'No external employees found' : 'No employees found'}
-          description={`Add your first ${isPartners ? 'external employee' : 'employee'} to get started`}
+          title={isPartners ? 'No external users found' : 'No employees found'}
+          description={`Add your first ${isPartners ? 'external user' : 'employee'} to get started`}
         />
       ) : (
         <DataTable
@@ -499,7 +499,7 @@ export function PeoplePage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={() => setShowCreate(false)}>
           <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[480px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Add {isPartners ? 'External Employee' : 'Employee'}</h2>
+              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Add {isPartners ? 'External User' : 'Employee'}</h2>
               <button onClick={() => setShowCreate(false)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200">
                 <X className="h-4 w-4" />
               </button>
@@ -550,7 +550,7 @@ export function PeoplePage() {
                     </div>
                   )}
                   <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                    Wires up an <code>employee_of</code> relationship — defines what context this contact works in.
+                    Links this contact to their employer organization — defines what context they work in.
                   </p>
                 </div>
               )}
@@ -570,7 +570,7 @@ export function PeoplePage() {
                     onClick={() => { setPartnerPickerSearch(''); setPartnerPickerOpen(true); }}
                     className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-left text-slate-500 dark:text-slate-400 hover:border-blue-400 focus:border-blue-500 focus:outline-none"
                   >
-                    — Create a new partner record — <span className="text-blue-600 underline ml-1">pick from list</span>
+                    — Create a new contact record — <span className="text-blue-600 underline ml-1">pick from list</span>
                   </button>
                 ) : (
                   <div className="flex items-center gap-2">
@@ -581,7 +581,7 @@ export function PeoplePage() {
                     >
                       {(() => {
                         const bp = linkableBps.find((b: any) => b.id === form.businessPartnerId);
-                        if (!bp) return `Partner #${form.businessPartnerId}`;
+                        if (!bp) return `Contact #${form.businessPartnerId}`;
                         const tail = bp.email ? ` · ${bp.email}` : bp.companyName ? ` · ${bp.companyName}` : '';
                         return `${bp.displayName}${tail}`;
                       })()}
@@ -597,7 +597,7 @@ export function PeoplePage() {
                   </div>
                 )}
                 <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                  Pick someone already in <strong>Partners → Contacts</strong> to give them
+                  Pick someone already in <strong>Contacts</strong> to give them
                   app access without duplicating the contact record.
                 </p>
               </div>
@@ -674,7 +674,7 @@ export function PeoplePage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="Determines what the user can see and edit — separate from job title.">
-                    Authorization Role <span className="text-red-500">*</span>
+                    Access Role <span className="text-red-500">*</span>
                   </label>
                   <select value={form.roleId} onChange={(e) => setForm(f => ({ ...f, roleId: e.target.value }))} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none">
                     <option value="">Select role</option>
@@ -815,7 +815,7 @@ export function PeoplePage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Select a partner</h2>
+              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Select a contact</h2>
               <button
                 type="button"
                 onClick={() => setPartnerPickerOpen(false)}
@@ -849,7 +849,7 @@ export function PeoplePage() {
                   return (
                     <p className="px-5 py-6 text-center text-sm text-slate-500 dark:text-slate-400">
                       {linkableBps.length === 0
-                        ? 'No linkable partners — every person already has a login.'
+                        ? 'No linkable contacts — every person already has a login.'
                         : 'No matches for that search.'}
                     </p>
                   );
@@ -931,7 +931,7 @@ export function PeoplePage() {
                   return (
                     <p className="px-5 py-6 text-center text-sm text-slate-500 dark:text-slate-400">
                       {employerOrgs.length === 0
-                        ? 'No organizations yet — add one from Partners → Organizations first.'
+                        ? 'No organizations yet — add one from Organizations first.'
                         : 'No matches for that search.'}
                     </p>
                   );

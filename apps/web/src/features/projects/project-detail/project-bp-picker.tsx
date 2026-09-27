@@ -203,7 +203,7 @@ export function ProjectBpPicker({
                     <div className="px-3 py-3 text-[12px] text-slate-400 dark:text-slate-500 text-center italic">
                       {search ? 'No matches.' : (
                         config.partnerType === 'organization'
-                          ? 'No suppliers available. Add one in Partners → Organizations.'
+                          ? 'No suppliers available. Add one in Organizations.'
                           : (filterEmployerOrgId
                               ? 'No people work for this organization yet — click "New contact" above to add one.'
                               : 'Type to search.')

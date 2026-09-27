@@ -45,7 +45,7 @@ const TARGETS: Array<{
   {
     key: 'partners',
     label: 'Customers & Suppliers',
-    description: 'Business partners — customers, suppliers, consultants. Ships in M2.',
+    description: 'Organizations — customers, suppliers, consultants. Ships in M2.',
     icon: Building2,
     available: false,
   },
@@ -53,7 +53,7 @@ const TARGETS: Array<{
     key: 'contacts',
     label: 'Customer Contacts',
     description:
-      'Six-stage wizard for real-world Excel / CSV / DOCX / PDF contact sheets — magic-byte triage, per-sheet header detection, split & forward-fill, dedup, idempotent commit.',
+      'Six-stage wizard for Excel / CSV / DOCX / PDF contact sheets — file-type detection, per-sheet header detection, split & forward-fill, dedup, safe re-run.',
     icon: ContactIcon,
     available: true,
   },

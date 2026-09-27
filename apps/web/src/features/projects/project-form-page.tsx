@@ -739,12 +739,12 @@ export function ProjectFormPage() {
                         <span className="text-amber-600">
                           No organizations are tagged as <strong>customer</strong> yet.{' '}
                           <a href="/partners?tab=organizations" className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">
-                            Add one in Partners → Organizations
+                            Add one in Organizations
                           </a>{' '}
                           and tag it with the customer role-type.
                         </span>
                       ) : (
-                        <>Need a new customer? Add it from <a href="/partners?tab=organizations" className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">Partners → Organizations</a> first.</>
+                        <>Need a new customer? Add it from <a href="/partners?tab=organizations" className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">Organizations</a> first.</>
                       )
                     ) : isAdmin ? (
                       'Saving will end the previous customer-of-project relationship and start a new one (history is preserved).'

@@ -218,7 +218,7 @@ export function getColumns(
                 ? 'Per-employee override — wins over the seniority level rate.'
                 : src === 'level'
                   ? 'From the seniority level rate history.'
-                  : 'From the seniority level default (rollout fallback).'
+                  : 'From the seniority level default.'
             }
           >
             ₪{r}/h
@@ -236,7 +236,7 @@ export function getColumns(
   cols.push(
     {
       accessorKey: 'roleName',
-      header: 'Authorization Role',
+      header: 'Access Role',
       // QA3 master-handoff · Part B — enum filter fed by the roles catalog.
       meta: {
         filterOptions: roles.map((r: any) => ({ value: String(r.name ?? ''), label: String(r.name ?? '') })),

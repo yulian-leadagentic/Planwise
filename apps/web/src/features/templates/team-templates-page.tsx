@@ -62,7 +62,7 @@ function TypeBadge({ type }: { type?: string | null }) {
         isPartner ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'
       }`}
     >
-      {isPartner ? 'Partner' : 'Employee'}
+      {isPartner ? 'External User' : 'Employee'}
     </span>
   );
 }

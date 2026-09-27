@@ -93,7 +93,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     title: 'People',
     items: [
-      { label: 'Partners', href: '/partners', icon: Briefcase },
+      { label: 'Organizations', href: '/partners', icon: Briefcase },
       // Dedicated contacts surface — not a tab inside Partners. Has its own
       // page with view toggles (List · By Project · By Customer), filters,
       // and project enrichment.

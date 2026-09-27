@@ -147,7 +147,7 @@ export function EditPersonModal({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block" title="Determines what the user can see and edit — separate from job title / profession.">
-                Authorization Role <span className="text-red-500">*</span>
+                Access Role <span className="text-red-500">*</span>
               </label>
               <select value={form.roleId} onChange={(e) => setForm(f => ({ ...f, roleId: e.target.value }))} className={inputClass}>
                 <option value="">Select role</option>

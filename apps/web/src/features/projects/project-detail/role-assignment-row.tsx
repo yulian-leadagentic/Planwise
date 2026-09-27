@@ -28,11 +28,11 @@ export function RoleAssignmentRow({
             type="button"
             onClick={() => onOpenProfile?.(p.id)}
             className="text-sm font-semibold text-slate-900 dark:text-slate-100 hover:underline truncate text-left"
-            title="Open partner profile"
+            title="Open profile"
           >
             {p.displayName}
           </button>
-          <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">({p.partnerType})</span>
+          <span className="text-[11px] text-slate-400 dark:text-slate-500">{p.partnerType === 'person' ? 'Contact' : 'Organization'}</span>
           {assignment.isPrimary && (
             <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">PRIMARY</span>
           )}

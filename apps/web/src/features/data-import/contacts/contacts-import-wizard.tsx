@@ -702,10 +702,10 @@ function SheetPickerStep({
 
 function VerdictBadge({ verdict, confidence }: { verdict: SheetGrade['verdict']; confidence: number }) {
   const cfg = {
-    auto: { bg: 'bg-emerald-50', text: 'text-emerald-700', label: '0-CLICK' },
-    manual: { bg: 'bg-amber-50', text: 'text-amber-700', label: 'CONFIRM' },
-    headerless: { bg: 'bg-blue-50', text: 'text-blue-700', label: 'EMAIL-ONLY' },
-    'non-contact': { bg: 'bg-slate-100', text: 'text-slate-500', label: 'NON-CONTACT' },
+    auto: { bg: 'bg-emerald-50', text: 'text-emerald-700', label: 'READY' },
+    manual: { bg: 'bg-amber-50', text: 'text-amber-700', label: 'NEEDS REVIEW' },
+    headerless: { bg: 'bg-blue-50', text: 'text-blue-700', label: 'EMAIL ONLY' },
+    'non-contact': { bg: 'bg-slate-100', text: 'text-slate-500', label: 'NOT CONTACTS' },
   }[verdict];
   return (
     <span
@@ -788,7 +788,7 @@ function MapStep({
               >
                 {p.name}
                 {p.isSystem && (
-                  <span className="ml-1 text-[10px] font-medium text-blue-600">·system</span>
+                  <span className="ml-1 text-[11px] font-medium text-blue-600">·system</span>
                 )}
               </button>
             ))}
@@ -929,7 +929,7 @@ function PreviewStep({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <SummaryTile label="Total rows" value={s.totalRows} />
         <SummaryTile label="Eligible" value={s.eligible} tone="ok" />
-        <SummaryTile label="Below contract" value={s.belowContract} tone={s.belowContract > 0 ? 'warn' : 'neutral'} />
+        <SummaryTile label="Missing email or phone" value={s.belowContract} tone={s.belowContract > 0 ? 'warn' : 'neutral'} />
         <SummaryTile label="Conflicts" value={s.orgConflicts} tone={s.orgConflicts > 0 ? 'warn' : 'neutral'} />
         <SummaryTile label="Orgs · create" value={s.orgsToCreate} tone="ok" />
         <SummaryTile label="Orgs · link" value={s.orgsToLink} tone="info" />
@@ -1105,8 +1105,8 @@ function ProjectAttachPanel({
       <p className="text-[11px] text-slate-500">
         Pick a project to add every committed person to its team. Each row's
         <span className="font-mono px-1 text-slate-600">discipline</span> column becomes the
-        person's <em>title-in-project</em>; the role-type here is the participation role. Leave
-        both empty for a global import (creates BPs + worker_of only).
+        person's <em>title on project</em>; the role-type here is the participation role. Leave
+        both empty for a global import (creates contacts and links them to their organizations only).
       </p>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1135,8 +1135,8 @@ function ProjectAttachPanel({
               {roleTypesLoading
                 ? 'Loading roles…'
                 : fallbackDefault
-                  ? `— server fallback: ${fallbackDefault.name} —`
-                  : '— no role · attach will be skipped —'}
+                  ? `— default: ${fallbackDefault.name} —`
+                  : '— no role · project attach will be skipped —'}
             </option>
             {roleTypes.map((rt) => (
               <option key={rt.id} value={rt.id}>
@@ -1317,7 +1317,7 @@ function SummaryTile({
   }[tone];
   return (
     <div className={cn('rounded-lg border px-3 py-2', cfg)}>
-      <div className="text-[10px] uppercase font-semibold tracking-wide opacity-70">{label}</div>
+      <div className="text-[11px] uppercase font-semibold tracking-wide opacity-70">{label}</div>
       <div className="text-lg font-bold tabular-nums font-mono">{value}</div>
     </div>
   );
@@ -1357,7 +1357,7 @@ function PreviewRow({
         belowContract && 'bg-red-50/40',
       )}
     >
-      <div className="font-mono text-[10px] text-slate-400 tabular-nums pt-1">
+      <div className="font-mono text-[11px] text-slate-400 tabular-nums pt-1">
         row {dec.sourceRowIndex}
       </div>
       <div className="min-w-0">
@@ -1424,24 +1424,24 @@ function PreviewRow({
             </>
           )}
         </div>
-        <div className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
-          <span>org:</span> <ActionBadge action={effectiveOrgAction} />
+        <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
+          <span>Organization:</span> <ActionBadge action={effectiveOrgAction} />
           <span className="text-slate-400 truncate">{dec.org.reason}</span>
           {dec.org.matchedBpName && (
             <span className="text-slate-500">→ <strong>{dec.org.matchedBpName}</strong></span>
           )}
         </div>
-        <div className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-1">
-          <span>person:</span> <ActionBadge action={dec.contact.action} />
+        <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1">
+          <span>Contact:</span> <ActionBadge action={dec.contact.action} />
           <span className="text-slate-400 truncate">{dec.contact.reason}</span>
         </div>
         {dec.contractError && (
-          <div className="text-[10px] text-red-700 mt-1 flex items-center gap-1">
+          <div className="text-[11px] text-red-700 mt-1 flex items-center gap-1">
             <XCircle className="h-3 w-3" /> {dec.contractError}
           </div>
         )}
         {row.errors.map((e, i) => (
-          <div key={i} className="text-[10px] text-amber-700 mt-0.5 flex items-center gap-1">
+          <div key={i} className="text-[11px] text-amber-700 mt-0.5 flex items-center gap-1">
             <AlertTriangle className="h-3 w-3" /> {e}
           </div>
         ))}
@@ -1456,11 +1456,11 @@ function PreviewRow({
             <option value="conflict">— pick —</option>
             <option value="skip">Skip row</option>
             <option value="create">Create new org</option>
-            {dec.org.matchedBpId && <option value="link">Link to matched BP</option>}
+            {dec.org.matchedBpId && <option value="link">Link to matched organization</option>}
           </select>
         </div>
       ) : (
-        <span className="text-[10px] text-slate-300 italic pt-1">auto</span>
+        <span className="text-[11px] text-slate-300 italic pt-1">auto</span>
       )}
     </div>
   );
@@ -1519,7 +1519,7 @@ function ActionBadge({ action }: { action: string }) {
     skip: 'bg-slate-100 text-slate-600',
   }[action] ?? 'bg-slate-100 text-slate-500';
   return (
-    <span className={cn('font-mono text-[10px] font-bold px-1.5 py-0.5 rounded-[5px]', cfg)}>
+    <span className={cn('font-mono text-[11px] font-bold px-1.5 py-0.5 rounded-[5px]', cfg)}>
       {action}
     </span>
   );
@@ -1568,7 +1568,7 @@ function CommitStep({
           <div className={cn('text-[13px] mt-0.5', ok ? 'text-emerald-800' : 'text-amber-800')}>
             {result.orgsCreated + result.orgsLinked} orgs ·{' '}
             {result.contactsCreated + result.contactsLinked} contacts ·{' '}
-            {result.workerOfLinksCreated} worker-of links
+            {result.workerOfLinksCreated} employer links
             {result.projectAttached > 0 &&
               ` · ${result.projectAttached} attached to ${projectName ?? 'the project'}`}
             {result.errors > 0 && ` · ${result.errors} errors`}
@@ -1581,7 +1581,7 @@ function CommitStep({
           <Info className="h-4 w-4 shrink-0 mt-0.5" />
           <div>
             <strong>0 people attached to {projectName ?? 'the project'}.</strong> Every row either
-            skipped (below-contract or user-marked "skip") or no role type was resolvable — pick
+            skipped (missing email or phone, or user-marked "skip") or no role type was resolvable — pick
             a role explicitly on the Preview step, or ensure the <code>contact</code>{' '}
             / <code>external_contact</code> project-role type is seeded.
           </div>
@@ -1593,7 +1593,7 @@ function CommitStep({
         <SummaryTile label="Orgs linked" value={result.orgsLinked} tone="info" />
         <SummaryTile label="Contacts created" value={result.contactsCreated} tone="ok" />
         <SummaryTile label="Contacts linked" value={result.contactsLinked} tone="info" />
-        <SummaryTile label="worker_of links" value={result.workerOfLinksCreated} tone="info" />
+        <SummaryTile label="Employer links" value={result.workerOfLinksCreated} tone="info" />
         {projectRequested && (
           <SummaryTile
             label={projectName ? `Attached · ${projectName}` : 'Attached to project'}
@@ -1601,7 +1601,7 @@ function CommitStep({
             tone={result.projectAttached > 0 ? 'ok' : 'warn'}
           />
         )}
-        <SummaryTile label="Below contract" value={result.belowContract} tone="warn" />
+        <SummaryTile label="Missing email or phone" value={result.belowContract} tone="warn" />
         <SummaryTile label="Skipped" value={result.orgsSkipped + result.contactsSkipped} />
         <SummaryTile label="Errors" value={result.errors} tone={result.errors ? 'warn' : 'neutral'} />
       </div>
@@ -1615,7 +1615,7 @@ function CommitStep({
             .filter((r) => r.status === 'error')
             .map((r) => (
               <div key={r.sourceRowIndex} className="px-3 py-2 text-[12px] text-red-700">
-                <span className="font-mono text-[10px]">row {r.sourceRowIndex}</span> · {r.message}
+                <span className="font-mono text-[11px]">row {r.sourceRowIndex}</span> · {r.message}
               </div>
             ))}
         </div>

@@ -107,9 +107,9 @@ export function TeamTab({
       // Branch 2 · fix/assignee-source — the task-tree picker reads
       // the unified candidate list; keep it in sync on Team tab edits.
       queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
-      notify.success('Disconnected (soft-ended)', { code: 'PROJECT-TEAM-DELETE-200' });
+      notify.success('Removed from project', { code: 'PROJECT-TEAM-DELETE-200' });
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to disconnect'),
+    onError: (err: any) => notify.apiError(err, 'Failed to remove from project'),
   });
 
   const removeRoleAssignment = useMutation({
@@ -118,9 +118,9 @@ export function TeamTab({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
       queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
-      notify.success('Disconnected', { code: 'PROJECT-PPR-DELETE-200' });
+      notify.success('Removed from project', { code: 'PROJECT-PPR-DELETE-200' });
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to disconnect'),
+    onError: (err: any) => notify.apiError(err, 'Failed to remove from project'),
   });
 
   const removeMyTeam = async (row: ProjectTeamPerson) => {
@@ -230,7 +230,7 @@ export function TeamTab({
         <div>
           <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Project Team</h2>
           <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
-            Connections between this project and your business partners. Disconnects are <strong>soft-ended</strong> (history preserved).
+            Connections between this project and organizations or contacts. Removals are <strong>ended</strong> (history preserved).
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">

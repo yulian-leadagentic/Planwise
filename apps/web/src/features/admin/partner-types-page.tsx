@@ -108,13 +108,13 @@ export function PartnerTypesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Partner Types"
-        description="Configure the role and relationship types used by Business Partners. System types can be renamed but not deleted."
+        title="Contact & Organization Types"
+        description="Configure the role and relationship types used by organizations and contacts. System types can be renamed but not deleted."
       />
 
       <div className="flex gap-1 border-b border-border">
         {([
-          { key: 'role-types', label: 'BP Types' },
+          { key: 'role-types', label: 'Types' },
           { key: 'relationship-types', label: 'Relationship Types' },
           { key: 'categories', label: 'Categories' },
           { key: 'personal-domains', label: 'Personal Email Domains' },
@@ -191,11 +191,11 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-[12px] text-slate-500 dark:text-slate-400">Roles a partner can hold (employee, customer, etc.). Used in the partner profile and as filters.</p>
+        <p className="text-[12px] text-slate-500 dark:text-slate-400">Roles an organization or contact can hold (employee, customer, etc.). Used in the profile and as filters.</p>
         {canWrite && editingId === null && (
           <button
             onClick={() => setEditingId('new')}
-            title="Define a new kind of role a partner can hold (e.g. customer, supplier, contractor). Roles are global tags on the partner — they show up in the partner drawer and drive who's eligible for relationship-type and project-role pickers."
+            title="Define a new kind of role an organization or contact can hold (e.g. customer, supplier, contractor). Roles are global tags — they show up in the profile drawer and drive who's eligible for relationship-type and project-role pickers."
             className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
           >
             <Plus className="h-3 w-3" /> Add Role Type
@@ -488,13 +488,13 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
       <div className="flex items-center justify-between">
         <div className="flex-1 max-w-3xl">
           <p className="text-[12px] text-slate-500 dark:text-slate-400 mb-1">
-            Defines how two business partners can be connected (person↔organization, organization↔organization, etc.). For a party's role on a specific project, use <a href="/admin/project-role-types" className="text-blue-600 hover:underline">Project Role Types</a> instead.
+            Defines how two parties can be connected (contact↔organization, organization↔organization, etc.). For a party's role on a specific project, use <a href="/admin/project-role-types" className="text-blue-600 hover:underline">Project Role Types</a> instead.
           </p>
         </div>
         {canWrite && editingId === null && (
           <button
             onClick={() => setEditingId('new')}
-            title="Define a new partner-to-partner relationship kind (e.g. 'contact_at_customer', 'subsidiary_of'). Each type names both sides and constrains which kinds and roles can hold each side. Project-side roles belong in Project Role Types, not here."
+            title="Define a new relationship kind between two parties (e.g. 'contact at customer', 'subsidiary of'). Each type names both sides and constrains which kinds and roles can hold each side. Project-side roles belong in Project Role Types, not here."
             className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
           >
             <Plus className="h-3 w-3" /> Add Relationship Type
@@ -511,15 +511,15 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
           The names appear as labels on the create form, and as a readable sentence in every list.
         </p>
         <ul className="list-disc pl-5 space-y-0.5">
-          <li><strong>Side A label / kind</strong> — what the first party IS (e.g. <em>Employee</em>, a <code>person</code>).</li>
-          <li><strong>Side B label / kind</strong> — what the second party IS (e.g. <em>Employer</em>, an <code>organization</code>).</li>
-          <li><strong>Inverse label</strong> — how the rel reads when viewed from side B (e.g. <em>Employs</em>).</li>
+          <li><strong>First-party label / kind</strong> — what the first party is (e.g. <em>Employee</em>, a contact).</li>
+          <li><strong>Second-party label / kind</strong> — what the second party is (e.g. <em>Employer</em>, an organization).</li>
+          <li><strong>Inverse label</strong> — how the relationship reads when viewed from the second party (e.g. <em>Employs</em>).</li>
           <li><strong>Allows multiple</strong> — uncheck for "one at a time" types like primary employer.</li>
         </ul>
         <p className="text-slate-600 dark:text-slate-300">
-          <strong>Example</strong> — to express <em>"an external_contact is a contact-of a customer org"</em>:
-          side A <code>Contact / person</code>, side B <code>Customer Org / organization</code>, inverse <code>Has contact</code>.
-          (Plus the legacy required-role constraints below for validation.)
+          <strong>Example</strong> — to express <em>"an external contact is a contact of a customer organization"</em>:
+          first party is a Contact, second party is a Customer organization, inverse label <em>Has contact</em>.
+          (Plus the required-role constraints below for validation.)
         </p>
       </div>
 
@@ -717,7 +717,7 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           <SidePickerCard
             color="blue"
-            label="Side A"
+            label="First party"
             optionalDisplayLabel={form.sideALabel}
             onDisplayLabelChange={(v) => setForm((f) => ({ ...f, sideALabel: v }))}
             value={form.sideATargets}
@@ -727,7 +727,7 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
           />
           <SidePickerCard
             color="violet"
-            label={form.isSymmetric ? 'Side B (same as A — ignored)' : 'Side B'}
+            label={form.isSymmetric ? 'Second party (same as first — ignored)' : 'Second party'}
             optionalDisplayLabel={form.sideBLabel}
             onDisplayLabelChange={(v) => setForm((f) => ({ ...f, sideBLabel: v }))}
             value={form.sideBTargets}
@@ -740,9 +740,9 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
         <div className="flex items-center gap-3 flex-wrap text-[11px]">
           <div
             className="flex-1 min-w-[180px]"
-            title="How the relationship reads when viewed from Side B's drawer. Example: type 'worker_of' shows on the person's drawer as 'Employer ← Acme'; on Acme's drawer it should show as 'Employs ← John' — set the inverse label to 'Employs'. Leave empty if symmetric or if the type name reads the same both ways."
+            title="How the relationship reads when viewed from the second party's drawer. Example: on the person's drawer it shows as 'Employer ← Acme'; on Acme's drawer it should show as 'Employs ← John' — set the inverse label to 'Employs'. Leave empty if symmetric or if the type name reads the same both ways."
           >
-            <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase block mb-0.5">Inverse label (reads back from side B)</span>
+            <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase block mb-0.5">Inverse label (reads back from the second party)</span>
             <input
               value={form.inverseLabel}
               onChange={(e) => setForm((f) => ({ ...f, inverseLabel: e.target.value }))}
@@ -752,7 +752,7 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
           </div>
           <label
             className="flex items-center gap-1.5 cursor-pointer"
-            title="Check if the relationship reads the same from either side (e.g. 'partner_of': if A partner_of B, then B partner_of A). Side B is ignored when symmetric — the system clones side A. Most rels are asymmetric (employee ≠ employer)."
+            title="Check if the relationship reads the same from either side (e.g. 'partner of': if A is partner of B, then B is partner of A). The second party is ignored when symmetric — the system clones the first party. Most relationships are asymmetric (employee ≠ employer)."
           >
             <input
               type="checkbox"
@@ -763,7 +763,7 @@ function RelationshipTypeEditRow({ type, onClose }: { type?: RelationshipType; o
           </label>
           <label
             className="flex items-center gap-1.5 cursor-pointer"
-            title="If checked, a partner can hold several active relationships of this type at once (e.g. a supplier can be a supplier on many projects). If unchecked, creating a new relationship soft-ends the existing one (e.g. exactly one primary employer at a time)."
+            title="If checked, an organization or contact can hold several active relationships of this type at once (e.g. a supplier can be a supplier on many projects). If unchecked, creating a new relationship ends the existing one (e.g. exactly one primary employer at a time)."
           >
             <input
               type="checkbox"
@@ -920,7 +920,7 @@ function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: 
                         <button
                           onClick={async () => {
                             const ok = await confirm(
-                              `Partners in this category will fall back to no category.`,
+                              `Organizations and contacts in this category will fall back to no category.`,
                               {
                                 title: `Delete category "${c.name}"?`,
                                 variant: 'danger',

@@ -315,7 +315,7 @@ export function CreatePartnerModal({
     : <Building2 className="h-4 w-4 text-violet-600" />;
   const titleText = lockPartnerType
     ? (isPerson ? 'Add Contact' : 'Add Organization')
-    : 'Add Business Partner';
+    : 'Add Organization or Contact';
   const submitLabel = isPerson ? 'Create Contact' : 'Create Organization';
 
   return (
@@ -523,7 +523,7 @@ function PersonForm({
         </select>
         <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
           <span className="font-semibold text-slate-500 dark:text-slate-400">Determines which project roles this person can be assigned to.</span>
-          {' '}The person's actual profession (e.g. Architect, MEP Engineer). Add more titles from the partner profile after creation.
+          {' '}The person's actual profession (e.g. Architect, MEP Engineer). Add more titles from the contact profile after creation.
         </p>
       </div>
 
@@ -610,7 +610,7 @@ function PersonForm({
           </select>
         )}
         <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-          Creates a <code>worker_of</code> relationship — the contact's "context" is defined here.
+          Links this contact to their employer organization — the contact's context is defined here.
         </p>
       </div>
       {form.employerOrgId && (
@@ -793,7 +793,7 @@ function RoleMultiSelect({
   if (options.length === 0) {
     return (
       <div className={cn(inputClass, 'text-slate-400 dark:text-slate-500 italic bg-slate-50 dark:bg-slate-800/40')}>
-        No role types configured — add some under Admin → Partner Types first.
+        No role types configured — add some under Admin → Contact & Organization Types first.
       </div>
     );
   }

@@ -479,7 +479,7 @@ export function ContactsPage() {
             onChange={(e) => setIncludeAmc(e.target.checked)}
             className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
           />
-          Include AMC
+          Include AMEC employees
         </label>
         <select
           value={orgFilter}
@@ -902,7 +902,7 @@ function ByCustomerView({
         <p className="mt-1 text-[12px] text-slate-400 dark:text-slate-500">
           Any organization set as a project's customer, or tagged with the{' '}
           <span className="font-mono text-slate-500 dark:text-slate-400">customer</span> role, will appear here.
-          Add one from <span className="font-mono text-slate-500 dark:text-slate-400">Partners → Organizations</span> to get started.
+          Add one from <span className="font-mono text-slate-500 dark:text-slate-400">Organizations</span> to get started.
         </p>
       </div>
     );

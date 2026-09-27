@@ -21,15 +21,15 @@ import { usePermissions } from '@/hooks/use-permissions';
 const adminCards = [
   {
     title: 'Employees',
-    description: 'Internal staff with login accounts — edit details, reset passwords, manage access',
+    description: 'Employees with login accounts — edit details, reset passwords, manage access',
     icon: Users,
     href: '/admin/employees',
     module: 'partners',
     color: 'bg-emerald-100 text-emerald-700',
   },
   {
-    title: 'Partner Types',
-    description: 'Manage role types and relationship types used by Business Partners',
+    title: 'Contact & Organization Types',
+    description: 'Manage role types and relationship types used by organizations and contacts',
     icon: Tags,
     href: '/admin/partner-types',
     module: 'admin/partner-types',

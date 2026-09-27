@@ -14,7 +14,7 @@ export function OrgRow({ displayName, email, phone, bpId, onOpenProfile }: {
           type="button"
           onClick={() => onOpenProfile?.(bpId)}
           className="text-sm font-semibold text-slate-900 dark:text-slate-100 hover:underline truncate text-left w-full"
-          title="Open partner profile"
+          title="Open profile"
         >
           {displayName}
         </button>

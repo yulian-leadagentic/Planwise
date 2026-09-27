@@ -107,11 +107,11 @@ export function ProjectRoleTypesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Project Role Types"
-        description="Catalog of roles a partner can hold on a project (Customer, Supplier, Architect, …). System roles can be renamed but not deleted."
+        description="Catalog of roles a party can hold on a project (Customer, Supplier, Architect, …). System roles can be renamed but not deleted."
         actions={canWrite && editingId === null ? (
           <button
             onClick={() => setEditingId('new')}
-            title="Define a new role a partner can hold on a project (e.g. Lead Architect, BIM Manager, Site Engineer). Each project role gets its own section on the project Team tab with an Add button. Use the 'Allowed kind' + 'Required partner-role' fields to constrain who can be picked."
+            title="Define a new role a party can hold on a project (e.g. Lead Architect, BIM Manager, Site Engineer). Each project role gets its own section on the project Team tab with an Add button. Use the 'Allowed kind' + 'Required role' fields to constrain who can be picked."
             className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
           >
             <Plus className="h-3 w-3" /> Add Project Role
@@ -123,13 +123,13 @@ export function ProjectRoleTypesPage() {
       <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-blue-50/40 p-3 text-[12px] text-slate-700 dark:text-slate-200 space-y-2">
         <p className="font-semibold text-slate-800 dark:text-slate-100">What does each row do?</p>
         <p>
-          A project role defines <strong>what a partner does on a project</strong>. The 4 system roles
+          A project role defines <strong>what a party does on a project</strong>. The 4 system roles
           (Customer, Supplier, Participant, plus optional ones) cover the common cases; admins
           can add custom roles like <em>Lead Architect</em>, <em>QA Inspector</em>, etc.
         </p>
         <ul className="list-disc pl-5 space-y-0.5">
-          <li><strong>Allowed kind</strong> — restricts which party kind (person / org) can hold this role.</li>
-          <li><strong>Required partner-role</strong> — party must also hold this role globally (e.g. project Customer requires partner-role <code>customer</code>).</li>
+          <li><strong>Allowed kind</strong> — restricts which party kind (contact / organization) can hold this role.</li>
+          <li><strong>Required role</strong> — party must also hold this role globally (e.g. project Customer requires role <code>customer</code>).</li>
           <li><strong>Primary required</strong> — exactly one party holds the role as primary on a project (e.g. one primary Customer).</li>
         </ul>
       </div>
@@ -390,9 +390,9 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
         <div className="flex items-center gap-2 flex-wrap">
           <span
             className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase whitespace-nowrap"
-            title="Filter assignable parties to those who hold this partner-role globally (e.g. only employees can be a 'Project Lead'). The list only shows roles compatible with the kind you chose above."
+            title="Filter assignable parties to those who hold this role globally (e.g. only employees can be a 'Team Leader'). The list only shows roles compatible with the kind you chose above."
           >
-            Required partner-role
+            Required role
           </span>
           <select
             value={form.requiredPartnerRoleCode}
@@ -415,7 +415,7 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
           <div className="flex items-center justify-between">
             <span
               className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase"
-              title="Filter assignable parties to those whose Job Title is in this list. Job titles are managed at /templates/types → Job Titles. Combined with Required partner-role above as AND — the party must satisfy both."
+              title="Filter assignable parties to those whose Job Title is in this list. Job titles are managed at /templates/types → Job Titles. Combined with Required role above as AND — the party must satisfy both."
             >
               Required job title(s)
             </span>
@@ -472,14 +472,14 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
         {form.allowedPartnerKind === 'organization' && (
           <label
             className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300 pt-1"
-            title="Org role (requires a contact person). When checked, the add-participant flow prompts for a contact person alongside the org. Persists as ProjectPartnerRole.contactPartyId."
+            title="Organization role (requires a contact person). When checked, the add-participant flow prompts for a contact person alongside the organization."
           >
             <input
               type="checkbox"
               checked={form.requiresContactPerson}
               onChange={(e) => setForm((f) => ({ ...f, requiresContactPerson: e.target.checked }))}
             />
-            Org role — require a contact person on the participation
+            Organization role — require a contact person on the participation
           </label>
         )}
         <input

@@ -36,7 +36,7 @@ const ADMIN_ITEMS: SubNavItem[] = [
   { label: 'Google Drive',           href: '/admin/drive',                     icon: HardDrive,     module: 'org',                      group: 'Access & Security' },
   { label: 'Activity Log',           href: '/admin/activity-log',              icon: Activity,      module: 'admin/activity-log',       group: 'Access & Security' },
 
-  { label: 'Partner Types',          href: '/admin/partner-types',             icon: Tags,          module: 'admin/partner-types',      group: 'People Config' },
+  { label: 'Contact & Organization Types', href: '/admin/partner-types',       icon: Tags,          module: 'admin/partner-types',      group: 'People Config' },
   { label: 'Project Role Types',     href: '/admin/project-role-types',        icon: Briefcase,     module: 'admin/project-role-types', group: 'People Config' },
 
   { label: 'Work Schedules',         href: '/admin/work-schedules',            icon: Calendar,      module: 'admin/work-schedules',     group: 'Time & Attendance' },
