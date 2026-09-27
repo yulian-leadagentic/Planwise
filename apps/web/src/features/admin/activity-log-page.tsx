@@ -76,7 +76,7 @@ export function ActivityLogPage() {
           {/* pageSize very high — server-side pagination controls
               (below) drive what data is loaded; DataTable's own
               pager is suppressed. */}
-          <DataTable columns={columns} data={logs} pageSize={1000} />
+          <DataTable columns={columns} data={logs} pageSize={1000} enableColumnFilters />
 
           {meta && meta.totalPages > 1 && (
             <div className="flex items-center justify-center gap-2">

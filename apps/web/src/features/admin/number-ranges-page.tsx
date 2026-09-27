@@ -220,7 +220,7 @@ export function NumberRangesPage() {
       } },
     { id: 'status', header: 'Status', enableSorting: false, size: 96,
       cell: ({ row }) => <StatusBadge status={row.original.isActive ? 'active' : 'inactive'} /> },
-    { id: 'actions', header: 'Actions', enableSorting: false, size: 128,
+    { id: 'actions', header: 'Actions', enableSorting: false, enableColumnFilter: false, size: 128,
       cell: ({ row }) => (
         <div className="flex items-center justify-end gap-2">
           <button
@@ -299,7 +299,7 @@ export function NumberRangesPage() {
           description="Add a range to auto-generate codes for projects, tasks, or partners."
         />
       ) : (
-        <DataTable columns={columns} data={rows} pageSize={1000} />
+        <DataTable columns={columns} data={rows} pageSize={1000} enableColumnFilters />
       )}
     </div>
   );

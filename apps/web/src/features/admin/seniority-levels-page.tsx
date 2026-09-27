@@ -173,7 +173,7 @@ export function SeniorityLevelsPage() {
       cell: ({ row }) => <span className="text-muted-foreground">{row.original.sortOrder}</span> },
     { id: 'status', header: 'Status', enableSorting: false, size: 96,
       cell: ({ row }) => <StatusBadge status={row.original.isActive ? 'active' : 'inactive'} /> },
-    { id: 'actions', header: 'Actions', enableSorting: false, size: 200,
+    { id: 'actions', header: 'Actions', enableSorting: false, enableColumnFilter: false, size: 200,
       cell: ({ row }) => (
         <div className="flex items-center justify-end gap-2">
           <button
@@ -263,7 +263,7 @@ export function SeniorityLevelsPage() {
           description="Add your first level to start (e.g. Junior, Mid, Senior)."
         />
       ) : (
-        <DataTable columns={columns} data={rows} pageSize={1000} />
+        <DataTable columns={columns} data={rows} pageSize={1000} enableColumnFilters />
       )}
 
       {rateModalFor && (

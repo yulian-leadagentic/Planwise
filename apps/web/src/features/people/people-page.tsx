@@ -398,6 +398,8 @@ export function PeoplePage() {
           columns={columns}
           data={users}
           isLoading={isLoading}
+          enableColumnFilters
+
           renderCard={(user) => (
             <div className="rounded-lg border border-border bg-background p-4 hover:bg-muted/50">
               <div className="flex items-center gap-3">

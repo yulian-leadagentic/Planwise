@@ -128,6 +128,19 @@ export function getColumns(
       // wired inline via the same pattern as the Role cell.
       id: 'seniorityLevel',
       header: 'Seniority',
+      // QA3 master-handoff · Part B — seniority-level enum filter fed
+      // by the catalog. accessorFn lets TanStack pull the value from
+      // the nested seniorityLevel.name so the filter has something to
+      // compare against.
+      accessorFn: (row: any) => row.seniorityLevel?.name ?? '',
+      meta: {
+        filterOptions: seniorityLevels.map((s) => ({ value: String(s.name ?? ''), label: String(s.name ?? '') })),
+      },
+      filterFn: (row, _colId, val) => {
+        if (!val) return true;
+        const name = (row.original as any).seniorityLevel?.name ?? '';
+        return String(name) === String(val);
+      },
       cell: ({ row }) => {
         const user = row.original;
         const sl = (user as any).seniorityLevel as { id?: number; name?: string } | null | undefined;
@@ -213,6 +226,15 @@ export function getColumns(
     {
       accessorKey: 'roleName',
       header: 'Authorization Role',
+      // QA3 master-handoff · Part B — enum filter fed by the roles catalog.
+      meta: {
+        filterOptions: roles.map((r: any) => ({ value: String(r.name ?? ''), label: String(r.name ?? '') })),
+      },
+      filterFn: (row, _colId, val) => {
+        if (!val) return true;
+        const name = (row.original as any).roleName ?? '';
+        return String(name) === String(val);
+      },
       cell: ({ row }) => {
         const user = row.original;
         const currentRoleId = (user as any).roleId;
@@ -245,6 +267,17 @@ export function getColumns(
     {
       accessorKey: 'isActive',
       header: 'Status',
+      // QA3 master-handoff · Part B — Active/Inactive enum filter.
+      meta: {
+        filterOptions: [
+          { value: 'true', label: 'Active' },
+          { value: 'false', label: 'Inactive' },
+        ],
+      },
+      filterFn: (row, _colId, val) => {
+        if (val === '' || val == null) return true;
+        return String(!!(row.original as any).isActive) === String(val);
+      },
       cell: ({ row }) => {
         const user = row.original;
         const isActive = !!user.isActive;
@@ -298,6 +331,7 @@ export function getColumns(
     cols.push({
       id: 'actions',
       header: 'Actions',
+      enableColumnFilter: false,
       cell: ({ row }) => (
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
           <button

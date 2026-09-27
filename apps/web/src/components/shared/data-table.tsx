@@ -3,13 +3,16 @@ import {
   getCoreRowModel,
   getSortedRowModel,
   getPaginationRowModel,
+  getFilteredRowModel,
   flexRender,
   type ColumnDef,
   type SortingState,
+  type ColumnFiltersState,
   type Table,
+  type Header,
 } from '@tanstack/react-table';
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, ChevronsUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronUp, ChevronsUpDown, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-media-query';
 import { useStickyHScroll } from './sticky-h-scroll';
 import { cn } from '@/lib/utils';
@@ -22,6 +25,20 @@ interface DataTableProps<TData> {
   onRowClick?: (row: TData) => void;
   isLoading?: boolean;
   emptyMessage?: string;
+  // QA3 master-handoff · Part B1 — opt-in per-column filter row.
+  // False (default) preserves the old behavior; true renders a second
+  // <thead> row with a filter input per filterable column. Columns opt
+  // out via `enableColumnFilter: false` on their ColumnDef; enum-shaped
+  // columns pick a <select> by declaring `meta.filterOptions`.
+  enableColumnFilters?: boolean;
+}
+
+/** Meta a ColumnDef can carry to shape its filter control. */
+export interface DataTableColumnMeta {
+  /** Enum values — when present the filter renders a <select>. */
+  filterOptions?: Array<{ value: string; label: string }>;
+  /** Optional custom placeholder for the text input. */
+  filterPlaceholder?: string;
 }
 
 export function DataTable<TData>({
@@ -32,8 +49,10 @@ export function DataTable<TData>({
   onRowClick,
   isLoading,
   emptyMessage = 'No data found',
+  enableColumnFilters = false,
 }: DataTableProps<TData>) {
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const isMobile = useIsMobile();
   // Sticky horizontal scrollbar — pins a proxy bar to the viewport
   // bottom when the table overflows horizontally. Wires once here so
@@ -45,13 +64,22 @@ export function DataTable<TData>({
   const table = useReactTable({
     data,
     columns,
-    state: { sorting },
+    state: { sorting, columnFilters },
     onSortingChange: setSorting,
+    onColumnFiltersChange: setColumnFilters,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    // Default filterFn: case-insensitive substring on the raw cell
+    // value. Enum columns using <select> get exact match at the cell
+    // level (they set the filter to the exact `value`).
+    defaultColumn: {
+      filterFn: 'includesString' as const,
+    },
     initialState: { pagination: { pageSize } },
   });
+  const activeFilterCount = columnFilters.length;
 
   if (isLoading) {
     return (
@@ -90,6 +118,20 @@ export function DataTable<TData>({
   // Desktop table layout
   return (
     <div className="space-y-4">
+      {enableColumnFilters && activeFilterCount > 0 && (
+        <div className="flex items-center justify-end gap-2 text-xs">
+          <span className="text-muted-foreground">
+            {activeFilterCount} filter{activeFilterCount === 1 ? '' : 's'} active
+          </span>
+          <button
+            type="button"
+            onClick={() => setColumnFilters([])}
+            className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 px-2 py-0.5 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+          >
+            <X className="h-3 w-3" aria-hidden="true" /> Clear filters
+          </button>
+        </div>
+      )}
       <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full text-sm">
           <thead className="bg-muted/50">
@@ -140,6 +182,21 @@ export function DataTable<TData>({
                 })}
               </tr>
             ))}
+            {/* QA3 master-handoff · Part B1 — per-column filter row.
+                Renders under the header when the consumer passes
+                enableColumnFilters. Each filterable column gets either a
+                text input (default, includesString match) or a <select>
+                when its ColumnDef declares `meta.filterOptions`. Actions
+                columns opt out via `enableColumnFilter: false`. */}
+            {enableColumnFilters && (
+              <tr className="border-t border-border/60 bg-white dark:bg-slate-900/60">
+                {table.getHeaderGroups()[0].headers.map((header) => (
+                  <th key={`filter-${header.id}`} className="px-2 py-1.5 text-left">
+                    <FilterControl header={header} />
+                  </th>
+                ))}
+              </tr>
+            )}
           </thead>
           <tbody className="divide-y divide-border">
             {table.getRowModel().rows.length === 0 ? (
@@ -174,6 +231,44 @@ export function DataTable<TData>({
       </div>
       <Pagination table={table} />
     </div>
+  );
+}
+
+// QA3 master-handoff · Part B1 — filter control per column.
+// Text input by default (case-insensitive substring); <select> when
+// the column's meta declares `filterOptions`. Rendering nothing for
+// columns that opt out via `enableColumnFilter: false` (Actions etc.).
+function FilterControl<TData>({ header }: { header: Header<TData, unknown> }) {
+  if (!header.column.getCanFilter()) return null;
+  const meta = header.column.columnDef.meta as DataTableColumnMeta | undefined;
+  const raw = header.column.getFilterValue();
+  const value = raw == null ? '' : String(raw);
+  if (meta?.filterOptions && meta.filterOptions.length > 0) {
+    return (
+      <select
+        aria-label={`Filter by ${typeof header.column.columnDef.header === 'string' ? header.column.columnDef.header : header.id}`}
+        value={value}
+        onChange={(e) => header.column.setFilterValue(e.target.value || undefined)}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-transparent px-1.5 py-0.5 text-[11px] font-normal text-slate-700 dark:text-slate-200 focus:outline-none focus-visible:border-blue-500"
+      >
+        <option value="">— All —</option>
+        {meta.filterOptions.map((opt) => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
+      </select>
+    );
+  }
+  return (
+    <input
+      type="text"
+      value={value}
+      onChange={(e) => header.column.setFilterValue(e.target.value || undefined)}
+      onClick={(e) => e.stopPropagation()}
+      placeholder={meta?.filterPlaceholder ?? 'Filter…'}
+      aria-label={`Filter by ${typeof header.column.columnDef.header === 'string' ? header.column.columnDef.header : header.id}`}
+      className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-transparent px-1.5 py-0.5 text-[11px] font-normal placeholder:text-slate-400 dark:placeholder:text-slate-500 text-slate-700 dark:text-slate-200 focus:outline-none focus-visible:border-blue-500"
+    />
   );
 }
 

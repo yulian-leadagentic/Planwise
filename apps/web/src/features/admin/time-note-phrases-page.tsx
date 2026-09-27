@@ -121,7 +121,7 @@ export function TimeNotePhrasesPage() {
           </button>
         );
       } },
-    { id: 'actions', header: 'Actions', enableSorting: false, size: 110,
+    { id: 'actions', header: 'Actions', enableSorting: false, enableColumnFilter: false, size: 110,
       cell: ({ row }) => {
         const p = row.original;
         if (editingId === p.id) {
@@ -209,7 +209,7 @@ export function TimeNotePhrasesPage() {
           description="Add one above to build out the pool."
         />
       ) : (
-        <DataTable columns={columns} data={phrases} pageSize={1000} />
+        <DataTable columns={columns} data={phrases} pageSize={1000} enableColumnFilters />
       )}
     </div>
   );
