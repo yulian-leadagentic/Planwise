@@ -7,10 +7,11 @@ import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { DataTable } from '@/components/shared/data-table';
 import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge } from '@/components/shared/status-badge';
-import { TextField } from '@/components/shared/field';
+import { TextField, Field } from '@/components/shared/field';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { usePermissions } from '@/hooks/use-permissions';
 
 // QA3 item 1 (2026-09-24) — rate history is displayed and edited via a
 // modal. The row's Hourly Cost cell shows the currently-effective rate
@@ -37,6 +38,13 @@ type SeniorityRow = {
   isActive: boolean;
   defaultHourlyCost: string | number | null;
   currency: string | null;
+  // People UX M2b — the API's shared resolver output at level scope
+  // (open-ended `seniority_rates` row → level default). Rendered in the
+  // "Hourly Cost" column so admins see the number cost calculations
+  // actually pull, not the stale default.
+  effectiveHourlyCost?: string | number | null;
+  effectiveRateSource?: 'level_rate_history' | 'level_default' | null;
+  effectiveCurrency?: string | null;
 };
 
 type FormState = {
@@ -60,6 +68,11 @@ const emptyForm: FormState = {
 export function SeniorityLevelsPage() {
   const confirm = useConfirm();
   const queryClient = useQueryClient();
+  // People UX M2b — finance gate. The rate column + rate modal are the
+  // same shape as the ones on People (finance:read there via
+  // `showEffectiveRate`) so we mirror that check here.
+  const { can } = usePermissions();
+  const showRates = can('finance', 'read');
   // scrollRef was for the hand-rolled table; DataTable owns its own.
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -154,68 +167,99 @@ export function SeniorityLevelsPage() {
 
   // Column defs for the shared DataTable — sorting disabled to
   // preserve the server-ordered no-sort behavior of the prior page.
-  const columns = useMemo<ColumnDef<SeniorityRow, unknown>[]>(() => [
-    { accessorKey: 'code', header: 'Code', enableSorting: false, size: 128,
-      cell: ({ row }) => <span className="font-mono text-xs">{row.original.code}</span> },
-    { accessorKey: 'name', header: 'Name', enableSorting: false,
-      cell: ({ row }) => <span className="font-medium">{row.original.name}</span> },
-    { id: 'cost', header: 'Hourly Cost', enableSorting: false, size: 160,
-      cell: ({ row }) => (
-        row.original.defaultHourlyCost != null ? (
-          <span className="font-mono text-sm text-slate-800 dark:text-slate-100">
-            ₪{row.original.defaultHourlyCost}
-            <span className="ml-1 text-[11px] text-slate-400 dark:text-slate-500">/h</span>
-          </span>
-        ) : (
-          <span className="text-xs italic text-slate-400 dark:text-slate-500">—</span>
-        )
-      ) },
-    { accessorKey: 'sortOrder', header: 'Order', enableSorting: false, size: 80,
-      cell: ({ row }) => <span className="text-muted-foreground">{row.original.sortOrder}</span> },
-    { id: 'status', header: 'Status', enableSorting: false, size: 96,
-      cell: ({ row }) => <StatusBadge status={row.original.isActive ? 'active' : 'inactive'} /> },
-    { id: 'actions', header: 'Actions', enableSorting: false, enableColumnFilter: false, size: 200,
-      cell: ({ row }) => (
-        <div className="flex items-center justify-end gap-2">
-          <button
-            onClick={() => setRateModalFor(row.original)}
-            aria-label={`Change rate for ${row.original.name}`}
-            className="inline-flex items-center gap-1 text-xs text-emerald-600 hover:underline"
-            title="View rate history and change the rate with a forward-effective date"
-          >
-            <Clock className="h-3 w-3" aria-hidden="true" /> Change rate
-          </button>
-          <button
-            onClick={() => startEdit(row.original)}
-            aria-label={`Edit level ${row.original.name}`}
-            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
-          >
-            <Pencil className="h-3 w-3" aria-hidden="true" /> Edit
-          </button>
-          <button
-            onClick={async () => {
-              // People UX U2 — deleting a catalog level is destructive
-              // (employees may still reference it via UserSeniority
-              // history). Danger variant + verb button.
-              const ok = await confirm(
-                `Employees still holding this level will fall back to no seniority; historical entries stay attached.`,
-                {
-                  title: `Delete labor category "${row.original.name}"?`,
-                  variant: 'danger',
-                  confirmLabel: 'Delete',
-                },
-              );
-              if (ok) deleteMutation.mutate(row.original.id);
-            }}
-            aria-label={`Delete level ${row.original.name}`}
-            className="inline-flex items-center gap-1 text-xs text-red-600 hover:underline"
-          >
-            <Trash2 className="h-3 w-3" aria-hidden="true" /> Delete
-          </button>
-        </div>
-      ),
-    },
-  ], []);
+  //
+  // People UX M2b (E-03 / E-23):
+  //   • The Hourly Cost column now reads `effectiveHourlyCost` (the
+  //     API-side layered read: open rate history row → level default),
+  //     so the number the admin sees matches what the cost engine
+  //     resolves. The old value read straight off `defaultHourlyCost`,
+  //     which lied whenever an admin had changed the rate via the
+  //     "Change rate" modal (that never touches the default column).
+  //   • The rate column + "Change rate" action are gated on
+  //     `finance:read`; non-finance admins see the level list without
+  //     the money.
+  const columns = useMemo<ColumnDef<SeniorityRow, unknown>[]>(() => {
+    const base: ColumnDef<SeniorityRow, unknown>[] = [
+      { accessorKey: 'code', header: 'Code', enableSorting: false, size: 128,
+        cell: ({ row }) => <span className="font-mono text-xs">{row.original.code}</span> },
+      { accessorKey: 'name', header: 'Name', enableSorting: false,
+        cell: ({ row }) => <span className="font-medium">{row.original.name}</span> },
+    ];
+    if (showRates) {
+      base.push({ id: 'cost', header: 'Hourly Cost', enableSorting: false, size: 180,
+        cell: ({ row }) => {
+          const eff = row.original.effectiveHourlyCost;
+          if (eff == null) {
+            return <span className="text-xs italic text-slate-400 dark:text-slate-500">—</span>;
+          }
+          const isDefault = row.original.effectiveRateSource === 'level_default';
+          return (
+            <span className="font-mono text-sm text-slate-800 dark:text-slate-100">
+              ₪{eff}
+              <span className="ml-1 text-[11px] text-slate-400 dark:text-slate-500">/h</span>
+              {isDefault && (
+                <span
+                  className="ml-1.5 inline-block rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:text-slate-400"
+                  title="No rate history yet — showing the level default until a rate is set."
+                >
+                  default
+                </span>
+              )}
+            </span>
+          );
+        } });
+    }
+    base.push(
+      { accessorKey: 'sortOrder', header: 'Order', enableSorting: false, size: 80,
+        cell: ({ row }) => <span className="text-muted-foreground">{row.original.sortOrder}</span> },
+      { id: 'status', header: 'Status', enableSorting: false, size: 96,
+        cell: ({ row }) => <StatusBadge status={row.original.isActive ? 'active' : 'inactive'} /> },
+      { id: 'actions', header: 'Actions', enableSorting: false, enableColumnFilter: false, size: 200,
+        cell: ({ row }) => (
+          <div className="flex items-center justify-end gap-2">
+            {showRates && (
+              <button
+                onClick={() => setRateModalFor(row.original)}
+                aria-label={`Change rate for ${row.original.name}`}
+                className="inline-flex items-center gap-1 text-xs text-emerald-600 hover:underline"
+                title="View rate history and change the rate with a forward-effective date"
+              >
+                <Clock className="h-3 w-3" aria-hidden="true" /> Change rate
+              </button>
+            )}
+            <button
+              onClick={() => startEdit(row.original)}
+              aria-label={`Edit level ${row.original.name}`}
+              className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
+            >
+              <Pencil className="h-3 w-3" aria-hidden="true" /> Edit
+            </button>
+            <button
+              onClick={async () => {
+                // People UX U2 — deleting a catalog level is destructive
+                // (employees may still reference it via UserSeniority
+                // history). Danger variant + verb button.
+                const ok = await confirm(
+                  `Employees still holding this level will fall back to no seniority; historical entries stay attached.`,
+                  {
+                    title: `Delete labor category "${row.original.name}"?`,
+                    variant: 'danger',
+                    confirmLabel: 'Delete',
+                  },
+                );
+                if (ok) deleteMutation.mutate(row.original.id);
+              }}
+              aria-label={`Delete level ${row.original.name}`}
+              className="inline-flex items-center gap-1 text-xs text-red-600 hover:underline"
+            >
+              <Trash2 className="h-3 w-3" aria-hidden="true" /> Delete
+            </button>
+          </div>
+        ),
+      },
+    );
+    return base;
+  }, [showRates, confirm, deleteMutation]);
 
   return (
     <div className="space-y-6">
@@ -250,6 +294,9 @@ export function SeniorityLevelsPage() {
           onCancel={() => setShowCreate(false)}
           saving={createMutation.isPending}
           currencies={currencies}
+          editingRow={null}
+          showRates={showRates}
+          onOpenRateModal={null}
         />
       )}
       {editingId != null && (
@@ -261,6 +308,16 @@ export function SeniorityLevelsPage() {
           onCancel={() => setEditingId(null)}
           saving={updateMutation.isPending}
           currencies={currencies}
+          editingRow={rows.find((r) => r.id === editingId) ?? null}
+          showRates={showRates}
+          onOpenRateModal={
+            showRates
+              ? () => {
+                  const target = rows.find((r) => r.id === editingId);
+                  if (target) setRateModalFor(target);
+                }
+              : null
+          }
         />
       )}
 
@@ -461,7 +518,10 @@ function FormCard({
   onSave,
   onCancel,
   saving,
-  currencies,
+  currencies: _currencies,
+  editingRow,
+  showRates,
+  onOpenRateModal,
 }: {
   mode: 'create' | 'edit';
   form: FormState;
@@ -470,7 +530,16 @@ function FormCard({
   onCancel: () => void;
   saving: boolean;
   currencies: Array<{ code: string; name: string; symbol: string | null }>;
+  /** Row backing the current edit — used to render the read-only
+   *  effective-rate display + "Change rate" jump. Null on create. */
+  editingRow: SeniorityRow | null;
+  /** Finance-gated: rate display + "Change rate" jump only when true. */
+  showRates: boolean;
+  /** Opens the rate-history modal for the row being edited. Null when
+   *  either finance is not granted or we're on the create path. */
+  onOpenRateModal: (() => void) | null;
 }) {
+  void _currencies; // reserved for a future per-level currency picker
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm({ ...form, [key]: value });
 
@@ -503,17 +572,69 @@ function FormCard({
           onChange={(e) => update('sortOrder', Number(e.target.value))}
           hint="Use 10 / 20 / 30 so new levels fit between existing ones."
         />
-        <TextField
-          label="Hourly Cost"
-          name={`seniority-cost-${mode}`}
-          type="number"
-          step="0.01"
-          min={0}
-          value={form.defaultHourlyCost}
-          onChange={(e) => update('defaultHourlyCost', e.target.value)}
-          placeholder="e.g. 80.00"
-          inputClassName="font-mono"
-        />
+        {/* People UX M2b (E-23) — Hourly Cost is no longer an editable
+            field on the form. Rate changes must go through the
+            "Change rate" modal (forward-effective rows on
+            `seniority_rates`). Here we render the current effective
+            rate READ-ONLY (or the default on the create path, which
+            has no row yet) so the admin sees what the cost engine
+            would return. Finance-gated to match the column above.
+            The DB column stays intact; the create-form still lets the
+            admin seed a `defaultHourlyCost` on first-time setup only
+            (the "Default rate" text field below). */}
+        {mode === 'edit' && editingRow && showRates && (
+          <Field label="Default rate" className="sm:col-span-1"
+            labelSuffix={
+              onOpenRateModal && (
+                <button
+                  type="button"
+                  onClick={onOpenRateModal}
+                  className="inline-flex items-center gap-1 text-[12px] font-semibold text-emerald-600 hover:underline"
+                >
+                  <Clock className="h-3 w-3" aria-hidden="true" /> Change rate
+                </button>
+              )
+            }
+          >
+            {() => (
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 font-mono">
+                {editingRow.effectiveHourlyCost != null ? (
+                  <>
+                    ₪{editingRow.effectiveHourlyCost}
+                    <span className="ml-1 text-[11px] text-slate-400 dark:text-slate-500">/h</span>
+                    {editingRow.effectiveRateSource === 'level_default' && (
+                      <span className="ml-1.5 inline-block rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                        default
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="italic text-slate-400 dark:text-slate-500 font-sans">
+                    No rate set yet — use "Change rate" to add one.
+                  </span>
+                )}
+              </div>
+            )}
+          </Field>
+        )}
+        {/* On create, we still let the admin seed the level's
+            `defaultHourlyCost` — that's the legacy rollout fallback
+            layer of the resolver. All subsequent changes must go via
+            the rate-history modal. Finance-gated. */}
+        {mode === 'create' && showRates && (
+          <TextField
+            label="Default rate"
+            name={`seniority-cost-${mode}`}
+            type="number"
+            step="0.01"
+            min={0}
+            value={form.defaultHourlyCost}
+            onChange={(e) => update('defaultHourlyCost', e.target.value)}
+            placeholder="e.g. 80.00"
+            inputClassName="font-mono"
+            hint='After the level is created, update this via "Change rate" so rates carry a forward-effective date.'
+          />
+        )}
         {/* QA3 round-3 item 5 — Currency picker removed; system is
             ₪-only. DB column stays nullable; the form submits with the
             currency state (defaults to '' → null on the wire), which

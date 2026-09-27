@@ -240,6 +240,18 @@ export function EditPersonModal({
               onChange={(e) => patch('phone', e.target.value)}
             />
           </div>
+          {/* People UX M2d (E-08) — orphan handling for the two
+              legacy string columns. When the user's stored department
+              or job title (a plain string on the User row) no longer
+              exists in the current catalog, we still render it here
+              as a "(legacy)" option so:
+                • the value survives an accidental "Save Changes";
+                • the admin sees the stored value clearly labelled;
+                • picking a live catalog value overwrites the legacy
+                  string cleanly.
+              The M4 label sweep uses the same pattern for the People
+              filter chips. Stage 2 (OrgUnit) will replace both
+              columns with FKs and this whole path drops. */}
           <div className="grid grid-cols-2 gap-4">
             <SelectField
               label="Job Title"
@@ -251,6 +263,10 @@ export function EditPersonModal({
               {professions.map((p: any) => (
                 <option key={p.id} value={p.name}>{p.name}</option>
               ))}
+              {form.position &&
+                !professions.some((p: any) => p.name === form.position) && (
+                  <option value={form.position}>{form.position} (legacy)</option>
+                )}
             </SelectField>
             <SelectField
               label="Department"
@@ -262,6 +278,10 @@ export function EditPersonModal({
               {departments.map((d: any) => (
                 <option key={d.id} value={d.name}>{d.name}</option>
               ))}
+              {form.department &&
+                !departments.some((d: any) => d.name === form.department) && (
+                  <option value={form.department}>{form.department} (legacy)</option>
+                )}
             </SelectField>
           </div>
           {/* Seniority History — replaces the single-level dropdown.

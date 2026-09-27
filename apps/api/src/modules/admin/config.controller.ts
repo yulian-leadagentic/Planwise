@@ -211,6 +211,26 @@ export class ConfigController {
     return { message: 'Department deleted' };
   }
 
+  // People UX M2d (E-08): usage count for a department, keyed by the
+  // department NAME (User.department is a plain string on this model —
+  // Stage 2's OrgUnit lift will replace it with an FK id). Returns the
+  // count of Users pointing at this row's current name so the Types
+  // rename / delete confirms can warn "N employees use this".
+  @Get('departments/:id/usage')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'Count Users referencing this department (by stored name)' })
+  async getDepartmentUsage(@Param('id', ParseIntPipe) id: number) {
+    const dept = await this.prisma.department.findUnique({
+      where: { id },
+      select: { name: true },
+    });
+    if (!dept) return { userCount: 0 };
+    const userCount = await this.prisma.user.count({
+      where: { department: dept.name, deletedAt: null },
+    });
+    return { userCount };
+  }
+
   // Professions
   @Get('professions')
   @RequirePermissions({ module: 'admin', action: 'read' })
@@ -240,6 +260,25 @@ export class ConfigController {
   async deleteProfession(@Param('id', ParseIntPipe) id: number) {
     await this.prisma.profession.delete({ where: { id } });
     return { message: 'Profession deleted' };
+  }
+
+  // People UX M2d (E-08): usage count for a profession / Job Title,
+  // keyed by the row's NAME (User.position is a plain string — Stage 2
+  // may lift this to an FK). Powers the Types rename/delete confirm
+  // warning. Cheap COUNT; no filter arg to keep the surface simple.
+  @Get('professions/:id/usage')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'Count Users referencing this job title (by stored name)' })
+  async getProfessionUsage(@Param('id', ParseIntPipe) id: number) {
+    const prof = await this.prisma.profession.findUnique({
+      where: { id },
+      select: { name: true },
+    });
+    if (!prof) return { userCount: 0 };
+    const userCount = await this.prisma.user.count({
+      where: { position: prof.name, deletedAt: null },
+    });
+    return { userCount };
   }
 
   // Project Role Templates
@@ -370,11 +409,54 @@ export class ConfigController {
 
   // Seniority levels — user-managed ladder (Junior / Mid / Senior / …).
   // No seed; each org defines its own. Used by EmployeeRole + RoleCostRate.
+  //
+  // People UX M2b (E-03 / E-23): the response also carries
+  // `effectiveHourlyCost` — the same layered read the cost engine uses
+  // (see `cost-rate-resolver.ts`), but at the LEVEL scope: the currently
+  // open-ended row on `seniority_rates` if present, else
+  // `defaultHourlyCost` as the legacy fallback. Rendered as the "Hourly
+  // Cost" column on the admin list so admins see the number cost
+  // calculations actually pull, not the stale default.
   @Get('seniority-levels')
   @RequirePermissions({ module: 'admin', action: 'read' })
   async getSeniorityLevels() {
-    return this.prisma.seniorityLevel.findMany({
+    const levels = await this.prisma.seniorityLevel.findMany({
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+    if (levels.length === 0) return levels;
+    // One round-trip: pull the currently-open rate row (endDate = null)
+    // for every level in this list, then merge by id. This is the same
+    // "layer 2" the shared resolver uses per-user, hoisted to the
+    // level scope where no user context exists.
+    const openRates = await this.prisma.seniorityRate.findMany({
+      where: {
+        seniorityLevelId: { in: levels.map((l) => l.id) },
+        endDate: null,
+      },
+      select: { seniorityLevelId: true, hourlyCost: true, currency: true },
+    });
+    const byLevel = new Map<number, { hourlyCost: any; currency: string | null }>();
+    for (const r of openRates) byLevel.set(r.seniorityLevelId, r);
+    return levels.map((l) => {
+      const open = byLevel.get(l.id);
+      // `defaultHourlyCost` is Prisma.Decimal | null on disk. Passing the
+      // Decimal through JSON.stringify emits its string form, which the
+      // frontend already parses (Number(...)) in the list mapper.
+      const effective = open ? open.hourlyCost : l.defaultHourlyCost;
+      const effectiveCurrency = open ? open.currency : l.currency;
+      return {
+        ...l,
+        effectiveHourlyCost: effective,
+        // `effectiveRateSource` documents which layer supplied the number
+        // ('level_rate_history' | 'level_default' | null) so the UI can
+        // annotate the row (e.g. "default" when no rate history exists).
+        effectiveRateSource: open
+          ? ('level_rate_history' as const)
+          : l.defaultHourlyCost != null
+            ? ('level_default' as const)
+            : null,
+        effectiveCurrency,
+      };
     });
   }
 

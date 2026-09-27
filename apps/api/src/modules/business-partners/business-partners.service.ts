@@ -464,6 +464,14 @@ export class BusinessPartnersService {
         displayName: toDisplayName(dto),
         firstName: dto.partnerType === 'person' ? dto.firstName ?? null : null,
         lastName: dto.partnerType === 'person' ? dto.lastName ?? null : null,
+        // People UX M2c (P-11 / P-37): Hebrew names are DTO-validated but
+        // used to be dropped on the floor here — bilingual search still
+        // matched them because the CSV importer wrote directly to the
+        // column, but the create-partner-modal's `firstNameHe/lastNameHe`
+        // values never survived a POST. Persist them now so the drawer
+        // parity edits round-trip cleanly.
+        firstNameHe: dto.partnerType === 'person' ? dto.firstNameHe ?? null : null,
+        lastNameHe: dto.partnerType === 'person' ? dto.lastNameHe ?? null : null,
         companyName: dto.companyName ?? null,
         taxId: dto.taxId ?? null,
         email: dto.email ?? null,
@@ -576,6 +584,11 @@ export class BusinessPartnersService {
       data: {
         firstName: dto.firstName,
         lastName: dto.lastName,
+        // People UX M2c — see create() above. Explicit-undefined leaves
+        // the column untouched, so callers that don't touch these fields
+        // are unaffected.
+        firstNameHe: dto.firstNameHe,
+        lastNameHe: dto.lastNameHe,
         companyName: dto.companyName,
         taxId: dto.taxId,
         email: dto.email,

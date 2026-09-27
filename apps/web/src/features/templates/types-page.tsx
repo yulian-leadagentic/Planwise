@@ -370,7 +370,25 @@ export function TypesPage() {
     setEditing(null);
   }
 
-  const saveEditing = useCallback(() => {
+  // People UX M2d (E-08) — usage-count helper for the two catalogs
+  // whose values are stored as plain strings on User rows (department,
+  // position). Falls back to zero on any error so the confirm still
+  // renders without the warning line rather than blocking the rename /
+  // delete altogether.
+  async function fetchUsage(kind: 'department' | 'profession', id: number): Promise<number> {
+    const path = kind === 'department'
+      ? `/admin/config/departments/${id}/usage`
+      : `/admin/config/professions/${id}/usage`;
+    try {
+      const res = await client.get(path);
+      const data = res.data?.data ?? res.data;
+      return Number(data?.userCount ?? 0) || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  const saveEditing = useCallback(async () => {
     if (!editing) return;
     const trimmedName = editing.name.trim();
     if (!trimmedName) {
@@ -390,12 +408,39 @@ export function TypesPage() {
       updateProjectCategory.mutate({ id: editing.id as number, name: trimmedName, code: editing.code.trim() || undefined, color: editing.color.trim() || undefined });
     } else if (activeTab === 'service') {
       updateServiceType.mutate({ id: editing.id as number, name: trimmedName, code: editing.code.trim() || undefined, color: editing.color.trim() || undefined });
-    } else if (activeTab === 'department') {
-      updateDepartment.mutate({ id: editing.id as number, name: trimmedName, code: editing.code.trim() || undefined });
-    } else if (activeTab === 'profession') {
-      updateProfession.mutate({ id: editing.id as number, name: trimmedName });
+    } else if (activeTab === 'department' || activeTab === 'profession') {
+      // People UX M2d (E-08) — rename touches the value stored on
+      // every referencing User row (server updates the catalog name;
+      // the plain-string on User.department / User.position is
+      // implicitly aliased through the display until Stage 2's OrgUnit
+      // lift). Warn when > 0 employees will read the new name so the
+      // admin sees the blast radius before confirming.
+      const kind = activeTab;
+      const original = rows.find((r) => r.id === editing.id)?.name ?? '';
+      // Only ask when the name is actually changing — a plain save
+      // (e.g. sortOrder / code tweak) doesn't need the warning.
+      if (trimmedName !== original) {
+        const count = await fetchUsage(kind, editing.id as number);
+        if (count > 0) {
+          const label = kind === 'department' ? 'department' : 'job title';
+          const ok = await confirm(
+            `${count} ${count === 1 ? 'employee' : 'employees'} use "${original}" as their ${label} — they'll see the new name "${trimmedName}" everywhere.`,
+            {
+              title: `Rename ${label} to "${trimmedName}"?`,
+              variant: 'default',
+              confirmLabel: 'Rename',
+            },
+          );
+          if (!ok) return;
+        }
+      }
+      if (kind === 'department') {
+        updateDepartment.mutate({ id: editing.id as number, name: trimmedName, code: editing.code.trim() || undefined });
+      } else {
+        updateProfession.mutate({ id: editing.id as number, name: trimmedName });
+      }
     }
-  }, [editing, activeTab, updateZoneType, updateProjectCategory, updateServiceType, updateDepartment, updateProfession]);
+  }, [editing, activeTab, updateZoneType, updateProjectCategory, updateServiceType, updateDepartment, updateProfession, confirm, rows]);
 
   // Escape key handler for inline edit
   useEffect(() => {
@@ -440,8 +485,20 @@ export function TypesPage() {
       : activeTab === 'projectCategory' ? 'project category'
       : activeTab === 'service' ? 'service type'
       : 'item';
+    // People UX M2d (E-08) — for the two tabs whose values are stored as
+    // plain strings on Users, pull the referencing count and inject a
+    // "N employees use this — they'll lose it" line into the confirm.
+    // Falls back to the generic message for the other catalogs (whose
+    // FKs are already enforced at the DB level).
+    let extraLine = '';
+    if (activeTab === 'department' || activeTab === 'profession') {
+      const count = await fetchUsage(activeTab, row.id as number);
+      if (count > 0) {
+        extraLine = `\n\n${count} ${count === 1 ? 'employee uses' : 'employees use'} this ${kind} — after delete they'll show it as legacy until an admin picks a live value on their profile.`;
+      }
+    }
     const ok = await confirm(
-      `Existing records referencing this ${kind} keep it as legacy data; new records will pick from the remaining catalog.`,
+      `Existing records referencing this ${kind} keep it as legacy data; new records will pick from the remaining catalog.${extraLine}`,
       {
         title: `Delete ${kind} "${row.name}"?`,
         variant: 'danger',

@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { X, User as UserIcon, Building2, Pencil, Trash2, Plus, Save, ChevronRight, Briefcase, FolderKanban, Linkedin, Facebook, Twitter, Instagram } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { X, User as UserIcon, Building2, Pencil, Trash2, Plus, Save, ChevronRight, Briefcase, FolderKanban, Linkedin, Facebook, Twitter, Instagram, Check, Search } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
@@ -8,7 +8,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { formatDate } from '@/lib/date-utils';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { CreatePartnerModal } from './create-partner-modal';
-import { TextField, SelectField, TextAreaField } from '@/components/shared/field';
+import { TextField, SelectField, TextAreaField, Field } from '@/components/shared/field';
 
 const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
@@ -127,6 +127,14 @@ interface BusinessPartnerFull {
   displayName: string;
   firstName: string | null;
   lastName: string | null;
+  // People UX M2c (P-11 / P-37) — Hebrew names + Discipline surfaced so
+  // the drawer edit mode can round-trip them. Same fields the create
+  // modal writes; before M2c the drawer's payload silently dropped
+  // both, so a value set at create time was invisible here.
+  firstNameHe: string | null;
+  lastNameHe: string | null;
+  disciplineId: number | null;
+  discipline: { id: number; name: string; nameHe: string | null } | null;
   companyName: string | null;
   taxId: string | null;
   email: string | null;
@@ -529,6 +537,27 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
   const [form, setForm] = useState({
     firstName: bp.firstName ?? '',
     lastName: bp.lastName ?? '',
+    // People UX M2c — Hebrew names, Discipline, Role(s), Title at {Org}
+    // are all edit-mode fields now. See DetailsTab render below.
+    firstNameHe: bp.firstNameHe ?? '',
+    lastNameHe: bp.lastNameHe ?? '',
+    disciplineId: bp.disciplineId != null ? String(bp.disciplineId) : '',
+    /** Ordered list of role-type ids the person/org carries. First entry
+     *  is the primary (used as `mainRoleTypeId` on save). Mirrors the
+     *  create-partner-modal's `mainRoleTypeIds` state so the two forms
+     *  share one editing model. */
+    roleTypeIds: (() => {
+      const list = bp.roles ?? [];
+      // Primary first, then everything else in stable order.
+      const primary = list.find((r) => r.isPrimary);
+      const rest = list.filter((r) => !r.isPrimary);
+      const ordered = primary ? [primary, ...rest] : list;
+      return ordered.map((r) => String(r.roleType.id));
+    })(),
+    /** Title at the current employer (M4 glossary: "Title at {Org}").
+     *  Backed by `titleAtB` on the active worker_of relationship. Saved
+     *  by PATCHing the same row on submit. */
+    titleAtOrg: employerRel?.titleAtB ?? '',
     companyName: bp.companyName ?? '',
     taxId: bp.taxId ?? '',
     email: bp.email ?? '',
@@ -546,17 +575,77 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
     employerOrgId: employerRel?.partyBId ?? null,
   });
 
-  // Re-sync employerOrgId when relationships load.
+  // Re-sync employer-linked fields when relationships load.
   useEffect(() => {
-    setForm((f) => ({ ...f, employerOrgId: employerRel?.partyBId ?? null }));
-  }, [employerRel?.partyBId]);
+    setForm((f) => ({
+      ...f,
+      employerOrgId: employerRel?.partyBId ?? null,
+      titleAtOrg: employerRel?.titleAtB ?? '',
+    }));
+  }, [employerRel?.partyBId, employerRel?.titleAtB]);
+
+  // People UX M2c — discipline catalog + role-type catalog for the
+  // person edit form. Both are cached elsewhere (create modal, admin
+  // pages), so this hits warm data most of the time.
+  const { data: disciplines = [] } = useQuery<Array<{ id: number; name: string; nameHe: string | null; isActive: boolean }>>({
+    queryKey: ['admin', 'disciplines', 'picker'],
+    staleTime: 10 * 60 * 1000,
+    enabled: editing && bp.partnerType === 'person',
+    queryFn: () =>
+      client.get('/admin/config/disciplines').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+
+  const { data: roleTypes = [] } = useQuery<Array<{ id: number; code: string; name: string; appliesToKind?: string }>>({
+    queryKey: ['partner-role-types'],
+    staleTime: 10 * 60 * 1000,
+    enabled: editing,
+    queryFn: () => client.get('/admin/partner-types/role-types').then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : [];
+    }),
+  });
+  // Same filter the create-partner-modal applies: drop 'employee'
+  // (managed under People) and respect appliesToKind.
+  const applicableRoleTypes = useMemo(
+    () => roleTypes.filter((rt) => {
+      if (rt.code === 'employee') return false;
+      const kind = rt.appliesToKind ?? 'any';
+      return kind === 'any' || kind === bp.partnerType;
+    }),
+    [roleTypes, bp.partnerType],
+  );
 
   const update = useMutation({
     mutationFn: async () => {
-      // 1. Update plain BP fields.
+      // People UX M2c — role diff: figure out what the multi-select
+      // added, removed, and which id is now primary. Ordered array so
+      // the first pick is the primary (matches create-partner-modal's
+      // model). Numbers throughout to keep the API surface consistent.
+      const nextRoleIds = form.roleTypeIds
+        .map((s) => Number(s))
+        .filter((n) => Number.isFinite(n));
+      const nextPrimary = nextRoleIds[0] ?? null;
+      const currentRoleIds = new Set((bp.roles ?? []).map((r) => r.roleType.id));
+      const toAdd = nextRoleIds.filter((id) => !currentRoleIds.has(id));
+      const toRemove = (bp.roles ?? []).filter((r) => !nextRoleIds.includes(r.roleType.id));
+
+      // 1. Update plain BP fields. Main Role goes on the same PATCH so
+      //    the write is transactional server-side (the primary role
+      //    also lives on `main_role_type_id`; the service's
+      //    `syncMainRoleIntoRoles` keeps the two representations
+      //    aligned).
       await client.patch(`/business-partners/${bp.id}`, {
         firstName: bp.partnerType === 'person' ? form.firstName.trim() || null : undefined,
         lastName: bp.partnerType === 'person' ? form.lastName.trim() || null : undefined,
+        firstNameHe: bp.partnerType === 'person' ? form.firstNameHe.trim() || null : undefined,
+        lastNameHe: bp.partnerType === 'person' ? form.lastNameHe.trim() || null : undefined,
+        disciplineId:
+          bp.partnerType === 'person'
+            ? (form.disciplineId ? Number(form.disciplineId) : null)
+            : undefined,
         companyName: bp.partnerType === 'organization' ? form.companyName.trim() || null : undefined,
         taxId: form.taxId.trim() || null,
         email: form.email.trim() || null,
@@ -570,13 +659,32 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
         address: form.address.trim() || null,
         notes: form.notes.trim() || null,
         status: form.status,
+        // Send the primary role id (or null to clear). Explicit-null
+        // matches the header pill's "clear" flow.
+        mainRoleTypeId: nextPrimary,
       });
 
-      // 2. For persons, sync the worker_of relationship to the chosen employer.
+      // 2. Role diff — remove roles the multi-select deselected, add
+      //    the new ones. The controller's addRole endpoint is
+      //    idempotent (upsert on (bpId, roleTypeId)); order is fixed
+      //    so we can await these serially without surprises.
+      for (const row of toRemove) {
+        await client
+          .delete(`/business-partners/${bp.id}/roles/${row.roleType.id}`)
+          .catch(() => undefined);
+      }
+      for (const id of toAdd) {
+        await client
+          .post(`/business-partners/${bp.id}/roles`, { roleTypeId: id, isPrimary: id === nextPrimary })
+          .catch(() => undefined);
+      }
+
+      // 3. For persons, sync the worker_of relationship to the chosen employer.
       // BM2 ops-surfaces Phase A: party↔party edges live on /partner-relationships now.
       if (bp.partnerType === 'person') {
         const newEmployerId = form.employerOrgId;
         const oldEmployerId = employerRel?.partyBId ?? null;
+        const nextTitle = form.titleAtOrg.trim();
         if (newEmployerId !== oldEmployerId) {
           // End the old worker_of (soft-delete) if it existed.
           if (employerRel) {
@@ -592,10 +700,21 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
                 partyAId: bp.id,
                 partyBId: newEmployerId,
                 typeId: workerOf.id,
+                // People UX M2c — carry the new Title at {Org} into
+                // the fresh worker_of edge so the value survives an
+                // employer swap.
+                titleAtB: nextTitle || undefined,
                 isPrimary: true,
               }).catch(() => undefined);
             }
           }
+        } else if (employerRel && nextTitle !== (employerRel.titleAtB ?? '')) {
+          // Same employer, changed title — PATCH the existing edge.
+          await client
+            .patch(`/partner-relationships/${employerRel.id}`, {
+              titleAtB: nextTitle || null,
+            })
+            .catch(() => undefined);
         }
       }
     },
@@ -770,20 +889,73 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
   return (
     <div className="space-y-3">
       {bp.partnerType === 'person' && (
-        <div className="grid grid-cols-2 gap-3">
-          <TextField
-            label="First Name"
-            name="drawer-firstName"
-            value={form.firstName}
-            onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))}
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <TextField
+              label="First Name"
+              name="drawer-firstName"
+              value={form.firstName}
+              onChange={(e) => setForm(f => ({ ...f, firstName: e.target.value }))}
+            />
+            <TextField
+              label="Last Name"
+              name="drawer-lastName"
+              value={form.lastName}
+              onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))}
+            />
+          </div>
+          {/* People UX M2c (P-11 / P-37) — Hebrew names live on the
+              CreatePartnerModal but never showed up in the drawer edit
+              path before. Adding them here so the drawer edits the
+              same set of person fields as the create form; the M2c DoD
+              is "what the create form captures can be seen and edited
+              in the drawer." */}
+          <div className="grid grid-cols-2 gap-3">
+            <TextField
+              label="שם פרטי (Hebrew first name)"
+              name="drawer-firstNameHe"
+              dir="rtl"
+              value={form.firstNameHe}
+              onChange={(e) => setForm(f => ({ ...f, firstNameHe: e.target.value }))}
+            />
+            <TextField
+              label="שם משפחה (Hebrew last name)"
+              name="drawer-lastNameHe"
+              dir="rtl"
+              value={form.lastNameHe}
+              onChange={(e) => setForm(f => ({ ...f, lastNameHe: e.target.value }))}
+            />
+          </div>
+          {/* People UX M2c — Discipline picker. Informational only (no
+              eligibility gate); same catalog the create modal reads. */}
+          <SelectField
+            label="Discipline"
+            name="drawer-discipline"
+            value={form.disciplineId}
+            onChange={(e) => setForm(f => ({ ...f, disciplineId: e.target.value }))}
+            hint="Informational classification (Architecture / MEP / Structural / …). Doesn't affect assignments."
+          >
+            <option value="">— None / set later —</option>
+            {disciplines
+              .filter((d) => d.isActive || String(d.id) === form.disciplineId)
+              .map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                  {d.nameHe ? ` · ${d.nameHe}` : ''}
+                </option>
+              ))}
+          </SelectField>
+          {/* People UX M2c — Role(s) multi-select with a primary
+              marker. Same model as the create modal: an ordered array
+              where the first entry is the primary. Save writes
+              `mainRoleTypeId` and diffs the roles list via
+              /business-partners/:id/roles. */}
+          <RolesMultiSelectField
+            value={form.roleTypeIds}
+            onChange={(next) => setForm((f) => ({ ...f, roleTypeIds: next }))}
+            options={applicableRoleTypes}
           />
-          <TextField
-            label="Last Name"
-            name="drawer-lastName"
-            value={form.lastName}
-            onChange={(e) => setForm(f => ({ ...f, lastName: e.target.value }))}
-          />
-        </div>
+        </>
       )}
       {bp.partnerType === 'organization' ? (
         <>
@@ -799,23 +971,54 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
             value={form.taxId}
             onChange={(e) => setForm(f => ({ ...f, taxId: e.target.value }))}
           />
+          {/* People UX M2c — org gets the same Role(s) editor. */}
+          <RolesMultiSelectField
+            value={form.roleTypeIds}
+            onChange={(next) => setForm((f) => ({ ...f, roleTypeIds: next }))}
+            options={applicableRoleTypes}
+          />
         </>
       ) : (
-        <SelectField
-          label="Employer (organization)"
-          name="drawer-employer"
-          value={form.employerOrgId ?? ''}
-          onChange={(e) => setForm(f => ({ ...f, employerOrgId: e.target.value ? Number(e.target.value) : null }))}
-          hint="Saving will link this contact to the selected organization."
-        >
-          <option value="">— No employer —</option>
-          {employerOrg && !orgs.some((o) => o.id === employerOrg.id) && (
-            <option value={employerOrg.id}>{employerOrg.displayName}</option>
+        <>
+          <SelectField
+            label="Employer (organization)"
+            name="drawer-employer"
+            value={form.employerOrgId ?? ''}
+            onChange={(e) => setForm(f => ({ ...f, employerOrgId: e.target.value ? Number(e.target.value) : null }))}
+            hint="Saving will link this contact to the selected organization."
+          >
+            <option value="">— No employer —</option>
+            {employerOrg && !orgs.some((o) => o.id === employerOrg.id) && (
+              <option value={employerOrg.id}>{employerOrg.displayName}</option>
+            )}
+            {orgs.map((o) => (
+              <option key={o.id} value={o.id}>{o.displayName}</option>
+            ))}
+          </SelectField>
+          {/* People UX M2c (P-11) — Title at {Org}. Backed by the
+              `titleAtB` on the active worker_of edge; edits round-trip
+              via PATCH /partner-relationships/:id or land on the new
+              edge when the employer changes. Only visible when an
+              employer is set — otherwise there's no edge to attach
+              the title to. */}
+          {form.employerOrgId && (
+            <TextField
+              label={`Title at ${employerOrg?.displayName ?? 'organization'}`}
+              name="drawer-titleAtOrg"
+              value={form.titleAtOrg}
+              onChange={(e) => setForm(f => ({ ...f, titleAtOrg: e.target.value }))}
+              placeholder='e.g. "Operations Manager", "Buyer"'
+              hint="Optional. Free-text title within the employer organization."
+            />
           )}
-          {orgs.map((o) => (
-            <option key={o.id} value={o.id}>{o.displayName}</option>
-          ))}
-        </SelectField>
+          {/* People UX M2c — Job Title (Profession) as a searchable
+              combobox. Replaces the always-visible chip list in
+              non-edit mode so admins can find a title in a long
+              catalog by typing. "Saved" pill flashes after each save.
+              The picker sets the PRIMARY profession — bulk chip
+              management stays in the read view. */}
+          <JobTitleCombobox bpId={bp.id} />
+        </>
       )}
       <TextField
         label="Email"
@@ -888,6 +1091,250 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
         </button>
       </div>
     </div>
+  );
+}
+
+// ─── Role(s) multi-select (People UX M2c) ───────────────────────────────────
+//
+// Chip-toggle picker for `partner_role_types`. Ordered — the first pick is
+// the primary and gets a small "Primary" badge. Mirrors the create modal's
+// RoleMultiSelect visually + behaviourally, but wired into the shared
+// Field wrapper (label + a11y). Save-side diffing lives on the drawer's
+// update mutation.
+function RolesMultiSelectField({
+  value,
+  onChange,
+  options,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  options: Array<{ id: number; code: string; name: string; appliesToKind?: string }>;
+}) {
+  const toggle = (id: number) => {
+    const asStr = String(id);
+    if (value.includes(asStr)) {
+      onChange(value.filter((v) => v !== asStr));
+    } else {
+      onChange([...value, asStr]);
+    }
+  };
+
+  return (
+    <Field
+      label="Role(s)"
+      hint="Pick one or more categorizations (Customer, Supplier, Consultant…). The first pick is the primary."
+    >
+      {({ ariaInvalid }) => (
+        <div
+          role="group"
+          aria-label="Role(s)"
+          aria-invalid={ariaInvalid || undefined}
+          className={cn(
+            'w-full rounded-lg border bg-white dark:bg-slate-900 p-2 flex flex-wrap gap-1.5',
+            'border-slate-200 dark:border-slate-700',
+          )}
+        >
+          {options.length === 0 ? (
+            <span className="text-[12px] italic text-slate-400 dark:text-slate-500 px-1 py-0.5">
+              No role types configured — add some under Admin → Contact & Organization Types first.
+            </span>
+          ) : (
+            options.map((rt) => {
+              const asStr = String(rt.id);
+              const idx = value.indexOf(asStr);
+              const selected = idx >= 0;
+              const isPrimary = idx === 0;
+              return (
+                <button
+                  key={rt.id}
+                  type="button"
+                  onClick={() => toggle(rt.id)}
+                  aria-pressed={selected}
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] font-medium border transition-colors',
+                    selected
+                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600',
+                  )}
+                >
+                  {rt.name}
+                  {isPrimary && (
+                    <span
+                      className="ml-1 rounded-full bg-blue-600 dark:bg-blue-500 text-white text-[9px] uppercase tracking-wider px-1 py-[1px]"
+                      title="Primary — used for main-role filters and eligibility"
+                    >
+                      Primary
+                    </span>
+                  )}
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
+    </Field>
+  );
+}
+
+// ─── Job Title combobox (People UX M2c) ─────────────────────────────────────
+//
+// Searchable single-select for the person's PRIMARY profession, with a
+// "Saved" pill that flashes for ~2s after each save so the admin sees the
+// write land. The old chip list stays in read-only mode below (for bulk
+// add/remove); this combobox is the "one editor" the drawer surfaces on
+// the edit form itself. When the primary changes we PUT the full
+// profession list back so the server keeps its diff shape.
+function JobTitleCombobox({ bpId }: { bpId: number }) {
+  const queryClient = useQueryClient();
+  const { data: current = [] } = useQuery<Array<{ professionId: number; isPrimary: boolean; profession: { id: number; name: string } }>>({
+    queryKey: ['bp-professions', bpId],
+    queryFn: () =>
+      client.get(`/business-partners/${bpId}/professions`).then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+  const { data: catalog = [] } = useQuery<Array<{ id: number; name: string }>>({
+    queryKey: ['professions'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/config/professions').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+
+  const primary = current.find((c) => c.isPrimary) ?? current[0] ?? null;
+  const primaryName = primary?.profession.name ?? '';
+
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  // Saved-badge visibility. Timer is cleared on unmount so a fast tab-out
+  // doesn't leave a stale timeout.
+  const [savedFlash, setSavedFlash] = useState(false);
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (savedTimer.current) clearTimeout(savedTimer.current);
+  }, []);
+
+  const save = useMutation({
+    mutationFn: (nextPrimaryId: number | null) => {
+      // Keep every profession the person currently holds; just move the
+      // primary flag to the new pick (or add it to the list when the
+      // person didn't have it yet).
+      const ids = new Set(current.map((c) => c.professionId));
+      if (nextPrimaryId != null) ids.add(nextPrimaryId);
+      return client
+        .put(`/business-partners/${bpId}/professions`, {
+          professionIds: Array.from(ids),
+          primaryProfessionId: nextPrimaryId,
+        })
+        .then((r) => r.data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bp-professions', bpId] });
+      queryClient.invalidateQueries({ queryKey: ['business-partners'] });
+      setSavedFlash(true);
+      if (savedTimer.current) clearTimeout(savedTimer.current);
+      savedTimer.current = setTimeout(() => setSavedFlash(false), 2000);
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update job title'),
+  });
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? catalog.filter((p) => p.name.toLowerCase().includes(q))
+    : catalog;
+
+  const pick = (id: number | null) => {
+    setOpen(false);
+    setQuery('');
+    save.mutate(id);
+  };
+
+  return (
+    <Field
+      label="Job Title"
+      hint="Determines which project roles this person can be assigned to. Searchable — type to filter."
+      labelSuffix={
+        savedFlash ? (
+          <span
+            role="status"
+            className="inline-flex items-center gap-1 rounded-full bg-emerald-100 dark:bg-emerald-900/40 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300"
+          >
+            <Check className="h-3 w-3" aria-hidden="true" /> Saved
+          </span>
+        ) : null
+      }
+    >
+      {({ id }) => (
+        <div className="relative">
+          <div className="relative flex items-center">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-300 dark:text-slate-600" aria-hidden="true" />
+            <input
+              id={id}
+              type="text"
+              value={open ? query : primaryName}
+              placeholder={primaryName ? 'Change job title…' : 'Search job titles…'}
+              onFocus={() => { setOpen(true); setQuery(''); }}
+              onChange={(e) => { setOpen(true); setQuery(e.target.value); }}
+              onBlur={() => {
+                // Give a click on the option list time to register
+                // before we collapse the menu.
+                setTimeout(() => setOpen(false), 150);
+              }}
+              className={cn(
+                'w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900',
+                'pl-8 pr-3 py-2 text-sm text-slate-900 dark:text-slate-100',
+                'placeholder:text-slate-400 dark:placeholder:text-slate-500',
+                'focus:outline-none focus:border-blue-500 dark:focus:border-blue-400',
+              )}
+              autoComplete="off"
+            />
+          </div>
+          {open && (
+            <div className="absolute z-10 mt-1 w-full max-h-56 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg">
+              {primary && (
+                <button
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); pick(null); }}
+                  className="w-full text-left px-3 py-2 text-[12px] text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 border-b border-slate-100 dark:border-slate-800"
+                >
+                  Clear current — {primary.profession.name}
+                </button>
+              )}
+              {filtered.length === 0 ? (
+                <div className="px-3 py-2 text-[12px] italic text-slate-400 dark:text-slate-500">
+                  {catalog.length === 0
+                    ? 'No job titles defined yet — add some under /templates/types → Job Titles.'
+                    : 'No matches.'}
+                </div>
+              ) : (
+                filtered.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onMouseDown={(e) => { e.preventDefault(); pick(p.id); }}
+                    aria-selected={p.id === primary?.professionId}
+                    className={cn(
+                      'w-full text-left px-3 py-2 text-[13px] hover:bg-slate-50 dark:hover:bg-slate-800/60',
+                      p.id === primary?.professionId
+                        ? 'text-blue-700 dark:text-blue-300 font-semibold'
+                        : 'text-slate-700 dark:text-slate-200',
+                    )}
+                  >
+                    {p.name}
+                    {p.id === primary?.professionId && (
+                      <span className="ml-2 text-[10px] uppercase tracking-wider text-blue-500">Current</span>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </Field>
   );
 }
 
