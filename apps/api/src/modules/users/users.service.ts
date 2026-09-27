@@ -7,6 +7,7 @@ import { NumberRangesService } from '../number-ranges/number-ranges.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
+import { buildCostRateResolver, isRateableOutcome } from '../projects/cost-rate-resolver';
 import * as Sentry from '@sentry/node';
 
 @Injectable()
@@ -291,11 +292,41 @@ export class UsersService implements OnModuleInit {
       this.prisma.user.count({ where }),
     ]);
 
+    // QA3 round-3 item 7 — compute each user's CURRENT effective hourly
+    // rate ("today"). Same resolver the cost engine uses, so the value
+    // displayed on the Employees table always matches what the labor-cost
+    // paths would bill for a right-now entry. `rateSource` tags each
+    // value with the winning layer so the FE can render an "override"
+    // pill when applicable. Non-employees keep null/null.
+    const employeeIds = data
+      .filter((u: any) => u.userType === 'employee')
+      .map((u: any) => u.id);
+    const resolver = employeeIds.length === 0
+      ? null
+      : await buildCostRateResolver(this.prisma, employeeIds);
+    const today = new Date();
+
     // Flatten role so the response matches the shared UserListItem shape
-    const flat = data.map((u: any) => ({
-      ...u,
-      roleName: u.role?.name ?? null,
-    }));
+    const flat = data.map((u: any) => {
+      const outcome = resolver && u.userType === 'employee'
+        ? resolver.resolve(u.id, today)
+        : null;
+      let effectiveHourlyCost: number | null = null;
+      let rateSource: 'override' | 'level' | 'default' | null = null;
+      if (outcome && isRateableOutcome(outcome)) {
+        effectiveHourlyCost = outcome.hourlyCost;
+        rateSource =
+          outcome.source === 'user_override' ? 'override'
+          : outcome.source === 'level_rate_history' ? 'level'
+          : 'default';
+      }
+      return {
+        ...u,
+        roleName: u.role?.name ?? null,
+        effectiveHourlyCost,
+        rateSource,
+      };
+    });
 
     return {
       data: flat,

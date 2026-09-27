@@ -162,8 +162,7 @@ export function SeniorityLevelsPage() {
       cell: ({ row }) => (
         row.original.defaultHourlyCost != null ? (
           <span className="font-mono text-sm text-slate-800 dark:text-slate-100">
-            {row.original.defaultHourlyCost}
-            {row.original.currency ? <span className="ml-1 text-[11px] text-slate-400 dark:text-slate-500">{row.original.currency}</span> : null}
+            ₪{row.original.defaultHourlyCost}
             <span className="ml-1 text-[11px] text-slate-400 dark:text-slate-500">/h</span>
           </span>
         ) : (
@@ -372,21 +371,9 @@ function RateHistoryModal({
                   className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm font-mono"
                 />
               </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Currency</label>
-                <select
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
-                  className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-                >
-                  <option value="">— Pick —</option>
-                  {currencies.map((c) => (
-                    <option key={c.code} value={c.code}>
-                      {c.code}{c.symbol ? ` (${c.symbol})` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {/* QA3 round-3 item 5 — currency selector removed
+                  (system is ₪-only). DB column stays nullable; we
+                  submit null on change. */}
               <div>
                 <label className="mb-1 block text-xs font-medium text-muted-foreground">Effective from</label>
                 <input
@@ -429,7 +416,6 @@ function RateHistoryModal({
                   <thead className="bg-slate-50 dark:bg-slate-800/60">
                     <tr>
                       <th className="px-3 py-1.5 text-left font-medium">Rate</th>
-                      <th className="px-3 py-1.5 text-left font-medium">Currency</th>
                       <th className="px-3 py-1.5 text-left font-medium">From</th>
                       <th className="px-3 py-1.5 text-left font-medium">To</th>
                     </tr>
@@ -437,8 +423,7 @@ function RateHistoryModal({
                   <tbody>
                     {rates.map((r) => (
                       <tr key={r.id} className="border-t border-slate-100 dark:border-slate-800">
-                        <td className="px-3 py-1.5 font-mono">{r.hourlyCost}</td>
-                        <td className="px-3 py-1.5 text-slate-500">{r.currency ?? '—'}</td>
+                        <td className="px-3 py-1.5 font-mono">₪{r.hourlyCost}/h</td>
                         <td className="px-3 py-1.5 text-slate-500">{fmt(r.startDate)}</td>
                         <td className="px-3 py-1.5 text-slate-500">
                           {r.endDate === null ? (
@@ -538,21 +523,10 @@ function FormCard({
             className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm font-mono"
           />
         </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-muted-foreground">Currency</label>
-          <select
-            value={form.currency}
-            onChange={(e) => update('currency', e.target.value)}
-            className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-          >
-            <option value="">— Pick currency —</option>
-            {currencies.map((c) => (
-              <option key={c.code} value={c.code}>
-                {c.code}{c.symbol ? ` (${c.symbol})` : ''} — {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        {/* QA3 round-3 item 5 — Currency picker removed; system is
+            ₪-only. DB column stays nullable; the form submits with the
+            currency state (defaults to '' → null on the wire), which
+            keeps write compatibility. */}
         {mode === 'edit' && (
           <div className="sm:col-span-2">
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Active</label>

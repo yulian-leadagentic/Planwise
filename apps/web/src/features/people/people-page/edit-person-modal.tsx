@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
+import { Coins, X } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { usePermissions } from '@/hooks/use-permissions';
 import { notify } from '@/lib/notify';
 import client from '@/api/client';
 import type { UserListItem } from '@/types';
 import { inputClass } from './constants';
 import { SeniorityHistorySection } from './seniority-history-section';
+import { UserRateModal } from './user-rate-modal';
 
 export function EditPersonModal({
   user,
@@ -23,7 +25,13 @@ export function EditPersonModal({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { can } = usePermissions();
   const isPartner = user.userType === 'partner';
+  // QA3 round-3 item 3a — cost-rate override entry point next to
+  // Seniority History. Employees only + finance-gated so admins
+  // without the finance grant don't see it.
+  const showCostOverride = !isPartner && can('finance', 'read');
+  const [showOverrideModal, setShowOverrideModal] = useState(false);
   // M4a.4 — toDateInput slices ISO to YYYY-MM-DD so <input type=date> accepts it.
   const toDateInput = (v: string | null | undefined) => (v ? String(v).slice(0, 10) : '');
   const [form, setForm] = useState({
@@ -179,6 +187,36 @@ export function EditPersonModal({
             userId={user.id}
             seniorityLevels={seniorityLevels}
           />
+          {/* QA3 round-3 item 3a — Cost rate override entry point.
+              Same modal as the 💰 row action; surfaced here because
+              admins look for it inside the edit dialog. Finance-gated,
+              employees only. */}
+          {showCostOverride && (
+            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 p-3 flex items-center justify-between">
+              <div>
+                <div
+                  className="text-[13px] font-semibold text-slate-700 dark:text-slate-200"
+                  title="Set a per-employee override rate. Overrides the level rate globally across projects. Supports bounded [start, end] windows."
+                >
+                  Cost rate override
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Optional per-employee rate that wins over the seniority level rate.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowOverrideModal(true)}
+                className="inline-flex items-center gap-1 rounded-md bg-emerald-600 hover:bg-emerald-700 px-3 py-1.5 text-[12px] font-semibold text-white"
+              >
+                <Coins className="h-3 w-3" aria-hidden="true" />
+                Manage override
+              </button>
+            </div>
+          )}
+          {showOverrideModal && (
+            <UserRateModal user={user} onClose={() => setShowOverrideModal(false)} />
+          )}
           {/* M4a.4 — Employment fields */}
           <div className="grid grid-cols-3 gap-4">
             <div>

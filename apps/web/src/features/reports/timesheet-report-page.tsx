@@ -80,11 +80,14 @@ const GROUP_OPTIONS: Array<{ value: GroupBy; label: string }> = [
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
+// QA3 round-3 item 6b — system is ₪-only. Kept as a Record just so any
+// existing lookup (`CURRENCY_SYMBOL[code]`) still returns ₪; other codes
+// resolve to ₪ too since we no longer render multi-currency.
 const CURRENCY_SYMBOL: Record<string, string> = {
   ILS: '₪',
-  USD: '$',
-  EUR: '€',
-  GBP: '£',
+  USD: '₪',
+  EUR: '₪',
+  GBP: '₪',
 };
 
 function fmtMoney(amount: number, currency: string | null): string {

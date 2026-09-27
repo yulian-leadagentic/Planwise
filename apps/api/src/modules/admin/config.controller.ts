@@ -512,28 +512,50 @@ export class ConfigController {
 
   @Post('user-rates/:userId/change')
   @RequirePermissions({ module: 'admin', action: 'write' })
-  @ApiOperation({ summary: 'Set / change per-employee override — close current + open new' })
+  @ApiOperation({ summary: 'Set / change per-employee override — close current + open new (or bounded window)' })
   async changeUserRate(
     @Param('userId', ParseIntPipe) userId: number,
-    @Body() body: { hourlyCost: number | string; currency?: string | null; effectiveFrom: string },
+    @Body() body: {
+      hourlyCost: number | string;
+      currency?: string | null;
+      effectiveFrom: string;
+      /** QA3 round-3 item 3b — optional bounded End. Absent = open-ended
+       *  "current" (closes the previous current row). Present = a bounded
+       *  [start, end] window that COEXISTS with any current open-ended
+       *  row; the resolver picks by desc-startDate during the bounded
+       *  window and falls back to the open-ended row outside it. */
+      effectiveTo?: string | null;
+    },
   ) {
     const start = parseIsoDate(body.effectiveFrom, 'effectiveFrom');
+    const end = body.effectiveTo
+      ? parseIsoDate(body.effectiveTo, 'effectiveTo')
+      : null;
     if (body.hourlyCost == null || body.hourlyCost === '') {
       throw new BadRequestException('hourlyCost is required');
     }
+    if (end && end.getTime() < start.getTime()) {
+      throw new BadRequestException('effectiveTo must be on or after effectiveFrom');
+    }
     await this.prisma.user.findFirstOrThrow({ where: { id: userId } });
     return this.prisma.$transaction(async (tx) => {
-      await tx.userRate.updateMany({
-        where: { userId, endDate: null },
-        data: { endDate: dayBefore(start) },
-      });
+      // Only close the current open-ended override when the NEW row is
+      // itself open-ended. A bounded row must coexist — otherwise a
+      // short bounded override at some future window would silently
+      // erase the currently-active rate.
+      if (!end) {
+        await tx.userRate.updateMany({
+          where: { userId, endDate: null },
+          data: { endDate: dayBefore(start) },
+        });
+      }
       return tx.userRate.create({
         data: {
           userId,
           hourlyCost: new Prisma.Decimal(body.hourlyCost as any),
           currency: body.currency?.trim().toUpperCase() || null,
           startDate: start,
-          endDate: null,
+          endDate: end,
         },
       });
     });

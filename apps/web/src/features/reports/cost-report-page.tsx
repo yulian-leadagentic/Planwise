@@ -60,12 +60,12 @@ export function CostReportPage() {
               {rows.map((row: any, i: number) => (
                 <tr key={i} className="border-b border-border last:border-0 hover:bg-muted/30">
                   <td className="px-4 py-3 font-medium">{row.projectName}</td>
-                  <td className="px-4 py-3 text-right">${Number(row.laborCost).toLocaleString()}</td>
-                  <td className="px-4 py-3 text-right">${Number(row.expenseCost).toLocaleString()}</td>
-                  <td className="px-4 py-3 text-right font-medium">${Number(row.totalCost).toLocaleString()}</td>
-                  <td className="px-4 py-3 text-right">{row.budgetAmount ? `$${Number(row.budgetAmount).toLocaleString()}` : '—'}</td>
+                  <td className="px-4 py-3 text-right">₪{Number(row.laborCost).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-right">₪{Number(row.expenseCost).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-right font-medium">₪{Number(row.totalCost).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-right">{row.budgetAmount ? `₪${Number(row.budgetAmount).toLocaleString()}` : '—'}</td>
                   <td className={`px-4 py-3 text-right ${row.variance && row.variance < 0 ? 'text-red-600' : 'text-green-600'}`}>
-                    {row.variance != null ? `$${Number(row.variance).toLocaleString()}` : '—'}
+                    {row.variance != null ? `₪${Number(row.variance).toLocaleString()}` : '—'}
                   </td>
                 </tr>
               ))}
@@ -74,9 +74,9 @@ export function CostReportPage() {
               <tfoot>
                 <tr className="border-t-2 border-border bg-muted/30 font-medium">
                   <td className="px-4 py-3">Total</td>
-                  <td className="px-4 py-3 text-right">${Number(totals.laborCost).toLocaleString()}</td>
-                  <td className="px-4 py-3 text-right">${Number(totals.expenseCost).toLocaleString()}</td>
-                  <td className="px-4 py-3 text-right">${Number(totals.totalCost).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-right">₪{Number(totals.laborCost).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-right">₪{Number(totals.expenseCost).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-right">₪{Number(totals.totalCost).toLocaleString()}</td>
                   <td className="px-4 py-3" />
                   <td className="px-4 py-3" />
                 </tr>

@@ -27,6 +27,10 @@ export function getColumns(
   onChangeDepartment?: (userId: number, department: string | null) => void,
   onChangeSeniority?: (userId: number, seniorityLevelId: number | null) => void,
   onChangeActive?: (userId: number, isActive: boolean) => void,
+  // QA3 round-3 item 7b (2026-09-27) — finance-gated effective ₪/h
+  // column. Falsy hides the column entirely (default). Also hidden on
+  // the Partners tab regardless.
+  showEffectiveRate = false,
 ): ColumnDef<UserListItem, unknown>[] {
   const cols: ColumnDef<UserListItem, unknown>[] = [
     {
@@ -166,6 +170,42 @@ export function getColumns(
       accessorKey: 'companyName',
       header: 'Company',
       cell: ({ row }) => row.original.companyName ?? '-',
+    });
+  }
+
+  // QA3 round-3 item 7b — effective ₪/h rate, employees only,
+  // finance-gated. Value is computed today from user_override →
+  // level_rate_history → level_default, and tagged with `rateSource`
+  // so we can flag an override so the operator sees WHY the number
+  // differs from the level's own rate.
+  if (showEffectiveRate && !isPartners) {
+    cols.push({
+      id: 'effectiveHourlyCost',
+      header: 'Rate (₪/h)',
+      cell: ({ row }) => {
+        const r = (row.original as any).effectiveHourlyCost as number | null | undefined;
+        const src = (row.original as any).rateSource as string | null | undefined;
+        if (r == null) return <span className="text-slate-300 dark:text-slate-600">—</span>;
+        return (
+          <span
+            className="inline-flex items-center gap-1.5 font-mono text-sm text-slate-800 dark:text-slate-100"
+            title={
+              src === 'override'
+                ? 'Per-employee override — wins over the seniority level rate.'
+                : src === 'level'
+                  ? 'From the seniority level rate history.'
+                  : 'From the seniority level default (rollout fallback).'
+            }
+          >
+            ₪{r}/h
+            {src === 'override' && (
+              <span className="rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider">
+                override
+              </span>
+            )}
+          </span>
+        );
+      },
     });
   }
 

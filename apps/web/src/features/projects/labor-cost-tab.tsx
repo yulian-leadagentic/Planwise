@@ -60,26 +60,17 @@ interface LaborCostResponse {
   unrateable: UnrateableRow[];
 }
 
-/**
- * Currency symbols for the handful of currencies we expect; everything
- * else falls back to the 3-letter code. Keep narrow — adding a long
- * lookup here invites stale data when the currencies catalog grows.
- */
-const CURRENCY_SYMBOL: Record<string, string> = {
-  ILS: '₪',
-  USD: '$',
-  EUR: '€',
-  GBP: '£',
-};
-
-function fmtMoney(amount: number, currency: string): string {
-  const sym = CURRENCY_SYMBOL[currency];
+// QA3 round-3 item 6b — system is ₪-only. Drop the per-currency card
+// split and the $/€/£ symbol lookup; every rendered money value is
+// always ₪. The API can still return `currency` on rows; we ignore
+// it for display and just sum them up into one ₪ total.
+function fmtMoney(amount: number): string {
   const formatted = new Intl.NumberFormat('en-US', {
     style: 'decimal',
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(amount);
-  return sym ? `${sym}${formatted}` : `${formatted} ${currency}`;
+  return `₪${formatted}`;
 }
 
 function fmtHours(hours: number): string {
@@ -112,7 +103,22 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
   }
 
   const { totals, byUser, unrateable } = data;
-  const hasAnyRated = totals.byCurrency.length > 0;
+  // QA3 round-3 item 6b — collapse per-currency buckets into one ₪ total.
+  // The engine still returns them separately (schema hasn't changed);
+  // we just sum for display.
+  const grandTotalCost = (totals.byCurrency ?? []).reduce(
+    (s: number, b: any) => s + Number(b?.totalCost ?? 0),
+    0,
+  );
+  const grandTotalHours = (totals.byCurrency ?? []).reduce(
+    (s: number, b: any) => s + Number(b?.totalHours ?? 0),
+    0,
+  );
+  const grandUserCount = (totals.byCurrency ?? []).reduce(
+    (s: number, b: any) => s + Number(b?.userCount ?? 0),
+    0,
+  );
+  const hasAnyRated = grandTotalCost > 0 || byUser.length > 0;
   const hasUnrateable = unrateable.length > 0;
   const hasNothingLogged = totals.totalLoggedHours === 0;
 
@@ -133,10 +139,9 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
           </p>
         </div>
 
-        {/* Per-currency totals. One card if all costs are in a single
-            currency; if multiple, the first card holds the rest in a
-            stacked list. Keeps the row to 3 cards at most. */}
-        {totals.byCurrency.length === 0 ? (
+        {/* QA3 round-3 item 6b — single ₪ Resolved cost card (no
+            per-currency split; system is ₪-only). */}
+        {grandTotalCost === 0 ? (
           <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-4 md:col-span-2">
             <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               <DollarSign className="h-3.5 w-3.5" /> Resolved cost
@@ -146,37 +151,17 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
             </p>
           </div>
         ) : (
-          totals.byCurrency.map((c, i) => (
-            <div
-              key={c.currency}
-              className={cn(
-                'rounded-lg border p-4',
-                i === 0
-                  ? 'border-emerald-200 bg-emerald-50'
-                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900',
-              )}
-            >
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                <DollarSign className="h-3.5 w-3.5" /> Resolved cost
-                {totals.byCurrency.length > 1 && (
-                  <span className="rounded bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 text-[10px] tracking-normal text-slate-600 dark:text-slate-300">
-                    {c.currency}
-                  </span>
-                )}
-              </div>
-              <p
-                className={cn(
-                  'mt-2 text-2xl font-bold tabular-nums',
-                  i === 0 ? 'text-emerald-700' : 'text-slate-900 dark:text-slate-100',
-                )}
-              >
-                {fmtMoney(c.totalCost, c.currency)}
-              </p>
-              <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                {fmtHours(c.totalHours)} · {c.userCount} user{c.userCount === 1 ? '' : 's'}
-              </p>
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 md:col-span-2">
+            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              <DollarSign className="h-3.5 w-3.5" /> Resolved cost
             </div>
-          ))
+            <p className="mt-2 text-2xl font-bold tabular-nums text-emerald-700">
+              {fmtMoney(grandTotalCost)}
+            </p>
+            <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+              {fmtHours(grandTotalHours)} · {grandUserCount} user{grandUserCount === 1 ? '' : 's'}
+            </p>
+          </div>
         )}
       </div>
 
@@ -260,10 +245,10 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
                     {fmtHours(row.hours)}
                   </td>
                   <td className="px-4 py-2.5 text-right text-[12px] tabular-nums text-slate-700 dark:text-slate-200">
-                    {fmtMoney(row.hourlyCost, row.currency)}
+                    {fmtMoney(row.hourlyCost)}
                   </td>
                   <td className="px-4 py-2.5 text-right text-[13px] tabular-nums font-semibold text-slate-900 dark:text-slate-100">
-                    {fmtMoney(row.cost, row.currency)}
+                    {fmtMoney(row.cost)}
                   </td>
                 </tr>
               ))}

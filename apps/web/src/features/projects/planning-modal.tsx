@@ -1260,7 +1260,8 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           const ac = Number(task.actualCost ?? 0);
           const budget = Number(task.budgetAmount ?? 0);
           const overBudget = budget > 0 && ac > budget;
-          const sym = task.actualCostCurrency === 'USD' ? '$' : task.actualCostCurrency === 'EUR' ? '€' : '₪';
+          // QA3 round-3 item 6b: ₪-only across every cost surface.
+          const sym = '₪';
           return (
             <span
               className={cn(
@@ -3692,7 +3693,8 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                           const ac = Number(task.actualCost ?? 0);
                           const budget = Number(task.budgetAmount ?? 0);
                           const overBudget = budget > 0 && ac > budget;
-                          const sym = task.actualCostCurrency === 'USD' ? '$' : task.actualCostCurrency === 'EUR' ? '€' : '₪';
+                          // QA3 round-3 item 6b: ₪-only across every cost surface.
+                          const sym = '₪';
                           return (
                             <td className={cn(
                               'px-3 py-2 text-right font-mono text-xs font-semibold',
@@ -4932,6 +4934,36 @@ function PlanningView({ projectId }: { projectId: number }) {
   // Task drawer at the URL — a row click opens ?task=N (bm2 fix #2).
   // Every task-row renderer reads openDrawer via OpenTaskDrawerContext.
   const { drawerId: drawerTaskId, openDrawer: openTaskDrawer, closeDrawer: closeTaskDrawer } = useDrawerRoute('task');
+  // QA3 round-3 item 2 — finance-gated Labor Cost (Spent) + Cost
+  // Utilization on the totals strip. Reuses the same summary endpoint
+  // the Cost tab consumes so the two surfaces can never drift; hidden
+  // for non-finance users (as the tab is).
+  const { can: canPerm } = usePermissions();
+  const showFinance = canPerm('finance', 'read');
+  const laborCostQuery = useQuery<any>({
+    queryKey: ['projects', projectId, 'labor-cost'],
+    queryFn: () => client.get(`/projects/${projectId}/labor-cost`).then((r) => r.data?.data ?? r.data),
+    enabled: !!projectId && showFinance,
+    staleTime: 30 * 1000,
+  });
+  const projectMetaQuery = useQuery<any>({
+    // Fetches project.budget for the Cost Utilization %. Same query
+    // key the project detail page uses so it hits cache.
+    queryKey: ['projects', projectId],
+    queryFn: () => client.get(`/projects/${projectId}`).then((r) => r.data?.data ?? r.data),
+    enabled: !!projectId && showFinance,
+    staleTime: 60 * 1000,
+  });
+  const laborCostSpent = (() => {
+    const buckets = laborCostQuery.data?.totals?.byCurrency ?? [];
+    // Sum across buckets — ₪-only in practice (item 6b removes the
+    // multi-currency UI), but tolerate mixed for safety.
+    return buckets.reduce((s: number, b: any) => s + Number(b?.totalCost ?? 0), 0);
+  })();
+  const projectBudget = Number(projectMetaQuery.data?.budget ?? 0);
+  const costUtilization = projectBudget > 0
+    ? Math.round((laborCostSpent / projectBudget) * 100)
+    : null;
 
   // Loaded planning data (zones + tasks) — used below for the group
   // builder. We also use it here to derive the list of task IDs that
@@ -6188,17 +6220,45 @@ function PlanningView({ projectId }: { projectId: number }) {
             )}>{totalLoggedHours}h</div>
           </div>
           <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
-          <div>
-            <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Budget amount</div>
+          <div title="Sum of task budget amounts allocated across the plan. Distinct from the Contract Budget on the top strip.">
+            <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Planned (Allocated)</div>
             <div className="text-[18px] font-bold text-slate-900 dark:text-slate-100 tabular-nums">₪{totalAmount.toLocaleString()}</div>
           </div>
           <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
-          <div>
-            <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Progress</div>
+          <div title="Hours Progress = logged / budget hours. Distinct from Cost Utilization (money) below.">
+            <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Hours Progress</div>
             <div className="text-[18px] font-bold text-slate-900 dark:text-slate-100 tabular-nums">
               {totalHours > 0 ? `${Math.min(100, Math.round((totalLoggedHours / totalHours) * 100))}%` : '—'}
             </div>
           </div>
+          {/* QA3 round-3 item 2 — money-side stats, finance-only. Same
+              summary the Cost tab renders, so the number on the strip
+              always matches the tab. Reads 0 / — cleanly when no rates
+              or no logged hours exist (data, not error). */}
+          {showFinance && (
+            <>
+              <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
+              <div title="Actual labor cost = Σ logged hours × rate at each entry's date. Same total the Labor Cost tab shows.">
+                <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Labor Cost (Spent)</div>
+                <div className="text-[18px] font-bold text-slate-900 dark:text-slate-100 tabular-nums">
+                  ₪{Math.round(laborCostSpent).toLocaleString()}
+                </div>
+              </div>
+              <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
+              <div title="Cost Utilization = Labor Cost ÷ Contract Budget. >100% overspend, >85% amber.">
+                <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Cost Utilization</div>
+                <div className={cn(
+                  'text-[18px] font-bold tabular-nums',
+                  costUtilization == null ? 'text-slate-400 dark:text-slate-500'
+                    : costUtilization > 100 ? 'text-red-600 dark:text-red-400'
+                    : costUtilization > 85 ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-slate-900 dark:text-slate-100',
+                )}>
+                  {costUtilization == null ? '—' : `${costUtilization}%`}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 

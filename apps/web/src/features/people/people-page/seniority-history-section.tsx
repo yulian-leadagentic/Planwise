@@ -9,11 +9,11 @@ import { useConfirm } from '@/components/shared/confirm-dialog';
 import type { SeniorityHistoryRow } from './types';
 
 /**
- * Far-future sentinel for "open-ended" end dates. The user wants the
- * End field to always be filled (never blank) and to default to this
- * value. On the wire we still send NULL to the server for the
- * "currently active" semantics, but the input box shows the sentinel
- * so the user sees an explicit "this row runs forever" value.
+ * QA3 round-3 item 4 — the End field is now EMPTY by default with a
+ * "Current" placeholder (not the 9999-12-31 sentinel that used to
+ * render on the row too). The sentinel constant is kept only so any
+ * legacy row that saved `9999-12-31` on the wire still normalizes
+ * back to null; new writes send `null` for "open-ended".
  */
 const OPEN_ENDED_SENTINEL = '9999-12-31';
 
@@ -42,10 +42,9 @@ export function SeniorityHistorySection({
   const [showAddForm, setShowAddForm] = useState(false);
   const [newLevelId, setNewLevelId] = useState<string>('');
   const [newStartDate, setNewStartDate] = useState<string>(new Date().toISOString().slice(0, 10));
-  // Default End = far-future sentinel so the field is never blank
-  // (matches the SAP / valid_to convention we use elsewhere). On
-  // submit it's normalized back to NULL for the "current" semantics.
-  const [newEndDate, setNewEndDate] = useState<string>(OPEN_ENDED_SENTINEL);
+  // QA3 round-3 item 4: default End = empty ("current"). Field shows a
+  // "Current" placeholder and normalizes empty → null on submit.
+  const [newEndDate, setNewEndDate] = useState<string>('');
   // Inline-edit one row at a time. null = no row in edit mode.
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editLevelId, setEditLevelId] = useState<string>('');
@@ -74,9 +73,8 @@ export function SeniorityHistorySection({
       notify.success('Seniority entry added', { code: 'USER-SENIORITY-ADD-200' });
       setShowAddForm(false);
       setNewLevelId('');
-      // Reset End to the far-future sentinel, not blank, so the next
-      // add starts with the default "open-ended" intent visible.
-      setNewEndDate(OPEN_ENDED_SENTINEL);
+      // Reset End to empty so the next add reads "Current" by default.
+      setNewEndDate('');
     },
     onError: (err: any) => notify.apiError(err, 'Failed to add seniority entry'),
   });
@@ -122,9 +120,9 @@ export function SeniorityHistorySection({
     setEditingId(row.id);
     setEditLevelId(String(row.seniorityLevelId));
     setEditStartDate(row.startDate.slice(0, 10));
-    // Null endDate (= "current") renders as the far-future sentinel so
-    // the input field is never blank.
-    setEditEndDate(row.endDate ? row.endDate.slice(0, 10) : OPEN_ENDED_SENTINEL);
+    // Null endDate = "current" → leave field empty so the placeholder
+    // shows "Current"; saves as null via normalizeEnd.
+    setEditEndDate(row.endDate ? row.endDate.slice(0, 10) : '');
   };
 
   const handleSaveEdit = (id: number) => {
@@ -138,9 +136,9 @@ export function SeniorityHistorySection({
     });
   };
 
-  // Show null endDate as the sentinel string (matches the input
-  // default) so "current" rows read consistently across edit + view.
-  const fmtDate = (iso: string | null) => (iso ? iso.slice(0, 10) : OPEN_ENDED_SENTINEL);
+  // QA3 round-3 item 4: null endDate reads as "Current" on the row —
+  // no more scary 9999-12-31 sentinel leaking into the UI.
+  const fmtDate = (iso: string | null) => (iso ? iso.slice(0, 10) : 'Current');
 
   return (
     <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 p-3">
@@ -197,17 +195,19 @@ export function SeniorityHistorySection({
             </div>
             <div>
               <label
-                className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider"
-                title="Defaults to 9999-12-31 (open-ended / 'current'). Set a real end date to record a closed historical period."
+                className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider whitespace-nowrap"
+                title="Leave empty for an open-ended / 'current' row. Set a real end date to record a closed historical period."
               >
-                End <span className="text-slate-400 dark:text-slate-500 normal-case">(9999-12-31 = current)</span>
+                End
               </label>
               <input
                 type="date"
                 value={newEndDate}
                 onChange={(e) => setNewEndDate(e.target.value)}
+                placeholder="Current"
                 className="w-full mt-1 px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-[12px] focus:border-blue-500 focus:outline-none"
               />
+              <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">leave empty = current</div>
             </div>
           </div>
           <div className="flex justify-end gap-2 pt-1">
@@ -243,7 +243,8 @@ export function SeniorityHistorySection({
             const isOpen = row.endDate === null;
             const isEditing = editingId === row.id;
             const hourlyCost = row.seniorityLevel.defaultHourlyCost;
-            const currency = row.seniorityLevel.currency;
+            // QA3 round-3 item 5: system is ₪-only. Currency column
+            // dropped from display; the DB nullable stays.
             if (isEditing) {
               return (
                 <div key={row.id} className="rounded-md border border-amber-300 bg-amber-50/40 p-2 space-y-2">
@@ -267,7 +268,7 @@ export function SeniorityHistorySection({
                       type="date"
                       value={editEndDate}
                       onChange={(e) => setEditEndDate(e.target.value)}
-                      placeholder="current"
+                      placeholder="Current"
                       className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-[12px]"
                     />
                   </div>
@@ -313,7 +314,7 @@ export function SeniorityHistorySection({
                     non-finance users see the seniority + dates so they
                     can validate the history, just not the money. */}
                 {showCost && hourlyCost != null && (
-                  <span className="text-slate-400 dark:text-slate-500">· {hourlyCost}{currency ? ` ${currency}` : ''}/h</span>
+                  <span className="text-slate-400 dark:text-slate-500">· ₪{hourlyCost}/h</span>
                 )}
                 <div className="ml-auto flex items-center gap-1">
                   <button

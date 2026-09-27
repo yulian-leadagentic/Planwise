@@ -84,7 +84,10 @@ export function ProjectDetailPage() {
     // Cost tab is gated by the Finance module permission. Backend
     // /projects/:id/labor-cost returns 403 to non-finance users — the
     // tab disappears from the UI so the user can't even try.
-    ...(showFinance ? [{ key: 'cost' as const, label: 'Cost' }] : []),
+    // QA3 round-3: renamed "Cost" → "Labor Cost" so the tab reads as
+    // "the money spent on labor (Σ hours × rate)" and not as a
+    // contract-budget mate.
+    ...(showFinance ? [{ key: 'cost' as const, label: 'Labor Cost' }] : []),
     { key: 'files', label: 'Files' },
     { key: 'discussion', label: 'Discussion' },
     { key: 'activity', label: 'Activity' },
@@ -236,8 +239,8 @@ export function ProjectDetailPage() {
             {showFinance && project.budget != null && (
               <>
                 <span className="text-slate-300 dark:text-slate-600">|</span>
-                <div className="flex items-center gap-1">
-                  <span className="text-slate-500 dark:text-slate-400 text-xs">Budget:</span>
+                <div className="flex items-center gap-1" title="Project-level contract budget from the project record. Compare against Labor Cost (Σ hours × rate) via Cost Utilization.">
+                  <span className="text-slate-500 dark:text-slate-400 text-xs">Contract Budget:</span>
                   <span className="font-mono text-xs font-semibold text-slate-900 dark:text-slate-100">
                     &#8362;{formatBudget(project.budget)}
                   </span>
@@ -249,8 +252,8 @@ export function ProjectDetailPage() {
                   return (
                     <>
                       <span className="text-slate-300 dark:text-slate-600">|</span>
-                      <div className="flex items-center gap-1">
-                        <span className="text-slate-500 dark:text-slate-400 text-xs">Cost:</span>
+                      <div className="flex items-center gap-1" title="Actual labor cost = Σ logged hours × effective rate at each entry's date.">
+                        <span className="text-slate-500 dark:text-slate-400 text-xs">Labor Cost:</span>
                         <span className="font-mono text-xs font-semibold text-slate-900 dark:text-slate-100">
                           &#8362;{formatBudget(actualCost)}
                         </span>
@@ -258,8 +261,8 @@ export function ProjectDetailPage() {
                       {utilization != null && (
                         <>
                           <span className="text-slate-300 dark:text-slate-600">|</span>
-                          <div className="flex items-center gap-1">
-                            <span className="text-slate-500 dark:text-slate-400 text-xs">Utilization:</span>
+                          <div className="flex items-center gap-1" title="Cost Utilization = Labor Cost ÷ Contract Budget.">
+                            <span className="text-slate-500 dark:text-slate-400 text-xs">Cost Utilization:</span>
                             <span
                               className={cn(
                                 'font-mono text-xs font-semibold',

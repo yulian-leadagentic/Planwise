@@ -272,6 +272,9 @@ export function PeoplePage() {
   // the server decide. (T-fix, 2026-06-29.)
   void isAdmin; void can; // permissions hook retained for future use
   const canEditPeople = true;
+  // QA3 round-3 item 7b — finance gate for the effective ₪/h column.
+  // Non-finance users don't see the rate at all (column hidden).
+  const showEffectiveRate = can('finance', 'read');
   const columns = useMemo(
     () => getColumns(
       isPartners,
@@ -297,8 +300,10 @@ export function PeoplePage() {
       isPartners
         ? undefined
         : (userId: number, isActive: boolean) => updateActive.mutate({ userId, isActive }),
+      // QA3 round-3 item 7b — finance-gated ₪/h column.
+      showEffectiveRate,
     ),
-    [isPartners, roles, canEditPeople, savingUserId, departments, seniorityLevels],
+    [isPartners, roles, canEditPeople, savingUserId, departments, seniorityLevels, showEffectiveRate],
   );
 
   const userType = peopleTab === 'employees' ? 'employee' : 'partner';
@@ -919,7 +924,6 @@ export function PeoplePage() {
       {overrideUser && (
         <UserRateModal
           user={overrideUser}
-          currencies={[]}
           onClose={() => setOverrideUser(null)}
         />
       )}

@@ -6,14 +6,17 @@ import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import type { UserListItem } from '@/types';
 
-// QA3 item 1 (2026-09-24) — per-employee cost-rate override modal.
-// Shows the user's override history and lets the admin:
-//   • Set / change the override at a forward-effective date
-//     (closes the current open-ended row at day - 1, opens a new one)
-//   • Remove the override at a forward-effective date (closes with no
-//     new row — user reverts to their level rate from that day on)
-// The cost engine derives at read time (see cost-rate-resolver.ts), so
-// project totals reflect the change on the next read.
+// QA3 round-3 items 3b + 5 — per-employee cost-rate override modal.
+//
+// Changes vs round-1:
+//   • End date (effectiveTo) added. Empty = "Current" (open-ended);
+//     any date = bounded [start, end] window. Bounded windows do NOT
+//     close the current open-ended row — the resolver picks by
+//     desc-startDate during the bounded window and falls back to the
+//     open-ended row outside it.
+//   • Currency field removed everywhere (system is ₪-only). The DB
+//     `currency` column stays nullable; we submit null.
+//   • Every rendered rate uses the ₪ prefix.
 
 type UserRateRow = {
   id: number;
@@ -26,16 +29,16 @@ type UserRateRow = {
 
 interface Props {
   user: UserListItem;
-  currencies: Array<{ code: string; name: string; symbol: string | null }>;
   onClose: () => void;
 }
 
-export function UserRateModal({ user, currencies, onClose }: Props) {
+export function UserRateModal({ user, onClose }: Props) {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const [hourlyCost, setHourlyCost] = useState('');
-  const [currency, setCurrency] = useState('');
   const [effectiveFrom, setEffectiveFrom] = useState(new Date().toISOString().slice(0, 10));
+  // Empty = "Current" (open-ended). Any date = bounded window.
+  const [effectiveTo, setEffectiveTo] = useState('');
 
   const { data: rates = [], isLoading } = useQuery<UserRateRow[]>({
     queryKey: ['admin', 'user-rates', user.id],
@@ -60,16 +63,21 @@ export function UserRateModal({ user, currencies, onClose }: Props) {
       client
         .post(`/admin/config/user-rates/${user.id}/change`, {
           hourlyCost,
-          currency: currency || null,
+          currency: null,
           effectiveFrom,
+          // Only send effectiveTo when the operator entered one; the
+          // backend interprets absence as "open-ended, close current".
+          ...(effectiveTo ? { effectiveTo } : {}),
         })
         .then((r) => r.data),
     onSuccess: () => {
       invalidateAll();
-      notify.success('Override saved — forward-effective from ' + effectiveFrom, {
-        code: 'USER-RATE-CHANGE-201',
-      });
+      const msg = effectiveTo
+        ? `Bounded override saved — ${effectiveFrom} → ${effectiveTo}`
+        : `Override saved — forward-effective from ${effectiveFrom}`;
+      notify.success(msg, { code: 'USER-RATE-CHANGE-201' });
       setHourlyCost('');
+      setEffectiveTo('');
     },
     onError: (err: any) => notify.apiError(err, 'Failed to save override'),
   });
@@ -94,6 +102,8 @@ export function UserRateModal({ user, currencies, onClose }: Props) {
     hourlyCost.trim().length > 0 &&
     !Number.isNaN(Number(hourlyCost)) &&
     /^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom) &&
+    (effectiveTo === '' ||
+      (/^\d{4}-\d{2}-\d{2}$/.test(effectiveTo) && effectiveTo >= effectiveFrom)) &&
     !changeMutation.isPending;
 
   const canRemove =
@@ -130,8 +140,7 @@ export function UserRateModal({ user, currencies, onClose }: Props) {
                 <span className="font-semibold text-emerald-700 dark:text-emerald-400">
                   Active override:
                 </span>{' '}
-                <span className="font-mono">{currentOverride.hourlyCost}</span>{' '}
-                {currentOverride.currency ?? ''} — since {fmt(currentOverride.startDate)}. Wins over
+                <span className="font-mono">₪{currentOverride.hourlyCost}</span>/h — since {fmt(currentOverride.startDate)}. Wins over
                 the level rate on entries from that date on.
               </>
             ) : (
@@ -148,7 +157,7 @@ export function UserRateModal({ user, currencies, onClose }: Props) {
             </h4>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Rate</label>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Rate (₪/h)</label>
                 <input
                   type="number"
                   step="0.01"
@@ -160,28 +169,32 @@ export function UserRateModal({ user, currencies, onClose }: Props) {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Currency</label>
-                <select
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
-                  className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-                >
-                  <option value="">— Inherit level —</option>
-                  {currencies.map((c) => (
-                    <option key={c.code} value={c.code}>
-                      {c.code}{c.symbol ? ` (${c.symbol})` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Effective from</label>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                  Effective from
+                </label>
                 <input
                   type="date"
                   value={effectiveFrom}
                   onChange={(e) => setEffectiveFrom(e.target.value)}
                   className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
                 />
+              </div>
+              <div>
+                <label
+                  className="mb-1 block text-xs font-medium text-muted-foreground whitespace-nowrap"
+                  title="Empty = open-ended (Current). Enter a date to bound the override to [start, end]; the person reverts to their level rate after that date."
+                >
+                  End (optional)
+                </label>
+                <input
+                  type="date"
+                  value={effectiveTo}
+                  onChange={(e) => setEffectiveTo(e.target.value)}
+                  min={effectiveFrom || undefined}
+                  placeholder="Current"
+                  className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                />
+                <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">leave empty = current</div>
               </div>
             </div>
             <div className="mt-3 flex items-center justify-between gap-2">
@@ -232,7 +245,6 @@ export function UserRateModal({ user, currencies, onClose }: Props) {
                   <thead className="bg-slate-50 dark:bg-slate-800/60">
                     <tr>
                       <th className="px-3 py-1.5 text-left font-medium">Rate</th>
-                      <th className="px-3 py-1.5 text-left font-medium">Currency</th>
                       <th className="px-3 py-1.5 text-left font-medium">From</th>
                       <th className="px-3 py-1.5 text-left font-medium">To</th>
                     </tr>
@@ -240,8 +252,7 @@ export function UserRateModal({ user, currencies, onClose }: Props) {
                   <tbody>
                     {rates.map((r) => (
                       <tr key={r.id} className="border-t border-slate-100 dark:border-slate-800">
-                        <td className="px-3 py-1.5 font-mono">{r.hourlyCost}</td>
-                        <td className="px-3 py-1.5 text-slate-500">{r.currency ?? '—'}</td>
+                        <td className="px-3 py-1.5 font-mono">₪{r.hourlyCost}/h</td>
                         <td className="px-3 py-1.5 text-slate-500">{fmt(r.startDate)}</td>
                         <td className="px-3 py-1.5 text-slate-500">
                           {r.endDate === null ? (
