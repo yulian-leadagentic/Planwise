@@ -430,7 +430,25 @@ export function TypesPage() {
 
   async function handleDelete(row: (typeof rows)[number]) {
     if (row.static) return;
-    if (!(await confirm(`Delete "${row.name}"? This action cannot be undone.`))) return;
+    // People UX U2 — catalog delete: danger variant + verb button, and a
+    // concrete description so the operator understands what happens to
+    // records still referencing this catalog row.
+    const kind =
+      activeTab === 'department' ? 'department'
+      : activeTab === 'profession' ? 'job title'
+      : activeTab === 'zone' ? 'zone type'
+      : activeTab === 'projectCategory' ? 'project category'
+      : activeTab === 'service' ? 'service type'
+      : 'item';
+    const ok = await confirm(
+      `Existing records referencing this ${kind} keep it as legacy data; new records will pick from the remaining catalog.`,
+      {
+        title: `Delete ${kind} "${row.name}"?`,
+        variant: 'danger',
+        confirmLabel: 'Delete',
+      },
+    );
+    if (!ok) return;
 
     if (activeTab === 'zone') deleteZoneType.mutate(row.id as number);
     else if (activeTab === 'projectCategory') deleteProjectCategory.mutate(row.id as number);

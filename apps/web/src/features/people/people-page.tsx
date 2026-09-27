@@ -19,6 +19,7 @@ import { emptyPerson } from './people-page/constants';
 import { EditPersonModal } from './people-page/edit-person-modal';
 import { ResetPasswordModal } from './people-page/reset-password-modal';
 import { UserRateModal } from './people-page/user-rate-modal';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 export function PeoplePage() {
   const queryClient = useQueryClient();
@@ -198,6 +199,7 @@ export function PeoplePage() {
   };
   const debouncedSearch = useDebounce(peopleSearch, 300);
   const { can, isAdmin } = usePermissions();
+  const confirm = useConfirm();
   const [savingUserId, setSavingUserId] = useState<number | null>(null);
   const [editingUser, setEditingUser] = useState<UserListItem | null>(null);
   const [resettingUser, setResettingUser] = useState<UserListItem | null>(null);
@@ -275,12 +277,62 @@ export function PeoplePage() {
   // QA3 round-3 item 7b — finance gate for the effective ₪/h column.
   // Non-finance users don't see the rate at all (column hidden).
   const showEffectiveRate = can('finance', 'read');
+  // People UX U2 — confirm any Access Role change that either raises the
+  // target to an admin-level role or lowers it from one. The heuristic
+  // "role name contains 'Admin'" covers the seeded Admin / HR Admin
+  // roles today; other roles bypass the confirm to keep the inline
+  // change fast. If we ever add a `level` or `isAdmin` flag to the
+  // roles table this predicate is where to swap it in.
+  const isAdminLevelRole = (roleName: string | undefined | null): boolean => {
+    if (!roleName) return false;
+    return /admin/i.test(String(roleName));
+  };
+
+  // Hoisted above the columns memo so the deactivate/role-change
+  // confirms can resolve the person by id from the current page.
+  const userType = peopleTab === 'employees' ? 'employee' : 'partner';
+  const isActiveParam: boolean | 'all' | undefined =
+    peopleStatus === 'active' ? true
+    : peopleStatus === 'inactive' ? false
+    : 'all';
+  const { data, isLoading } = useUsers({
+    userType,
+    search: debouncedSearch || undefined,
+    isActive: isActiveParam,
+  });
+  const users = data?.data ?? [];
+
   const columns = useMemo(
     () => getColumns(
       isPartners,
       roles,
       canEditPeople,
-      (userId, roleId) => updateRole.mutate({ userId, roleId }),
+      // People UX U2 — confirm when moving to (or away from) an
+      // admin-level role. Cancel leaves the select on its previous value
+      // because we only fire the mutation on OK.
+      async (userId, roleId) => {
+        const user = users.find((u: any) => u.id === userId) as any;
+        const nextRole = roles.find((r: any) => r.id === roleId);
+        const currentRoleName = user?.roleName ?? null;
+        const nextRoleName = nextRole?.name ?? null;
+        const raising = isAdminLevelRole(nextRoleName);
+        const lowering = isAdminLevelRole(currentRoleName) && !raising;
+        if (raising || lowering) {
+          const who = user ? `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() : 'this user';
+          const ok = await confirm(
+            raising
+              ? `Grant ${nextRoleName} access to ${who}? They will gain elevated permissions across the workspace.`
+              : `Change ${who} from ${currentRoleName} to ${nextRoleName}? They will lose elevated access.`,
+            {
+              title: raising ? 'Grant admin-level access?' : 'Lower access level?',
+              variant: 'danger',
+              confirmLabel: raising ? 'Grant access' : 'Change role',
+            },
+          );
+          if (!ok) return;
+        }
+        updateRole.mutate({ userId, roleId });
+      },
       (user) => setEditingUser(user),
       (user) => setResettingUser(user),
       savingUserId,
@@ -297,31 +349,39 @@ export function PeoplePage() {
       isPartners
         ? undefined
         : (userId: number, seniorityLevelId: number | null) => updateSeniority.mutate({ userId, seniorityLevelId }),
+      // People UX U2 — deactivate is destructive (blocks login), so it
+      // pops a red danger confirm naming the person. Reactivate has no
+      // destructive effect and stays a one-click toggle.
       isPartners
         ? undefined
-        : (userId: number, isActive: boolean) => updateActive.mutate({ userId, isActive }),
+        : async (userId: number, isActive: boolean) => {
+            if (!isActive) {
+              const user = users.find((u: any) => u.id === userId) as any;
+              const who = user ? `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() : 'this user';
+              const ok = await confirm(
+                `${who} will no longer be able to log in. Their history stays intact and they can be reactivated any time.`,
+                {
+                  title: `Deactivate ${who}?`,
+                  variant: 'danger',
+                  confirmLabel: 'Deactivate',
+                },
+              );
+              if (!ok) return;
+            }
+            updateActive.mutate({ userId, isActive });
+          },
       // QA3 round-3 item 7b — finance-gated ₪/h column.
       showEffectiveRate,
     ),
-    [isPartners, roles, canEditPeople, savingUserId, departments, seniorityLevels, showEffectiveRate],
+    [isPartners, roles, canEditPeople, savingUserId, departments, seniorityLevels, showEffectiveRate, users, confirm],
   );
 
-  const userType = peopleTab === 'employees' ? 'employee' : 'partner';
   // Status filter: this is the ONLY page in the app that legitimately
   // needs to see deactivated users (so admins can reactivate them).
   // 'active' (default) → backend default kicks in (only active).
   // 'inactive' → only inactive. 'all' → both, via the `all` sentinel.
-  const isActiveParam: boolean | 'all' | undefined =
-    peopleStatus === 'active' ? true
-    : peopleStatus === 'inactive' ? false
-    : 'all';
-  const { data, isLoading } = useUsers({
-    userType,
-    search: debouncedSearch || undefined,
-    isActive: isActiveParam,
-  });
-
-  const users = data?.data ?? [];
+  // (userType / isActiveParam / useUsers hoisted above the columns memo
+  // for the U2 confirm callbacks to resolve the person by id.)
 
   const tabs = [
     { key: 'employees' as const, label: 'Employees' },

@@ -406,8 +406,27 @@ function MainRoleHeaderField({ bp, canWrite }: { bp: BusinessPartnerFull; canWri
     <select
       autoFocus
       value={bp.mainRoleTypeId ?? ''}
-      onChange={(e) => {
+      onChange={async (e) => {
         const v = e.target.value;
+        // People UX U2 — clearing the Main Role is destructive (some
+        // team/project pickers filter on it). Ask before wiping it.
+        if (v === '' && bp.mainRoleTypeId) {
+          const ok = await confirm(
+            `${bp.displayName} will no longer have a main role — pickers that filter by main role will stop offering them.`,
+            {
+              title: 'Clear Main Role?',
+              variant: 'danger',
+              confirmLabel: 'Clear',
+            },
+          );
+          if (!ok) {
+            // Roll the select back to its stored value by re-triggering
+            // React's render — the value is bound so blurring collapses
+            // the picker without side effects.
+            setPicking(false);
+            return;
+          }
+        }
         setRole.mutate(v === '' ? null : Number(v));
       }}
       onBlur={() => setPicking(false)}
@@ -464,6 +483,7 @@ function MainRoleHeaderField({ bp, canWrite }: { bp: BusinessPartnerFull; canWri
 
 function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerFull; canWrite: boolean; canDelete: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
 
   // Active worker_of relationship (persons only) — defines the contact's employer.
@@ -601,7 +621,20 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
           )}
           {canDelete && !bp.user && (
             <button
-              onClick={async () => { if (await confirm(`Remove "${bp.displayName}"?`)) remove.mutate(); }}
+              onClick={async () => {
+                // People UX U2 — deleting a partner is permanent; name the
+                // target and warn that relationships / project roles
+                // pointing at it will fail if they still exist.
+                const ok = await confirm(
+                  `"${bp.displayName}" will be permanently removed. Any relationships or project roles that still reference this partner will be rejected by the backend.`,
+                  {
+                    title: `Remove "${bp.displayName}"?`,
+                    variant: 'danger',
+                    confirmLabel: 'Remove partner',
+                  },
+                );
+                if (ok) remove.mutate();
+              }}
               className="bg-white dark:bg-slate-900 border border-red-200 hover:border-red-400 text-red-600 text-[12px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
             >
               <Trash2 className="h-3 w-3" /> Remove
@@ -1037,9 +1070,17 @@ function DomainsSection({ bpId, canWrite, canDelete }: { bpId: number; canWrite:
               {canDelete && (
                 <button
                   onClick={async () => {
-                    if (await confirm(`Detach domain "${d.domain}" from this organization?`)) {
-                      remove.mutate(d.id);
-                    }
+                    // People UX U2 — detaching a corporate domain breaks
+                    // future email→org auto-matching in the import flow.
+                    const ok = await confirm(
+                      `Import dedup will stop matching addresses at "${d.domain}" to this organization.`,
+                      {
+                        title: `Detach domain "${d.domain}"?`,
+                        variant: 'danger',
+                        confirmLabel: 'Detach',
+                      },
+                    );
+                    if (ok) remove.mutate(d.id);
                   }}
                   disabled={remove.isPending}
                   className="p-1 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
@@ -1144,7 +1185,20 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
               </div>
               {canDelete && (
                 <button
-                  onClick={async () => { if (await confirm('Remove this relationship?')) remove.mutate({ id: r.id, sourceTable: r.sourceTable }); }}
+                  onClick={async () => {
+                    // People UX U2 — name both parties of the relationship
+                    // so the operator sees the exact edge being cut.
+                    const target = r.targetName ?? `${r.targetType} #${r.targetId}`;
+                    const ok = await confirm(
+                      `The "${r.relationshipType.name}" link from ${bp.displayName} to ${target} will end.`,
+                      {
+                        title: `Remove relationship to ${target}?`,
+                        variant: 'danger',
+                        confirmLabel: 'Remove',
+                      },
+                    );
+                    if (ok) remove.mutate({ id: r.id, sourceTable: r.sourceTable });
+                  }}
                   className="p-1 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600 shrink-0"
                   title="Remove"
                 >
@@ -1213,7 +1267,19 @@ function RelationshipsTab({ bp, canWrite, canDelete }: { bp: BusinessPartnerFull
                 </div>
                 {canDelete && (
                   <button
-                    onClick={async () => { if (await confirm('Remove this relationship?')) removeIncoming.mutate(r.id); }}
+                    onClick={async () => {
+                      // People UX U2 — incoming edges: name the source side.
+                      const label = r.relationshipType.inverseLabel || r.relationshipType.name;
+                      const ok = await confirm(
+                        `The "${label}" link from ${r.sourceName} to ${bp.displayName} will end.`,
+                        {
+                          title: `Remove relationship from ${r.sourceName}?`,
+                          variant: 'danger',
+                          confirmLabel: 'Remove',
+                        },
+                      );
+                      if (ok) removeIncoming.mutate(r.id);
+                    }}
                     className="p-1 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600 shrink-0"
                     title="Remove"
                   >

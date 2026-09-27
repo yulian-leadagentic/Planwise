@@ -274,7 +274,16 @@ export function TeamTemplatesPage() {
                 <button
                   onClick={async (e) => {
                     e.stopPropagation();
-                    if (await confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id);
+                    // People UX U2 — danger variant + verb button.
+                    const ok = await confirm(
+                      `Projects that were built from this template keep their team; deleting only removes it from the "Apply template" picker.`,
+                      {
+                        title: `Delete team template "${t.name}"?`,
+                        variant: 'danger',
+                        confirmLabel: 'Delete',
+                      },
+                    );
+                    if (ok) deleteMutation.mutate(t.id);
                   }}
                   className="hover:bg-red-50 text-slate-300 dark:text-slate-600 hover:text-red-600 rounded-md p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                 >

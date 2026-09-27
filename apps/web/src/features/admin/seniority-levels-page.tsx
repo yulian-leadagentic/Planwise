@@ -193,9 +193,18 @@ export function SeniorityLevelsPage() {
           </button>
           <button
             onClick={async () => {
-              if (await confirm(`Delete seniority level "${row.original.name}"?`)) {
-                deleteMutation.mutate(row.original.id);
-              }
+              // People UX U2 — deleting a catalog level is destructive
+              // (employees may still reference it via UserSeniority
+              // history). Danger variant + verb button.
+              const ok = await confirm(
+                `Employees still holding this level will fall back to no seniority; historical entries stay attached.`,
+                {
+                  title: `Delete labor category "${row.original.name}"?`,
+                  variant: 'danger',
+                  confirmLabel: 'Delete',
+                },
+              );
+              if (ok) deleteMutation.mutate(row.original.id);
             }}
             aria-label={`Delete level ${row.original.name}`}
             className="inline-flex items-center gap-1 text-xs text-red-600 hover:underline"

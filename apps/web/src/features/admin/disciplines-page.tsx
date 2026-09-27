@@ -201,13 +201,16 @@ export function DisciplinesPage() {
             </button>
             <button
               onClick={async () => {
-                if (
-                  await confirm(
-                    `Delete discipline "${row.original.name}"? Existing contacts referencing it will be set to no discipline.`,
-                  )
-                ) {
-                  deleteMutation.mutate(row.original.id);
-                }
+                // People UX U2 — danger variant + verb button.
+                const ok = await confirm(
+                  `Existing contacts referencing this discipline will be set to no discipline.`,
+                  {
+                    title: `Delete discipline "${row.original.name}"?`,
+                    variant: 'danger',
+                    confirmLabel: 'Delete',
+                  },
+                );
+                if (ok) deleteMutation.mutate(row.original.id);
               }}
               aria-label={`Delete discipline ${row.original.name}`}
               className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400 hover:underline"

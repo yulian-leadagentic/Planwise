@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 import { cn } from '@/lib/utils';
 import { useRemoveProjectMember } from '@/hooks/use-projects';
 import { PartnerDrawer } from '@/features/partners/partner-drawer';
@@ -38,6 +39,7 @@ export function TeamTab({
 }) {
   const queryClient = useQueryClient();
   const removeMember = useRemoveProjectMember();
+  const confirm = useConfirm();
   // M4a — pickers are now driven by the role catalog. Two kinds of add flows:
   //   - customerContact: adds a person → customer-org partner-relationship.
   //   - roleAssignment:  adds a party → project_partner_role for a specific
@@ -109,7 +111,32 @@ export function TeamTab({
     onError: (err: any) => notify.apiError(err, 'Failed to disconnect'),
   });
 
-  const removeMyTeam = (row: ProjectTeamPerson) => {
+  const removeMyTeam = async (row: ProjectTeamPerson) => {
+    // People UX U2 — team-member removal on a project is a destructive
+    // change: their entries stay attached but they lose active-member
+    // access. Name the person and, when we can compute it, list the
+    // roles that will end on this project so the operator sees the
+    // full consequence.
+    const who = row.displayName || 'this person';
+    const heldRoles = team?.roleAssignments
+      .filter((a) => a.party.id === row.businessPartnerId)
+      .map((a) => a.role.name) ?? [];
+    const rolesLine = heldRoles.length > 0
+      ? `\nTheir project roles will end: ${heldRoles.join(', ')}.`
+      : '';
+    const leaderLine = heldRoles.some((n) => /team\s*leader/i.test(n))
+      ? '\n\nThey are the Team Leader on this project — remove or reassign leadership first if you don\'t want to lose the assignment.'
+      : '';
+    const ok = await confirm(
+      `${who} will lose active membership on this project.${rolesLine}${leaderLine}`,
+      {
+        title: `Remove ${who} from this project?`,
+        variant: 'danger',
+        confirmLabel: 'Remove',
+      },
+    );
+    if (!ok) return;
+
     // Internal employee — disconnect via legacy ProjectMember endpoint;
     // the write-through soft-ends the participates_in_project row.
     //
@@ -298,9 +325,21 @@ export function TeamTab({
                     key={a.id}
                     assignment={a}
                     onRemove={async () => {
-                      if (await confirm(`Remove ${a.party.displayName} as ${rt.name}?`)) {
-                        removeRoleAssignment.mutate(a.id);
-                      }
+                      // People UX U2 — obligatory (primary-required) role
+                      // sections use the styled danger confirm and warn
+                      // that the role becomes unstaffed on this project.
+                      const extra = rt.isPrimaryRequired
+                        ? ` This is a required project role — the project will show as under-staffed until another ${rt.name.toLowerCase()} is added.`
+                        : '';
+                      const ok = await confirm(
+                        `${a.party.displayName} will no longer be the ${rt.name} on this project.${extra}`,
+                        {
+                          title: `Remove ${a.party.displayName} as ${rt.name}?`,
+                          variant: 'danger',
+                          confirmLabel: 'Remove',
+                        },
+                      );
+                      if (ok) removeRoleAssignment.mutate(a.id);
                     }}
                     onOpenProfile={setFocusedPartnerId}
                   />
@@ -430,7 +469,22 @@ export function TeamTab({
                   // party=customer org, contactParty=person), so
                   // disconnecting goes through DELETE /project-partner-roles/:id
                   // — NOT the legacy DELETE /partner-relationships/:id.
-                  onRemove={() => removeRoleAssignment.mutate(row.relationshipId)}
+                  //
+                  // People UX U2 — customer-contact removals are destructive
+                  // for the project's customer touch point; confirm with
+                  // the person's name.
+                  onRemove={async () => {
+                    const who = row.displayName || 'this contact';
+                    const ok = await confirm(
+                      `${who} will no longer be listed as a customer contact on this project.`,
+                      {
+                        title: `Remove ${who} from customer contacts?`,
+                        variant: 'danger',
+                        confirmLabel: 'Remove',
+                      },
+                    );
+                    if (ok) removeRoleAssignment.mutate(row.relationshipId);
+                  }}
                   accent="violet"
                   onOpenProfile={setFocusedPartnerId}
                 />
@@ -474,9 +528,18 @@ export function TeamTab({
                     key={a.id}
                     assignment={a}
                     onRemove={async () => {
-                      if (await confirm(`Remove ${a.party.displayName} as ${rt.name}?`)) {
-                        removeRoleAssignment.mutate(a.id);
-                      }
+                      const leaderLine = rt.code === 'team_leader'
+                        ? '\n\nThey will also lose leader access to the project (project.leaderId is cleared).'
+                        : '';
+                      const ok = await confirm(
+                        `${a.party.displayName} will no longer be the ${rt.name} on this project.${leaderLine}`,
+                        {
+                          title: `Remove ${a.party.displayName} as ${rt.name}?`,
+                          variant: 'danger',
+                          confirmLabel: 'Remove',
+                        },
+                      );
+                      if (ok) removeRoleAssignment.mutate(a.id);
                     }}
                     onOpenProfile={setFocusedPartnerId}
                   />

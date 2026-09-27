@@ -223,7 +223,16 @@ export function ProjectRoleTypesPage() {
                         {canDelete && !t.isSystem && (
                           <button
                             onClick={async () => {
-                              if (await confirm(`Delete project role "${t.name}"?`)) remove.mutate(t.id);
+                              // People UX U2 — danger variant + verb button.
+                              const ok = await confirm(
+                                `Any project role assignments referencing this type will be rejected by the backend.`,
+                                {
+                                  title: `Delete project role "${t.name}"?`,
+                                  variant: 'danger',
+                                  confirmLabel: 'Delete',
+                                },
+                              );
+                              if (ok) remove.mutate(t.id);
                             }}
                             className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
                             title="Delete"

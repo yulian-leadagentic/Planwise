@@ -285,7 +285,17 @@ function RoleTypesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: b
                         )}
                         {canDelete && !t.isSystem && (
                           <button
-                            onClick={async () => { if (await confirm(`Delete role type "${t.name}"?`)) remove.mutate(t.id); }}
+                            onClick={async () => {
+                              const ok = await confirm(
+                                `Any partner still holding this role will keep it as legacy data; new roles for that partner will use the remaining catalog.`,
+                                {
+                                  title: `Delete role type "${t.name}"?`,
+                                  variant: 'danger',
+                                  confirmLabel: 'Delete',
+                                },
+                              );
+                              if (ok) remove.mutate(t.id);
+                            }}
                             className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
                             title="Delete"
                           >
@@ -585,7 +595,17 @@ function RelationshipTypesTab({ canWrite, canDelete }: { canWrite: boolean; canD
                         )}
                         {canDelete && !t.isSystem && (
                           <button
-                            onClick={async () => { if (await confirm(`Delete relationship type "${t.name}"?`)) remove.mutate(t.id); }}
+                            onClick={async () => {
+                              const ok = await confirm(
+                                `Existing relationships of this type stay in place; no new ones can be created.`,
+                                {
+                                  title: `Delete relationship type "${t.name}"?`,
+                                  variant: 'danger',
+                                  confirmLabel: 'Delete',
+                                },
+                              );
+                              if (ok) remove.mutate(t.id);
+                            }}
                             className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
                             title="Delete"
                           >
@@ -899,7 +919,15 @@ function CategoriesTab({ canWrite, canDelete }: { canWrite: boolean; canDelete: 
                       {canDelete && !c.isSystem && (
                         <button
                           onClick={async () => {
-                            if (await confirm(`Delete category "${c.name}"?`)) remove.mutate(c.id);
+                            const ok = await confirm(
+                              `Partners in this category will fall back to no category.`,
+                              {
+                                title: `Delete category "${c.name}"?`,
+                                variant: 'danger',
+                                confirmLabel: 'Delete',
+                              },
+                            );
+                            if (ok) remove.mutate(c.id);
                           }}
                           className="p-1.5 rounded hover:bg-red-50 text-slate-400 dark:text-slate-500 hover:text-red-600"
                           title="Delete"
