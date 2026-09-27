@@ -190,11 +190,17 @@ export function ContactsPage() {
   // Contacts (persons with project enrichment). Returns the full page
   // envelope: rows + server-side meta (total, page count, …) so the
   // header can show truthful totals and pagination controls have data.
+  //
+  // People UX U3 (P-01 / P-02) — internal filtering is done SERVER-side
+  // via `excludeInternal` when the AMC toggle is off; the client used to
+  // slice the current page after loading, which hid externals that
+  // sat past row 200 and inflated the total count. Now the server returns
+  // the correct set + truthful total in one shot.
   const { data: contactsPage, isLoading: contactsLoading } = useQuery<ContactsPage>({
     // Prefix with 'business-partners' so the partner drawer's save mutations
     // (which invalidate ['business-partners']) cascade down to this query and
     // the list refreshes after an edit, without manual reload.
-    queryKey: ['business-partners', 'contacts-list', view, page, perPage, debouncedSearch, statusFilter, orgFilter],
+    queryKey: ['business-partners', 'contacts-list', view, page, perPage, debouncedSearch, statusFilter, orgFilter, includeAmc],
     queryFn: () =>
       client.get('/business-partners', {
         params: {
@@ -202,6 +208,9 @@ export function ContactsPage() {
           withProjects: true,
           page: view === 'list' ? page : 1,
           perPage,
+          // People UX U3 — AMC toggle drives the server-side filter now.
+          // When OFF (default) the server returns externals only.
+          ...(!includeAmc ? { excludeInternal: true } : {}),
           ...(debouncedSearch ? { search: debouncedSearch } : {}),
           ...(statusFilter !== 'all' ? { status: statusFilter === 'active' ? 'active' : 'inactive' } : {}),
           ...(orgFilter ? { employerId: Number(orgFilter) } : {}),
@@ -284,61 +293,24 @@ export function ContactsPage() {
     return m;
   }, [orgs]);
 
-  // Ported from the old Partners "Contacts" tab (parity requirement in
-  // ux/partner-contact): the seeded "Internal" org represents your own
-  // company, and anyone worker_of it is internal staff even if they
-  // don't have a login account yet. Primary rule below still catches
-  // the login case; this is the secondary safety net.
-  const internalOrgIds = useMemo(() => {
-    const ids = new Set<number>();
-    for (const o of orgs) {
-      const isInternal = (o.companyName ?? '').toLowerCase() === 'internal'
-        || (o.displayName ?? '').toLowerCase() === 'internal';
-      if (isInternal) ids.add(o.id);
-    }
-    return ids;
-  }, [orgs]);
-
-  // Identity rule — anyone with a login account is INTERNAL staff, belongs
-  // in /people not Contacts.
-  //
-  // NB: this filter runs on the loaded page only, so a page that happens
-  // to be all-internal would render as empty when a further page has
-  // externals. Acceptable because internal accounts on the /contacts
-  // surface are already the exception (most persons here are external);
-  // the server-side partnerType='person' + the filters below narrow the
-  // set enough that this is not a routine concern.
-  // Split externals vs internals so the toggle can flip the source
-  // without a second server round-trip (the loaded page already
-  // carries both; we filter here).
-  const externalContacts = useMemo(
-    () => allContacts.filter((c) => {
-      // Primary — has a login account → internal.
-      if (c.user) return false;
-      // Secondary — explicitly working for the Internal org.
-      if (internalOrgIds.size > 0) {
-        const workerOf = c.partnerRelationshipsA?.find(
-          (r) => r.type?.code === 'worker_of',
-        );
-        if (workerOf && internalOrgIds.has(workerOf.partyBId)) return false;
-      }
-      return true;
-    }),
-    [allContacts, internalOrgIds],
-  );
-
-  // When the AMC toggle is ON, surface the full loaded page (externals
-  // + internals). Sort so externals still lead — matches the locked
-  // spec's "core consultants first" ordering.
+  // People UX U3 (P-01, 2026-09-27) — internal filtering moved to the
+  // server. The client used to load a whole page, then `.filter()` the
+  // internal identities out, which meant an externals-total of 60 could
+  // show as "showing 43 of 60" whenever the loaded 50-row page held
+  // internals. Now the server returns the correct set (see
+  // `excludeInternal` on the request above) so we can render `allContacts`
+  // directly. When the AMC toggle is ON, we still lead with externals
+  // for readability — matches the locked spec's "core consultants first"
+  // ordering.
   const shownContacts = useMemo(() => {
-    if (!includeAmc) return externalContacts;
+    if (!includeAmc) return allContacts;
     return [...allContacts].sort((a, b) => {
       const aInt = a.user ? 1 : 0;
       const bInt = b.user ? 1 : 0;
       if (aInt !== bInt) return aInt - bInt; // externals (0) first
       return a.displayName.localeCompare(b.displayName);
     });
-  }, [includeAmc, allContacts, externalContacts]);
+  }, [includeAmc, allContacts]);
 
   // Employer dropdown — sourced from the full org roster (already loaded
   // above) instead of derived from the current page. Previously this was
@@ -355,36 +327,57 @@ export function ContactsPage() {
   // narrowed the set already — no client-side org filter here anymore.
   const visibleContacts = shownContacts;
 
-  // "Copy external emails" — grabs every external contact's email (the
-  // people users typically need to CC, e.g. sending a batch update to
-  // consultants). Deliberately reads `externalContacts`, not
-  // `visibleContacts`, so the button's semantics stay stable regardless
-  // of the AMC toggle. Missing/blank emails are skipped.
+  // People UX U3 (P-04, 2026-09-27) — "Copy external emails" now fetches
+  // every match server-side and copies them all, not just the current
+  // page. Uses the SAME filter set as the visible list, except
+  // `excludeInternal` is forced to true so the button semantics stay
+  // stable regardless of the AMC toggle. Cap at 2000 rows with a clear
+  // notice if it hits.
+  const COPY_CAP = 2000;
   const copyExternalEmails = async () => {
-    const emails = externalContacts
-      .map((c) => (c.email ?? '').trim())
-      .filter((e) => !!e);
-    const deduped = Array.from(new Set(emails));
-    if (deduped.length === 0) {
-      notify.warning('No external emails to copy', { code: 'CONTACTS-COPY-EMPTY' });
-      return;
-    }
     try {
+      const r = await client.get('/business-partners', {
+        params: {
+          partnerType: 'person',
+          excludeInternal: true,
+          perPage: COPY_CAP,
+          page: 1,
+          ...(debouncedSearch ? { search: debouncedSearch } : {}),
+          ...(statusFilter !== 'all' ? { status: statusFilter === 'active' ? 'active' : 'inactive' } : {}),
+          ...(orgFilter ? { employerId: Number(orgFilter) } : {}),
+        },
+      });
+      const body = r.data?.data ?? r.data;
+      const rows: Contact[] = Array.isArray(body) ? body : (body?.data ?? []);
+      const total: number = body?.meta?.total ?? rows.length;
+      const emails = rows
+        .map((c) => (c.email ?? '').trim())
+        .filter((e) => !!e);
+      const deduped = Array.from(new Set(emails));
+      if (deduped.length === 0) {
+        notify.warning('No external emails to copy', { code: 'CONTACTS-COPY-EMPTY' });
+        return;
+      }
       await navigator.clipboard.writeText(deduped.join(', '));
-      notify.success(`Copied ${deduped.length} email${deduped.length === 1 ? '' : 's'}`, { code: 'CONTACTS-COPY-200' });
+      const capNote =
+        total > COPY_CAP
+          ? ` (capped at ${COPY_CAP} of ${total} — narrow the filters to reach the rest)`
+          : '';
+      notify.success(
+        `Copied ${deduped.length} email${deduped.length === 1 ? '' : 's'}${capNote}`,
+        { code: 'CONTACTS-COPY-200' },
+      );
     } catch (err: any) {
-      notify.apiError(err, 'Failed to copy — clipboard access denied');
+      notify.apiError(err, 'Failed to copy external emails');
     }
   };
 
-  const hasFilters = !!search || statusFilter !== 'active' || !!orgFilter;
+  const hasFilters = !!debouncedSearch || statusFilter !== 'active' || !!orgFilter || includeAmc;
 
   // Header count string — server total when available so the badge is
   // truthful even when the current page holds only a slice. Falls back
-  // to the local count for the initial render before meta lands. When
-  // the AMC toggle is ON we count the full loaded set so the badge
-  // reflects the visible list rather than externals-only.
-  const totalCount = meta?.total ?? (includeAmc ? allContacts.length : externalContacts.length);
+  // to the loaded-page count for the initial render before meta lands.
+  const totalCount = meta?.total ?? allContacts.length;
   const totalPages = meta?.totalPages ?? 1;
 
   return (
@@ -431,8 +424,8 @@ export function ContactsPage() {
           type="button"
           onClick={copyExternalEmails}
           className="inline-flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-slate-400 dark:hover:border-slate-500"
-          title="Copy all external contact emails to the clipboard"
-          disabled={externalContacts.length === 0}
+          title="Copy all external contact emails (matching current filters) to the clipboard"
+          disabled={contactsLoading}
         >
           <Copy className="h-4 w-4" aria-hidden="true" />
           Copy external emails
@@ -566,10 +559,27 @@ export function ContactsPage() {
       {contactsLoading ? (
         <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading contacts…</div>
       ) : visibleContacts.length === 0 ? (
-        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center text-sm text-slate-400 dark:text-slate-500 italic">
-          {visibleContacts.length === 0
-            ? 'No external contacts yet. Add one from Partners → Add Contact, or click "New Contact" above.'
-            : 'No contacts match the current filters.'}
+        // People UX U3 — filtered empty state offers a Clear filters
+        // button; first-use state drops the "Partners → Add Contact"
+        // fossil (that flow no longer exists) and points at "New
+        // Contact" above instead.
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center text-sm">
+          {hasFilters ? (
+            <div className="flex flex-col items-center gap-3 text-slate-500 dark:text-slate-400">
+              <p className="italic">No contacts match the current filters.</p>
+              <button
+                type="button"
+                onClick={() => { setSearch(''); setStatusFilter('active'); setOrgFilter(''); setIncludeAmc(false); }}
+                className="inline-flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden="true" /> Clear filters
+              </button>
+            </div>
+          ) : (
+            <p className="italic text-slate-400 dark:text-slate-500">
+              No external contacts yet. Click "New Contact" above to add the first one.
+            </p>
+          )}
         </div>
       ) : view === 'list' ? (
         <>
