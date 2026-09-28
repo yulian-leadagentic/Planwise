@@ -6,6 +6,17 @@ import { Modal } from '@/components/shared/modal';
 import { inputClass } from './constants';
 import type { ProjectRoleTypeRow } from './types';
 
+/**
+ * Choose "a" / "an" by the word's initial letter (a/e/i/o/u).
+ * Simple by design — the project's role-code catalog (customer,
+ * employee, supplier, organization, person contact, admin) is fully
+ * covered without the honest/unicorn edge cases.
+ */
+function article(word: string): 'a' | 'an' {
+  const first = word.trim().charAt(0).toLowerCase();
+  return 'aeiou'.includes(first) ? 'an' : 'a';
+}
+
 /* ─── Role Assignment Picker ────────────────────────────────────────────────
    Generic picker for any ProjectRoleType (Supplier, Architect, Engineer, …).
    Creates a project_partner_role row.
@@ -68,22 +79,20 @@ interface BpForRepresentation {
 function roleCriteriaLines(role: ProjectRoleTypeRow): string[] {
   const lines: string[] = [];
   if (role.allowedPartnerKind === 'organization') {
-    lines.push('Must be an Organization');
+    lines.push(`Must be ${article('organization')} organization`);
   } else if (role.allowedPartnerKind === 'person') {
-    lines.push('Must be a person Contact');
+    lines.push(`Must be ${article('person contact')} person contact`);
   }
   if (role.requiredPartnerRoleCode) {
-    const label = role.requiredPartnerRoleCode === 'employee'
-      ? 'Employee'
-      : role.requiredPartnerRoleCode.replace(/_/g, ' ');
-    lines.push(`Must be an ${label}`);
+    const label = role.requiredPartnerRoleCode.replace(/_/g, ' ').toLowerCase();
+    lines.push(`Must be ${article(label)} ${label}`);
   }
   const profs = Array.isArray(role.requiredProfessionIds) ? role.requiredProfessionIds : [];
   if (profs.length > 0) {
     lines.push('Needs a required job title');
   }
   if (role.isPrimaryRequired) lines.push('One primary assignment required');
-  if (role.requiresContactPerson) lines.push('Contact person required when the party is an Organization');
+  if (role.requiresContactPerson) lines.push('Contact person required when the party is an organization');
   return lines;
 }
 
@@ -91,6 +100,7 @@ export function RoleAssignmentPicker({
   role,
   projectId,
   existingPartyIds: _existingPartyIds,
+  hasExistingPrimary = false,
   onClose,
 }: {
   role: ProjectRoleTypeRow;
@@ -98,12 +108,26 @@ export function RoleAssignmentPicker({
   /** Kept for source compatibility; the server now handles this via
    *  the `projectId` query param on eligible-parties. */
   existingPartyIds: number[];
+  /** TA-3: true when a primary of this role already exists on the project.
+   *  When false (or role is the customer role and none exists yet), the
+   *  picker auto-sets isPrimary and hides the toggle in favour of a
+   *  muted hint — the confusing checkbox only shows when the operator
+   *  is genuinely deciding whether to move primary. */
+  hasExistingPrimary?: boolean;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
   const [selectedPartyId, setSelectedPartyId] = useState<number | null>(null);
   const [titleInProject, setTitleInProject] = useState('');
-  const [isPrimary, setIsPrimary] = useState(false);
+  // TA-3: auto-primary when the role is `customer` OR the role requires
+  // a primary and none exists yet on the project. The visible checkbox
+  // (see below) is hidden in that case; state stays true so the POST
+  // still carries `isPrimary: true`.
+  const autoPrimary =
+    role.code === 'customer' || (role.isPrimaryRequired && !hasExistingPrimary);
+  const [isPrimary, setIsPrimary] = useState(autoPrimary);
+  // TA-1: expander for the "N not eligible — show why" list.
+  const [showIneligibleReasons, setShowIneligibleReasons] = useState(false);
   // BM2 Phase C — representation state.
   const [contactPartyId, setContactPartyId] = useState<number | null>(null);
   const [onBehalfOfPartyId, setOnBehalfOfPartyId] = useState<number | null>(null);
@@ -294,11 +318,10 @@ export function RoleAssignmentPicker({
           )}
           <div>
             <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">{role.name}</label>
-            {/* Options render as a native <select>; disabled <option>s
-                carry the reason inline (" — Must be an Employee") so
-                the row itself, not a tooltip, tells the user why they
-                can't be picked. Eligible rows come first, ineligible
-                second, each group alphabetised by displayName. */}
+            {/* TA-1: eligible-only list. Ineligible parties are hidden
+                by default and surfaced on demand via the "N not eligible
+                — show why" expander below, so a busy catalog doesn't
+                bury the eligible rows in a wall of disabled options. */}
             <select
               value={selectedPartyId ?? ''}
               onChange={(e) => setSelectedPartyId(Number(e.target.value) || null)}
@@ -312,22 +335,45 @@ export function RoleAssignmentPicker({
                 .map((p) => (
                   <option key={p.id} value={p.id}>{p.displayName}</option>
                 ))}
-              {candidates.some((c) => !c.eligible) && (
-                <option disabled>──────────</option>
-              )}
-              {candidates
-                .filter((c) => !c.eligible)
-                .map((p) => (
-                  <option key={p.id} value={p.id} disabled>
-                    {p.displayName} — {p.reasons.join(', ') || 'Not eligible'}
-                  </option>
-                ))}
             </select>
             {!candidatesLoading && candidates.filter((c) => c.eligible).length === 0 && (
               <p className="text-[12px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 px-2 py-1.5 rounded mt-1">
                 No eligible {role.allowedPartnerKind === 'organization' ? 'organizations' : 'people'} yet.
                 Add one that meets the criteria above under People or Partners first.
               </p>
+            )}
+            {/* TA-1: subtle "N not eligible" expander. Only shown when
+                there are ineligible candidates to explain — keeps M3's
+                "understand WHY someone's missing" answer available
+                without the wall of disabled rows. */}
+            {!candidatesLoading && candidates.some((c) => !c.eligible) && (
+              <div className="mt-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowIneligibleReasons((v) => !v)}
+                  aria-expanded={showIneligibleReasons}
+                  className="text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 underline decoration-dotted underline-offset-2"
+                >
+                  {candidates.filter((c) => !c.eligible).length} not eligible — {showIneligibleReasons ? 'hide' : 'show why'}
+                </button>
+                {showIneligibleReasons && (
+                  <ul className="mt-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 px-2 py-1.5 text-[11px] text-slate-500 dark:text-slate-400 space-y-0.5 max-h-40 overflow-y-auto">
+                    {candidates
+                      .filter((c) => !c.eligible)
+                      .map((p) => (
+                        <li key={p.id} className="leading-snug">
+                          <span className="text-slate-600 dark:text-slate-300 font-medium">{p.displayName}</span>
+                          {p.reasons.length > 0 && (
+                            <>
+                              {' '}
+                              <span className="text-slate-400 dark:text-slate-500">— {p.reasons.join(' · ')}</span>
+                            </>
+                          )}
+                        </li>
+                      ))}
+                  </ul>
+                )}
+              </div>
             )}
           </div>
 
@@ -403,7 +449,20 @@ export function RoleAssignmentPicker({
               className={inputClass}
             />
           </div>
-          {role.isPrimaryRequired && (
+          {/* TA-3: primary control.
+              - When this is the first customer (role.code === 'customer'
+                with no existing primary) OR any other primary-required
+                role with no primary yet: auto-set and hide the toggle,
+                show a muted hint instead.
+              - When a primary already exists (adding an additional
+                assignment): render the checkbox so the operator can
+                choose to move primary. */}
+          {role.isPrimaryRequired && autoPrimary && (
+            <p className="pt-1 text-[11.5px] text-slate-500 dark:text-slate-400">
+              This will be the project's primary {role.name}.
+            </p>
+          )}
+          {role.isPrimaryRequired && !autoPrimary && (
             <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200 pt-1">
               <input type="checkbox" checked={isPrimary} onChange={(e) => setIsPrimary(e.target.checked)} className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-blue-600" />
               Mark as primary {role.name}

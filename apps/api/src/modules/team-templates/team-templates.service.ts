@@ -112,15 +112,23 @@ export class TeamTemplatesService {
     for (const p of parties) partyById.set(p.id, p);
 
     // Human-readable role-code → label map, matching M3 picker so the
-    // "Must be an Employee" reason reads the same everywhere.
+    // "Must be an employee" reason reads the same everywhere.
+    // TA-2: labels are lowercase and combined with `article()` so the
+    // grammar is correct ("Must be a customer", not "Must be an
+    // Customer"). Helper duplicated in the controller + client picker —
+    // one string not worth a shared package.
     const roleCodeToLabel: Record<string, string> = {
-      employee: 'Employee',
-      customer: 'Customer',
-      supplier: 'Supplier',
-      partner: 'Partner',
+      employee: 'employee',
+      customer: 'customer',
+      supplier: 'supplier',
+      partner: 'partner',
     };
     const humaniseRoleCode = (c: string) =>
-      roleCodeToLabel[c] ?? c.replace(/_/g, ' ');
+      roleCodeToLabel[c] ?? c.replace(/_/g, ' ').toLowerCase();
+    const article = (word: string): 'a' | 'an' => {
+      const first = word.trim().charAt(0).toLowerCase();
+      return 'aeiou'.includes(first) ? 'an' : 'a';
+    };
 
     // Collect every profession id referenced by any member's target
     // role so we can name them in reasons. Same lookup the M3 picker
@@ -208,8 +216,8 @@ export class TeamTemplatesService {
       ) {
         reasons.push(
           rule.allowedPartnerKind === 'organization'
-            ? 'Must be an Organization'
-            : 'Must be a person Contact',
+            ? `Must be ${article('organization')} organization`
+            : `Must be ${article('person contact')} person contact`,
         );
       }
       if (rule.requiredPartnerRoleCode) {
@@ -217,7 +225,8 @@ export class TeamTemplatesService {
           (r) => r.roleType.code === rule.requiredPartnerRoleCode,
         );
         if (!holds) {
-          reasons.push(`Must be an ${humaniseRoleCode(rule.requiredPartnerRoleCode)}`);
+          const name = humaniseRoleCode(rule.requiredPartnerRoleCode);
+          reasons.push(`Must be ${article(name)} ${name}`);
         }
       }
       if (rule.requiredProfessionIds.length > 0) {

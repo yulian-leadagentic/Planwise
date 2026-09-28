@@ -927,6 +927,18 @@ export function TeamTab({
           </div>
         )}
 
+        {/* TA-4: no-customer hint. Stakeholders groups by customer org;
+            without one, customer contacts can't be attached (the
+            "Add contact" button is already correctly hidden). The
+            Coverage strip above already offers the "Customer" +
+            affordance — this hint just explains why the customer
+            group is missing. */}
+        {population === 'stake' && !team.customer && (
+          <div className="border-b border-slate-100 dark:border-slate-800 px-3 py-2 text-[12px] text-slate-500 dark:text-slate-400">
+            Set the project's customer to attach customer contacts.
+          </div>
+        )}
+
         {/* Group control row — Collapse all / Expand all shortcut. */}
         {view === 'table' && groups.length > 0 && (
           <div className="flex items-center justify-end gap-2 border-b border-slate-100 dark:border-slate-800 px-3 py-1.5">
@@ -1009,6 +1021,9 @@ export function TeamTab({
           existingPartyIds={team.roleAssignments
             .filter((a) => a.role.id === roleAssignmentTarget.id)
             .map((a) => a.party.id)}
+          hasExistingPrimary={team.roleAssignments.some(
+            (a) => a.role.id === roleAssignmentTarget.id && a.isPrimary,
+          )}
           onClose={() => setRoleAssignmentTarget(null)}
         />
       )}

@@ -249,14 +249,24 @@ export class ProjectRoleTypesController {
     // "Contact" in reasons, never the raw partner-role code / raw
     // partnerType. Matches the wording on the picker banner so the
     // criteria and the row-level reason read as one voice.
+    // TA-2: labels are lowercase so grammar reads naturally ("Must be an
+    // employee", "Must be a customer") and matches the client's
+    // CRITERIA block. The `article()` helper picks a/an by first letter
+    // — the tiny helper is duplicated in role-assignment-picker.tsx;
+    // extracting it to a shared package is not worth the plumbing for
+    // one string.
     const roleCodeToLabel: Record<string, string> = {
-      employee: 'Employee',
-      customer: 'Customer',
-      supplier: 'Supplier',
-      partner: 'Partner',
+      employee: 'employee',
+      customer: 'customer',
+      supplier: 'supplier',
+      partner: 'partner',
     };
     const humaniseRoleCode = (c: string): string =>
-      roleCodeToLabel[c] ?? c.replace(/_/g, ' ');
+      roleCodeToLabel[c] ?? c.replace(/_/g, ' ').toLowerCase();
+    const article = (word: string): 'a' | 'an' => {
+      const first = word.trim().charAt(0).toLowerCase();
+      return 'aeiou'.includes(first) ? 'an' : 'a';
+    };
 
     return parties.map((p) => {
       const reasons: string[] = [];
@@ -269,8 +279,8 @@ export class ProjectRoleTypesController {
       ) {
         reasons.push(
           rule.allowedPartnerKind === 'organization'
-            ? 'Must be an Organization'
-            : 'Must be a person Contact',
+            ? `Must be ${article('organization')} organization`
+            : `Must be ${article('person contact')} person contact`,
         );
       }
       // Rule 2 — requiredPartnerRoleCode.
@@ -279,7 +289,8 @@ export class ProjectRoleTypesController {
           (r) => r.roleType.code === rule.requiredPartnerRoleCode,
         );
         if (!holds) {
-          reasons.push(`Must be an ${humaniseRoleCode(rule.requiredPartnerRoleCode)}`);
+          const name = humaniseRoleCode(rule.requiredPartnerRoleCode);
+          reasons.push(`Must be ${article(name)} ${name}`);
         }
       }
       // Rule 3 — requiredProfessionIds (Job Titles).
