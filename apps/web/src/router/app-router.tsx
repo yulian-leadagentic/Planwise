@@ -58,6 +58,7 @@ const SeniorityLevelsPage = lazy(() => import('@/features/admin/seniority-levels
 const DisciplinesPage = lazy(() => import('@/features/admin/disciplines-page').then(m => ({ default: m.DisciplinesPage })));
 const ProjectRoleTypesPage = lazy(() => import('@/features/admin/project-role-types-page').then(m => ({ default: m.ProjectRoleTypesPage })));
 const ActivityLogPage = lazy(() => import('@/features/admin/activity-log-page').then(m => ({ default: m.ActivityLogPage })));
+const ModelAlignmentReportsPage = lazy(() => import('@/features/admin/model-alignment-reports-page').then(m => ({ default: m.ModelAlignmentReportsPage })));
 const WorkSchedulesPage = lazy(() => import('@/features/admin/work-schedules-page').then(m => ({ default: m.WorkSchedulesPage })));
 const CalendarDaysPage = lazy(() => import('@/features/admin/calendar-page').then(m => ({ default: m.CalendarDaysPage })));
 const DataImportPage = lazy(() => import('@/features/data-import/data-import-page').then(m => ({ default: m.DataImportPage })));
@@ -169,6 +170,7 @@ export function AppRouter() {
           <Route index element={<L><AdminPage /></L>} />
           <Route path="roles" element={<L><RolesPage /></L>} />
           <Route path="activity-log" element={<L><ActivityLogPage /></L>} />
+          <Route path="reports/model-alignment" element={<L><ModelAlignmentReportsPage /></L>} />
           <Route path="work-schedules" element={<L><WorkSchedulesPage /></L>} />
           <Route path="calendar" element={<L><CalendarDaysPage /></L>} />
           <Route path="notification-settings" element={<L><NotificationSettingsPage /></L>} />

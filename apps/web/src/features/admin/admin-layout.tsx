@@ -17,6 +17,7 @@ import {
   Network,
   KeyRound,
   HardDrive,
+  ClipboardCheck,
 } from 'lucide-react';
 import { SubNavLayout, type SubNavItem } from '@/components/layout/sub-nav-layout';
 
@@ -35,6 +36,7 @@ const ADMIN_ITEMS: SubNavItem[] = [
   { label: 'SSO / Identity',         href: '/admin/sso',                       icon: KeyRound,      module: 'org',                      group: 'Access & Security' },
   { label: 'Google Drive',           href: '/admin/drive',                     icon: HardDrive,     module: 'org',                      group: 'Access & Security' },
   { label: 'Activity Log',           href: '/admin/activity-log',              icon: Activity,      module: 'admin/activity-log',       group: 'Access & Security' },
+  { label: 'Model Alignment (§9)',   href: '/admin/reports/model-alignment',   icon: ClipboardCheck, module: 'admin',                    group: 'Access & Security' },
 
   { label: 'Contact & Organization Types', href: '/admin/partner-types',       icon: Tags,          module: 'admin/partner-types',      group: 'People Config' },
   { label: 'Project Role Types',     href: '/admin/project-role-types',        icon: Briefcase,     module: 'admin/project-role-types', group: 'People Config' },

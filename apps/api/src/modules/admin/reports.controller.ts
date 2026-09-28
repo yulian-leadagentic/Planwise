@@ -261,4 +261,337 @@ export class ReportsController {
 
     return { cacheMismatches, categoryWithoutHistory };
   }
+
+  // ─────────────────────────────────────────────────────────────────
+  // People-model-alignment §9 — Phase 4 pre-migration verification
+  // reports. Four independent GETs, one per stage in
+  // `docs/bm2/people-model-alignment.md`. Every one of these is a
+  // read-only anti-join / groupBy; NONE writes, migrates, or nudges
+  // the schema. Yulian reviews each list before approving the
+  // matching migration commit.
+  //
+  // Design choices shared by all four:
+  //   • Return _both_ the reference set (e.g. every distinct department
+  //     string) and the matching lookup so the UI can render "12 →
+  //     matched to OrgUnit X" or "12 → no match". Yulian resolves the
+  //     unmatched rows first.
+  //   • Case-insensitive trim match — the free-text side is user-typed
+  //     ("Design", " design ", "DESIGN") but the catalog is canonical.
+  //   • Include EVERY bucket (matched + unmatched) so a downstream
+  //     migration script cannot claim "0 unmatched" from a filtered
+  //     list — the whole point of §9 is transparency.
+  // ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Stage 1 — userType vs. home-domain drift.
+   *
+   * Two independent buckets, computed strictly in memory after two
+   * bounded queries (users + BP domains):
+   *   • `employeesOffHomeDomain` — `userType === 'employee'` whose
+   *     email is NOT on a home-org owned domain. Under D1 these should
+   *     stop being employees after the migration flips.
+   *   • `onHomeDomainNotEmployee` — anyone on a home-org domain whose
+   *     `userType` is not 'employee' (partner/both). D1 will promote
+   *     them to Employee on the flip.
+   *
+   * Both lists include soft-deleted-out users only via `deletedAt = null`;
+   * `isActive` rides along so the UI can visually deprioritize the
+   * inactive rows without hiding them (an inactive user who is still
+   * an "employee" record is exactly what §9 wants surfaced).
+   */
+  @Get('model-alignment/stage-1-usertype-vs-domain')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'Phase 4 Stage 1 — userType vs. home-domain drift' })
+  async modelAlignmentStage1() {
+    const homeOrg = await this.bpService.getHomeOrg();
+    const homeDomains = (homeOrg?.domains ?? [])
+      .filter((d) => !d.isPersonal)
+      .map((d) => d.domain.toLowerCase());
+
+    // One scan of Users, split into buckets in memory. Cheap; the row
+    // count is small (dozens–hundreds).
+    const users = await this.prisma.user.findMany({
+      where: { deletedAt: null },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        userType: true,
+        seniorityLevelId: true,
+        isActive: true,
+      },
+      orderBy: [{ isActive: 'desc' }, { id: 'asc' }],
+    });
+
+    const domainOf = (email: string | null | undefined): string | null => {
+      if (!email) return null;
+      const at = email.lastIndexOf('@');
+      if (at === -1) return null;
+      return email.slice(at + 1).toLowerCase();
+    };
+    const isOnHomeDomain = (email: string | null | undefined) => {
+      const d = domainOf(email);
+      return d != null && homeDomains.includes(d);
+    };
+
+    const employeesOffHomeDomain: Array<{
+      userId: number;
+      email: string | null;
+      name: string;
+      userType: string;
+      seniorityLevelId: number | null;
+      isActive: boolean;
+    }> = [];
+    const onHomeDomainNotEmployee: Array<{
+      userId: number;
+      email: string | null;
+      name: string;
+      userType: string;
+    }> = [];
+
+    for (const u of users) {
+      const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email || `#${u.id}`;
+      if (u.userType === 'employee' && !isOnHomeDomain(u.email)) {
+        employeesOffHomeDomain.push({
+          userId: u.id,
+          email: u.email,
+          name,
+          userType: u.userType,
+          seniorityLevelId: u.seniorityLevelId,
+          isActive: u.isActive,
+        });
+      }
+      if (u.userType !== 'employee' && isOnHomeDomain(u.email)) {
+        onHomeDomainNotEmployee.push({
+          userId: u.id,
+          email: u.email,
+          name,
+          userType: u.userType,
+        });
+      }
+    }
+
+    return {
+      homeOrgId: homeOrg?.id ?? null,
+      homeDomains,
+      employeesOffHomeDomain,
+      onHomeDomainNotEmployee,
+    };
+  }
+
+  /**
+   * Stage 2 — Department → OrgUnit mapping preview.
+   *
+   * Two independent groupings, each carrying the best-effort OrgUnit
+   * match. The match is case-insensitive on the trimmed unit name so a
+   * "Design" ⇔ " Design " ⇔ "DESIGN" trio still maps to the same node.
+   *   • `userDepartments` — every distinct `User.department` string
+   *     (excluding null/empty) with a per-string user count. Null /
+   *     empty is not a "mapping problem", it's a "no home unit yet"
+   *     problem and belongs to a different stage.
+   *   • `projectDepartments` — every `Project.departmentId` in use,
+   *     hydrated with the `departments.name` value and the OrgUnit
+   *     match. Projects with no `departmentId` are dropped; the
+   *     mapping migration only cares about the referenced rows.
+   *
+   * OrgUnits filtered by `deletedAt = null` — a soft-deleted node is
+   * not a valid target for the Stage 2 backfill.
+   */
+  @Get('model-alignment/stage-2-department-mapping')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'Phase 4 Stage 2 — Department → OrgUnit mapping preview' })
+  async modelAlignmentStage2() {
+    // Lookup table keyed by lower-trimmed name → OrgUnit.
+    const orgUnits = await this.prisma.orgUnit.findMany({
+      where: { deletedAt: null },
+      select: { id: true, name: true },
+    });
+    const unitByNameLc = new Map<string, { id: number; name: string }>();
+    for (const u of orgUnits) {
+      const key = (u.name ?? '').trim().toLowerCase();
+      if (key && !unitByNameLc.has(key)) unitByNameLc.set(key, { id: u.id, name: u.name });
+    }
+
+    // — 1. User.department strings —
+    // groupBy on the (nullable) column; drop the null bucket for the
+    // mapping report.
+    const userDeptGroups = await this.prisma.user.groupBy({
+      by: ['department'],
+      where: { deletedAt: null, department: { not: null } },
+      _count: { _all: true },
+    });
+    const userDepartments = userDeptGroups
+      .filter((g) => (g.department ?? '').trim() !== '')
+      .map((g) => {
+        const dept = g.department as string;
+        const match = unitByNameLc.get(dept.trim().toLowerCase()) ?? null;
+        return {
+          department: dept,
+          userCount: g._count._all,
+          matchingOrgUnitId: match?.id ?? null,
+          matchingOrgUnitName: match?.name ?? null,
+        };
+      })
+      .sort((a, b) => b.userCount - a.userCount);
+
+    // — 2. Project.departmentId values —
+    const projDeptGroups = await this.prisma.project.groupBy({
+      by: ['departmentId'],
+      where: { departmentId: { not: null } },
+      _count: { _all: true },
+    });
+    const deptIds = projDeptGroups
+      .map((g) => g.departmentId)
+      .filter((x): x is number => x != null);
+    const deptRows = deptIds.length
+      ? await this.prisma.department.findMany({
+          where: { id: { in: deptIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const deptById = new Map(deptRows.map((d) => [d.id, d.name] as const));
+    const projectDepartments = projDeptGroups
+      .map((g) => {
+        const id = g.departmentId as number;
+        const name = deptById.get(id) ?? null;
+        const key = (name ?? '').trim().toLowerCase();
+        const match = key ? unitByNameLc.get(key) ?? null : null;
+        return {
+          departmentId: id,
+          departmentName: name,
+          projectCount: g._count._all,
+          matchingOrgUnitId: match?.id ?? null,
+        };
+      })
+      .sort((a, b) => b.projectCount - a.projectCount);
+
+    return { userDepartments, projectDepartments };
+  }
+
+  /**
+   * Stage 3 — Contract.partnerId (User) → BusinessPartner resolution.
+   *
+   * One scan of Contract, each row hydrated with `partner → User` and
+   * that user's `businessPartnerId`. Two buckets, and the second is a
+   * strict subset of the first (a row is in `contractsWithoutPartnerBp`
+   * iff its partner-User has no attached BP — the exact case Yulian
+   * has to resolve before the Stage 3 migration).
+   *
+   * Uses `contract.name` in place of a `contractCode` field (the
+   * Contract table has no `code` column at time of writing); the
+   * response shape's field name is kept for future compatibility.
+   * Rows where the partner-User is soft-deleted still appear — a
+   * dangling FK is a real data point for the report.
+   */
+  @Get('model-alignment/stage-3-contracts-partners')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'Phase 4 Stage 3 — Contract.partner → BusinessPartner readiness' })
+  async modelAlignmentStage3() {
+    const contracts = await this.prisma.contract.findMany({
+      where: { deletedAt: null },
+      select: {
+        id: true,
+        name: true,
+        partnerId: true,
+        partner: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            businessPartnerId: true,
+          },
+        },
+      },
+      orderBy: { id: 'asc' },
+    });
+
+    const contractsWithPartnerUser = contracts.map((c) => {
+      const p = c.partner;
+      const name = p
+        ? [p.firstName, p.lastName].filter(Boolean).join(' ') || p.email || `#${p.id}`
+        : `#${c.partnerId}`;
+      return {
+        contractId: c.id,
+        contractCode: c.name ?? null,
+        partnerUserId: c.partnerId,
+        partnerUserName: name,
+        partnerBusinessPartnerId: p?.businessPartnerId ?? null,
+      };
+    });
+
+    const contractsWithoutPartnerBp = contractsWithPartnerUser
+      .filter((r) => r.partnerBusinessPartnerId == null)
+      .map((r) => ({
+        contractId: r.contractId,
+        contractCode: r.contractCode,
+        partnerUserId: r.partnerUserId,
+        partnerUserName: r.partnerUserName,
+        reason: 'partner-user-has-no-BP' as const,
+      }));
+
+    return { contractsWithPartnerUser, contractsWithoutPartnerBp };
+  }
+
+  /**
+   * Stage 4 — TeamTemplateMember.role (free text) → ProjectRoleType
+   * mapping preview.
+   *
+   * One groupBy on the `role` string, split off the null/empty bucket
+   * as its own count so the UI shows "N members have no role" as a
+   * distinct fact from the mapping table. For each non-empty group we
+   * try both `name` and `code` on ProjectRoleType (case-insensitive)
+   * because historically some templates were seeded from role NAMES
+   * and others from codes — the migration in Stage 4 must consider
+   * both.
+   */
+  @Get('model-alignment/stage-4-template-role-mapping')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'Phase 4 Stage 4 — TeamTemplateMember.role → ProjectRoleType mapping' })
+  async modelAlignmentStage4() {
+    const roleTypes = await this.prisma.projectRoleType.findMany({
+      select: { id: true, code: true, name: true },
+    });
+    const roleByNameLc = new Map<string, { id: number; name: string }>();
+    const roleByCodeLc = new Map<string, { id: number; name: string }>();
+    for (const r of roleTypes) {
+      const nk = (r.name ?? '').trim().toLowerCase();
+      const ck = (r.code ?? '').trim().toLowerCase();
+      if (nk) roleByNameLc.set(nk, { id: r.id, name: r.name });
+      if (ck) roleByCodeLc.set(ck, { id: r.id, name: r.name });
+    }
+
+    const groups = await this.prisma.teamTemplateMember.groupBy({
+      by: ['role'],
+      _count: { _all: true },
+    });
+
+    let nullOrEmptyRole = 0;
+    const memberRoleStrings: Array<{
+      role: string;
+      memberCount: number;
+      matchingProjectRoleTypeId: number | null;
+      matchingProjectRoleTypeName: string | null;
+    }> = [];
+
+    for (const g of groups) {
+      const raw = (g.role ?? '').trim();
+      if (raw === '') {
+        nullOrEmptyRole += g._count._all;
+        continue;
+      }
+      const key = raw.toLowerCase();
+      const match = roleByNameLc.get(key) ?? roleByCodeLc.get(key) ?? null;
+      memberRoleStrings.push({
+        role: raw,
+        memberCount: g._count._all,
+        matchingProjectRoleTypeId: match?.id ?? null,
+        matchingProjectRoleTypeName: match?.name ?? null,
+      });
+    }
+    memberRoleStrings.sort((a, b) => b.memberCount - a.memberCount);
+
+    return { memberRoleStrings, nullOrEmptyRole };
+  }
 }
