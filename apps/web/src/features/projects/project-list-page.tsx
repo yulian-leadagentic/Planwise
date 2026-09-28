@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Plus, Trash2, MessageSquare, Search, Send, UserCircle, Columns3, ChevronDown, Check, Star } from 'lucide-react';
+import { Plus, Trash2, MessageSquare, Search, Send, UserCircle, Columns3, ChevronDown, Check, Star, Loader2 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/page-header';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
@@ -482,8 +482,18 @@ export function ProjectListPage() {
       }
       notify.apiError(err, 'Failed to update status');
     },
+    // QA4 B3: drop the broad refetch. The optimistic onMutate above
+    // already patches every ['projects'] cache to the new status; a
+    // blanket invalidateQueries here re-runs `projects.findAll` on
+    // every keystroke (heavy: partnerRoles include, timeEntry
+    // groupBy, rollupTaskCompletion — the source of the perceptible
+    // slowness reported by users). Do NOT replace the row with the
+    // PATCH response either — it omits partnerRoles/leader/_count/
+    // rollups, so the columns for those would blank until the next
+    // full refetch. Mark stale but skip the immediate refetch so a
+    // navigation-away/back still pulls fresh data.
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['projects'], refetchType: 'none' });
     },
   });
 
@@ -1189,6 +1199,10 @@ export function ProjectListPage() {
                         <StatusCell
                           value={p.status}
                           canEdit={canWriteProjects}
+                          // QA4 B3: mutation.variables carries the id of the
+                          // pending PATCH, so we can flag only THIS row's cell
+                          // as saving even though the mutation instance is shared.
+                          pending={updateProjectStatus.isPending && updateProjectStatus.variables?.id === p.id}
                           onChange={(status) => updateProjectStatus.mutate({ id: p.id, status })}
                         />
                       </td>
@@ -1367,10 +1381,16 @@ function ColumnHeaderWithFilter({
 function StatusCell({
   value,
   canEdit,
+  pending,
   onChange,
 }: {
   value: string;
   canEdit: boolean;
+  // QA4 B3: true while THIS row's status PATCH is in flight — parent
+  // matches `mutation.variables?.id === p.id`. We reflect it with a
+  // small spinner + disable to keep the row's optimistic feedback
+  // honest even without a full-table refetch.
+  pending?: boolean;
   onChange: (next: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -1385,6 +1405,10 @@ function StatusCell({
   }, [editing]);
 
   const st = statusColors[value] ?? statusColors.draft;
+  // QA4 B3: interactive controls stay disabled while the row is
+  // saving so a user can't stack a second click before the first
+  // resolves. The visual pending state is the small spinner glyph.
+  const interactive = canEdit && !pending;
 
   if (!editing) {
     return (
@@ -1392,20 +1416,25 @@ function StatusCell({
         type="button"
         onClick={(e) => {
           e.stopPropagation();
-          if (canEdit) setEditing(true);
+          if (interactive) setEditing(true);
         }}
-        disabled={!canEdit}
-        title={canEdit ? 'Change status' : undefined}
-        aria-label={canEdit ? `Change status (currently ${st.label})` : `Status: ${st.label}`}
+        disabled={!interactive}
+        title={interactive ? 'Change status' : pending ? 'Saving…' : undefined}
+        aria-label={interactive ? `Change status (currently ${st.label})` : `Status: ${st.label}`}
+        aria-busy={pending || undefined}
         className={cn(
-          'rounded-[5px] px-2 py-0.5 text-[10px] font-bold',
+          'inline-flex items-center gap-1 rounded-[5px] px-2 py-0.5 text-[10px] font-bold',
           st.bg,
           st.text,
-          canEdit && 'cursor-pointer hover:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400',
-          !canEdit && 'cursor-default',
+          interactive && 'cursor-pointer hover:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400',
+          !interactive && 'cursor-default',
+          pending && 'opacity-70',
         )}
       >
         {st.label}
+        {pending && (
+          <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+        )}
       </button>
     );
   }
