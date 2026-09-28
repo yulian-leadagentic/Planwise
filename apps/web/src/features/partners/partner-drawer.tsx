@@ -10,6 +10,7 @@ import { useConfirm } from '@/components/shared/confirm-dialog';
 import { CreatePartnerModal } from './create-partner-modal';
 import { TextField, SelectField, TextAreaField, Field } from '@/components/shared/field';
 import { Modal, Sheet } from '@/components/shared/modal';
+import { Tabs, tabPanelId, tabTriggerId } from '@/components/shared/tabs';
 
 const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
 
@@ -237,7 +238,8 @@ export function PartnerDrawer({
   onClose: () => void;
 }) {
   // Tabs simplified to (details | relationships). The legacy Roles tab is
-  // gone — single Main Role lives in the header (see MainRoleHeaderField).
+  // gone; the primary role now surfaces as a small chip in the header
+  // subtitle and is edited via the Details tab's Role(s) multi-select.
   // All additional role context is expressed via Relationships.
   const [tab, setTab] = useState<'details' | 'relationships'>('details');
   const { can, isAdmin } = usePermissions();
@@ -285,6 +287,19 @@ export function PartnerDrawer({
           <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 truncate">{bp?.displayName ?? '...'}</h2>
           <p className="text-[11px] text-slate-400 dark:text-slate-500">
             {bp?.partnerType === 'organization' ? 'Organization' : 'Person'}
+            {/* People UX M2c follow-up — the standalone main-role pill
+                is gone: the Details tab's Role(s) multi-select is the
+                one editor. Keep the primary role visible as a compact
+                chip in the header subtitle so casual reads still say
+                "who this contact is". */}
+            {bp?.mainRoleType && (
+              <>
+                {' · '}
+                <span className="font-semibold text-slate-600 dark:text-slate-300">
+                  {bp.mainRoleType.name}
+                </span>
+              </>
+            )}
             {bp?.user && ' · Has login account'}
           </p>
         </div>
@@ -297,12 +312,6 @@ export function PartnerDrawer({
           <span aria-hidden="true" className="text-lg leading-none">×</span>
         </button>
       </div>
-
-      {/* Main Role strip — single primary categorization. Always
-            visible (header-adjacent) so a missing value is obvious
-            and one click sets it. Sits BETWEEN the header and the
-            tab bar so it doesn't compete with tab navigation. */}
-        {bp && <MainRoleHeaderField bp={bp} canWrite={canWrite} />}
 
         {/* QA3 Commit D (Item 6a) — quick action strip for orgs.
             Renders "Add contact" so a user landing on a customer's
@@ -323,27 +332,39 @@ export function PartnerDrawer({
           </div>
         )}
 
-        {/* Tabs */}
-        <div className="flex border-b border-slate-200 dark:border-slate-700 px-5">
-          {([
-            { key: 'details',      label: 'Details' },
-            { key: 'relationships',label: `Relationships${bp ? ` (${(bp.partnerRelationshipsA?.length ?? 0) + (bp.projectPartnerRoles?.length ?? 0) + (bp.incomingRelationships?.length ?? 0)})` : ''}` },
-          ] as const).map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={cn(
-                'border-b-2 px-3 py-2 text-xs font-semibold transition-colors',
-                tab === t.key ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200',
-              )}
-            >
-              {t.label}
-            </button>
-          ))}
+        {/* Tabs — People UX M5 (E-27) follow-up. Uses the shared
+            <Tabs> primitive so keyboard navigation, aria-selected /
+            aria-controls, and the underline styling match every
+            other tab bar in the app. Local state (no URL param) is
+            kept because the drawer is a mount-and-close view. */}
+        <div className="px-5">
+          <Tabs
+            idBase={`partner-drawer-${partnerId}`}
+            ariaLabel="Partner details tabs"
+            value={tab}
+            onChange={setTab}
+            items={[
+              { value: 'details', label: 'Details' },
+              {
+                value: 'relationships',
+                label: 'Relationships',
+                badge: bp
+                  ? (bp.partnerRelationshipsA?.length ?? 0)
+                    + (bp.projectPartnerRoles?.length ?? 0)
+                    + (bp.incomingRelationships?.length ?? 0)
+                  : undefined,
+              },
+            ]}
+          />
         </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-5 py-4">
+      <div
+        role="tabpanel"
+        id={tabPanelId(`partner-drawer-${partnerId}`, tab)}
+        aria-labelledby={tabTriggerId(`partner-drawer-${partnerId}`, tab)}
+        className="flex-1 overflow-y-auto px-5 py-4"
+      >
         {isError ? (
           <div className="text-sm text-slate-400 dark:text-slate-500 text-center py-8">
             Couldn't load this partner.{' '}
@@ -379,136 +400,6 @@ export function PartnerDrawer({
         />
       )}
     </Sheet>
-  );
-}
-
-// ─── Main Role header strip ──────────────────────────────────────────────────
-//
-// Single primary categorization of the contact. Replaces the legacy
-// per-BP role chips. Three states:
-//   1. Unset + write permission  → yellow soft-prompt with inline dropdown
-//   2. Set                        → compact "Main role: Customer" pill
-//                                  (click pill → reveals dropdown for change)
-//   3. Unset + no write permission → silent (nothing rendered)
-//
-// Dropdown options are filtered by appliesToKind: a person sees roles
-// where appliesToKind in ('person','any'); an org sees ('organization','any').
-// That way "Employee" doesn't show up on an org, and "Supplier" doesn't
-// show up on a person.
-function MainRoleHeaderField({ bp, canWrite }: { bp: BusinessPartnerFull; canWrite: boolean }) {
-  const confirm = useConfirm();
-  const queryClient = useQueryClient();
-  const [picking, setPicking] = useState(false);
-
-  const { data: allRoleTypes = [] } = useQuery<RoleType[] & { appliesToKind?: string }[]>({
-    queryKey: ['partner-role-types'],
-    staleTime: 5 * 60 * 1000,
-    queryFn: () => client.get('/admin/partner-types/role-types').then((r) => {
-      const d = r.data?.data ?? r.data;
-      return Array.isArray(d) ? d : [];
-    }),
-  });
-
-  // Filter the dropdown by the BP's kind. Catalog rows tagged 'any' are
-  // shown for both. Also drop the 'employee' role from this dropdown —
-  // the employee identity is granted by creating a User from the
-  // Employees admin, not by tagging a partner here.
-  const options = useMemo(() => {
-    return allRoleTypes.filter((rt: any) => {
-      if (rt.code === 'employee') return false;
-      const kind = rt.appliesToKind ?? 'any';
-      return kind === 'any' || kind === bp.partnerType;
-    });
-  }, [allRoleTypes, bp.partnerType]);
-
-  const setRole = useMutation({
-    mutationFn: (mainRoleTypeId: number | null) =>
-      client.patch(`/business-partners/${bp.id}`, { mainRoleTypeId }).then((r) => r.data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['business-partners'] });
-      queryClient.invalidateQueries({ queryKey: ['business-partners', bp.id] });
-      notify.success('Type updated', { code: 'BP-MAINROLE-200' });
-      setPicking(false);
-    },
-    onError: (err: any) => notify.apiError(err, 'Failed to update type'),
-  });
-
-  // Inline dropdown view — used by both the soft-prompt and the
-  // change-role flow once a role is already set.
-  const DropdownRow = (
-    <select
-      autoFocus
-      value={bp.mainRoleTypeId ?? ''}
-      onChange={async (e) => {
-        const v = e.target.value;
-        // People UX U2 — clearing the Main Role is destructive (some
-        // team/project pickers filter on it). Ask before wiping it.
-        if (v === '' && bp.mainRoleTypeId) {
-          const ok = await confirm(
-            `${bp.displayName} will no longer have a type — pickers that filter by type will stop offering them.`,
-            {
-              title: 'Clear Type?',
-              variant: 'danger',
-              confirmLabel: 'Clear',
-            },
-          );
-          if (!ok) {
-            // Roll the select back to its stored value by re-triggering
-            // React's render — the value is bound so blurring collapses
-            // the picker without side effects.
-            setPicking(false);
-            return;
-          }
-        }
-        setRole.mutate(v === '' ? null : Number(v));
-      }}
-      onBlur={() => setPicking(false)}
-      className="text-[12px] rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1 text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-    >
-      <option value="">— None —</option>
-      {options.map((rt) => (
-        <option key={rt.id} value={rt.id}>{rt.name}</option>
-      ))}
-    </select>
-  );
-
-  // State 1 — unset and admin can write: soft prompt.
-  if (!bp.mainRoleType && canWrite) {
-    return (
-      <div className="border-b border-amber-100 bg-amber-50/60 px-5 py-2 flex items-center gap-2">
-        <span className="text-[11px] font-semibold text-amber-700">Main role not set</span>
-        {DropdownRow}
-        <span className="text-[10px] text-amber-600/80">Set the contact's primary categorization (Customer, Supplier, Consultant, ...)</span>
-      </div>
-    );
-  }
-
-  // State 3 — unset and no write permission: render nothing (the
-  // viewer can't act on it; don't clutter the header).
-  if (!bp.mainRoleType) return null;
-
-  // State 2 — set: compact pill. Click to change (write only).
-  return (
-    <div className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-800/40 px-5 py-2 flex items-center gap-2">
-      <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase">Main role</span>
-      {picking ? (
-        DropdownRow
-      ) : (
-        <button
-          type="button"
-          disabled={!canWrite}
-          onClick={() => canWrite && setPicking(true)}
-          className={cn(
-            'text-[12px] font-semibold rounded-full px-2.5 py-0.5',
-            'bg-blue-100 text-blue-700',
-            canWrite ? 'hover:bg-blue-200 cursor-pointer' : 'cursor-default',
-          )}
-          title={canWrite ? 'Change main role' : ''}
-        >
-          {bp.mainRoleType.name}
-        </button>
-      )}
-    </div>
   );
 }
 
