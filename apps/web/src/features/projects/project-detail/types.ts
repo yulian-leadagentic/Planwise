@@ -42,6 +42,13 @@ export interface ProjectTeamPerson {
   // Customer contacts may carry which rel-type wired them to the customer.
   relationshipTypeCode?: string;
   relationshipTypeName?: string;
+  // Phase 5 team rebuild — discipline on the person BP (informational,
+  // used for grouping / filtering the Team tab). Optional so payloads
+  // from older backend rollouts keep parsing.
+  discipline?: { id: number; name: string } | null;
+  // Labor Category (seniority) — only present for internal Project Team
+  // members (party.user is set). Powers the Labor Category filter.
+  seniorityLevel?: { id: number; name: string } | null;
 }
 
 export interface ProjectRoleTypeRow {
@@ -75,6 +82,9 @@ export interface ProjectRoleAssignment {
     lastName: string | null;
     email: string | null;
     phone: string | null;
+    // Phase 5 team rebuild — discipline surfaces for both person and
+    // org parties (org disciplines are common for consultant firms).
+    discipline?: { id: number; name: string } | null;
   };
   isPrimary: boolean;
   titleInProject: string | null;

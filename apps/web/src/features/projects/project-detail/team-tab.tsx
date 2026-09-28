@@ -1,5 +1,46 @@
-import { UserPlus, Filter } from 'lucide-react';
-import { useMemo, useState } from 'react';
+/**
+ * Team tab — Phase 5 rebuild (Wave 3, 2026-09-28).
+ *
+ * Replaces the old Cards/Sections + flat-table layout with a single
+ * dense, organized table designed to scale to 60+ people:
+ *
+ *   1. Population segmented control ("Our Team | Stakeholders | All",
+ *      slate track / white selected — deliberately NOT blue).
+ *   2. Coverage strip — required project-role types shown as filled
+ *      chips (green ✓) or empty amber "⚠ Role +" affordances that
+ *      launch role-first Add for that specific role.
+ *   3. Toolbar — search · Filters popover (Role / Discipline / Labor
+ *      Category / Status; active filters render as chips with a live
+ *      "N of M" count) · Group dropdown (Discipline / Project Role /
+ *      Flat) · Table/Cards toggle · primary + Add person.
+ *   4. Table — collapsible group headers with sticky <thead> AND
+ *      sticky group headers on scroll; sortable columns.
+ *   5. Add flow is ROLE-FIRST — pick a Project Role, then the eligible
+ *      party picker (RoleAssignmentPicker / AddMemberDialog for the
+ *      participant role); ineligible rows disabled with a reason.
+ *
+ * Data comes from GET /projects/:id/team — the `discipline` field on
+ * every person shape was added in the matching backend commit.
+ *
+ * No cost / allocation column anywhere on this screen (belongs on a
+ * separate Workload view). "Team member" replaces "Participant" per
+ * the D9 glossary; "Labor Category" replaces "Seniority". Blue is
+ * reserved for the primary CTA, active tab, and links; everything
+ * else uses muted slate.
+ */
+import {
+  UserPlus,
+  Filter as FilterIcon,
+  Search as SearchIcon,
+  ChevronDown,
+  ChevronRight,
+  X,
+  ExternalLink,
+  Check,
+  AlertTriangle,
+  Users as UsersIcon,
+} from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
@@ -10,22 +51,76 @@ import { useRemoveProjectMember } from '@/hooks/use-projects';
 import { PartnerDrawer } from '@/features/partners/partner-drawer';
 import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
 import { EmptyState } from '@/components/shared/empty-state';
-import { Section } from './section';
-import { OrgRow } from './org-row';
-import { PersonRow } from './person-row';
-import { RoleAssignmentRow } from './role-assignment-row';
-import { TeamTableView } from './team-table-view';
-import { CustomerContactPicker } from './customer-contact-picker';
+import { Modal } from '@/components/shared/modal';
 import { RoleAssignmentPicker } from './role-assignment-picker';
+import { CustomerContactPicker } from './customer-contact-picker';
 import { AddMemberDialog } from './add-member-dialog';
+import { getInitials } from './utils';
 import type {
   ProjectMember,
+  ProjectRoleAssignment,
   ProjectRoleTypeRow,
   ProjectTeamData,
   ProjectTeamPerson,
 } from './types';
 
-/* ─── Team Tab ──────────────────────────────────────────────────────────────── */
+/* ─── Types ─────────────────────────────────────────────────────────── */
+
+type Population = 'team' | 'stake' | 'all';
+type GroupBy = 'discipline' | 'role' | 'flat';
+type ViewMode = 'table' | 'cards';
+type StatusFilter = 'active' | 'inactive' | 'all';
+type SortKey = 'name' | 'role' | 'discipline' | 'email' | 'phone' | 'type';
+type SortDir = 'asc' | 'desc';
+type RowType = 'employee' | 'contact' | 'org';
+
+/**
+ * Unified row shape used across all three populations. Every table row
+ * (Our Team / Stakeholders / All) reduces to one of these before render
+ * so grouping, sorting, filtering and remove semantics have a single
+ * source of truth.
+ */
+interface TeamRow {
+  rowKey: string;                         // stable list key
+  bpId: number;                           // BusinessPartner id (for the drawer)
+  displayName: string;
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+  phone: string | null;
+  discipline: string | null;              // for group / filter
+  disciplineId: number | null;
+  seniorityName: string | null;           // Labor Category (internal only)
+  seniorityId: number | null;
+  roleNames: string[];                    // project roles this row holds
+  roleIds: number[];
+  roleNamesLabel: string;                 // joined for the Role cell
+  rowType: RowType;                       // Employee | Contact | Org
+  isTeamLeader: boolean;                  // for the indigo avatar accent
+  orgName: string | null;                 // for stakeholders grouping ("Represents"/org header)
+  orgId: number | null;
+  // Remove behaviour is context-specific — the caller supplies a
+  // closure so the table doesn't need to know about mutations.
+  onRemove: (() => void) | null;
+  // Optional profile-drawer target when different from bpId (unused
+  // today — kept as an escape hatch for org headers that link back to
+  // the org profile rather than the contact person).
+}
+
+/* ─── Small style helpers ──────────────────────────────────────────── */
+
+const CELL = 'px-3 py-2 text-[13px] text-slate-700 dark:text-slate-200 align-middle';
+const H_CELL = 'px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400';
+
+const seg = (on: boolean) =>
+  cn(
+    'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12.5px] font-semibold transition-colors',
+    on
+      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm'
+      : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
+  );
+
+/* ─── Team Tab ─────────────────────────────────────────────────────── */
 
 export function TeamTab({
   projectId,
@@ -41,39 +136,20 @@ export function TeamTab({
   const queryClient = useQueryClient();
   const removeMember = useRemoveProjectMember();
   const confirm = useConfirm();
-  // People UX U5 (T-12) — same permission model as the project-list role
-  // cell (`canWritePartners`): admin bypasses, non-admin needs the
-  // `partners:write` grant. When false, the section-level Add buttons
-  // are hidden entirely (rather than disabled) so read-only users see a
-  // clean roster instead of a row of greyed affordances. Row-level X
-  // buttons are kept and the backend rejects the DELETE with a 403.
   const { isAdmin, can: canPerm } = usePermissions();
   const canWritePartners = isAdmin || canPerm('partners', 'write');
-  // M4a — pickers are now driven by the role catalog. Two kinds of add flows:
-  //   - customerContact: adds a person → customer-org partner-relationship.
-  //   - roleAssignment:  adds a party → project_partner_role for a specific
-  //                      ProjectRoleType (Supplier, Architect, Engineer, …).
-  const [showCustomerContactPicker, setShowCustomerContactPicker] = useState(false);
-  const [roleAssignmentTarget, setRoleAssignmentTarget] = useState<ProjectRoleTypeRow | null>(null);
-  // Profile-link clicks open the partner drawer overlay in-place rather
-  // than navigating to /partners. Shared state across all team rows.
-  const [focusedPartnerId, setFocusedPartnerId] = useState<number | null>(null);
 
-  // People UX U5 (T-07) — expose isError + refetch so the render path
-  // below can distinguish "still loading" from "loaded and failed" and
-  // offer a Retry, instead of pretending it's still loading forever.
-  const { data: team, isLoading, isError, refetch: refetchTeam } = useQuery<ProjectTeamData>({
+  // ─── Data ──────────────────────────────────────────────────────────
+  const {
+    data: team,
+    isLoading,
+    isError,
+    refetch: refetchTeam,
+  } = useQuery<ProjectTeamData>({
     queryKey: ['project-team', projectId],
     queryFn: () => client.get(`/projects/${projectId}/team`).then((r) => r.data?.data ?? r.data),
   });
 
-  // The role catalog drives the dynamic sections below. We exclude:
-  //   'customer'         — its own locked section;
-  //   'participant'      — handled by the internal Project Team section;
-  //   'customer_contact' — PR-026 (2026-08-27): rendered by the dedicated
-  //                        Customer Contacts card so it is NOT double-
-  //                        shown as a generic role section. Matches the
-  //                        backend `notIn` filter on `roleAssignments`.
   const { data: roleCatalog = [] } = useQuery<ProjectRoleTypeRow[]>({
     queryKey: ['project-role-types'],
     staleTime: 5 * 60 * 1000,
@@ -83,33 +159,62 @@ export function TeamTab({
         return Array.isArray(d) ? d : [];
       }),
   });
+
   const customerContactRoleType = roleCatalog.find((rt) => rt.code === 'customer_contact') ?? null;
-  const dynamicRoles = roleCatalog
-    .filter((rt) => rt.code !== 'customer' && rt.code !== 'participant' && rt.code !== 'customer_contact')
-    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
 
-  // Split dynamic roles into two buckets so the Team tab can show the
-  // "obligatory" (isPrimaryRequired) ones at the top of the page — they
-  // need to be staffed for the project to be considered complete — and
-  // push everything else below the Customer section. Matches the user's
-  // requested ordering: Obligatory -> Project Team -> Customer ->
-  // Customer Contacts -> Other roles.
-  const obligatoryRoles = dynamicRoles.filter((rt) => rt.isPrimaryRequired);
-  const otherRoles = dynamicRoles.filter((rt) => !rt.isPrimaryRequired);
+  // Roles that appear in the "+ Add" role-first picker — excludes the
+  // system-locked ones (customer / participant / customer_contact) so
+  // the operator can't create nonsense duplicates through this flow.
+  const addableRoles = useMemo(
+    () =>
+      roleCatalog
+        .filter((rt) => rt.code !== 'customer' && rt.code !== 'participant' && rt.code !== 'customer_contact')
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)),
+    [roleCatalog],
+  );
 
+  // Required (isPrimaryRequired) roles power the Coverage strip.
+  const requiredRoles = useMemo(
+    () => roleCatalog.filter((rt) => rt.isPrimaryRequired).sort((a, b) => a.sortOrder - b.sortOrder),
+    [roleCatalog],
+  );
+
+  // ─── UI state ──────────────────────────────────────────────────────
+  const [population, setPopulation] = useState<Population>('team');
+  const [view, setView] = useState<ViewMode>('table');
+  const [groupBy, setGroupBy] = useState<GroupBy>('discipline');
+  const [search, setSearch] = useState('');
+
+  // Filters (multi-select). Empty set = no filter.
+  const [roleFilter, setRoleFilter] = useState<Set<number>>(new Set());
+  const [disciplineFilter, setDisciplineFilter] = useState<Set<number>>(new Set());
+  const [laborFilter, setLaborFilter] = useState<Set<number>>(new Set());
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersAnchorRef = useRef<HTMLButtonElement>(null);
+
+  // Table interaction state.
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>({ key: 'name', dir: 'asc' });
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+
+  // Drawer + add flows.
+  const [focusedPartnerId, setFocusedPartnerId] = useState<number | null>(null);
+  const [addPickerOpen, setAddPickerOpen] = useState(false);
+  const [roleAssignmentTarget, setRoleAssignmentTarget] = useState<ProjectRoleTypeRow | null>(null);
+  const [showCustomerContactPicker, setShowCustomerContactPicker] = useState(false);
+  // showAddMember (participant role) is lifted state; opening happens
+  // via onToggleAddMember, which the parent detail-page owns.
+
+  // ─── Mutations ─────────────────────────────────────────────────────
   const softEnd = useMutation({
-    // BM2 ops-surfaces Phase A: customer-contact rows are party↔party
-    // edges (`worker_of` at the customer org) → /partner-relationships.
     mutationFn: (relationshipId: number) =>
       client.delete(`/partner-relationships/${relationshipId}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
-      // Branch 2 · fix/assignee-source — the task-tree picker reads
-      // the unified candidate list; keep it in sync on Team tab edits.
       queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
       notify.success('Removed from project', { code: 'PROJECT-TEAM-DELETE-200' });
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to remove from project'),
+    onError: (err: unknown) => notify.apiError(err, 'Failed to remove from project'),
   });
 
   const removeRoleAssignment = useMutation({
@@ -120,24 +225,22 @@ export function TeamTab({
       queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
       notify.success('Removed from project', { code: 'PROJECT-PPR-DELETE-200' });
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to remove from project'),
+    onError: (err: unknown) => notify.apiError(err, 'Failed to remove from project'),
   });
 
-  const removeMyTeam = async (row: ProjectTeamPerson) => {
-    // People UX U2 — team-member removal on a project is a destructive
-    // change: their entries stay attached but they lose active-member
-    // access. Name the person and, when we can compute it, list the
-    // roles that will end on this project so the operator sees the
-    // full consequence.
+  // ─── Remove helpers ────────────────────────────────────────────────
+  const confirmRemovePerson = async (row: ProjectTeamPerson) => {
     const who = row.displayName || 'this person';
-    const heldRoles = team?.roleAssignments
-      .filter((a) => a.party.id === row.businessPartnerId)
-      .map((a) => a.role.name) ?? [];
-    const rolesLine = heldRoles.length > 0
-      ? `\nTheir project roles will end: ${heldRoles.join(', ')}.`
-      : '';
+    const heldRoles =
+      team?.roleAssignments
+        .filter((a) => a.party.id === row.businessPartnerId)
+        .map((a) => a.role.name) ?? [];
+    const rolesLine =
+      heldRoles.length > 0
+        ? `\nTheir project roles will end: ${heldRoles.join(', ')}.`
+        : '';
     const leaderLine = heldRoles.some((n) => /team\s*leader/i.test(n))
-      ? '\n\nThey are the Team Leader on this project — remove or reassign leadership first if you don\'t want to lose the assignment.'
+      ? "\n\nThey are the Team Leader on this project — remove or reassign leadership first if you don't want to lose the assignment."
       : '';
     const ok = await confirm(
       `${who} will lose active membership on this project.${rolesLine}${leaderLine}`,
@@ -148,66 +251,321 @@ export function TeamTab({
       },
     );
     if (!ok) return;
-
-    // Internal employee — disconnect via legacy ProjectMember endpoint;
-    // the write-through soft-ends the participates_in_project row.
-    //
-    // Bug fix: the backend route is `DELETE /projects/:id/members/:userId`
-    // and the service looks up `projectMember.delete({ where:
-    // projectId_userId })`. The earlier code passed `member.id` (the
-    // ProjectMember row PK) as `memberId`, which Prisma then couldn't
-    // find — producing the "Failed to remove member" error users were
-    // seeing on the Team tab. Pass the user ID instead.
     if (row.userId) {
-      // People UX U5 (T-14) — the useRemoveProjectMember hook already
-      // toasts on error (`use-projects.ts` onError → notify.apiError),
-      // so a call-site onError here caused a double-toast. Keep the
-      // per-call onSuccess for the extra query invalidation; drop the
-      // duplicate error toast.
       removeMember.mutate(
         { projectId, memberId: row.userId },
         {
-          onSuccess: () => queryClient.invalidateQueries({ queryKey: ['project-team', projectId] }),
+          onSuccess: () =>
+            queryClient.invalidateQueries({ queryKey: ['project-team', projectId] }),
         },
       );
       return;
     }
-    // Fallback: soft-end the relationship directly.
     softEnd.mutate(row.relationshipId);
   };
 
-  // View toggle — Cards (the existing per-section view) vs Table (a flat
-  // searchable list of everyone on the project). The table is what the
-  // user asked for in A6 and is useful when scanning "who has access /
-  // what's their phone number" without scrolling through five sections.
-  const [view, setView] = useState<'cards' | 'table'>('cards');
+  const confirmRemoveRoleAssignment = async (a: ProjectRoleAssignment) => {
+    const who = a.party.displayName;
+    const leaderLine = a.role.code === 'team_leader'
+      ? '\n\nThey will also lose leader access to the project (project.leaderId is cleared).'
+      : '';
+    const requiredLine = a.role.isPrimaryRequired
+      ? ` This is a required project role — the project will show as under-staffed until another ${a.role.name.toLowerCase()} is added.`
+      : '';
+    const ok = await confirm(
+      `${who} will no longer be the ${a.role.name} on this project.${requiredLine}${leaderLine}`,
+      {
+        title: `Remove ${who} as ${a.role.name}?`,
+        variant: 'danger',
+        confirmLabel: 'Remove',
+      },
+    );
+    if (ok) removeRoleAssignment.mutate(a.id);
+  };
 
-  // PR-007 — role-type multi-select filter. Empty set = no filter.
-  // When set, both views narrow to participants who hold at least ONE
-  // of the selected roles (OR within the filter). Composes with the
-  // per-column text filters the Table view already carries. Options
-  // come from the role catalog (project-role-types) — same source the
-  // dynamic role sections use — so the dropdown matches what the user
-  // sees in Cards view. Local state (not URL-backed) to match the
-  // execution-board pattern for tab-scoped filters.
-  const [roleFilter, setRoleFilter] = useState<Set<number>>(new Set());
-  const roleFilterActive = roleFilter.size > 0;
-  // Precompute the selected role NAMES so the Table view can match rows
-  // by role-name intersection (row.roles is a Set<string>).
-  const selectedRoleNames = useMemo(() => {
-    if (!roleFilterActive) return new Set<string>();
-    const names = new Set<string>();
-    for (const rt of roleCatalog) {
-      if (roleFilter.has(rt.id)) names.add(rt.name);
+  // ─── Row assembly ──────────────────────────────────────────────────
+  // Team-Leader detection — used to give the leader an indigo avatar
+  // accent regardless of population.
+  const teamLeaderBpIds = useMemo(() => {
+    const s = new Set<number>();
+    for (const a of team?.roleAssignments ?? []) {
+      if (a.role.code === 'team_leader') s.add(a.party.id);
     }
-    return names;
-  }, [roleFilter, roleFilterActive, roleCatalog]);
+    return s;
+  }, [team]);
 
-  // People UX U5 (T-07) — split loading and error paths so a failed GET
-  // /projects/:id/team stops looking like an eternal spinner. The error
-  // state offers a Retry that re-fires the same query.
+  // "Our Team" rows — internal employees (party.user is set). Every
+  // team member folds the roles they hold across the project into one
+  // row so a person who is both a participant and an Architect appears
+  // once.
+  const teamRows: TeamRow[] = useMemo(() => {
+    if (!team) return [];
+    return team.projectTeam.map((m) => {
+      const held = team.roleAssignments.filter((a) => a.party.id === m.businessPartnerId);
+      const roleNames = held.map((a) => a.role.name);
+      const roleIds = held.map((a) => a.role.id);
+      return {
+        rowKey: `team-${m.relationshipId}`,
+        bpId: m.businessPartnerId,
+        displayName: m.displayName,
+        firstName: m.firstName,
+        lastName: m.lastName,
+        email: m.email,
+        phone: m.phone,
+        discipline: m.discipline?.name ?? null,
+        disciplineId: m.discipline?.id ?? null,
+        seniorityName: m.seniorityLevel?.name ?? null,
+        seniorityId: m.seniorityLevel?.id ?? null,
+        roleNames,
+        roleIds,
+        roleNamesLabel: roleNames.length > 0 ? roleNames.join(', ') : 'Team member',
+        rowType: 'employee',
+        isTeamLeader: teamLeaderBpIds.has(m.businessPartnerId),
+        orgName: null,
+        orgId: null,
+        onRemove: () => confirmRemovePerson(m),
+      };
+    });
+  }, [team, teamLeaderBpIds]);
+
+  // Stakeholders — external role assignments (orgs and non-employee
+  // people) + the customer org + customer contacts. Rows are keyed by
+  // {roleAssignmentId | customerContactRelationshipId | customer-org}
+  // so a party assigned to multiple stakeholder roles produces one row
+  // per role (they're genuinely different attachments).
+  const stakeholderRows: TeamRow[] = useMemo(() => {
+    if (!team) return [];
+    const out: TeamRow[] = [];
+
+    // Customer org row.
+    if (team.customer) {
+      out.push({
+        rowKey: `customer-org-${team.customer.organizationId}`,
+        bpId: team.customer.organizationId,
+        displayName: team.customer.displayName,
+        firstName: null,
+        lastName: null,
+        email: team.customer.email,
+        phone: team.customer.phone,
+        discipline: null,
+        disciplineId: null,
+        seniorityName: null,
+        seniorityId: null,
+        roleNames: ['Customer'],
+        roleIds: [],
+        roleNamesLabel: 'Customer',
+        rowType: 'org',
+        isTeamLeader: false,
+        orgName: team.customer.displayName,
+        orgId: team.customer.organizationId,
+        onRemove: null, // customer is locked
+      });
+    }
+
+    // Customer contacts (project-scoped person rows).
+    for (const c of team.customerContacts) {
+      out.push({
+        rowKey: `cc-${c.relationshipId}`,
+        bpId: c.businessPartnerId,
+        displayName: c.displayName,
+        firstName: c.firstName,
+        lastName: c.lastName,
+        email: c.email,
+        phone: c.phone,
+        discipline: c.discipline?.name ?? null,
+        disciplineId: c.discipline?.id ?? null,
+        seniorityName: null,
+        seniorityId: null,
+        roleNames: [c.relationshipTypeName ?? 'Customer contact'],
+        roleIds: [],
+        roleNamesLabel: c.relationshipTypeName ?? 'Customer contact',
+        rowType: 'contact',
+        isTeamLeader: false,
+        orgName: team.customer?.displayName ?? null,
+        orgId: team.customer?.organizationId ?? null,
+        onRemove: async () => {
+          const who = c.displayName || 'this contact';
+          const ok = await confirm(
+            `${who} will no longer be listed as a customer contact on this project.`,
+            {
+              title: `Remove ${who} from customer contacts?`,
+              variant: 'danger',
+              confirmLabel: 'Remove',
+            },
+          );
+          if (ok) removeRoleAssignment.mutate(c.relationshipId);
+        },
+      });
+    }
+
+    // Role assignments — orgs and non-employee people. Skip anyone
+    // already represented in the internal projectTeam list (they're
+    // already surfaced in "Our Team").
+    const teamBpIds = new Set(team.projectTeam.map((p) => p.businessPartnerId));
+    for (const a of team.roleAssignments) {
+      if (teamBpIds.has(a.party.id)) continue; // internal, shown under Our Team
+      const isOrg = a.party.partnerType === 'organization';
+      out.push({
+        rowKey: `ra-${a.id}`,
+        bpId: a.party.id,
+        displayName: a.party.displayName,
+        firstName: a.party.firstName,
+        lastName: a.party.lastName,
+        email: a.party.email ?? null,
+        phone: a.party.phone ?? null,
+        discipline: a.party.discipline?.name ?? null,
+        disciplineId: a.party.discipline?.id ?? null,
+        seniorityName: null,
+        seniorityId: null,
+        roleNames: [a.role.name],
+        roleIds: [a.role.id],
+        roleNamesLabel: a.role.name,
+        rowType: isOrg ? 'org' : 'contact',
+        isTeamLeader: !isOrg && teamLeaderBpIds.has(a.party.id),
+        orgName: a.onBehalfOfParty?.displayName ?? (isOrg ? a.party.displayName : null),
+        orgId: a.onBehalfOfParty?.id ?? (isOrg ? a.party.id : null),
+        onRemove: () => confirmRemoveRoleAssignment(a),
+      });
+    }
+
+    return out;
+  }, [team, teamLeaderBpIds]);
+
+  const allRows: TeamRow[] = useMemo(() => [...teamRows, ...stakeholderRows], [teamRows, stakeholderRows]);
+
+  // ─── Filter options ────────────────────────────────────────────────
+  const source = population === 'team' ? teamRows : population === 'stake' ? stakeholderRows : allRows;
+
+  const disciplineOptions = useMemo(() => {
+    const seen = new Map<number, string>();
+    for (const r of source) if (r.disciplineId != null) seen.set(r.disciplineId, r.discipline!);
+    return Array.from(seen.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [source]);
+
+  const laborOptions = useMemo(() => {
+    const seen = new Map<number, string>();
+    for (const r of source) if (r.seniorityId != null) seen.set(r.seniorityId, r.seniorityName!);
+    return Array.from(seen.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [source]);
+
+  const roleOptions = useMemo(
+    () =>
+      addableRoles.map((r) => ({ value: r.id, label: r.name })),
+    [addableRoles],
+  );
+
+  // ─── Filtering ─────────────────────────────────────────────────────
+  const activeFilterCount =
+    roleFilter.size +
+    disciplineFilter.size +
+    laborFilter.size +
+    (statusFilter !== 'active' ? 1 : 0) +
+    (search.trim() ? 1 : 0);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return source.filter((r) => {
+      if (q) {
+        const hay = [r.displayName, r.email, r.phone].filter(Boolean).join(' ').toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (roleFilter.size > 0) {
+        if (!r.roleIds.some((id) => roleFilter.has(id))) return false;
+      }
+      if (disciplineFilter.size > 0) {
+        if (r.disciplineId == null || !disciplineFilter.has(r.disciplineId)) return false;
+      }
+      if (laborFilter.size > 0) {
+        if (r.seniorityId == null || !laborFilter.has(r.seniorityId)) return false;
+      }
+      // Status is informational for now — every row we load is active
+      // in the sense that its valid window covers `now` (backend
+      // filter). We keep the control for API parity with the spec.
+      if (statusFilter === 'inactive') return false;
+      return true;
+    });
+  }, [source, search, roleFilter, disciplineFilter, laborFilter, statusFilter]);
+
+  // ─── Sorting ───────────────────────────────────────────────────────
+  const sortValue = (r: TeamRow, k: SortKey): string => {
+    if (k === 'name') return r.displayName;
+    if (k === 'role') return r.roleNamesLabel;
+    if (k === 'discipline') return r.discipline ?? '';
+    if (k === 'email') return r.email ?? '';
+    if (k === 'phone') return r.phone ?? '';
+    if (k === 'type') return r.rowType;
+    return '';
+  };
+  const sorted = useMemo(() => {
+    if (!sort) return filtered;
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    return [...filtered].sort((a, b) =>
+      sortValue(a, sort.key).localeCompare(sortValue(b, sort.key)) * dir,
+    );
+  }, [filtered, sort]);
+
+  // ─── Grouping ──────────────────────────────────────────────────────
+  const groups = useMemo(() => {
+    // Stakeholders always group by organization regardless of the
+    // "Group" dropdown — spec §4 bullet 2. Everywhere else uses the
+    // dropdown value.
+    const effectiveGroup: GroupBy | 'org' = population === 'stake' ? 'org' : groupBy;
+    const bins = new Map<string, TeamRow[]>();
+    const order: string[] = [];
+    const addTo = (key: string, r: TeamRow) => {
+      if (!bins.has(key)) {
+        bins.set(key, []);
+        order.push(key);
+      }
+      bins.get(key)!.push(r);
+    };
+    for (const r of sorted) {
+      if (effectiveGroup === 'flat') {
+        addTo('__flat__', r);
+      } else if (effectiveGroup === 'discipline') {
+        addTo(r.discipline ?? 'No discipline', r);
+      } else if (effectiveGroup === 'role') {
+        const label = r.roleNames.length > 0 ? r.roleNames[0] : 'Team member';
+        addTo(label, r);
+      } else if (effectiveGroup === 'org') {
+        addTo(r.orgName ?? 'Unaffiliated', r);
+      }
+    }
+    return order.map((k) => ({ key: k, rows: bins.get(k)! }));
+  }, [sorted, groupBy, population]);
+
+  const collapseAll = () => setCollapsedGroups(new Set(groups.map((g) => g.key)));
+  const expandAll = () => setCollapsedGroups(new Set());
+  const allCollapsed = groups.length > 0 && groups.every((g) => collapsedGroups.has(g.key));
+
+  const toggleGroup = (k: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  };
+
+  // ─── Coverage strip helpers ────────────────────────────────────────
+  const coverage = useMemo(() => {
+    return requiredRoles.map((rt) => {
+      // team_leader also honours project.leaderId via ProjectPartnerRole,
+      // so this simply reads the assignments list.
+      const filled = team?.roleAssignments.filter((a) => a.role.id === rt.id) ?? [];
+      return { role: rt, filled };
+    });
+  }, [requiredRoles, team]);
+
+  // ─── Loading / error ───────────────────────────────────────────────
   if (isLoading) {
-    return <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">Loading team…</p>;
+    return (
+      <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">Loading team…</p>
+    );
   }
   if (isError || !team) {
     return (
@@ -224,371 +582,350 @@ export function TeamTab({
     );
   }
 
+  // Counts for the segmented control ─ live, filter-independent.
+  const counts = { team: teamRows.length, stake: stakeholderRows.length, all: allRows.length };
+
+  const totalUnfiltered = source.length;
+
+  // ─── Row actions ──────────────────────────────────────────────────
+  const openDrawer = (bpId: number) => setFocusedPartnerId(bpId);
+
+  // Trigger the role-first add for a specific role (from coverage
+  // chip). The "participant" role opens the internal team-member
+  // dialog instead of the generic RoleAssignmentPicker.
+  const openAddForRole = (rt: ProjectRoleTypeRow) => {
+    if (rt.code === 'participant') {
+      onToggleAddMember(true);
+      return;
+    }
+    setRoleAssignmentTarget(rt);
+  };
+
+  const clearAllFilters = () => {
+    setRoleFilter(new Set());
+    setDisciplineFilter(new Set());
+    setLaborFilter(new Set());
+    setStatusFilter('active');
+    setSearch('');
+  };
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
+      {/* Header row — heading + primary "+ Add person" CTA. */}
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Project Team</h2>
-          <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
-            Connections between this project and organizations or contacts. Removals are <strong>ended</strong> (history preserved).
+          <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5 max-w-lg">
+            Company staff and outside parties, separated. Removals are <strong>ended</strong> (history preserved).
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {/* PR-007 — role-type multi-select. Sourced from the same role
-              catalog that drives the dynamic Cards sections, so "Role"
-              in the dropdown ≡ "section header" in Cards view. Empty
-              selection = show everyone (no filter). Trigger label reads
-              "All Roles" / "Architect" / "Architect + 2 more". */}
-          <MultiSelectFilter
-            options={dynamicRoles.map((rt) => ({ value: rt.id, label: rt.name }))}
-            selected={roleFilter}
-            onChange={setRoleFilter}
-            placeholder="Roles"
-            title="Filter by role type"
-            triggerClassName="w-52"
-          />
-          <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
+        {canWritePartners && (
+          <button
+            type="button"
+            onClick={() => setAddPickerOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-blue-700"
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Add person
+          </button>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+        {/* Toolbar row 1 — segmented population control + view toggle. */}
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 dark:border-slate-800 px-3 py-2">
+          <div
+            role="tablist"
+            aria-label="Team population"
+            className="inline-flex rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5"
+          >
+            {(
+              [
+                { id: 'team', label: 'Our Team', n: counts.team },
+                { id: 'stake', label: 'Stakeholders', n: counts.stake },
+                { id: 'all', label: 'All', n: counts.all },
+              ] as { id: Population; label: string; n: number }[]
+            ).map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                role="tab"
+                aria-selected={population === p.id}
+                onClick={() => setPopulation(p.id)}
+                className={seg(population === p.id)}
+              >
+                <span>{p.label}</span>
+                <span className="font-mono text-[10px] opacity-60">{p.n}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="flex-1" />
+
+          <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 h-[34px] min-w-[180px]">
+            <SearchIcon className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" aria-hidden="true" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name, email, phone…"
+              aria-label="Search team members"
+              className="flex-1 bg-transparent text-[13px] text-slate-700 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 outline-none"
+            />
+          </label>
+
+          {/* Filters button + popover. */}
+          <div className="relative">
             <button
-              onClick={() => setView('cards')}
-              className={cn(
-                'rounded-md px-3 py-1 text-[12px] font-semibold transition-colors',
-                view === 'cards' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
-              )}
+              ref={filtersAnchorRef}
+              type="button"
+              onClick={() => setFiltersOpen((v) => !v)}
+              aria-expanded={filtersOpen}
+              aria-haspopup="dialog"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 h-[34px] text-[12.5px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
             >
-              Cards
+              <FilterIcon className="h-3.5 w-3.5" aria-hidden="true" />
+              Filters
+              {activeFilterCount > 0 && (
+                <span className="rounded-full bg-blue-600 px-1.5 text-[10px] font-bold text-white font-mono">
+                  {activeFilterCount}
+                </span>
+              )}
             </button>
+            {filtersOpen && (
+              <FiltersPopover
+                onClose={() => setFiltersOpen(false)}
+                roleOptions={roleOptions}
+                disciplineOptions={disciplineOptions}
+                laborOptions={laborOptions}
+                roleFilter={roleFilter}
+                setRoleFilter={setRoleFilter}
+                disciplineFilter={disciplineFilter}
+                setDisciplineFilter={setDisciplineFilter}
+                laborFilter={laborFilter}
+                setLaborFilter={setLaborFilter}
+                statusFilter={statusFilter}
+                setStatusFilter={setStatusFilter}
+              />
+            )}
+          </div>
+
+          {/* Group dropdown. Stakeholders always groups by org (spec) —
+              the dropdown is disabled there to reflect that. */}
+          <select
+            aria-label="Group rows by"
+            value={population === 'stake' ? 'org' : groupBy}
+            disabled={population === 'stake'}
+            onChange={(e) => setGroupBy(e.target.value as GroupBy)}
+            className="h-[34px] rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 text-[12.5px] font-semibold text-slate-700 dark:text-slate-200 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {population === 'stake' ? (
+              <option value="org">Group: Organization</option>
+            ) : (
+              <>
+                <option value="discipline">Group: Discipline</option>
+                <option value="role">Group: Project Role</option>
+                <option value="flat">Group: Flat</option>
+              </>
+            )}
+          </select>
+
+          {/* Table / Cards toggle. */}
+          <div
+            role="group"
+            aria-label="View"
+            className="inline-flex items-center rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 h-[34px]"
+          >
             <button
+              type="button"
+              aria-pressed={view === 'table'}
               onClick={() => setView('table')}
               className={cn(
-                'rounded-md px-3 py-1 text-[12px] font-semibold transition-colors',
-                view === 'table' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
+                'rounded-md px-3 h-[30px] text-[12px] font-semibold',
+                view === 'table'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm'
+                  : 'text-slate-500 dark:text-slate-400',
               )}
             >
               Table
             </button>
+            <button
+              type="button"
+              aria-pressed={view === 'cards'}
+              onClick={() => setView('cards')}
+              className={cn(
+                'rounded-md px-3 h-[30px] text-[12px] font-semibold',
+                view === 'cards'
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm'
+                  : 'text-slate-500 dark:text-slate-400',
+              )}
+            >
+              Cards
+            </button>
           </div>
         </div>
-      </div>
 
-      {/* Table view — single flat list of everyone touching the project
-          (internal team, role assignments, customer, customer contacts).
-          Each row carries name, role, email, phone, and "kind" so
-          there's a single scannable surface for the contact-info use
-          case. The cards view stays the default since it's the way
-          users add/remove people. */}
-      {view === 'table' && (
-        <TeamTableView team={team} roleFilterNames={selectedRoleNames} />
-      )}
-
-      {view === 'cards' && (
-      <>
-      {/* (cards content below — wrapped in fragment so the next-section
-          markers don't shift indentation across the diff) */}
-
-      {/* PR-007 · empty state — when the role-type filter is active and
-          NO section will produce a row (no matching role assignments AND
-          no Project Team member holds any of the selected roles), fall
-          through to a single EmptyState so the user isn't left staring
-          at a blank tab. Computed here so all sections below can early-
-          return `null` uniformly when the filter excludes them. */}
-      {(() => {
-        if (!roleFilterActive) return null;
-        const anyRoleAssign = team.roleAssignments.some((a) => roleFilter.has(a.role.id));
-        const anyTeamMemberHoldsRole = team.projectTeam.some((row) =>
-          team.roleAssignments.some((a) => a.party.id === row.businessPartnerId && roleFilter.has(a.role.id)),
-        );
-        if (!anyRoleAssign && !anyTeamMemberHoldsRole) {
-          return (
-            <EmptyState
-              icon={Filter}
-              title="No people match the selected roles"
-              description="Clear the role filter or pick different roles to see participants on this project."
-            />
-          );
-        }
-        return null;
-      })()}
-
-      {/* Section ordering — per user request:
-            1. Obligatory roles (isPrimaryRequired)
-            2. Project Team (internal members)
-            3. Customer
-            4. Customer Contacts
-            5. Other roles (non-required)
-          The obligatory bucket floats to the top because those are the
-          roles that MUST be staffed for the project to be considered
-          complete — they need to be the first thing the admin sees.
-          PR-007 · when the role filter is active, only role-typed
-          sections whose role is IN the selection render (Customer /
-          Customer Contacts don't map to a project role type, so they
-          hide). The Project Team section stays visible but its members
-          are narrowed to those who hold one of the selected roles. */}
-
-      {/* Section 1 — Obligatory role assignments. Rendered first so a
-          missing one is immediately visible. Emerald (action) accent
-          to mirror the rest of the dynamic role sections. */}
-      {obligatoryRoles.filter((rt) => !roleFilterActive || roleFilter.has(rt.id)).map((rt) => {
-        const assignments = team.roleAssignments.filter((a) => a.role.id === rt.id);
-        return (
-          <Section
-            key={`obligatory-${rt.id}`}
-            label={rt.name}
-            count={assignments.length}
-            accent="emerald"
-            /* People UX U5 (T-12) — Add gate uses the same permission
-               model as the project-list role cell. When the user has no
-               `partners:write`, the button is hidden entirely so the
-               row-actions section stays neat instead of showing a
-               disabled affordance. */
-            action={canWritePartners ? (
-              <button
-                onClick={() => setRoleAssignmentTarget(rt)}
-                className="flex items-center gap-1.5 rounded-md bg-white dark:bg-slate-900 border border-amber-300 bg-amber-50 hover:border-amber-400 px-3 py-1.5 text-xs font-semibold text-amber-800 transition-colors"
-              >
-                <UserPlus className="h-3.5 w-3.5" />
-                Add {rt.name}
-              </button>
-            ) : undefined}
-          >
-            {assignments.length === 0 ? (
-              <p className="text-[12px] text-amber-700 italic">
-                <strong>Required.</strong> No {rt.name.toLowerCase()} on this project yet.
-                {rt.allowedPartnerKind !== 'any' && ` Allowed: ${rt.allowedPartnerKind} only.`}
-                {rt.requiredPartnerRoleCode && ` Must hold role "${rt.requiredPartnerRoleCode}".`}
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {assignments.map((a) => (
-                  <RoleAssignmentRow
-                    key={a.id}
-                    assignment={a}
-                    onRemove={async () => {
-                      // People UX U2 — obligatory (primary-required) role
-                      // sections use the styled danger confirm and warn
-                      // that the role becomes unstaffed on this project.
-                      const extra = rt.isPrimaryRequired
-                        ? ` This is a required project role — the project will show as under-staffed until another ${rt.name.toLowerCase()} is added.`
-                        : '';
-                      const ok = await confirm(
-                        `${a.party.displayName} will no longer be the ${rt.name} on this project.${extra}`,
-                        {
-                          title: `Remove ${a.party.displayName} as ${rt.name}?`,
-                          variant: 'danger',
-                          confirmLabel: 'Remove',
-                        },
-                      );
-                      if (ok) removeRoleAssignment.mutate(a.id);
-                    }}
-                    onOpenProfile={setFocusedPartnerId}
-                  />
-                ))}
-              </div>
+        {/* Active filter chips row (+ "N of M" count). */}
+        {(activeFilterCount > 0 || filtered.length !== totalUnfiltered) && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30 px-3 py-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              Filters
+            </span>
+            {search.trim() && (
+              <FilterChip label={`Search: ${search.trim()}`} onClear={() => setSearch('')} />
             )}
-          </Section>
-        );
-      })}
-
-      {/* Section 2 — Project Team (internal employees with User accounts).
-          PR-007 · when the role filter is active, only surface members
-          who hold at least one of the selected roles (the section still
-          shows so the user can see WHICH team members match). */}
-      {(() => {
-        const visibleTeam = roleFilterActive
-          ? team.projectTeam.filter((row) =>
-              team.roleAssignments.some((a) => a.party.id === row.businessPartnerId && roleFilter.has(a.role.id)),
-            )
-          : team.projectTeam;
-        // Hide the whole section when the filter is active and no team
-        // member matches — the section header alone would be misleading.
-        if (roleFilterActive && visibleTeam.length === 0) return null;
-        return (
-          <Section
-            label="Project Team"
-            count={visibleTeam.length}
-            accent="blue"
-            action={canWritePartners ? (
-              <button
-                onClick={() => onToggleAddMember(true)}
-                className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
-              >
-                <UserPlus className="h-3.5 w-3.5" />
-                Add Team Member
-              </button>
-            ) : undefined}
-          >
-            {visibleTeam.length === 0 ? (
-              <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">No internal members yet.</p>
-            ) : (
-              <div className="space-y-2">
-                {visibleTeam.map((row) => {
-                  // Cross-reference: every ProjectRoleType assignment this
-                  // member holds (Architect, Engineer, etc.). Previously the
-                  // Project Team section showed only the person's name +
-                  // email — users had no quick way to see "what role does
-                  // Yulian play on this project?" without scrolling to each
-                  // role section. Now the chip list of held roles renders
-                  // right next to the name.
-                  const heldRoles = team.roleAssignments
-                    .filter((a) => a.party.id === row.businessPartnerId)
-                    .map((a) => a.role.name);
-                  return (
-                    <PersonRow
-                      key={row.relationshipId}
-                      row={row}
-                      onRemove={() => removeMyTeam(row)}
-                      accent="blue"
-                      onOpenProfile={setFocusedPartnerId}
-                      heldRoles={heldRoles}
-                    />
-                  );
-                })}
-              </div>
-            )}
-          </Section>
-        );
-      })()}
-
-      {/* Section 3 — Customer (locked, hardcoded). Hidden when the
-          role-type filter is active — Customer isn't a project role
-          type, so it can't match. */}
-      {!roleFilterActive && (
-        <Section label="Customer" count={team.customer ? 1 : 0} accent="indigo">
-          {team.customer ? (
-            <OrgRow
-              displayName={team.customer.displayName}
-              email={team.customer.email}
-              phone={team.customer.phone}
-              bpId={team.customer.organizationId}
-              onOpenProfile={setFocusedPartnerId}
-            />
-          ) : (
-            <p className="text-[12px] text-amber-600 italic">No customer set on this project (data inconsistency — contact admin).</p>
-          )}
-        </Section>
-      )}
-
-      {/* Section 4 — Customer Contacts (org-level: anyone with an active
-          rel pointing at the customer org). Shared across every project
-          of this customer; not project-scoped. Hidden when the role-type
-          filter is active for the same reason as Customer above. */}
-      {!roleFilterActive && (
-        <Section
-          label={team.customer ? `${team.customer.displayName} Contacts` : 'Customer Contacts'}
-          count={team.customerContacts.length}
-          accent="violet"
-          action={canWritePartners ? (
-            <button
-              onClick={() => setShowCustomerContactPicker(true)}
-              disabled={!team.customer || !customerContactRoleType}
-              title={
-                !team.customer
-                  ? 'No customer on project'
-                  : !customerContactRoleType
-                    ? "The 'customer_contact' project role type is missing — run the pending migration."
-                    : undefined
-              }
-              className="flex items-center gap-1.5 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors"
-            >
-              <UserPlus className="h-3.5 w-3.5" />
-              Add Customer Contact
-            </button>
-          ) : undefined}
-        >
-          {team.customerContacts.length === 0 ? (
-            <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">No customer contacts yet.</p>
-          ) : (
-            <div className="space-y-2">
-              {team.customerContacts.map((row) => (
-                <PersonRow
-                  key={row.relationshipId}
-                  row={row}
-                  // PR-026 (2026-08-27): customer-contact rows are now
-                  // `project_partner_role` rows (role.code=customer_contact,
-                  // party=customer org, contactParty=person), so
-                  // disconnecting goes through DELETE /project-partner-roles/:id
-                  // — NOT the legacy DELETE /partner-relationships/:id.
-                  //
-                  // People UX U2 — customer-contact removals are destructive
-                  // for the project's customer touch point; confirm with
-                  // the person's name.
-                  onRemove={async () => {
-                    const who = row.displayName || 'this contact';
-                    const ok = await confirm(
-                      `${who} will no longer be listed as a customer contact on this project.`,
-                      {
-                        title: `Remove ${who} from customer contacts?`,
-                        variant: 'danger',
-                        confirmLabel: 'Remove',
-                      },
-                    );
-                    if (ok) removeRoleAssignment.mutate(row.relationshipId);
+            {[...roleFilter].map((id) => {
+              const opt = roleOptions.find((o) => o.value === id);
+              if (!opt) return null;
+              return (
+                <FilterChip
+                  key={`role-${id}`}
+                  label={`Role: ${opt.label}`}
+                  onClear={() => {
+                    const next = new Set(roleFilter);
+                    next.delete(id);
+                    setRoleFilter(next);
                   }}
-                  accent="violet"
-                  onOpenProfile={setFocusedPartnerId}
+                />
+              );
+            })}
+            {[...disciplineFilter].map((id) => {
+              const opt = disciplineOptions.find((o) => o.value === id);
+              if (!opt) return null;
+              return (
+                <FilterChip
+                  key={`disc-${id}`}
+                  label={`Discipline: ${opt.label}`}
+                  onClear={() => {
+                    const next = new Set(disciplineFilter);
+                    next.delete(id);
+                    setDisciplineFilter(next);
+                  }}
+                />
+              );
+            })}
+            {[...laborFilter].map((id) => {
+              const opt = laborOptions.find((o) => o.value === id);
+              if (!opt) return null;
+              return (
+                <FilterChip
+                  key={`labor-${id}`}
+                  label={`Labor Category: ${opt.label}`}
+                  onClear={() => {
+                    const next = new Set(laborFilter);
+                    next.delete(id);
+                    setLaborFilter(next);
+                  }}
+                />
+              );
+            })}
+            {statusFilter !== 'active' && (
+              <FilterChip
+                label={`Status: ${statusFilter === 'inactive' ? 'Inactive only' : 'All'}`}
+                onClear={() => setStatusFilter('active')}
+              />
+            )}
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              className="text-[12px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100"
+            >
+              Clear
+            </button>
+            <div className="ml-auto text-[12px] text-slate-500 dark:text-slate-400">
+              Showing <strong className="text-slate-700 dark:text-slate-200">{filtered.length}</strong> of {totalUnfiltered}
+            </div>
+          </div>
+        )}
+
+        {/* Coverage strip — required roles. */}
+        {coverage.length > 0 && (
+          <div className="border-b border-slate-100 dark:border-slate-800 px-3 py-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+              Required roles · coverage
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {coverage.map(({ role, filled }) => (
+                <CoverageChip
+                  key={role.id}
+                  role={role}
+                  filled={filled}
+                  onAdd={() => openAddForRole(role)}
+                  onOpenProfile={openDrawer}
+                  canWrite={canWritePartners}
+                  teamLeaderBpIds={teamLeaderBpIds}
                 />
               ))}
             </div>
-          )}
-        </Section>
+          </div>
+        )}
+
+        {/* Group control row — Collapse all / Expand all shortcut. */}
+        {view === 'table' && groups.length > 0 && (
+          <div className="flex items-center justify-end gap-2 border-b border-slate-100 dark:border-slate-800 px-3 py-1.5">
+            <button
+              type="button"
+              onClick={allCollapsed ? expandAll : collapseAll}
+              className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100"
+            >
+              {allCollapsed ? 'Expand all' : 'Collapse all'}
+            </button>
+          </div>
+        )}
+
+        {/* Body — either Table or Cards. */}
+        {view === 'table' ? (
+          <TableBody
+            groups={groups}
+            population={population}
+            sort={sort}
+            setSort={setSort}
+            collapsedGroups={collapsedGroups}
+            toggleGroup={toggleGroup}
+            openDrawer={openDrawer}
+            canWrite={canWritePartners}
+            onAddContactAtOrg={
+              customerContactRoleType && team.customer
+                ? () => setShowCustomerContactPicker(true)
+                : null
+            }
+          />
+        ) : (
+          <CardsBody rows={sorted} openDrawer={openDrawer} />
+        )}
+
+        {/* Empty state */}
+        {groups.length === 0 && (
+          <div className="p-8">
+            <EmptyState
+              icon={activeFilterCount > 0 ? FilterIcon : UsersIcon}
+              title={activeFilterCount > 0 ? 'No rows match the active filters' : 'No one on this project yet'}
+              description={
+                activeFilterCount > 0
+                  ? 'Clear filters or search terms to see everyone on this project.'
+                  : "Click + Add person to bring someone onto the project."
+              }
+            />
+          </div>
+        )}
+      </div>
+
+      {/* ─── Overlays ───────────────────────────────────────────────── */}
+      {addPickerOpen && (
+        <RoleFirstPicker
+          addableRoles={addableRoles}
+          participantRole={roleCatalog.find((rt) => rt.code === 'participant') ?? null}
+          onClose={() => setAddPickerOpen(false)}
+          onPickRole={(rt) => {
+            setAddPickerOpen(false);
+            openAddForRole(rt);
+          }}
+          onPickParticipant={() => {
+            setAddPickerOpen(false);
+            onToggleAddMember(true);
+          }}
+        />
       )}
 
-      {/* Sections 5+ — Other (non-required) ProjectRoleTypes. Adding a
-          new project_role_type in admin makes a new section appear here
-          automatically. */}
-      {otherRoles.filter((rt) => !roleFilterActive || roleFilter.has(rt.id)).map((rt) => {
-        const assignments = team.roleAssignments.filter((a) => a.role.id === rt.id);
-        return (
-          <Section
-            key={rt.id}
-            label={rt.name}
-            count={assignments.length}
-            accent="emerald"
-            action={canWritePartners ? (
-              <button
-                onClick={() => setRoleAssignmentTarget(rt)}
-                className="flex items-center gap-1.5 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors"
-              >
-                <UserPlus className="h-3.5 w-3.5" />
-                Add {rt.name}
-              </button>
-            ) : undefined}
-          >
-            {assignments.length === 0 ? (
-              <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">
-                No {rt.name.toLowerCase()} on this project yet.
-                {rt.allowedPartnerKind !== 'any' && ` Allowed: ${rt.allowedPartnerKind} only.`}
-                {rt.requiredPartnerRoleCode && ` Must hold role "${rt.requiredPartnerRoleCode}".`}
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {assignments.map((a) => (
-                  <RoleAssignmentRow
-                    key={a.id}
-                    assignment={a}
-                    onRemove={async () => {
-                      const leaderLine = rt.code === 'team_leader'
-                        ? '\n\nThey will also lose leader access to the project (project.leaderId is cleared).'
-                        : '';
-                      const ok = await confirm(
-                        `${a.party.displayName} will no longer be the ${rt.name} on this project.${leaderLine}`,
-                        {
-                          title: `Remove ${a.party.displayName} as ${rt.name}?`,
-                          variant: 'danger',
-                          confirmLabel: 'Remove',
-                        },
-                      );
-                      if (ok) removeRoleAssignment.mutate(a.id);
-                    }}
-                    onOpenProfile={setFocusedPartnerId}
-                  />
-                ))}
-              </div>
-            )}
-          </Section>
-        );
-      })}
-
-      {/* Add Member (internal) modal — unchanged. */}
       {showAddMember && (
         <AddMemberDialog
           projectId={projectId}
@@ -597,22 +934,6 @@ export function TeamTab({
         />
       )}
 
-      {/* Customer-contact add flow. PR-026 (2026-08-27): the picker now
-          writes a project-scoped `project_partner_role` row, so it
-          needs the projectId + the customer_contact role id (looked up
-          from the role catalog above). */}
-      {showCustomerContactPicker && team.customer && customerContactRoleType && (
-        <CustomerContactPicker
-          projectId={projectId}
-          customerOrgId={team.customer.organizationId}
-          customerName={team.customer.displayName}
-          customerContactRoleId={customerContactRoleType.id}
-          existingContactBpIds={team.customerContacts.map((p) => p.businessPartnerId)}
-          onClose={() => setShowCustomerContactPicker(false)}
-        />
-      )}
-
-      {/* Project-role add flow (Supplier, Architect, …). */}
       {roleAssignmentTarget && (
         <RoleAssignmentPicker
           role={roleAssignmentTarget}
@@ -624,9 +945,17 @@ export function TeamTab({
         />
       )}
 
-      {/* Profile clicks open the partner drawer overlay in-place. On close,
-          invalidate project-team so any role/rel edits made in the drawer
-          flow back into the team view. */}
+      {showCustomerContactPicker && team.customer && customerContactRoleType && (
+        <CustomerContactPicker
+          projectId={projectId}
+          customerOrgId={team.customer.organizationId}
+          customerName={team.customer.displayName}
+          customerContactRoleId={customerContactRoleType.id}
+          existingContactBpIds={team.customerContacts.map((p) => p.businessPartnerId)}
+          onClose={() => setShowCustomerContactPicker(false)}
+        />
+      )}
+
       {focusedPartnerId != null && (
         <PartnerDrawer
           partnerId={focusedPartnerId}
@@ -636,8 +965,620 @@ export function TeamTab({
           }}
         />
       )}
-      </>
-      )}
     </div>
+  );
+}
+
+/* ─── FilterChip ───────────────────────────────────────────────────── */
+
+function FilterChip({ label, onClear }: { label: string; onClear: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-0.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200">
+      {label}
+      <button
+        type="button"
+        onClick={onClear}
+        aria-label={`Clear ${label}`}
+        className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100"
+      >
+        <X className="h-3 w-3" aria-hidden="true" />
+      </button>
+    </span>
+  );
+}
+
+/* ─── FiltersPopover ───────────────────────────────────────────────── */
+
+function FiltersPopover({
+  onClose,
+  roleOptions,
+  disciplineOptions,
+  laborOptions,
+  roleFilter,
+  setRoleFilter,
+  disciplineFilter,
+  setDisciplineFilter,
+  laborFilter,
+  setLaborFilter,
+  statusFilter,
+  setStatusFilter,
+}: {
+  onClose: () => void;
+  roleOptions: { value: number; label: string }[];
+  disciplineOptions: { value: number; label: string }[];
+  laborOptions: { value: number; label: string }[];
+  roleFilter: Set<number>;
+  setRoleFilter: (s: Set<number>) => void;
+  disciplineFilter: Set<number>;
+  setDisciplineFilter: (s: Set<number>) => void;
+  laborFilter: Set<number>;
+  setLaborFilter: (s: Set<number>) => void;
+  statusFilter: StatusFilter;
+  setStatusFilter: (s: StatusFilter) => void;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+  return (
+    <div
+      ref={wrapRef}
+      role="dialog"
+      aria-label="Filters"
+      className="absolute right-0 top-full z-40 mt-2 w-[320px] rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg p-3 space-y-3"
+    >
+      <FilterGroup label="Project Role">
+        <MultiSelectFilter
+          options={roleOptions}
+          selected={roleFilter}
+          onChange={setRoleFilter}
+          placeholder="Roles"
+          triggerClassName="w-full"
+        />
+      </FilterGroup>
+      <FilterGroup label="Discipline">
+        <MultiSelectFilter
+          options={disciplineOptions}
+          selected={disciplineFilter}
+          onChange={setDisciplineFilter}
+          placeholder="Disciplines"
+          triggerClassName="w-full"
+        />
+      </FilterGroup>
+      <FilterGroup label="Labor Category">
+        <MultiSelectFilter
+          options={laborOptions}
+          selected={laborFilter}
+          onChange={setLaborFilter}
+          placeholder="Labor Categories"
+          triggerClassName="w-full"
+        />
+      </FilterGroup>
+      <FilterGroup label="Status">
+        <div className="flex gap-1">
+          {(['active', 'inactive', 'all'] as StatusFilter[]).map((s) => (
+            <button
+              key={s}
+              type="button"
+              aria-pressed={statusFilter === s}
+              onClick={() => setStatusFilter(s)}
+              className={cn(
+                'flex-1 rounded-md px-2 py-1 text-[11.5px] font-semibold border',
+                statusFilter === s
+                  ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-transparent'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-400 dark:hover:border-slate-500',
+              )}
+            >
+              {s === 'active' ? 'Active only' : s === 'inactive' ? 'Inactive only' : 'All'}
+            </button>
+          ))}
+        </div>
+      </FilterGroup>
+    </div>
+  );
+}
+
+function FilterGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/* ─── CoverageChip ─────────────────────────────────────────────────── */
+
+function CoverageChip({
+  role,
+  filled,
+  onAdd,
+  onOpenProfile,
+  canWrite,
+  teamLeaderBpIds,
+}: {
+  role: ProjectRoleTypeRow;
+  filled: ProjectRoleAssignment[];
+  onAdd: () => void;
+  onOpenProfile: (bpId: number) => void;
+  canWrite: boolean;
+  teamLeaderBpIds: Set<number>;
+}) {
+  if (filled.length === 0) {
+    return (
+      <button
+        type="button"
+        onClick={canWrite ? onAdd : undefined}
+        disabled={!canWrite}
+        aria-label={`Add ${role.name}`}
+        className={cn(
+          'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-semibold',
+          'border border-dashed border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300',
+          canWrite ? 'hover:border-amber-500' : 'opacity-60 cursor-not-allowed',
+        )}
+      >
+        <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+        <span>{role.name}</span>
+        <span>· not assigned</span>
+        <span className="text-amber-700 dark:text-amber-400 font-bold">+</span>
+      </button>
+    );
+  }
+  return (
+    <>
+      {filled.map((a) => {
+        const isLeader = teamLeaderBpIds.has(a.party.id);
+        return (
+          <button
+            key={a.id}
+            type="button"
+            onClick={() => onOpenProfile(a.party.id)}
+            title={`Open ${a.party.displayName}`}
+            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 pl-1 pr-2.5 py-0.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
+          >
+            <Avatar
+              displayName={a.party.displayName}
+              firstName={a.party.firstName}
+              lastName={a.party.lastName}
+              isLeader={isLeader}
+              size="xs"
+            />
+            <span className="text-slate-400 dark:text-slate-500 font-medium">{role.name}</span>
+            <span>·</span>
+            <span>{a.party.displayName}</span>
+            <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+/* ─── Avatar ───────────────────────────────────────────────────────── */
+
+function Avatar({
+  displayName,
+  firstName,
+  lastName,
+  isLeader,
+  size = 'sm',
+}: {
+  displayName: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  isLeader?: boolean;
+  size?: 'xs' | 'sm';
+}) {
+  const initials =
+    getInitials(firstName ?? '', lastName ?? '') || displayName.slice(0, 2).toUpperCase();
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        'inline-flex items-center justify-center rounded-full font-semibold shrink-0',
+        size === 'xs' ? 'h-5 w-5 text-[9px]' : 'h-6 w-6 text-[10px]',
+        isLeader
+          ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 ring-1 ring-indigo-300 dark:ring-indigo-600'
+          : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-200',
+      )}
+    >
+      {initials}
+    </span>
+  );
+}
+
+/* ─── Table body (with grouping + sticky headers) ──────────────────── */
+
+function TableBody({
+  groups,
+  population,
+  sort,
+  setSort,
+  collapsedGroups,
+  toggleGroup,
+  openDrawer,
+  canWrite,
+  onAddContactAtOrg,
+}: {
+  groups: { key: string; rows: TeamRow[] }[];
+  population: Population;
+  sort: { key: SortKey; dir: SortDir } | null;
+  setSort: (s: { key: SortKey; dir: SortDir } | null) => void;
+  collapsedGroups: Set<string>;
+  toggleGroup: (k: string) => void;
+  openDrawer: (bpId: number) => void;
+  canWrite: boolean;
+  onAddContactAtOrg: (() => void) | null;
+}) {
+  const showType = population === 'all';
+  const showRepresents = population === 'stake';
+
+  const columns: { key: SortKey; label: string; className?: string }[] = showRepresents
+    ? [
+        { key: 'name', label: 'Contact' },
+        { key: 'type', label: 'Type' },
+        { key: 'role', label: 'Represents' },
+        { key: 'discipline', label: 'Discipline' },
+        { key: 'email', label: 'Email' },
+        { key: 'phone', label: 'Phone' },
+      ]
+    : [
+        { key: 'name', label: 'Name' },
+        ...(showType ? [{ key: 'type' as SortKey, label: 'Type' }] : []),
+        { key: 'role', label: 'Project Role' },
+        { key: 'discipline', label: 'Discipline' },
+        { key: 'email', label: 'Email' },
+        { key: 'phone', label: 'Phone' },
+      ];
+
+  const toggleSort = (k: SortKey) => {
+    setSort(
+      !sort || sort.key !== k
+        ? { key: k, dir: 'asc' }
+        : sort.dir === 'asc'
+          ? { key: k, dir: 'desc' }
+          : null,
+    );
+  };
+
+  return (
+    <div className="max-h-[70vh] overflow-auto">
+      <table className="w-full border-collapse">
+        <thead className="sticky top-0 z-20 bg-slate-50 dark:bg-slate-800/80 backdrop-blur">
+          <tr>
+            {columns.map((c) => (
+              <th key={c.key} scope="col" className={H_CELL}>
+                <button
+                  type="button"
+                  onClick={() => toggleSort(c.key)}
+                  className="inline-flex items-center gap-1 hover:text-slate-700 dark:hover:text-slate-100"
+                >
+                  <span>{c.label}</span>
+                  <span className="text-slate-300 dark:text-slate-600 text-[9px] font-mono">
+                    {sort?.key === c.key ? (sort.dir === 'asc' ? '▲' : '▼') : '⇅'}
+                  </span>
+                </button>
+              </th>
+            ))}
+            <th scope="col" className={cn(H_CELL, 'w-[80px] text-right')}>
+              <span className="sr-only">Actions</span>
+            </th>
+          </tr>
+        </thead>
+
+        {groups.map((g) => {
+          const collapsed = collapsedGroups.has(g.key);
+          const isFlat = g.key === '__flat__';
+          const isOrgGroup = population === 'stake';
+          const groupLabel = isFlat
+            ? ''
+            : isOrgGroup
+              ? g.key
+              : g.key;
+          const totalCols = columns.length + 1;
+          return (
+            <tbody key={g.key} className="divide-y divide-slate-100 dark:divide-slate-800">
+              {!isFlat && (
+                <tr
+                  className={cn(
+                    'sticky z-10 bg-slate-50/95 dark:bg-slate-800/95 backdrop-blur',
+                    // Second sticky row — offset so it sits UNDER the
+                    // main header. Uses a fixed 34px approx table
+                    // header height; Tailwind's `top-*` doesn't cover
+                    // arbitrary values without config, so we inline
+                    // the style.
+                  )}
+                  style={{ top: 34 }}
+                >
+                  <td colSpan={totalCols} className="px-3 py-1.5">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(g.key)}
+                        aria-expanded={!collapsed}
+                        className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100"
+                      >
+                        {collapsed ? (
+                          <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+                        ) : (
+                          <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                        )}
+                        <span>{groupLabel}</span>
+                        <span className="text-slate-400 dark:text-slate-500 font-mono font-medium">
+                          {g.rows.length}
+                        </span>
+                      </button>
+                      {isOrgGroup && canWrite && onAddContactAtOrg && (
+                        <button
+                          type="button"
+                          onClick={onAddContactAtOrg}
+                          className="ml-auto inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
+                        >
+                          <UserPlus className="h-3 w-3" aria-hidden="true" />
+                          Add contact
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )}
+              {!collapsed &&
+                g.rows.map((r) => (
+                  <tr
+                    key={r.rowKey}
+                    className="group hover:bg-slate-50/60 dark:hover:bg-slate-800/40"
+                  >
+                    {/* Name */}
+                    <td className={CELL}>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Avatar
+                          displayName={r.displayName}
+                          firstName={r.firstName}
+                          lastName={r.lastName}
+                          isLeader={r.isTeamLeader}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => openDrawer(r.bpId)}
+                          className="font-semibold text-slate-900 dark:text-slate-100 hover:underline truncate text-left"
+                          title="Open profile"
+                        >
+                          {r.displayName}
+                        </button>
+                      </div>
+                    </td>
+                    {/* Type — All view only */}
+                    {showType && (
+                      <td className={CELL}>
+                        <TypePill type={r.rowType} />
+                      </td>
+                    )}
+                    {showRepresents && (
+                      <td className={CELL}>
+                        <TypePill type={r.rowType} />
+                      </td>
+                    )}
+                    {/* Role / Represents */}
+                    <td className={CELL}>
+                      {showRepresents
+                        ? r.orgName ?? '—'
+                        : r.roleNames.length > 0
+                          ? (
+                            <div className="flex flex-wrap gap-1">
+                              {r.roleNames.map((n) => (
+                                <span
+                                  key={n}
+                                  className="inline-flex items-center rounded-md bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300"
+                                >
+                                  {n}
+                                </span>
+                              ))}
+                            </div>
+                          )
+                          : (
+                            <span className="text-[11.5px] italic text-slate-400 dark:text-slate-500">
+                              Team member
+                            </span>
+                          )}
+                    </td>
+                    {/* Discipline */}
+                    <td className={CELL}>
+                      {r.discipline ? (
+                        r.discipline
+                      ) : (
+                        <span className="text-slate-300 dark:text-slate-600">—</span>
+                      )}
+                    </td>
+                    {/* Email */}
+                    <td className={CELL}>
+                      {r.email ? (
+                        <a
+                          href={`mailto:${r.email}`}
+                          className="text-blue-600 dark:text-blue-400 hover:underline truncate"
+                        >
+                          {r.email}
+                        </a>
+                      ) : (
+                        <span className="text-slate-300 dark:text-slate-600">—</span>
+                      )}
+                    </td>
+                    {/* Phone */}
+                    <td className={cn(CELL, 'font-mono whitespace-nowrap')}>
+                      {r.phone ?? <span className="text-slate-300 dark:text-slate-600">—</span>}
+                    </td>
+                    {/* Row actions */}
+                    <td className={cn(CELL, 'text-right')}>
+                      <div className="inline-flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                        <button
+                          type="button"
+                          onClick={() => openDrawer(r.bpId)}
+                          aria-label={`Open ${r.displayName}`}
+                          title="Open profile"
+                          className="rounded p-1 text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                        {r.onRemove && canWrite && (
+                          <button
+                            type="button"
+                            onClick={r.onRemove}
+                            aria-label={`Remove ${r.displayName} from project`}
+                            title="Remove from project"
+                            className="rounded p-1 text-slate-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30"
+                          >
+                            <X className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          );
+        })}
+      </table>
+    </div>
+  );
+}
+
+function TypePill({ type }: { type: RowType }) {
+  const label = type === 'employee' ? 'Employee' : type === 'contact' ? 'Contact' : 'Org';
+  return (
+    <span className="inline-flex items-center rounded-md bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+      {label}
+    </span>
+  );
+}
+
+/* ─── Cards body (fallback view — keeps the toggle useful) ─────────── */
+
+function CardsBody({ rows, openDrawer }: { rows: TeamRow[]; openDrawer: (bpId: number) => void }) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+      {rows.map((r) => (
+        <button
+          key={r.rowKey}
+          type="button"
+          onClick={() => openDrawer(r.bpId)}
+          className="text-left rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 hover:border-slate-400 dark:hover:border-slate-500 focus:outline-none focus:border-blue-500"
+        >
+          <div className="flex items-center gap-2">
+            <Avatar
+              displayName={r.displayName}
+              firstName={r.firstName}
+              lastName={r.lastName}
+              isLeader={r.isTeamLeader}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold text-slate-900 dark:text-slate-100 truncate text-[13px]">
+                {r.displayName}
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                {r.roleNames.length > 0 ? r.roleNames.join(', ') : 'Team member'}
+              </div>
+            </div>
+          </div>
+          {(r.email || r.discipline) && (
+            <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-400 truncate">
+              {r.discipline && <span>{r.discipline}</span>}
+              {r.discipline && r.email && <span> · </span>}
+              {r.email && <span className="text-blue-600 dark:text-blue-400">{r.email}</span>}
+            </div>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ─── RoleFirstPicker — role-first Add flow ────────────────────────── */
+
+function RoleFirstPicker({
+  addableRoles,
+  participantRole,
+  onClose,
+  onPickRole,
+  onPickParticipant,
+}: {
+  addableRoles: ProjectRoleTypeRow[];
+  participantRole: ProjectRoleTypeRow | null;
+  onClose: () => void;
+  onPickRole: (rt: ProjectRoleTypeRow) => void;
+  onPickParticipant: () => void;
+}) {
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Add person to project"
+      description="First pick the project role — the next step lists only the parties who are eligible for it."
+      widthClass="w-[520px] max-w-[92vw]"
+      footer={
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-lg border border-slate-200 dark:border-slate-700 px-3.5 py-2 text-[13px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+        >
+          Cancel
+        </button>
+      }
+    >
+      <div className="space-y-2">
+        {participantRole && (
+          <button
+            type="button"
+            onClick={onPickParticipant}
+            className="flex w-full items-start gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-left hover:border-slate-400 dark:hover:border-slate-500"
+          >
+            <UserPlus className="h-4 w-4 mt-0.5 text-blue-600" aria-hidden="true" />
+            <div className="min-w-0">
+              <div className="text-[13px] font-semibold text-slate-900 dark:text-slate-100">Team member (internal)</div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                Adds a company employee to the project team.
+              </div>
+            </div>
+          </button>
+        )}
+        {addableRoles.map((rt) => (
+          <button
+            key={rt.id}
+            type="button"
+            onClick={() => onPickRole(rt)}
+            className="flex w-full items-start gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-left hover:border-slate-400 dark:hover:border-slate-500"
+          >
+            <UserPlus className="h-4 w-4 mt-0.5 text-slate-400 dark:text-slate-500" aria-hidden="true" />
+            <div className="min-w-0">
+              <div className="text-[13px] font-semibold text-slate-900 dark:text-slate-100">
+                {rt.name}
+                {rt.isPrimaryRequired && (
+                  <span className="ml-2 rounded-full bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:text-amber-300">
+                    REQUIRED
+                  </span>
+                )}
+              </div>
+              {rt.description && (
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2">
+                  {rt.description}
+                </div>
+              )}
+            </div>
+          </button>
+        ))}
+      </div>
+    </Modal>
   );
 }

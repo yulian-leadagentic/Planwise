@@ -1179,7 +1179,19 @@ export class ProjectsService {
                 lastName: true,
                 email: true,
                 phone: true,
-                user: { select: { id: true, position: true } },
+                // Phase 5 team rebuild — surface discipline so the Team
+                // tab can group by / filter on it without a follow-up
+                // fetch. Kept minimal ({id, name}) to bound payload.
+                discipline: { select: { id: true, name: true } },
+                user: {
+                  select: {
+                    id: true,
+                    position: true,
+                    // seniorityLevel powers the "Labor Category" filter
+                    // on the Team tab (Phase 5). Internal employees only.
+                    seniorityLevel: { select: { id: true, name: true } },
+                  },
+                },
               },
             },
           },
@@ -1201,6 +1213,8 @@ export class ProjectsService {
         phone: a.party.phone,
         position: a.party.user?.position ?? null,
         roleInContext: a.titleInProject,
+        discipline: a.party.discipline ?? null,
+        seniorityLevel: a.party.user?.seniorityLevel ?? null,
         validFrom: a.validFrom,
         validTo: a.validTo,
       }));
@@ -1249,6 +1263,10 @@ export class ProjectsService {
               lastName: true,
               email: true,
               phone: true,
+              // Phase 5 team rebuild — surface discipline on customer
+              // contacts so the Team tab can group them consistently
+              // with internal employees / other role assignments.
+              discipline: { select: { id: true, name: true } },
               user: { select: { id: true, position: true } },
             },
           },
@@ -1281,6 +1299,7 @@ export class ProjectsService {
           email: r.contactParty!.email ?? null,
           phone: r.contactParty!.phone ?? null,
           position: r.contactParty!.user?.position ?? null,
+          discipline: r.contactParty!.discipline ?? null,
           validFrom: r.validFrom,
           validTo: r.validTo,
         }));
@@ -1312,6 +1331,10 @@ export class ProjectsService {
             lastName: true,
             email: true,
             phone: true,
+            // Phase 5 team rebuild — surface party.discipline so the
+            // frontend can group and filter role-based rows by
+            // discipline without a second fetch.
+            discipline: { select: { id: true, name: true } },
           },
         },
         // BM2 Phase 2 — representation surfaces on the team endpoint so
