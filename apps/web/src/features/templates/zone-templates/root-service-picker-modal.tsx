@@ -36,12 +36,17 @@ export function RootServicePickerModal({
     setAdding(true);
     try {
       for (const svc of toAdd) {
-        // Fetch service tasks and copy them as TemplateTask entries with service tag
+        // Fetch service tasks and copy them as TemplateTask entries with service tag.
+        // QA4 · B1 (2026-09-28): mirror the zone-picker fix — also write
+        // `deliverableTemplateId = svc.id` (and phaseId when known) so the
+        // link survives a Deliverable rename. Marker stays for display.
         const detail = await client.get(`/templates/${svc.id}`).then((r) => r.data.data ?? r.data);
         for (const task of (detail?.templateTasks ?? [])) {
           await client.post(`/templates/${templateId}/tasks`, {
             code: task.code, name: task.name, description: `[SERVICE:${svc.name}]`,
             defaultBudgetHours: task.defaultBudgetHours, defaultBudgetAmount: task.defaultBudgetAmount,
+            deliverableTemplateId: svc.id,
+            phaseId: svc.phaseId ?? svc.phase?.id ?? undefined,
           });
         }
       }

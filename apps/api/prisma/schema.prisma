@@ -1600,6 +1600,12 @@ model Template {
   // Task.deliverableTemplate. Enables COUNT-by-deliverable and "where
   // is this template used" queries without scanning Tasks globally.
   projectTasks        Task[]               @relation("TaskDeliverableTemplate")
+  // QA4 Round-1 · B1 (2026-09-28) — template-side back-relations for
+  // TemplateTask.deliverableTemplateId and TemplateZoneTask.deliverableTemplateId.
+  // Enables "list all tasks that reference this Deliverable" queries
+  // and lets Prisma tie the SetNull semantics without a raw JOIN.
+  templateTasksAsDeliverable      TemplateTask[]     @relation("TemplateTaskDeliverableTemplate")
+  templateZoneTasksAsDeliverable  TemplateZoneTask[] @relation("TemplateZoneTaskDeliverableTemplate")
   // Per-project deliverable instances materialized from this catalog
   // template. The catalog template stays untouched; each ProjectDeliverable
   // may diverge (rename, reorder, status) without affecting the catalog.
@@ -1612,6 +1618,15 @@ model TemplateTask {
   id                  Int          @id @default(autoincrement())
   templateId          Int          @map("template_id")
   serviceTypeId       Int?         @map("service_type_id")
+  /// QA4 Round-1 · B1 (2026-09-28) — FK to the Deliverable Template
+  /// this task belongs to. Replaces the legacy `[SERVICE:<name>]`
+  /// marker in `description` as the source of truth for the
+  /// task→Deliverable link, so renaming a Deliverable no longer
+  /// breaks the project-init exact-name JOIN. Nullable + SetNull on
+  /// delete: the parent Template can go away without cascading a
+  /// task delete (matches Task.deliverableTemplateId). The marker
+  /// stays in `description` for display back-compat.
+  deliverableTemplateId Int?       @map("deliverable_template_id")
   code                String       @db.VarChar(50)
   name                String       @db.VarChar(255)
   description         String?      @db.Text
@@ -1622,9 +1637,10 @@ model TemplateTask {
   sortOrder           Int          @default(0) @map("sort_order")
   createdAt           DateTime     @default(now()) @map("created_at")
 
-  template    Template     @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  serviceType ServiceType? @relation(fields: [serviceTypeId], references: [id])
-  phase       Phase?       @relation(fields: [phaseId], references: [id])
+  template            Template     @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  serviceType         ServiceType? @relation(fields: [serviceTypeId], references: [id])
+  phase               Phase?       @relation(fields: [phaseId], references: [id])
+  deliverableTemplate Template?    @relation("TemplateTaskDeliverableTemplate", fields: [deliverableTemplateId], references: [id], onDelete: SetNull)
 
   @@map("template_tasks")
 }
@@ -1663,6 +1679,9 @@ model TemplateZoneTask {
   id                  Int          @id @default(autoincrement())
   templateZoneId      Int          @map("template_zone_id")
   serviceTypeId       Int?         @map("service_type_id")
+  /// QA4 Round-1 · B1 (2026-09-28) — see TemplateTask.deliverableTemplateId.
+  /// Same FK, same SetNull semantics, on the zone-task side.
+  deliverableTemplateId Int?       @map("deliverable_template_id")
   code                String       @db.VarChar(50)
   name                String       @db.VarChar(255)
   description         String?      @db.Text
@@ -1673,9 +1692,10 @@ model TemplateZoneTask {
   sortOrder           Int          @default(0) @map("sort_order")
   createdAt           DateTime     @default(now()) @map("created_at")
 
-  templateZone TemplateZone @relation(fields: [templateZoneId], references: [id], onDelete: Cascade)
-  serviceType  ServiceType? @relation(fields: [serviceTypeId], references: [id])
-  phase        Phase?       @relation(fields: [phaseId], references: [id])
+  templateZone        TemplateZone @relation(fields: [templateZoneId], references: [id], onDelete: Cascade)
+  serviceType         ServiceType? @relation(fields: [serviceTypeId], references: [id])
+  phase               Phase?       @relation(fields: [phaseId], references: [id])
+  deliverableTemplate Template?    @relation("TemplateZoneTaskDeliverableTemplate", fields: [deliverableTemplateId], references: [id], onDelete: SetNull)
 
   @@map("template_zone_tasks")
 }

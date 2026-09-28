@@ -45,7 +45,12 @@ export function ServicePickerModal({
         // Fetch service detail to get its tasks
         const detail = await client.get(`/templates/${svc.id}`).then((r) => r.data.data ?? r.data);
         const tasks = detail?.templateTasks ?? [];
-        // Copy each task tagged with the service name
+        // Copy each task tagged with the service name.
+        // QA4 · B1 (2026-09-28): also write the FK
+        // `deliverableTemplateId = svc.id` so a later rename of the
+        // Deliverable template no longer breaks the exact-name JOIN in
+        // project-init. The `[SERVICE:<name>]` marker stays in the
+        // description for display back-compat.
         for (const task of tasks) {
           await client.post(`/templates/zones/${zoneId}/tasks`, {
             code: task.code,
@@ -53,6 +58,8 @@ export function ServicePickerModal({
             description: `[SERVICE:${svc.name}]`,
             defaultBudgetHours: task.defaultBudgetHours,
             defaultBudgetAmount: task.defaultBudgetAmount,
+            deliverableTemplateId: svc.id,
+            phaseId: svc.phaseId ?? svc.phase?.id ?? undefined,
           });
         }
       }

@@ -423,7 +423,11 @@ export class ZonesService {
             // can group by Template.name (matches /templates/deliverables).
             // Gated on `template.type === 'task_list'` — zone templates
             // are spatial scaffolding, not deliverables.
-            deliverableTemplateId: deliverableId,
+            // QA4 · B1 (2026-09-28): if the individual templateTask has
+            // its own FK (post-picker-fix or migration backfill), that
+            // wins over the outer default so a rename-safe link comes
+            // through even when the outer template is a zone template.
+            deliverableTemplateId: (tt as any).deliverableTemplateId ?? deliverableId,
             code: tt.code,
             name: tt.name,
             description: tt.description,
@@ -666,7 +670,10 @@ export class ZonesService {
               data: {
                 zoneId: zone.id, projectId, serviceTypeId: tt.serviceTypeId,
                 // The linked task template is the Deliverable for these tasks.
-                deliverableTemplateId: tz.linkedTaskTemplateId,
+                // QA4 · B1: prefer the per-templateTask FK (correct after a
+                // deliverable rename); fall back to the zone's linked-task
+                // template id for pre-backfill rows.
+                deliverableTemplateId: (tt as any).deliverableTemplateId ?? tz.linkedTaskTemplateId,
                 code: tt.code, name: tt.name, description: tt.description,
                 budgetHours: budget.budgetHours, budgetAmount: budget.budgetAmount,
                 phaseId: servicePhaseId ?? tt.phaseId, priority: tt.defaultPriority, status: 'not_started', createdBy: userId,
@@ -682,6 +689,14 @@ export class ZonesService {
             await tx.task.create({
               data: {
                 zoneId: zone.id, projectId, serviceTypeId: tzt.serviceTypeId,
+                // QA4 · B1 (2026-09-28) — inline zone-tasks now carry a
+                // deliverable FK too (from the picker or the migration
+                // backfill). Read it here so the created project task
+                // arrives with its Service intact even when the Deliverable
+                // template was renamed later. Description marker stays for
+                // display back-compat; the final name-JOIN below is the
+                // last-resort fallback for un-backfilled rows.
+                deliverableTemplateId: (tzt as any).deliverableTemplateId ?? null,
                 code: tzt.code, name: tzt.name, description: tzt.description,
                 budgetHours: budget.budgetHours, budgetAmount: budget.budgetAmount,
                 phaseId: tzt.phaseId, priority: tzt.defaultPriority, status: 'not_started', createdBy: userId,
@@ -726,7 +741,11 @@ export class ZonesService {
               await tx.task.create({
                 data: {
                   zoneId: zone.id, projectId, serviceTypeId: tt.serviceTypeId,
-                  deliverableTemplateId: refDeliverableId,
+                  // QA4 · B1: per-templateTask FK wins over the outer
+                  // ref-template default — a referenced task_list is one
+                  // deliverable per templateTask when the marker/FK sets
+                  // it explicitly (post-fix).
+                  deliverableTemplateId: (tt as any).deliverableTemplateId ?? refDeliverableId,
                   code: tt.code, name: tt.name, description: tt.description,
                   budgetHours: budget.budgetHours, budgetAmount: budget.budgetAmount,
                   phaseId: refPhaseId ?? tt.phaseId, priority: tt.defaultPriority || 'medium', status: 'not_started', createdBy: userId,
@@ -768,7 +787,13 @@ export class ZonesService {
           await tx.task.create({
             data: {
               zoneId: mainZone.id, projectId, serviceTypeId: tt.serviceTypeId,
-              deliverableTemplateId: rootDeliverableId,
+              // QA4 · B1: per-templateTask FK wins. For a `task_list`
+              // outer template each templateTask still resolves to the
+              // outer templateId when its own FK is NULL (legacy shape).
+              // For a zone template (rootDeliverableId=null) the
+              // templateTask's FK — set by the picker or backfill — is
+              // what wires the deliverable identity.
+              deliverableTemplateId: (tt as any).deliverableTemplateId ?? rootDeliverableId,
               code: tt.code, name: tt.name, description: tt.description,
               budgetHours: budget.budgetHours, budgetAmount: budget.budgetAmount,
               phaseId: tt.phaseId, priority: tt.defaultPriority || 'medium', status: 'not_started', createdBy: userId,

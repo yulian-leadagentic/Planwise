@@ -246,6 +246,10 @@ export class TemplatesService {
       data: {
         templateId,
         serviceTypeId: body.serviceTypeId || null,
+        // QA4 · B1 (2026-09-28) — accept the deliverable FK from the
+        // pickers. Optional (some callers still write only the marker);
+        // when both come in, this is the source of truth going forward.
+        deliverableTemplateId: body.deliverableTemplateId ?? null,
         code: body.code,
         name: body.name,
         description: body.description || null,
@@ -264,6 +268,10 @@ export class TemplatesService {
       where: { id: taskId },
       data: {
         serviceTypeId: body.serviceTypeId,
+        // QA4 · B1 — allow a later PATCH to correct or clear the link.
+        // `undefined` skips the field entirely (Prisma treats it as
+        // "not part of the update"), so legacy callers stay unaffected.
+        deliverableTemplateId: body.deliverableTemplateId,
         code: body.code,
         name: body.name,
         description: body.description,
@@ -358,6 +366,9 @@ export class TemplatesService {
         defaultBudgetAmount: body.defaultBudgetAmount || null,
         phaseId: body.phaseId || null,
         serviceTypeId: body.serviceTypeId || null,
+        // QA4 · B1 (2026-09-28) — mirror of addTask() above; keeps the
+        // deliverable FK in sync when the zone-picker writes the task.
+        deliverableTemplateId: body.deliverableTemplateId ?? null,
         defaultPriority: body.defaultPriority || 'medium',
         sortOrder: body.sortOrder ?? (maxOrder._max.sortOrder ?? 0) + 1,
       },
