@@ -70,13 +70,13 @@ export function SeniorityHistorySection({
       client.post(`/users/${userId}/seniorities`, payload).then((r) => r.data),
     onSuccess: () => {
       refresh();
-      notify.success('Seniority entry added', { code: 'USER-SENIORITY-ADD-200' });
+      notify.success('Labor category entry added', { code: 'USER-SENIORITY-ADD-200' });
       setShowAddForm(false);
       setNewLevelId('');
       // Reset End to empty so the next add reads "Current" by default.
       setNewEndDate('');
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to add seniority entry'),
+    onError: (err: any) => notify.apiError(err, 'Failed to add labor category entry'),
   });
 
   const updateEntry = useMutation({
@@ -84,10 +84,10 @@ export function SeniorityHistorySection({
       client.patch(`/users/${userId}/seniorities/${id}`, payload).then((r) => r.data),
     onSuccess: () => {
       refresh();
-      notify.success('Seniority entry updated', { code: 'USER-SENIORITY-UPD-200' });
+      notify.success('Labor category entry updated', { code: 'USER-SENIORITY-UPD-200' });
       setEditingId(null);
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to update seniority entry'),
+    onError: (err: any) => notify.apiError(err, 'Failed to update labor category entry'),
   });
 
   const removeEntry = useMutation({
@@ -95,14 +95,14 @@ export function SeniorityHistorySection({
       client.delete(`/users/${userId}/seniorities/${id}`).then((r) => r.data),
     onSuccess: () => {
       refresh();
-      notify.success('Seniority entry removed', { code: 'USER-SENIORITY-DEL-200' });
+      notify.success('Labor category entry removed', { code: 'USER-SENIORITY-DEL-200' });
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to remove seniority entry'),
+    onError: (err: any) => notify.apiError(err, 'Failed to remove labor category entry'),
   });
 
   const handleAdd = () => {
     if (!newLevelId) {
-      notify.warning('Pick a seniority level', { code: 'USER-SENIORITY-ADD-400' });
+      notify.warning('Pick a labor category', { code: 'USER-SENIORITY-ADD-400' });
       return;
     }
     if (!newStartDate) {
@@ -146,12 +146,12 @@ export function SeniorityHistorySection({
         <div>
           <label
             className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 block"
-            title="Each row is a [startDate, endDate] interval. The project cost calc looks up which row covered each time entry's date and bills at that level's hourly cost."
+            title="Each row is a [startDate, endDate] interval. The project cost calc looks up which row covered each time entry's date and bills at that category's hourly cost."
           >
-            Seniority History
+            Labor Category History
           </label>
           <p className="text-[11px] text-slate-500 dark:text-slate-400">
-            Date-effective seniority. Open-ended adds auto-close the previous current row.
+            Date-effective labor category. Open-ended adds auto-close the previous current row.
           </p>
         </div>
         {!showAddForm && (
@@ -170,7 +170,7 @@ export function SeniorityHistorySection({
         <div className="mb-3 rounded-md border border-blue-200 bg-white dark:bg-slate-900 p-3 space-y-2">
           <div className="grid grid-cols-3 gap-2">
             <div>
-              <label className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Level</label>
+              <label className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Labor Category</label>
               <select
                 value={newLevelId}
                 onChange={(e) => setNewLevelId(e.target.value)}
@@ -235,7 +235,7 @@ export function SeniorityHistorySection({
         <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">Loading…</p>
       ) : history.length === 0 ? (
         <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">
-          No seniority history. Add the first entry to start tracking cost.
+          No labor category history. Add the first entry to start tracking cost.
         </p>
       ) : (
         <div className="space-y-1.5">
@@ -311,7 +311,7 @@ export function SeniorityHistorySection({
                 </span>
                 {/* Hourly cost shown only to users with finance:read.
                     Mirrors the backend gate on the cost endpoints —
-                    non-finance users see the seniority + dates so they
+                    non-finance users see the labor category + dates so they
                     can validate the history, just not the money. */}
                 {showCost && hourlyCost != null && (
                   <span className="text-slate-400 dark:text-slate-500">· ₪{hourlyCost}/h</span>
@@ -326,7 +326,7 @@ export function SeniorityHistorySection({
                     type="button"
                     onClick={() => startEdit(row)}
                     className="text-slate-400 dark:text-slate-500 hover:text-blue-600 min-w-[24px] min-h-[24px] p-1.5 rounded inline-flex items-center justify-center"
-                    aria-label={`Edit seniority entry starting ${fmtDate(row.startDate)}`}
+                    aria-label={`Edit labor category entry starting ${fmtDate(row.startDate)}`}
                     title="Edit"
                   >
                     <Pencil className="h-3 w-3" aria-hidden="true" />
@@ -334,10 +334,10 @@ export function SeniorityHistorySection({
                   <button
                     type="button"
                     onClick={async () => {
-                      if (await confirm(`Remove this seniority entry?`)) removeEntry.mutate(row.id);
+                      if (await confirm(`Remove this labor category entry?`)) removeEntry.mutate(row.id);
                     }}
                     className="text-slate-400 dark:text-slate-500 hover:text-red-600 min-w-[24px] min-h-[24px] p-1.5 rounded inline-flex items-center justify-center"
-                    aria-label={`Remove seniority entry starting ${fmtDate(row.startDate)}`}
+                    aria-label={`Remove labor category entry starting ${fmtDate(row.startDate)}`}
                     title="Remove"
                   >
                     <X className="h-3 w-3" aria-hidden="true" />

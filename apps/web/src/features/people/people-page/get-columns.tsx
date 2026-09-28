@@ -138,7 +138,7 @@ export function getColumns(
       // tab; this column is for quick scan only. QA3 round-2 item 4:
       // wired inline via the same pattern as the Role cell.
       id: 'seniorityLevel',
-      header: 'Seniority',
+      header: 'Labor Category',
       // QA3 master-handoff · Part B — seniority-level enum filter fed
       // by the catalog. accessorFn lets TanStack pull the value from
       // the nested seniorityLevel.name so the filter has something to
@@ -164,7 +164,7 @@ export function getColumns(
         const isSaving = savingUserId === user.id;
         return (
           <select
-            aria-label={`Seniority for ${user.firstName} ${user.lastName}`}
+            aria-label={`Labor Category for ${user.firstName} ${user.lastName}`}
             value={currentId}
             disabled={isSaving}
             onChange={(e) => {
@@ -215,10 +215,10 @@ export function getColumns(
             className="inline-flex items-center gap-1.5 font-mono text-sm text-slate-800 dark:text-slate-100"
             title={
               src === 'override'
-                ? 'Per-employee override — wins over the seniority level rate.'
+                ? 'Per-employee override — wins over the labor category rate.'
                 : src === 'level'
-                  ? 'From the seniority level rate history.'
-                  : 'From the seniority level default.'
+                  ? 'From the labor category rate history.'
+                  : 'From the labor category default.'
             }
           >
             ₪{r}/h

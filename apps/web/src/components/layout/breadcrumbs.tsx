@@ -82,7 +82,7 @@ const ROUTE_LABELS: Record<string, string> = {
   'number-ranges': 'Number Ranges',
   'object-numbering': 'Object Numbering',
   currencies: 'Currencies',
-  'seniority-levels': 'Seniority Levels',
+  'seniority-levels': 'Labor Categories',
   'project-role-types': 'Project Role Types',
   'data-import': 'Data Import',
   history: 'History',

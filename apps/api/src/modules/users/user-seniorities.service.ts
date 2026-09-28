@@ -181,7 +181,7 @@ export class UserSenioritiesService {
 
   async updateEntry(id: number, dto: UpdateSeniorityEntryDto) {
     const row = await this.prisma.userSeniority.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException('Seniority entry not found.');
+    if (!row) throw new NotFoundException('Labor category entry not found.');
 
     const next = {
       seniorityLevelId: dto.seniorityLevelId ?? row.seniorityLevelId,
@@ -231,10 +231,10 @@ export class UserSenioritiesService {
 
   async removeEntry(id: number) {
     const row = await this.prisma.userSeniority.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException('Seniority entry not found.');
+    if (!row) throw new NotFoundException('Labor category entry not found.');
     await this.prisma.userSeniority.delete({ where: { id } });
     await this.syncUserSeniorityLevel(row.userId);
-    return { message: 'Seniority entry removed.' };
+    return { message: 'Labor category entry removed.' };
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -248,7 +248,7 @@ export class UserSenioritiesService {
 
   private async assertLevel(levelId: number) {
     const l = await this.prisma.seniorityLevel.findUnique({ where: { id: levelId }, select: { id: true } });
-    if (!l) throw new NotFoundException(`Seniority level ${levelId} not found.`);
+    if (!l) throw new NotFoundException(`Labor category ${levelId} not found.`);
   }
 
   /**

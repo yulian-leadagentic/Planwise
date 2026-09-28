@@ -178,8 +178,8 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
                 Missing rates — {totals.unrateableUserCount} user{totals.unrateableUserCount === 1 ? '' : 's'} ({fmtHours(totals.unrateableHours)}) excluded from cost
               </h3>
               <p className="mt-0.5 text-[12px] text-amber-800/80">
-                Set a seniority level on these users (and a default hourly
-                cost on that level) to include their logged time.
+                Set a labor category on these users (and a default hourly
+                cost on that category) to include their logged time.
               </p>
               <ul className="mt-2 space-y-1">
                 {unrateable.map((row) => (
@@ -206,7 +206,7 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
         <div className="border-b border-slate-200 dark:border-slate-700 px-4 py-2.5">
           <h3 className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">By contributor</h3>
           <p className="text-[11px] text-slate-500 dark:text-slate-400">
-            Sorted by cost (largest first). Hourly cost comes from each user's seniority level.
+            Sorted by cost (largest first). Hourly cost comes from each user's labor category.
           </p>
         </div>
         {hasAnyRated ? (
@@ -214,7 +214,7 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/50 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 <th className="px-4 py-2 text-left font-semibold">Person</th>
-                <th className="px-4 py-2 text-left font-semibold">Seniority</th>
+                <th className="px-4 py-2 text-left font-semibold">Labor Category</th>
                 <th className="px-4 py-2 text-right font-semibold">Hours</th>
                 <th className="px-4 py-2 text-right font-semibold">Hourly cost</th>
                 <th className="px-4 py-2 text-right font-semibold">Total cost</th>

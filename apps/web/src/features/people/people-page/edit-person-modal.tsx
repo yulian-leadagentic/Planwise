@@ -298,7 +298,7 @@ export function EditPersonModal({
                   Cost rate override
                 </div>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Optional per-employee rate that wins over the seniority level rate.
+                  Optional per-employee rate that wins over the labor category rate.
                 </p>
               </div>
               <button

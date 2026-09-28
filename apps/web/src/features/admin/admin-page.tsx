@@ -116,8 +116,8 @@ const adminCards = [
     color: 'bg-green-100 text-green-700',
   },
   {
-    title: 'Seniority Levels',
-    description: 'Define the seniority ladder for employees and cost rates',
+    title: 'Labor Categories',
+    description: 'Define the labor-category ladder for employees and cost rates',
     icon: GraduationCap,
     href: '/admin/seniority-levels',
     module: 'admin',

@@ -114,11 +114,11 @@ export function SeniorityLevelsPage() {
         .then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'seniority-levels'] });
-      notify.success('Seniority level created', { code: 'SENIORITY-CREATE-201' });
+      notify.success('Labor category created', { code: 'SENIORITY-CREATE-201' });
       setShowCreate(false);
       setForm(emptyForm);
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to create seniority level'),
+    onError: (err: any) => notify.apiError(err, 'Failed to create labor category'),
   });
 
   const updateMutation = useMutation({
@@ -135,10 +135,10 @@ export function SeniorityLevelsPage() {
         .then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'seniority-levels'] });
-      notify.success('Seniority level updated', { code: 'SENIORITY-UPDATE-200' });
+      notify.success('Labor category updated', { code: 'SENIORITY-UPDATE-200' });
       setEditingId(null);
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to update seniority level'),
+    onError: (err: any) => notify.apiError(err, 'Failed to update labor category'),
   });
 
   const deleteMutation = useMutation({
@@ -146,9 +146,9 @@ export function SeniorityLevelsPage() {
       client.delete(`/admin/config/seniority-levels/${id}`).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'seniority-levels'] });
-      notify.success('Seniority level deleted', { code: 'SENIORITY-DELETE-200' });
+      notify.success('Labor category deleted', { code: 'SENIORITY-DELETE-200' });
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to delete seniority level'),
+    onError: (err: any) => notify.apiError(err, 'Failed to delete labor category'),
   });
 
   const startEdit = (row: SeniorityRow) => {
@@ -201,7 +201,7 @@ export function SeniorityLevelsPage() {
               {isDefault && (
                 <span
                   className="ml-1.5 inline-block rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:text-slate-400"
-                  title="No rate history yet — showing the level default until a rate is set."
+                  title="No rate history yet — showing the labor category default until a rate is set."
                 >
                   default
                 </span>
@@ -230,18 +230,18 @@ export function SeniorityLevelsPage() {
             )}
             <button
               onClick={() => startEdit(row.original)}
-              aria-label={`Edit level ${row.original.name}`}
+              aria-label={`Edit labor category ${row.original.name}`}
               className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
             >
               <Pencil className="h-3 w-3" aria-hidden="true" /> Edit
             </button>
             <button
               onClick={async () => {
-                // People UX U2 — deleting a catalog level is destructive
+                // People UX U2 — deleting a catalog category is destructive
                 // (employees may still reference it via UserSeniority
                 // history). Danger variant + verb button.
                 const ok = await confirm(
-                  `Employees still holding this level will fall back to no seniority; historical entries stay attached.`,
+                  `Employees still holding this labor category will fall back to none; historical entries stay attached.`,
                   {
                     title: `Delete labor category "${row.original.name}"?`,
                     variant: 'danger',
@@ -250,7 +250,7 @@ export function SeniorityLevelsPage() {
                 );
                 if (ok) deleteMutation.mutate(row.original.id);
               }}
-              aria-label={`Delete level ${row.original.name}`}
+              aria-label={`Delete labor category ${row.original.name}`}
               className="inline-flex items-center gap-1 text-xs text-red-600 hover:underline"
             >
               <Trash2 className="h-3 w-3" aria-hidden="true" /> Delete
@@ -265,8 +265,8 @@ export function SeniorityLevelsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Seniority Levels"
-        description="Define the seniority ladder used by employee roles and cost rates. Each level is a row; order them from junior to senior using the sort order."
+        title="Labor Categories"
+        description="Define the labor-category ladder used by employee roles and cost rates. Each category is a row; order them from junior to senior using the sort order."
         actions={
           !showCreate && editingId == null ? (
             <button
@@ -276,7 +276,7 @@ export function SeniorityLevelsPage() {
               }}
               className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700"
             >
-              <Plus className="h-4 w-4" /> Add level
+              <Plus className="h-4 w-4" /> Add category
             </button>
           ) : null
         }
@@ -327,8 +327,8 @@ export function SeniorityLevelsPage() {
       ) : rows.length === 0 ? (
         <EmptyState
           icon={GraduationCap}
-          title="No seniority levels defined"
-          description="Add your first level to start (e.g. Junior, Mid, Senior)."
+          title="No labor categories defined yet"
+          description="Add your first category to start (e.g. Junior, Mid, Senior)."
         />
       ) : (
         <DataTable columns={columns} data={rows} pageSize={1000} enableColumnFilters />
@@ -450,7 +450,7 @@ function RateHistoryModal({
           </div>
           <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
             Closes the current row at the day before, opens a new row starting {effectiveFrom || '…'}.
-            Entries before that date keep the prior rate.
+            Entries before that date keep the prior rate for this labor category.
           </p>
         </div>
 
@@ -462,7 +462,7 @@ function RateHistoryModal({
             <p className="text-xs text-slate-400">Loading…</p>
           ) : rates.length === 0 ? (
             <p className="text-xs text-slate-400 italic">
-              No rate history yet — the level uses its default hourly cost until you set one.
+              No rate history yet — the labor category uses its default hourly cost until you set one.
             </p>
           ) : (
             <div className="overflow-hidden rounded-md border border-slate-200 dark:border-slate-700">
@@ -559,7 +559,7 @@ function FormCard({
           type="number"
           value={form.sortOrder}
           onChange={(e) => update('sortOrder', Number(e.target.value))}
-          hint="Use 10 / 20 / 30 so new levels fit between existing ones."
+          hint="Use 10 / 20 / 30 so new categories fit between existing ones."
         />
         {/* People UX M2b (E-23) — Hourly Cost is no longer an editable
             field on the form. Rate changes must go through the
@@ -621,7 +621,7 @@ function FormCard({
             onChange={(e) => update('defaultHourlyCost', e.target.value)}
             placeholder="e.g. 80.00"
             inputClassName="font-mono"
-            hint='After the level is created, update this via "Change rate" so rates carry a forward-effective date.'
+            hint='After the labor category is created, update this via "Change rate" so rates carry a forward-effective date.'
           />
         )}
         {/* QA3 round-3 item 5 — Currency picker removed; system is

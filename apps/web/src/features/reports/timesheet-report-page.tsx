@@ -567,7 +567,7 @@ export function TimesheetReportPage() {
               hint that'd otherwise just confuse non-finance viewers). */}
           {showFinance && (
             totals.byCurrency.length === 0 ? (
-              <span className="text-blue-100 italic">No resolved cost (set Seniority hourly costs to populate)</span>
+              <span className="text-blue-100 italic">No resolved cost (set Labor Category hourly costs to populate)</span>
             ) : (
               totals.byCurrency.map((c) => (
                 <span key={c.currency} className="font-semibold">

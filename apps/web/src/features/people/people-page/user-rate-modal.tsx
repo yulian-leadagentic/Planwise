@@ -138,8 +138,8 @@ export function UserRateModal({ user, onClose }: Props) {
             </>
           ) : (
             <>
-              No override active. This user derives their rate from their seniority level (see the
-              Seniority Levels admin page).
+              No override active. This user derives their rate from their labor category (see the
+              Labor Categories admin page).
             </>
           )}
         </div>

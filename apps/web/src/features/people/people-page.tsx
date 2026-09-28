@@ -277,11 +277,11 @@ export function PeoplePage() {
     onMutate: ({ userId }) => setSavingUserId(userId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      // Seniority feeds cost — nudge project surfaces that show actuals.
+      // Labor category feeds cost — nudge project surfaces that show actuals.
       queryClient.invalidateQueries({ queryKey: ['projects'] });
-      notify.success('Seniority updated', { code: 'USER-SENIORITY-200' });
+      notify.success('Labor category updated', { code: 'USER-SENIORITY-200' });
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to update seniority'),
+    onError: (err: any) => notify.apiError(err, 'Failed to update labor category'),
     onSettled: () => setSavingUserId(null),
   });
 
@@ -814,14 +814,14 @@ export function PeoplePage() {
                   {departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
                 </SelectField>
               </div>
-              {/* M5a — Seniority Level (drives default hourly cost).
+              {/* M5a — Labor Category (drives default hourly cost).
                   Cost preview + price tags on each option are gated
                   by finance:read so non-finance users see only the
-                  level name. */}
+                  category name. */}
               <SelectField
                 label={
                   <>
-                    Seniority Level
+                    Labor Category
                     {/* Finance gate — no admin short-circuit; admins must
                         hold the explicit Finance grant in /admin/roles. */}
                     {can('finance', 'read') && (() => {
@@ -838,7 +838,7 @@ export function PeoplePage() {
                 value={form.seniorityLevelId}
                 onChange={(e) => setForm((f) => ({ ...f, seniorityLevelId: e.target.value === '' ? '' : Number(e.target.value) }))}
               >
-                <option value="">— Pick a seniority level —</option>
+                <option value="">— Pick a labor category —</option>
                 {seniorityLevels.map((s: any) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
@@ -849,8 +849,8 @@ export function PeoplePage() {
                 ))}
               </SelectField>
               {seniorityLevels.length === 0 && (
-                <p className="text-[11px] text-amber-700 mt-1">
-                  No seniority levels defined yet. Add some in <a className="text-blue-600 hover:underline" href="/admin/seniority-levels" target="_blank" rel="noreferrer">/admin/seniority-levels</a>.
+                <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">
+                  No labor categories defined yet. Add some in <a className="text-blue-600 dark:text-blue-400 hover:underline" href="/admin/seniority-levels" target="_blank" rel="noreferrer">/admin/seniority-levels</a>.
                 </p>
               )}
 

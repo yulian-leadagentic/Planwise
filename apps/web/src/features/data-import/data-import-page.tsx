@@ -38,7 +38,7 @@ const TARGETS: Array<{
   {
     key: 'users',
     label: 'Employees',
-    description: 'Create employee accounts with role, seniority, and employment dates. Sets up the seniority history row automatically.',
+    description: 'Create employee accounts with role, labor category, and employment dates. Sets up the labor category history row automatically.',
     icon: Users,
     available: true,
   },

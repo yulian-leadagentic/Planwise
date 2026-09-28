@@ -522,7 +522,7 @@ export class ConfigController {
   @RequirePermissions({ module: 'admin', action: 'delete' })
   async deleteSeniorityLevel(@Param('id', ParseIntPipe) id: number) {
     await this.prisma.seniorityLevel.delete({ where: { id } });
-    return { message: 'Seniority level deleted' };
+    return { message: 'Labor category deleted' };
   }
 
   // ─── QA3 item 1 (2026-09-24) — effective-dated rate history ─────────
