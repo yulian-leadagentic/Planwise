@@ -19,9 +19,25 @@ const columns: ColumnDef<Contract, unknown>[] = [
     cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
   },
   {
-    accessorKey: 'partner',
-    header: 'Partner',
+    accessorKey: 'party',
+    header: 'Party',
+    // Phase 4 · Stage 3 (2026-09-28) — prefer the BP `party.displayName`
+    // (which already carries the "right" name for both organizations and
+    // people). Fall back to the legacy User `partner.firstName + lastName`
+    // for rows the follow-up migration hasn't backfilled yet.
     cell: ({ row }) => {
+      const party = row.original.party;
+      if (party) {
+        const isOrg = party.partnerType === 'organization';
+        return (
+          <div>
+            <p className="text-sm">{party.displayName}</p>
+            <p className="text-[10px] leading-none text-slate-500 dark:text-slate-400">
+              {isOrg ? 'Organization' : 'Contact'}
+            </p>
+          </div>
+        );
+      }
       const p = row.original.partner;
       if (!p) return '-';
       return (
@@ -126,24 +142,31 @@ export function ContractsPage() {
           columns={columns}
           data={contracts}
           isLoading={isLoading}
-          renderCard={(contract) => (
-            <div className="rounded-lg border border-border bg-background p-4 hover:bg-muted/50">
-              <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="font-medium">{contract.name}</h3>
-                  {contract.partner && (
-                    <p className="text-xs text-muted-foreground">
-                      {contract.partner.firstName} {contract.partner.lastName}
-                    </p>
-                  )}
+          renderCard={(contract) => {
+            // Phase 4 · Stage 3 (2026-09-28) — prefer BP party over the
+            // legacy User partner for the card's subtitle.
+            const partyLabel = contract.party
+              ? contract.party.displayName
+              : contract.partner
+              ? `${contract.partner.firstName} ${contract.partner.lastName}`.trim()
+              : null;
+            return (
+              <div className="rounded-lg border border-border bg-background p-4 hover:bg-muted/50">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="font-medium">{contract.name}</h3>
+                    {partyLabel && (
+                      <p className="text-xs text-muted-foreground">{partyLabel}</p>
+                    )}
+                  </div>
+                  <StatusBadge status={contract.status} />
                 </div>
-                <StatusBadge status={contract.status} />
+                {contract.totalAmount != null && (
+                  <p className="mt-2 text-sm font-medium">{formatCurrency(contract.totalAmount)}</p>
+                )}
               </div>
-              {contract.totalAmount != null && (
-                <p className="mt-2 text-sm font-medium">{formatCurrency(contract.totalAmount)}</p>
-              )}
-            </div>
-          )}
+            );
+          }}
           emptyMessage="No contracts found"
         />
       )}

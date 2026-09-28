@@ -141,6 +141,12 @@ export class ContractsService {
         include: {
           project: { select: { id: true, name: true } },
           partner: { select: { id: true, firstName: true, lastName: true, companyName: true } },
+          // Phase 4 · Stage 3 (2026-09-28) — additive: expose the BP
+          // party relation so readers can prefer `party.displayName`
+          // over the legacy User-based `partner` name. Null when the
+          // row predates the Stage 3 migration and its User has no
+          // linked BP.
+          party: { select: { id: true, partnerType: true, displayName: true, companyName: true, email: true } },
           _count: { select: { items: true, billings: true } },
         },
       }),
@@ -159,6 +165,8 @@ export class ContractsService {
       include: {
         project: { select: { id: true, name: true } },
         partner: { select: { id: true, firstName: true, lastName: true, companyName: true, email: true } },
+        // Phase 4 · Stage 3 (2026-09-28) — additive: BP party relation.
+        party: { select: { id: true, partnerType: true, displayName: true, companyName: true, email: true } },
         creator: { select: { id: true, firstName: true, lastName: true } },
         items: {
           include: {
@@ -191,6 +199,8 @@ export class ContractsService {
       include: {
         project: { select: { id: true, name: true } },
         partner: { select: { id: true, firstName: true, lastName: true, companyName: true } },
+        // Phase 4 · Stage 3 (2026-09-28) — additive: BP party relation.
+        party: { select: { id: true, partnerType: true, displayName: true, companyName: true, email: true } },
       },
     });
 

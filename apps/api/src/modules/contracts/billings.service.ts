@@ -46,6 +46,8 @@ export class BillingsService {
         contract: {
           include: {
             partner: { select: { id: true, firstName: true, lastName: true, companyName: true } },
+            // Phase 4 · Stage 3 (2026-09-28) — additive: BP party.
+            party: { select: { id: true, partnerType: true, displayName: true, companyName: true, email: true } },
             project: { select: { id: true, name: true } },
           },
         },

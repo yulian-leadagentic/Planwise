@@ -4,7 +4,15 @@ export interface Contract {
   id: number;
   name: string;
   projectId: number | null;
+  /** LEGACY — User FK. Kept for one release; prefer `partyId`. */
   partnerId: number;
+  /**
+   * Phase 4 · Stage 3 (2026-09-28) — the BusinessPartner this contract is
+   * with (organization or person). Populated by the party read include on
+   * the API side; nullable until every row has been backfilled by the
+   * follow-up migration that retires `partnerId`.
+   */
+  partyId?: number | null;
   status: ContractStatus;
   totalAmount: number | null;
   startDate: string | null;
@@ -13,12 +21,26 @@ export interface Contract {
   createdBy: number;
   createdAt: string;
   updatedAt: string;
+  /** LEGACY — User relation. Prefer `party` for the display name. */
   partner?: {
     id: number;
     firstName: string;
     lastName: string;
     companyName: string | null;
   };
+  /**
+   * Phase 4 · Stage 3 (2026-09-28) — BusinessPartner relation. When
+   * present, this is the canonical party of the contract; reader UIs
+   * should prefer `party.displayName` and fall back to the legacy
+   * `partner` name only when `party` is null.
+   */
+  party?: {
+    id: number;
+    partnerType: 'organization' | 'person';
+    displayName: string;
+    companyName?: string | null;
+    email?: string | null;
+  } | null;
   project?: {
     id: number;
     name: string;
