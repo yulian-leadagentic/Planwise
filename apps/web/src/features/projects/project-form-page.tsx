@@ -12,6 +12,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { notify } from '@/lib/notify';
 import { PeopleMultiSelect, type Person } from '@/components/shared/people-multi-select';
 import { Field, SelectField } from '@/components/shared/field';
+import { buildTree } from '@/features/admin/organization-page/build-tree';
 
 // Empty-string → undefined preprocessor. Lets `.optional()` pass for
 // blank fields without z.coerce.number() turning '' into NaN and
@@ -36,6 +37,13 @@ const projectSchema = z.object({
     .array(z.number().int().positive())
     .min(1, 'Please select at least one project category'),
   departmentId: optionalNumber,
+  /**
+   * QA4 Round-1 · A2 (2026-09-28) — Organizational unit hosting this
+   * project. Optional at create; server verifies the unit exists and
+   * `assignableToProjects === true` (soft-deleted or gated units are
+   * rejected with a 400).
+   */
+  orgUnitId: optionalNumber,
   customerOrgId: z.coerce.number().min(1, 'Please pick a customer organization'),
   status: z.string().default('draft'),
   // Was z.coerce.number().optional() — empty input coerces to NaN
@@ -61,6 +69,7 @@ const FIELD_LABELS: Record<string, string> = {
   number: 'Project Number',
   projectTypeIds: 'Project Category',
   departmentId: 'Department',
+  orgUnitId: 'Organizational unit',
   customerOrgId: 'Customer',
   status: 'Status',
   budget: 'Budget',
@@ -122,6 +131,23 @@ export function ProjectFormPage() {
       const d = r.data?.data ?? r.data;
       return Array.isArray(d) ? d : (d?.data ?? []);
     }),
+  });
+
+  // QA4 Round-1 · A2 (2026-09-28) — OrgUnit picker feed. Returns the
+  // FLAT tree from `GET /org-units`; we filter to
+  // `assignableToProjects === true` and render it hierarchically via
+  // the shared `buildTree` helper the admin Organization page uses.
+  // 'org-units' is a legitimate root query key here (Organization
+  // admin uses ['org', 'tree']) — the picker is a separate consumer
+  // and shouldn't get bulk-invalidated by unrelated admin mutations.
+  const { data: orgUnitsAll = [] } = useQuery<any[]>({
+    queryKey: ['org-units'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () =>
+      client.get('/org-units').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
   });
   // How the Project Number field should behave, driven by the number range
   // assigned to the PROJECT entity kind (Admin → Object Numbering):
@@ -296,6 +322,8 @@ export function ProjectFormPage() {
         description: project.description ?? '',
         projectTypeIds: seededCategoryIds,
         departmentId: (project as any).departmentId ?? undefined,
+        // QA4 A2 — reseed the OrgUnit picker from the persisted FK.
+        orgUnitId: (project as any).orgUnitId ?? undefined,
         customerOrgId: existingCustomerRel?.partyId ?? existingCustomerRel?.party?.id ?? undefined,
         status: project.status,
         budget: project.budget ?? undefined,
@@ -714,6 +742,70 @@ export function ProjectFormPage() {
                     preserved; it just stops being editable from the
                     create form. Future cleanup migration can drop the
                     column. */}
+
+                {/* QA4 Round-1 · A2 (2026-09-28) — Organizational unit
+                    picker. Hierarchical <select>: units are flattened
+                    depth-first via the shared `buildTree` so subtree
+                    ordering matches the Organization admin. Options
+                    are filtered to `assignableToProjects === true` so
+                    admin-gated units don't show up. Server rejects
+                    non-assignable ids anyway (defense-in-depth). */}
+                <div>
+                  <label className={labelClass} htmlFor="orgUnitId">
+                    Organizational unit
+                  </label>
+                  <select
+                    id="orgUnitId"
+                    {...register('orgUnitId', {
+                      // '' → undefined so the DTO's @IsOptional accepts a blank pick.
+                      setValueAs: (v) => (v === '' || v == null ? undefined : Number(v)),
+                    })}
+                    className={inputClass}
+                  >
+                    <option value="">
+                      {orgUnitsAll.length === 0 ? 'No units available' : '— No unit —'}
+                    </option>
+                    {(() => {
+                      // Filter to assignable, then flatten depth-first
+                      // via buildTree so children render under their
+                      // parent regardless of DB ordering. Non-breaking
+                      // spaces indent each depth level in the label.
+                      const assignable = orgUnitsAll.filter(
+                        (u: any) => u.assignableToProjects !== false,
+                      );
+                      const roots = buildTree(assignable as any[]);
+                      const flat: Array<{ id: number; label: string }> = [];
+                      const walk = (list: any[], depth: number) => {
+                        for (const item of list) {
+                          const n = item.node;
+                          const indent = '  '.repeat(depth);
+                          flat.push({
+                            id: n.id,
+                            label: `${indent}${n.name}${n.code ? ` (${n.code})` : ''}`,
+                          });
+                          walk(item.children, depth + 1);
+                        }
+                      };
+                      walk(roots as any[], 0);
+                      return flat.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.label}
+                        </option>
+                      ));
+                    })()}
+                  </select>
+                  <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+                    Optional — hosts the project inside the org tree. Admins can
+                    toggle which units accept projects in{' '}
+                    <a
+                      href="/admin/organization"
+                      className="text-blue-600 hover:underline dark:text-blue-400"
+                    >
+                      Organization
+                    </a>
+                    .
+                  </p>
+                </div>
 
                 {/* Customer (required at create; locked in edit mode) */}
                 <div>

@@ -72,6 +72,20 @@ export class CreateProjectDto {
   @IsInt()
   departmentId?: number;
 
+  /**
+   * QA4 Round-1 · A2 (2026-09-28) — Organizational unit that hosts this
+   * project. `Project.orgUnitId` + relation already exist; we surface
+   * them on the DTO so the ValidationPipe (`forbidNonWhitelisted:true`)
+   * doesn't 400 on the create/update payload. Free of the legacy
+   * `departmentId` — OrgUnit is the single source of truth going
+   * forward. Validation of "unit exists and is assignable" happens in
+   * projects.service.ts.
+   */
+  @ApiPropertyOptional({ description: 'Organizational unit id (must be assignable-to-projects)' })
+  @IsOptional()
+  @IsInt()
+  orgUnitId?: number;
+
   @ApiPropertyOptional({ enum: ProjectStatus })
   @IsOptional()
   @IsEnum(ProjectStatus)

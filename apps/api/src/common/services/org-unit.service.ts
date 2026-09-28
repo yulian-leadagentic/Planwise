@@ -61,8 +61,14 @@ export class OrgUnitService {
     managerUserId?: number | null;
     code?: string | null;
     sortOrder?: number;
+    /**
+     * QA4 Round-1 · A3 — Whether projects may be assigned to this unit.
+     * Defaults to TRUE at the DB level, matching the schema default, so
+     * existing callers that don't send the field keep current behaviour.
+     */
+    assignableToProjects?: boolean;
   }) {
-    const { name, parentId = null, managerUserId = null, code = null, sortOrder = 0 } = input;
+    const { name, parentId = null, managerUserId = null, code = null, sortOrder = 0, assignableToProjects } = input;
 
     return this.prisma.$transaction(async (tx) => {
       let parentPath = '/';
@@ -87,6 +93,8 @@ export class OrgUnitService {
           sortOrder,
           path: '/', // rewritten immediately below
           depth: parentDepth + 1,
+          // Omit when undefined so the schema's @default(true) applies.
+          ...(assignableToProjects !== undefined ? { assignableToProjects } : {}),
         },
       });
 
@@ -213,7 +221,10 @@ export class OrgUnitService {
    * so a client can't touch path/depth/parentId — those are owned by
    * move() so the tree invariant stays intact).
    */
-  async updateMeta(id: number, patch: { name?: string; code?: string | null }) {
+  async updateMeta(
+    id: number,
+    patch: { name?: string; code?: string | null; assignableToProjects?: boolean },
+  ) {
     const unit = await this.prisma.orgUnit.findFirst({
       where: { id, deletedAt: null },
       select: { id: true },
@@ -223,6 +234,13 @@ export class OrgUnitService {
     const data: Prisma.OrgUnitUpdateInput = {};
     if (patch.name !== undefined) data.name = patch.name;
     if (patch.code !== undefined) data.code = patch.code;
+    // QA4 Round-1 · A3 (2026-09-28) — flip the per-unit "can host
+    // projects" gate. `undefined` skips the field entirely (preserves
+    // current value); `true`/`false` writes explicitly. Explicit whitelist
+    // — the controller must have translated the raw body first.
+    if (patch.assignableToProjects !== undefined) {
+      data.assignableToProjects = patch.assignableToProjects;
+    }
 
     return this.prisma.orgUnit.update({ where: { id }, data });
   }
@@ -336,6 +354,10 @@ export class OrgUnitService {
         sortOrder: u.sortOrder,
         managerUserId: u.managerUserId,
         manager: u.manager,
+        // QA4 Round-1 · A3 (2026-09-28) — surface the assignable flag so
+        // the project OrgUnit picker (New-Project / Edit) can filter to
+        // assignable units, and the admin UI can show a per-node badge.
+        assignableToProjects: u.assignableToProjects,
         memberCount: directCount.get(u.id) ?? 0,
         subtreeMemberCount,
         subtreeUnitCount,

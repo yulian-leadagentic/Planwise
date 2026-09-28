@@ -121,6 +121,28 @@ export class ProjectsService {
   async create(userId: number, dto: CreateProjectDto) {
     const { memberIds, leaderId, customerOrgId, roleAssignments, projectTypeIds, ...rest } = dto;
 
+    // QA4 Round-1 · A2 (2026-09-28) — When the client asks to place the
+    // project under an OrgUnit, verify (a) the unit is not soft-deleted
+    // and (b) admins haven't flipped it off in the Organization admin
+    // (assignableToProjects=false). Rejecting here matches how the
+    // OrgUnit picker on the New-Project form filters its options — a
+    // caller can't do an end-run via curl. Runs before any writes so a
+    // rejected assignment doesn't leak a half-built project.
+    if (rest.orgUnitId != null) {
+      const unit = await this.prisma.orgUnit.findFirst({
+        where: { id: rest.orgUnitId, deletedAt: null },
+        select: { id: true, assignableToProjects: true },
+      });
+      if (!unit) {
+        throw new BadRequestException(`Organizational unit ${rest.orgUnitId} not found`);
+      }
+      if (!unit.assignableToProjects) {
+        throw new BadRequestException(
+          `Organizational unit ${rest.orgUnitId} is not available for project assignments`,
+        );
+      }
+    }
+
     // QA3 Wave-1 Commit 3C (PR-037) — resolve the effective category set.
     // Priority: explicit `projectTypeIds` array > explicit `projectTypeId`
     // scalar > fail. `projectTypeId` becomes the PRIMARY FK (used for
@@ -777,6 +799,24 @@ export class ProjectsService {
   async update(id: number, dto: UpdateProjectDto, actorUserId?: number) {
     await this.findOne(id);
     const { memberIds, projectTypeIds, ...rest } = dto;
+
+    // QA4 Round-1 · A2 (2026-09-28) — same guard as create(): reject an
+    // OrgUnit that is soft-deleted or has assignableToProjects=false.
+    // Setting orgUnitId=null explicitly is fine — that clears the link.
+    if (rest.orgUnitId != null) {
+      const unit = await this.prisma.orgUnit.findFirst({
+        where: { id: rest.orgUnitId, deletedAt: null },
+        select: { id: true, assignableToProjects: true },
+      });
+      if (!unit) {
+        throw new BadRequestException(`Organizational unit ${rest.orgUnitId} not found`);
+      }
+      if (!unit.assignableToProjects) {
+        throw new BadRequestException(
+          `Organizational unit ${rest.orgUnitId} is not available for project assignments`,
+        );
+      }
+    }
 
     // Capture which keys are actually being changed (any value supplied,
     // including null) so the activity-log description can name the fields

@@ -59,30 +59,42 @@ export class OrgUnitsController {
   @RequirePermissions({ module: 'org', action: 'write' })
   @ApiOperation({ summary: 'Create a unit (optionally under a parent, optionally with a manager)' })
   async create(
-    @Body() body: { name: string; code?: string | null; parentId?: number | null; managerUserId?: number | null },
+    @Body() body: {
+      name: string;
+      code?: string | null;
+      parentId?: number | null;
+      managerUserId?: number | null;
+      /** QA4 A3 (2026-09-28) — optional; defaults TRUE in schema. */
+      assignableToProjects?: boolean;
+    },
   ) {
     return this.orgUnits.create({
       name: body.name,
       code: body.code ?? null,
       parentId: body.parentId ?? null,
       managerUserId: body.managerUserId ?? null,
+      assignableToProjects: body.assignableToProjects,
     });
   }
 
   @Patch('org-units/:id')
   @RequirePermissions({ module: 'org', action: 'write' })
-  @ApiOperation({ summary: 'Rename / change the short code of a unit' })
+  @ApiOperation({ summary: 'Rename / change the short code / assignable-to-projects toggle' })
   async update(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { name?: string; code?: string | null },
+    @Body() body: { name?: string; code?: string | null; assignableToProjects?: boolean },
   ) {
-    // Whitelist: only name + code go to the service. Tree topology
-    // (parentId/path/depth) is owned by the /move endpoint, manager
-    // by /manager. Do NOT spread the raw body into a bare update or
-    // a client can rewire the tree via the PATCH shape.
+    // Whitelist: only name + code + assignableToProjects go to the
+    // service. Tree topology (parentId/path/depth) is owned by the
+    // /move endpoint, manager by /manager. Do NOT spread the raw body
+    // into a bare update or a client can rewire the tree via the PATCH
+    // shape. QA4 A3 (2026-09-28) added `assignableToProjects` to the
+    // whitelist — the Organization admin's per-unit toggle PATCHes
+    // this endpoint.
     return this.orgUnits.updateMeta(id, {
       name: body.name,
       code: body.code,
+      assignableToProjects: body.assignableToProjects,
     });
   }
 

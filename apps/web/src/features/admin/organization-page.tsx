@@ -74,6 +74,13 @@ interface OrgNode {
   sortOrder: number;
   managerUserId: number | null;
   manager: OrgManager | null;
+  /**
+   * QA4 Round-1 · A3 (2026-09-28) — Can projects be assigned to this
+   * unit? Drives (a) the toggle in `UnitPanel`, (b) the "not assignable"
+   * badge on the tree row, and (c) the project OrgUnit picker's filter.
+   * Backend defaults it to TRUE for existing rows.
+   */
+  assignableToProjects: boolean;
   memberCount: number;
   subtreeMemberCount: number;
   subtreeUnitCount: number;
@@ -448,6 +455,17 @@ function TreeRow({
               {node.code}
             </span>
           )}
+          {/* QA4 A3 — read-only "not assignable" badge on the tree row
+              when admins have flipped the per-unit gate off. Assignable
+              is the default so the row stays clean for the majority. */}
+          {!node.assignableToProjects && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded-[5px] bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 shrink-0"
+              title="Projects can't be assigned to this unit"
+            >
+              not assignable
+            </span>
+          )}
           {showSubtree && (
             <span className="text-[11px] text-slate-400 dark:text-slate-500 truncate tabular-nums">
               {node.subtreeUnitCount} units · {node.subtreeMemberCount} people
@@ -578,6 +596,23 @@ function UnitPanel({
     onError: (err: any) => notify.apiError(err, 'Failed to remove member'),
   });
 
+  // QA4 Round-1 · A3 (2026-09-28) — Per-unit "can projects be assigned
+  // here" gate. PATCHes the same /org-units/:id whitelist the rename
+  // dialog uses, so a permission gap on `org:write` naturally covers
+  // both. Optimistic UI is skipped intentionally — the invalidate ends
+  // up refetching one tree query, and the on-hover latency is invisible.
+  const setAssignable = useMutation({
+    mutationFn: (value: boolean) =>
+      client
+        .patch(`/org-units/${node.id}`, { assignableToProjects: value })
+        .then((r) => r.data),
+    onSuccess: () => {
+      invalidateOrg();
+      notify.success('Assignability updated', { code: 'ORG-ASSIGNABLE-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update assignability'),
+  });
+
   const columns: ColumnDef<OrgMember, unknown>[] = useMemo(
     () => [
       {
@@ -668,6 +703,35 @@ function UnitPanel({
             {node.memberCount} direct member{node.memberCount === 1 ? '' : 's'} · {node.subtreeUnitCount} unit{node.subtreeUnitCount === 1 ? '' : 's'} in subtree · {node.subtreeMemberCount} people below
           </p>
         </div>
+      </div>
+
+      {/* QA4 Round-1 · A3 (2026-09-28) — Per-unit "assignable to projects" gate.
+          Admins flip this off for reference/holding units that shouldn't host
+          projects; the flag drives the New-Project OrgUnit picker's filter
+          and a server-side reject on the project create/update path. */}
+      <div className="space-y-1.5">
+        <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+          Projects
+        </label>
+        <label className="flex items-start gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={node.assignableToProjects}
+            disabled={!canWrite || setAssignable.isPending}
+            onChange={(e) => setAssignable.mutate(e.target.checked)}
+            className="mt-0.5 h-4 w-4 rounded border-slate-300 dark:border-slate-600 accent-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+            aria-label="Projects can be assigned to this unit"
+          />
+          <span className="min-w-0">
+            <span className="block text-[13px] font-semibold text-slate-800 dark:text-slate-100">
+              Projects can be assigned to this unit
+            </span>
+            <span className="block text-[11px] text-slate-500 dark:text-slate-400">
+              When off, this unit is hidden from the New-Project and Edit-Project
+              OrgUnit picker and the server rejects direct assignments.
+            </span>
+          </span>
+        </label>
       </div>
 
       {/* Manager row */}

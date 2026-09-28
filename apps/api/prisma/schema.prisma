@@ -2741,6 +2741,12 @@ model OrgUnit {
   path          String    @default("/")
   depth         Int       @default(0)
   sortOrder     Int       @default(0) @map("sort_order")
+  /// QA4 Round-1 · A3 (2026-09-28) — Per-unit gate for the project
+  /// OrgUnit picker. TRUE (default) means projects may be assigned to
+  /// this unit; FALSE hides it in the picker (New-Project / Edit) and
+  /// server-side rejects assignments (projects.service.ts create/update).
+  /// Existing rows default TRUE to preserve current behaviour.
+  assignableToProjects Boolean @default(true) @map("assignable_to_projects")
   deletedAt     DateTime? @map("deleted_at")
   members       User[]    @relation("UserOrgUnit")
   /// Phase 4 · Stage 2 (2026-09-28) — Projects hosted by this unit.
