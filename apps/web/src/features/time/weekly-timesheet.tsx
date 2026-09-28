@@ -37,16 +37,34 @@ function minutesToTime(mins: number): string {
 
 // ─── Time Entry Form Popup ──────────────────────────────────────────────────
 
-function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
-  date: string; startTime: string; endTime: string; onClose: () => void; onSaved: () => void;
+function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved }: {
+  date: string;
+  startTime: string;
+  endTime: string;
+  // QA4 B5: when `entry` is passed the popup edits that row instead
+  // of creating a new one — reuses the PATCH /time-entries/:id path
+  // that was built but never wired to any UI.
+  entry?: {
+    id: number;
+    projectId?: number | null;
+    taskId?: number | null;
+    startTime?: string | null;
+    endTime?: string | null;
+    location?: string | null;
+    note?: string | null;
+    isBillable?: boolean | null;
+  } | null;
+  onClose: () => void;
+  onSaved: () => void;
 }) {
-  const [projectId, setProjectId] = useState<string>('');
-  const [taskId, setTaskId] = useState<string>('');
-  const [start, setStart] = useState(startTime);
-  const [end, setEnd] = useState(endTime);
-  const [location, setLocation] = useState<'office' | 'home'>('office');
-  const [note, setNote] = useState('');
-  const [isBillable, setIsBillable] = useState(true);
+  const isEditing = !!entry?.id;
+  const [projectId, setProjectId] = useState<string>(entry?.projectId != null ? String(entry.projectId) : '');
+  const [taskId, setTaskId] = useState<string>(entry?.taskId != null ? String(entry.taskId) : '');
+  const [start, setStart] = useState(entry?.startTime ?? startTime);
+  const [end, setEnd] = useState(entry?.endTime ?? endTime);
+  const [location, setLocation] = useState<'office' | 'home'>(entry?.location === 'home' ? 'home' : 'office');
+  const [note, setNote] = useState(entry?.note ?? '');
+  const [isBillable, setIsBillable] = useState(entry?.isBillable ?? true);
   const [showQuickTask, setShowQuickTask] = useState(false);
   const [quickTaskName, setQuickTaskName] = useState('');
   // Task being edited in the drawer. The "+ Quick Task" button creates a
@@ -131,25 +149,46 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
     };
 
     setSubmitting(true);
-    await overlap.withConfirm(
-      (confirmOverlap) => timeApi.createEntry({ ...payloadBase, confirmOverlap }),
-      {
-        onSuccess: () => {
-          notify.success('Time entry created', { code: 'TIME-CREATE-200' });
-          // Shared invalidator so project Hours / task Actual ₪ /
-          // completion % refresh in every screen without a manual
-          // reload. Previously only ['time'] was invalidated here,
-          // which is why logging from this popup sometimes-refreshed
-          // the tree and never refreshed the project KPIs.
-          invalidateAfterTimeEntry(queryClient, {
-            projectId: payloadBase.projectId ?? null,
-            taskId: payloadBase.taskId ?? null,
-          });
-          onSaved();
-          onClose();
+    // QA4 B5: when editing, hit PATCH /time-entries/:id (which was
+    // implemented but never wired). We still funnel through
+    // overlap.withConfirm so the cross-task-overlap "Save anyway"
+    // dialog stays consistent between create + update.
+    if (isEditing && entry?.id) {
+      await overlap.withConfirm(
+        (confirmOverlap) => timeApi.updateEntry(entry.id, { ...payloadBase, confirmOverlap }),
+        {
+          onSuccess: () => {
+            notify.success('Time entry updated', { code: 'TIME-UPDATE-200' });
+            invalidateAfterTimeEntry(queryClient, {
+              projectId: payloadBase.projectId ?? null,
+              taskId: payloadBase.taskId ?? null,
+            });
+            onSaved();
+            onClose();
+          },
         },
-      },
-    );
+      );
+    } else {
+      await overlap.withConfirm(
+        (confirmOverlap) => timeApi.createEntry({ ...payloadBase, confirmOverlap }),
+        {
+          onSuccess: () => {
+            notify.success('Time entry created', { code: 'TIME-CREATE-200' });
+            // Shared invalidator so project Hours / task Actual ₪ /
+            // completion % refresh in every screen without a manual
+            // reload. Previously only ['time'] was invalidated here,
+            // which is why logging from this popup sometimes-refreshed
+            // the tree and never refreshed the project KPIs.
+            invalidateAfterTimeEntry(queryClient, {
+              projectId: payloadBase.projectId ?? null,
+              taskId: payloadBase.taskId ?? null,
+            });
+            onSaved();
+            onClose();
+          },
+        },
+      );
+    }
     setSubmitting(false);
   };
 
@@ -232,7 +271,7 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
       <div className="w-full max-w-lg rounded-[14px] bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 px-5 py-4">
           <div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Add Timesheet Entry</h3>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">{isEditing ? 'Edit Timesheet Entry' : 'Add Timesheet Entry'}</h3>
             <p className="text-[11px] text-slate-400 dark:text-slate-500">{new Date(date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
           </div>
           <div className="flex items-center gap-1">
@@ -412,7 +451,7 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
               its own guard in time-entries.service.create). */}
           <button onClick={handleSubmit} disabled={submitting || totalMinutes <= 0 || !projectId || !taskId}
             className="rounded-lg bg-blue-600 px-5 py-2 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-            {submitting ? 'Saving…' : 'Save time entry'}
+            {submitting ? 'Saving…' : isEditing ? 'Update time entry' : 'Save time entry'}
           </button>
         </div>
       </div>
@@ -509,6 +548,16 @@ function WeekView() {
   const confirm = useConfirm();
   const [weekOffset, setWeekOffset] = useState(0);
   const [showEntryForm, setShowEntryForm] = useState<{ date: string; startTime: string; endTime: string } | null>(null);
+  // QA4 B5: entry currently being edited via the pencil affordance.
+  // Non-null means the popup opens in edit mode against this row (see
+  // TimeEntryFormPopup — it hits PATCH /time-entries/:id instead of
+  // POST /time-entries when this prop is set).
+  const [editingEntry, setEditingEntry] = useState<any | null>(null);
+  // Compute the popup's opening date/time based on which state fired
+  // — a drag-selected empty slot vs a pencil-clicked existing entry.
+  const openEditForEntry = (ent: any) => {
+    setEditingEntry(ent);
+  };
   // Drag-select state. `anchor` is the hour the pointer went down on;
   // `pointer` follows the pointer (mouse OR touch) and can be BELOW
   // `anchor` — supports upward drag by normalising min/max on commit.
@@ -871,17 +920,34 @@ function WeekView() {
                             className="group relative rounded-md bg-amber-500/90 hover:bg-amber-600 text-white px-1.5 py-0.5 text-[10px] flex-1 min-w-[80px] max-w-full overflow-hidden shadow-sm cursor-pointer"
                             title={`Untimed · ${minutesToDisplay(entry.minutes ?? 0)}\n${projectName}\n${taskName}`}
                           >
-                            <button
-                              type="button"
-                              onMouseDown={(e) => e.stopPropagation()}
-                              onClick={(e) => handleDeleteEntry(e, entry)}
-                              disabled={deleteEntry.isPending}
-                              className="absolute top-0 right-0 rounded p-0.5 text-white/80 hover:text-white hover:bg-amber-700/40 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity disabled:opacity-50"
-                              title="Delete this time entry"
-                              aria-label="Delete untimed entry"
-                            >
-                              <Trash2 className="h-2.5 w-2.5" aria-hidden="true" />
-                            </button>
+                            {/* QA4 B5: hover-revealed action cluster. Pencil opens
+                                the entry-form popup pre-filled; trash keeps the
+                                existing delete behaviour. Kept top-right so a
+                                cell-drag on the chip body still starts a new
+                                selection (via stopPropagation on both). */}
+                            <div className="absolute top-0 right-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                              <button
+                                type="button"
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => { e.stopPropagation(); openEditForEntry(entry); }}
+                                className="rounded p-0.5 text-white/80 hover:text-white hover:bg-amber-700/40"
+                                title="Edit this time entry"
+                                aria-label="Edit untimed entry"
+                              >
+                                <Pencil className="h-2.5 w-2.5" aria-hidden="true" />
+                              </button>
+                              <button
+                                type="button"
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => handleDeleteEntry(e, entry)}
+                                disabled={deleteEntry.isPending}
+                                className="rounded p-0.5 text-white/80 hover:text-white hover:bg-amber-700/40 disabled:opacity-50"
+                                title="Delete this time entry"
+                                aria-label="Delete untimed entry"
+                              >
+                                <Trash2 className="h-2.5 w-2.5" aria-hidden="true" />
+                              </button>
+                            </div>
                             <p className="font-semibold truncate">{minutesToDisplay(entry.minutes ?? 0)}</p>
                             <p className="truncate opacity-90">{projectName || 'No project'}</p>
                           </div>
@@ -955,21 +1021,37 @@ function WeekView() {
                             <div key={entry.id}
                               className="group absolute left-0.5 right-0.5 rounded-md bg-blue-600 text-white px-2 py-1 overflow-hidden z-10 cursor-pointer hover:bg-blue-700 shadow-sm"
                               style={{ top: `${offsetInCell}px`, height: `${blockHeight}px` }}
-                              title={`${timeLabel}\n${projectName}\n${taskName}\n${durationHours.toFixed(2)} hrs`}>
-                              {/* Delete affordance — hover-reveals top-right; click prompts
-                                  confirm + invalidates the time query. Stops the parent
-                                  mousedown from starting a fresh cell-drag selection. */}
-                              <button
-                                type="button"
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => handleDeleteEntry(e, entry)}
-                                disabled={deleteEntry.isPending}
-                                className="absolute top-0.5 right-0.5 rounded p-0.5 text-white/70 hover:text-white hover:bg-blue-800/40 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
-                                title="Delete this time entry"
-                                aria-label="Delete time entry"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </button>
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => { e.stopPropagation(); openEditForEntry(entry); }}
+                              title={`${timeLabel}\n${projectName}\n${taskName}\n${durationHours.toFixed(2)} hrs\n\nClick to edit`}>
+                              {/* QA4 B5: click the block anywhere to open the
+                                  edit popup; hover reveals an explicit pencil +
+                                  trash cluster (both stopPropagation so the
+                                  block's own click handler doesn't fire twice
+                                  when you specifically hit the icons). */}
+                              <div className="absolute top-0.5 right-0.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  type="button"
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => { e.stopPropagation(); openEditForEntry(entry); }}
+                                  className="rounded p-0.5 text-white/70 hover:text-white hover:bg-blue-800/40"
+                                  title="Edit this time entry"
+                                  aria-label="Edit time entry"
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => handleDeleteEntry(e, entry)}
+                                  disabled={deleteEntry.isPending}
+                                  className="rounded p-0.5 text-white/70 hover:text-white hover:bg-blue-800/40 disabled:opacity-50"
+                                  title="Delete this time entry"
+                                  aria-label="Delete time entry"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </div>
                               <p className="text-[10px] font-medium opacity-90">{timeLabel}</p>
                               <p className="text-[11px] font-bold truncate">{projectName || 'No project'}</p>
                               {blockHeight > 50 && taskName && <p className="text-[10px] truncate opacity-80">{taskName}</p>}
@@ -1016,14 +1098,24 @@ function WeekView() {
                   <span className="font-medium text-slate-700 dark:text-slate-200">{minutesToDisplay(e.minutes)}</span>
                   <span className="text-slate-600 dark:text-slate-300 flex-1 truncate">{e.project?.name ?? ''} {e.task?.name ? `/ ${e.task.name}` : ''}</span>
                   {e.location && <span className="text-[10px] text-slate-400 dark:text-slate-500">{e.location === 'home' ? '🏠' : '🏢'}</span>}
-                  {/* Same delete affordance on the list view — hover-revealed
-                      so the row stays clean unless the user actively wants
-                      to act on it. */}
+                  {/* QA4 B5: pencil beside trash — same hover reveal so the
+                      row stays clean but the affordance is discoverable on
+                      hover. Pencil opens the edit popup, trash keeps the
+                      existing confirm + delete path. */}
+                  <button
+                    type="button"
+                    onClick={() => openEditForEntry(e)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity rounded p-1 text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                    title="Edit this time entry"
+                    aria-label="Edit time entry"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
                   <button
                     type="button"
                     onClick={(ev) => handleDeleteEntry(ev, e)}
                     disabled={deleteEntry.isPending}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity rounded p-1 text-slate-400 dark:text-slate-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-30"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity rounded p-1 text-slate-400 dark:text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-30"
                     title="Delete this time entry"
                     aria-label="Delete time entry"
                   >
@@ -1036,13 +1128,33 @@ function WeekView() {
         );
       })()}
 
-      {/* Entry Form Popup */}
+      {/* Entry Form Popup — CREATE branch (drag-selected slot). */}
       {showEntryForm && (
         <TimeEntryFormPopup
           date={showEntryForm.date}
           startTime={showEntryForm.startTime}
           endTime={showEntryForm.endTime}
           onClose={() => setShowEntryForm(null)}
+          onSaved={invalidate}
+        />
+      )}
+      {/* QA4 B5 — EDIT branch. When the user clicks the pencil beside
+          any entry, we mount the same popup with `entry` set so its
+          fields seed from the existing row and doSubmit branches to
+          PATCH /time-entries/:id. Date pulled from the entry itself
+          (fallback to today so the header formatter never NaNs). */}
+      {editingEntry && (
+        <TimeEntryFormPopup
+          date={(() => {
+            const raw = editingEntry.date;
+            if (!raw) return format(new Date(), 'yyyy-MM-dd');
+            if (typeof raw === 'string') return raw.split('T')[0];
+            return format(new Date(raw), 'yyyy-MM-dd');
+          })()}
+          startTime={editingEntry.startTime ?? '09:00'}
+          endTime={editingEntry.endTime ?? '10:00'}
+          entry={editingEntry}
+          onClose={() => setEditingEntry(null)}
           onSaved={invalidate}
         />
       )}
