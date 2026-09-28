@@ -201,17 +201,11 @@ export const contactsImportApi = {
   upload: async (file: File): Promise<UploadResponse> => {
     const form = new FormData();
     form.append('file', file);
-    // The shared axios client sets `Content-Type: application/json` as an
-    // instance default; when we ship FormData that default can override
-    // axios's auto-detected `multipart/form-data; boundary=…`, leaving
-    // multer unable to split the parts on the server ("no file was
-    // uploaded (use the 'file' form field)").
-    // Explicitly clearing the header per-request tells axios to
-    // recompute it — for FormData it emits the correct multipart type
-    // WITH the boundary token.
-    const r = await client.post<UploadResponse>('/data-import/contacts/upload', form, {
-      headers: { 'Content-Type': undefined as unknown as string },
-    });
+    // The shared axios client's request interceptor detects FormData
+    // bodies and removes the instance-default `Content-Type` so the
+    // browser sets `multipart/form-data; boundary=<token>` itself.
+    // See apps/web/src/api/client.ts request interceptor.
+    const r = await client.post<UploadResponse>('/data-import/contacts/upload', form);
     return unwrap<UploadResponse>(r);
   },
 

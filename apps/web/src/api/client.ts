@@ -16,6 +16,18 @@ client.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  // When the request body is FormData (multipart file upload), delete the
+  // instance-default `Content-Type: application/json` so the browser can set
+  // `multipart/form-data; boundary=<token>` itself — without the boundary
+  // multer on the server can't split the parts and returns
+  // "no file was uploaded (use the 'file' form field)".
+  if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+    if (config.headers && typeof (config.headers as any).delete === 'function') {
+      (config.headers as any).delete('Content-Type');
+    } else if (config.headers) {
+      delete (config.headers as any)['Content-Type'];
+    }
+  }
   return config;
 });
 
