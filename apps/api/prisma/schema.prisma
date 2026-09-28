@@ -1064,13 +1064,11 @@ model TeamTemplateMember {
   id             Int     @id @default(autoincrement())
   teamTemplateId Int     @map("team_template_id")
   userId         Int     @map("user_id")
-  /// Legacy free-text role. Kept nullable one release; a follow-up
-  /// drops it once every template member has moved to the catalog
-  /// via `projectRoleTypeId` below.
-  role           String?
   /// Phase 4 · Stage 4 (2026-09-28) — catalog Project Role for this
   /// member. Nullable; a null value means "Team member" (D9 default)
   /// when the template is applied. Optional per M11 replacement rule.
+  /// Retirement (2026-09-28) — legacy free-text `role` column dropped;
+  /// see migration `drop_team_template_member_role`.
   projectRoleTypeId Int? @map("project_role_type_id")
 
   teamTemplate    TeamTemplate     @relation(fields: [teamTemplateId], references: [id])
