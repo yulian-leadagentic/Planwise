@@ -1359,6 +1359,14 @@ export class ProjectsService {
             // frontend can group and filter role-based rows by
             // discipline without a second fetch.
             discipline: { select: { id: true, name: true } },
+            // QA4 D1 (2026-09-28) — surface `party.user` so the Team
+            // tab can classify Our-Team-vs-Stakeholder by employee
+            // status (linked User row) instead of by participant-mirror
+            // membership. Employees get an internal User; external
+            // parties (organizations, freelancers, customer contacts)
+            // do not. Kept minimal ({id}) — payload isn't the concern,
+            // the presence of the row is.
+            user: { select: { id: true } },
           },
         },
         // BM2 Phase 2 — representation surfaces on the team endpoint so

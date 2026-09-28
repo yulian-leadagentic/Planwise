@@ -308,17 +308,30 @@ export function TeamTab({
     return s;
   }, [team]);
 
-  // "Our Team" rows — internal employees (party.user is set). Every
-  // team member folds the roles they hold across the project into one
-  // row so a person who is both a participant and an Architect appears
-  // once.
+  // "Our Team" rows — internal employees (party has a linked `User`).
+  // QA4 D1 (2026-09-28): the population is now the UNION of
+  //   • `projectTeam` (employees with a `participant` PPR mirror) — the
+  //     established path;
+  //   • employees found ONLY in `roleAssignments` — e.g. a Team Leader
+  //     or BIM Manager added without a participant mirror (which is
+  //     legal for role-first adds and legacy data).
+  // Previously the "orphan employee" case landed in Stakeholders,
+  // which read as "add succeeded but no one appeared under Our Team".
+  // D2 (following commit) ensures new adds also write the participant
+  // mirror; this classifier keeps both existing rows and any future
+  // races correct. Every team member folds the roles they hold across
+  // the project into one row.
   const teamRows: TeamRow[] = useMemo(() => {
     if (!team) return [];
-    return team.projectTeam.map((m) => {
+    const out: TeamRow[] = [];
+    const seen = new Set<number>();
+
+    for (const m of team.projectTeam) {
       const held = team.roleAssignments.filter((a) => a.party.id === m.businessPartnerId);
       const roleNames = held.map((a) => a.role.name);
       const roleIds = held.map((a) => a.role.id);
-      return {
+      seen.add(m.businessPartnerId);
+      out.push({
         rowKey: `team-${m.relationshipId}`,
         bpId: m.businessPartnerId,
         displayName: m.displayName,
@@ -341,8 +354,58 @@ export function TeamTab({
         contextTitle: null,
         partyKind: 'person',
         onRemove: () => confirmRemovePerson(m),
-      };
-    });
+      });
+    }
+
+    // Orphan employees — party.user is set but no participant mirror
+    // exists for them yet. Group by party.id so a person holding two
+    // non-participant roles renders as ONE Our-Team row.
+    const orphanByBp = new Map<number, ProjectRoleAssignment[]>();
+    for (const a of team.roleAssignments) {
+      if (a.party.user?.id == null) continue;
+      if (seen.has(a.party.id)) continue;
+      const list = orphanByBp.get(a.party.id) ?? [];
+      list.push(a);
+      orphanByBp.set(a.party.id, list);
+    }
+    for (const [bpId, held] of orphanByBp) {
+      const first = held[0]!;
+      const roleNames = held.map((a) => a.role.name);
+      const roleIds = held.map((a) => a.role.id);
+      out.push({
+        rowKey: `team-orphan-${bpId}`,
+        bpId,
+        displayName: first.party.displayName,
+        firstName: first.party.firstName,
+        lastName: first.party.lastName,
+        email: first.party.email ?? null,
+        phone: first.party.phone ?? null,
+        discipline: first.party.discipline?.name ?? null,
+        disciplineId: first.party.discipline?.id ?? null,
+        // Labor Category (seniority) — not surfaced on
+        // roleAssignments.party today; leave blank rather than fetch.
+        // The row will simply not participate in the Labor Category
+        // filter until a participant mirror lands (D2).
+        seniorityName: null,
+        seniorityId: null,
+        roleNames,
+        roleIds,
+        roleNamesLabel: roleNames.length > 0 ? roleNames.join(', ') : 'Team member',
+        rowType: 'employee',
+        isTeamLeader: teamLeaderBpIds.has(bpId),
+        orgName: null,
+        orgId: null,
+        contextBadge: null,
+        contextTitle: null,
+        partyKind: 'person',
+        // Remove goes through the role assignment itself — no
+        // participant mirror to end. Using the first held role for the
+        // confirm copy keeps the message concrete.
+        onRemove: () => confirmRemoveRoleAssignment(first),
+      });
+    }
+
+    return out;
   }, [team, teamLeaderBpIds]);
 
   // Stakeholders — external role assignments (orgs and non-employee
@@ -421,12 +484,27 @@ export function TeamTab({
       });
     }
 
-    // Role assignments — orgs and non-employee people. Skip anyone
-    // already represented in the internal projectTeam list (they're
-    // already surfaced in "Our Team").
+    // QA4 D1 (2026-09-28) — classify by EMPLOYEE status, not by
+    // participant-mirror membership. A roleAssignment whose party has
+    // a linked internal User is an employee → surfaced under Our Team
+    // via `teamRows` above (rolled up onto their projectTeam row when
+    // present, or as an "orphan employee" row below when the
+    // participant mirror is missing). Everyone else (orgs, freelancers,
+    // customer contacts, related parties) stays in Stakeholders.
+    // Previously the split keyed on presence in `team.projectTeam`,
+    // which only contains `participant` PPRs — so employees added via
+    // a non-participant PPR (Team Leader, BIM Manager…) landed in
+    // Stakeholders. See docs/bm2/qa4-round1.md §D0-D1.
     const teamBpIds = new Set(team.projectTeam.map((p) => p.businessPartnerId));
     for (const a of team.roleAssignments) {
-      if (teamBpIds.has(a.party.id)) continue; // internal, shown under Our Team
+      // Employee = linked User row on the party. Already-surfaced-under-
+      // Our-Team-via-projectTeam rows are skipped either way, but we
+      // ALSO skip employees who have NO projectTeam row: `orphanTeamRows`
+      // (below) picks those up as first-class Our-Team rows so an
+      // employee added via team_leader / BIM Manager (no participant
+      // mirror) still shows under Our Team.
+      if (a.party.user?.id != null) continue;
+      if (teamBpIds.has(a.party.id)) continue; // legacy safety net
       const isOrg = a.party.partnerType === 'organization';
       out.push({
         rowKey: `ra-${a.id}`,

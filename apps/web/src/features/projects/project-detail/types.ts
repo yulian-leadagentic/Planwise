@@ -85,6 +85,12 @@ export interface ProjectRoleAssignment {
     // Phase 5 team rebuild — discipline surfaces for both person and
     // org parties (org disciplines are common for consultant firms).
     discipline?: { id: number; name: string } | null;
+    // QA4 D1 (2026-09-28) — presence of a linked internal `user`
+    // classifies the party as an EMPLOYEE. Drives the Team-tab
+    // Our-Team vs Stakeholders partition; every non-employee (external
+    // person, organization, customer contact) has `user == null`.
+    // Optional on the type so older backend rollouts keep parsing.
+    user?: { id: number } | null;
   };
   isPrimary: boolean;
   titleInProject: string | null;
