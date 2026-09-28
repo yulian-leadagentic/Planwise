@@ -1374,6 +1374,74 @@ export class ProjectsService {
       orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
     });
 
+    // D4-4 (2026-09-28) — surface parties standing-related to the
+    // project's customer via `consultant_of | supplier_of |
+    // pm_supervision_for` as READ-ONLY stakeholder context. These are
+    // party↔party edges (BUT050-style), NOT project participation, so we
+    // deliberately do NOT create ProjectPartnerRole rows from them. The
+    // Team tab renders them alongside the customer's contacts under the
+    // customer-org group, with a small type badge and no remove action.
+    // validTo pattern mirrors `BusinessPartnersService.findAll` M6
+    // `excludeInternal` — a `{ gt: now }` guard against the
+    // '9999-12-31' schema default is enough (validTo is never NULL by
+    // Prisma default; the null-safe form is not needed here).
+    const CUSTOMER_RELATED_TYPE_CODES = [
+      'consultant_of',
+      'supplier_of',
+      'pm_supervision_for',
+    ];
+    let customerRelated: Array<{
+      relationshipId: number;
+      typeCode: string;
+      typeLabel: string;
+      partyId: number;
+      partyKind: 'organization' | 'person';
+      displayName: string;
+      email: string | null;
+      phone: string | null;
+      discipline: { id: number; name: string } | null;
+      titleAtCustomer: string | null;
+    }> = [];
+    if (customerAssignment) {
+      const rows = await this.prisma.partnerRelationship.findMany({
+        where: {
+          partyBId: customerAssignment.party.id,
+          type: { code: { in: CUSTOMER_RELATED_TYPE_CODES } },
+          validTo: { gt: now },
+        },
+        include: {
+          type: { select: { code: true, sideALabel: true, name: true } },
+          partyA: {
+            select: {
+              id: true,
+              partnerType: true,
+              displayName: true,
+              email: true,
+              phone: true,
+              discipline: { select: { id: true, name: true } },
+            },
+          },
+        },
+        orderBy: [{ typeId: 'asc' }, { createdAt: 'asc' }],
+      });
+      customerRelated = rows.map((r) => ({
+        relationshipId: r.id,
+        typeCode: r.type.code,
+        // `sideALabel` is the party-A-side role name on
+        // PartnerRelationshipType (e.g. "Consultant", "Supplier",
+        // "Project manager / Supervisor"). Fall back to the type
+        // display name if sideALabel is ever left NULL.
+        typeLabel: r.type.sideALabel ?? r.type.name,
+        partyId: r.partyA.id,
+        partyKind: r.partyA.partnerType as 'organization' | 'person',
+        displayName: r.partyA.displayName,
+        email: r.partyA.email ?? null,
+        phone: r.partyA.phone ?? null,
+        discipline: r.partyA.discipline ?? null,
+        titleAtCustomer: r.titleAtB ?? null,
+      }));
+    }
+
     return {
       customer: customerAssignment ? {
         relationshipId: customerAssignment.id,
@@ -1383,6 +1451,7 @@ export class ProjectsService {
         phone: customerAssignment.party.phone,
       } : null,
       customerContacts,
+      customerRelated,
       projectTeam,
       roleAssignments: roleAssignments.map((a) => ({
         id: a.id,

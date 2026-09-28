@@ -101,6 +101,28 @@ export interface ProjectRoleAssignment {
   onBehalfOfParty?: { id: number; displayName: string; partnerType: string } | null;
 }
 
+/**
+ * D4-4 — a party (person or org) standing-related to the project's
+ * customer via `consultant_of | supplier_of | pm_supervision_for`.
+ * Surfaced as READ-ONLY stakeholder context on the Team tab; NOT a
+ * project participant — no ProjectPartnerRole is created from these.
+ */
+export interface CustomerRelatedRow {
+  relationshipId: number;
+  typeCode: 'consultant_of' | 'supplier_of' | 'pm_supervision_for';
+  /** From PartnerRelationshipType.sideALabel — "Consultant" / "Supplier" /
+   *  "Project manager / Supervisor". */
+  typeLabel: string;
+  partyId: number;
+  partyKind: 'organization' | 'person';
+  displayName: string;
+  email: string | null;
+  phone: string | null;
+  discipline: { id: number; name: string } | null;
+  /** partnerRelationship.titleAtB — party's title AT the customer. */
+  titleAtCustomer: string | null;
+}
+
 export interface ProjectTeamData {
   customer: {
     relationshipId: number;
@@ -110,6 +132,11 @@ export interface ProjectTeamData {
     phone: string | null;
   } | null;
   customerContacts: ProjectTeamPerson[];
+  /** D4-4 — customer's consultants / suppliers / PM firms as read-only
+   *  stakeholder context. Empty array when the project has no customer,
+   *  or when the customer has no active edges of these types. Optional
+   *  on the type so older backend rollouts keep parsing. */
+  customerRelated?: CustomerRelatedRow[];
   projectTeam: ProjectTeamPerson[];
   roleAssignments: ProjectRoleAssignment[];
 }

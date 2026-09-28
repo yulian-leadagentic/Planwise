@@ -57,6 +57,7 @@ import { CustomerContactPicker } from './customer-contact-picker';
 import { AddMemberDialog } from './add-member-dialog';
 import { getInitials } from './utils';
 import type {
+  CustomerRelatedRow,
   ProjectMember,
   ProjectRoleAssignment,
   ProjectRoleTypeRow,
@@ -72,7 +73,11 @@ type ViewMode = 'table' | 'cards';
 type StatusFilter = 'active' | 'inactive' | 'all';
 type SortKey = 'name' | 'role' | 'discipline' | 'email' | 'phone' | 'type';
 type SortDir = 'asc' | 'desc';
-type RowType = 'employee' | 'contact' | 'org';
+// 'related' — D4-4 read-only stakeholder derived from a
+// party-to-customer edge (Consultant / Supplier / PM). Rows of this type
+// are visually distinguished by a `contextBadge` next to the name, hold
+// no ProjectPartnerRole, and never expose the row `✕` action.
+type RowType = 'employee' | 'contact' | 'org' | 'related';
 
 /**
  * Unified row shape used across all three populations. Every table row
@@ -99,6 +104,15 @@ interface TeamRow {
   isTeamLeader: boolean;                  // for the indigo avatar accent
   orgName: string | null;                 // for stakeholders grouping ("Represents"/org header)
   orgId: number | null;
+  // D4-4 — short read-only badge for parties standing-related to the
+  // customer via consultant_of / supplier_of / pm_supervision_for.
+  // Non-null identifies a "context" row: no ✕, excluded from Project
+  // Role filter (they have no roleIds), rendered under the customer
+  // org group in Stakeholders. The base rowType stays 'related'; the
+  // party's underlying kind is preserved in `partyKind` for the badge.
+  contextBadge: string | null;
+  contextTitle: string | null;            // titleAtCustomer (fuller label)
+  partyKind: 'organization' | 'person' | null;
   // Remove behaviour is context-specific — the caller supplies a
   // closure so the table doesn't need to know about mutations.
   onRemove: (() => void) | null;
@@ -323,6 +337,9 @@ export function TeamTab({
         isTeamLeader: teamLeaderBpIds.has(m.businessPartnerId),
         orgName: null,
         orgId: null,
+        contextBadge: null,
+        contextTitle: null,
+        partyKind: 'person',
         onRemove: () => confirmRemovePerson(m),
       };
     });
@@ -358,6 +375,9 @@ export function TeamTab({
         isTeamLeader: false,
         orgName: team.customer.displayName,
         orgId: team.customer.organizationId,
+        contextBadge: null,
+        contextTitle: null,
+        partyKind: 'organization',
         onRemove: null, // customer is locked
       });
     }
@@ -383,6 +403,9 @@ export function TeamTab({
         isTeamLeader: false,
         orgName: team.customer?.displayName ?? null,
         orgId: team.customer?.organizationId ?? null,
+        contextBadge: null,
+        contextTitle: null,
+        partyKind: 'person',
         onRemove: async () => {
           const who = c.displayName || 'this contact';
           const ok = await confirm(
@@ -424,7 +447,52 @@ export function TeamTab({
         isTeamLeader: !isOrg && teamLeaderBpIds.has(a.party.id),
         orgName: a.onBehalfOfParty?.displayName ?? (isOrg ? a.party.displayName : null),
         orgId: a.onBehalfOfParty?.id ?? (isOrg ? a.party.id : null),
+        contextBadge: null,
+        contextTitle: null,
+        partyKind: isOrg ? 'organization' : 'person',
         onRemove: () => confirmRemoveRoleAssignment(a),
+      });
+    }
+
+    // D4-4 — customer's Consultant / Supplier / PM parties as read-only
+    // context rows. They are grouped under the customer org (orgName =
+    // customer displayName) so they land in the same Stakeholders group
+    // as customer contacts. `roleIds: []` means the Project Role
+    // filter naturally excludes them (they are NOT participants).
+    // `onRemove: null` blocks the `✕` action (they have no
+    // ProjectPartnerRole to delete).
+    const CTX_SHORT: Record<CustomerRelatedRow['typeCode'], string> = {
+      consultant_of: 'Consultant',
+      supplier_of: 'Supplier',
+      pm_supervision_for: 'PM',
+    };
+    for (const c of team.customerRelated ?? []) {
+      out.push({
+        rowKey: `crel-${c.relationshipId}`,
+        bpId: c.partyId,
+        displayName: c.displayName,
+        firstName: null,
+        lastName: null,
+        email: c.email,
+        phone: c.phone,
+        discipline: c.discipline?.name ?? null,
+        disciplineId: c.discipline?.id ?? null,
+        seniorityName: null,
+        seniorityId: null,
+        // No project role — Project Role filter excludes them.
+        roleNames: [],
+        roleIds: [],
+        // Sort by role uses this; keep it consistent with the badge so
+        // "Consultant" rows cluster together on a role sort.
+        roleNamesLabel: CTX_SHORT[c.typeCode] ?? c.typeLabel,
+        rowType: 'related',
+        isTeamLeader: false,
+        orgName: team.customer?.displayName ?? null,
+        orgId: team.customer?.organizationId ?? null,
+        contextBadge: CTX_SHORT[c.typeCode] ?? c.typeLabel,
+        contextTitle: c.titleAtCustomer,
+        partyKind: c.partyKind,
+        onRemove: null, // read-only — no ProjectPartnerRole exists to delete
       });
     }
 
@@ -1358,6 +1426,15 @@ function TableBody({
                         >
                           {r.displayName}
                         </button>
+                        {/* D4-4 — party-to-customer edge badge. Muted
+                            convention differentiates read-only context
+                            rows from project participants. */}
+                        {r.contextBadge && (
+                          <ContextBadge
+                            label={r.contextBadge}
+                            title={r.contextTitle}
+                          />
+                        )}
                       </div>
                     </td>
                     {/* Type — All view only */}
@@ -1388,11 +1465,19 @@ function TableBody({
                               ))}
                             </div>
                           )
-                          : (
-                            <span className="text-[11.5px] italic text-slate-400 dark:text-slate-500">
-                              Team member
-                            </span>
-                          )}
+                          : r.rowType === 'related'
+                            ? (
+                              // D4-4 — related rows have no project role.
+                              // Show a soft em-dash rather than the
+                              // "Team member" fallback (they are NOT
+                              // team members).
+                              <span className="text-slate-300 dark:text-slate-600">—</span>
+                            )
+                            : (
+                              <span className="text-[11.5px] italic text-slate-400 dark:text-slate-500">
+                                Team member
+                              </span>
+                            )}
                     </td>
                     {/* Discipline */}
                     <td className={CELL}>
@@ -1455,9 +1540,36 @@ function TableBody({
 }
 
 function TypePill({ type }: { type: RowType }) {
-  const label = type === 'employee' ? 'Employee' : type === 'contact' ? 'Contact' : 'Org';
+  // D4-4 — 'related' rows are read-only party↔customer context, not
+  // project participants; the pill label makes that distinction
+  // visible in the All and Stakeholders views.
+  const label =
+    type === 'employee'
+      ? 'Employee'
+      : type === 'contact'
+        ? 'Contact'
+        : type === 'related'
+          ? 'Related'
+          : 'Org';
   return (
     <span className="inline-flex items-center rounded-md bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+      {label}
+    </span>
+  );
+}
+
+/**
+ * D4-4 — small muted badge that names the party-to-customer edge type
+ * (Consultant / Supplier / PM). Rendered next to the name on rows of
+ * type 'related'. Muted convention per spec: bg-slate-100 /
+ * text-slate-500, dark variants, small `rounded` (NOT rounded-full).
+ */
+function ContextBadge({ label, title }: { label: string; title?: string | null }) {
+  return (
+    <span
+      className="inline-flex items-center rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:text-slate-400"
+      title={title ? `${label} — ${title}` : `${label} (related to customer)`}
+    >
       {label}
     </span>
   );
@@ -1484,11 +1596,20 @@ function CardsBody({ rows, openDrawer }: { rows: TeamRow[]; openDrawer: (bpId: n
               isLeader={r.isTeamLeader}
             />
             <div className="min-w-0 flex-1">
-              <div className="font-semibold text-slate-900 dark:text-slate-100 truncate text-[13px]">
-                {r.displayName}
+              <div className="flex items-center gap-1.5 min-w-0">
+                <div className="font-semibold text-slate-900 dark:text-slate-100 truncate text-[13px]">
+                  {r.displayName}
+                </div>
+                {r.contextBadge && (
+                  <ContextBadge label={r.contextBadge} title={r.contextTitle} />
+                )}
               </div>
               <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                {r.roleNames.length > 0 ? r.roleNames.join(', ') : 'Team member'}
+                {r.roleNames.length > 0
+                  ? r.roleNames.join(', ')
+                  : r.rowType === 'related'
+                    ? r.contextTitle ?? 'Related to customer'
+                    : 'Team member'}
               </div>
             </div>
           </div>
