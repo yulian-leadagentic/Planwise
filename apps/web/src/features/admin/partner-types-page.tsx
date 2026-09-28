@@ -11,6 +11,7 @@ import {
   useColumnFilters,
   type ColumnFilterConfig,
 } from '@/components/shared/column-filter';
+import { Tabs, tabPanelId, tabTriggerId, useUrlTab } from '@/components/shared/tabs';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -99,8 +100,24 @@ function summarizeSide(targets: SideTarget[] | null, fallbackLabel: string | nul
 
 type PartnerTypesTab = 'role-types' | 'relationship-types' | 'categories' | 'personal-domains';
 
+const PARTNER_TYPES_TAB_VALUES = ['role-types', 'relationship-types', 'categories', 'personal-domains'] as const satisfies readonly PartnerTypesTab[];
+
+const PARTNER_TYPES_TAB_ITEMS: { value: PartnerTypesTab; label: string }[] = [
+  { value: 'role-types', label: 'Types' },
+  { value: 'relationship-types', label: 'Relationship Types' },
+  { value: 'categories', label: 'Categories' },
+  { value: 'personal-domains', label: 'Personal Email Domains' },
+];
+
 export function PartnerTypesPage() {
-  const [tab, setTab] = useState<PartnerTypesTab>('role-types');
+  // People UX M5 (E-20 / E-27) — shared Tabs component + `?tab=` URL sync.
+  // Deep-linked shares reopen the right sub-view; role=tab/aria-selected
+  // and arrow-key roving focus come from the shared implementation.
+  const [tab, setTab] = useUrlTab<PartnerTypesTab>(
+    'tab',
+    PARTNER_TYPES_TAB_VALUES,
+    'role-types',
+  );
   const { can, isAdmin } = usePermissions();
   const canWrite = isAdmin || can('admin/partner-types', 'write');
   const canDelete = isAdmin || can('admin/partner-types', 'delete');
@@ -112,30 +129,24 @@ export function PartnerTypesPage() {
         description="Configure the role and relationship types used by organizations and contacts. System types can be renamed but not deleted."
       />
 
-      <div className="flex gap-1 border-b border-border">
-        {([
-          { key: 'role-types', label: 'Types' },
-          { key: 'relationship-types', label: 'Relationship Types' },
-          { key: 'categories', label: 'Categories' },
-          { key: 'personal-domains', label: 'Personal Email Domains' },
-        ] as const).map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={cn(
-              'border-b-2 px-4 py-2.5 text-sm font-medium transition-colors',
-              tab === t.key ? 'border-blue-600 text-blue-600' : 'border-transparent text-muted-foreground hover:text-foreground',
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        idBase="admin-partner-types"
+        ariaLabel="Partner types sub-views"
+        value={tab}
+        onChange={setTab}
+        items={PARTNER_TYPES_TAB_ITEMS}
+      />
 
-      {tab === 'role-types' && <RoleTypesTab canWrite={canWrite} canDelete={canDelete} />}
-      {tab === 'relationship-types' && <RelationshipTypesTab canWrite={canWrite} canDelete={canDelete} />}
-      {tab === 'categories' && <CategoriesTab canWrite={canWrite} canDelete={canDelete} />}
-      {tab === 'personal-domains' && <PersonalEmailDomainsTab canWrite={canWrite} canDelete={canDelete} />}
+      <div
+        role="tabpanel"
+        id={tabPanelId('admin-partner-types', tab)}
+        aria-labelledby={tabTriggerId('admin-partner-types', tab)}
+      >
+        {tab === 'role-types' && <RoleTypesTab canWrite={canWrite} canDelete={canDelete} />}
+        {tab === 'relationship-types' && <RelationshipTypesTab canWrite={canWrite} canDelete={canDelete} />}
+        {tab === 'categories' && <CategoriesTab canWrite={canWrite} canDelete={canDelete} />}
+        {tab === 'personal-domains' && <PersonalEmailDomainsTab canWrite={canWrite} canDelete={canDelete} />}
+      </div>
     </div>
   );
 }

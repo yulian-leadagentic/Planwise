@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { ColorPalettePicker } from '@/components/shared/color-palette-picker';
+import { Tabs, tabPanelId, tabTriggerId, useUrlTab } from '@/components/shared/tabs';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
@@ -32,12 +33,14 @@ import { useConfirm } from '@/components/shared/confirm-dialog';
 // to the ProjectType table that New-Project actually reads.
 type TabKey = 'zone' | 'projectCategory' | 'service' | 'department' | 'profession';
 
-const TABS: { key: TabKey; label: string }[] = [
-  { key: 'zone', label: 'Zone Types' },
-  { key: 'projectCategory', label: 'Project Categories' },
-  { key: 'service', label: 'Services' },
-  { key: 'department', label: 'Departments' },
-  { key: 'profession', label: 'Job Titles' },
+const TAB_VALUES = ['zone', 'projectCategory', 'service', 'department', 'profession'] as const satisfies readonly TabKey[];
+
+const TABS: { value: TabKey; label: string }[] = [
+  { value: 'zone', label: 'Zone Types' },
+  { value: 'projectCategory', label: 'Project Categories' },
+  { value: 'service', label: 'Services' },
+  { value: 'department', label: 'Departments' },
+  { value: 'profession', label: 'Job Titles' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -79,7 +82,10 @@ export function TypesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const [activeTab, setActiveTab] = useState<TabKey>('zone');
+  // People UX M5 (E-27) — `?tab=` URL sync via the shared useUrlTab hook.
+  // Deep-linked shares reopen the right sub-view; role=tab / aria-selected /
+  // arrow-key navigation come from the shared Tabs component below.
+  const [activeTab, setActiveTabRaw] = useUrlTab<TabKey>('tab', TAB_VALUES, 'zone');
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
 
@@ -559,30 +565,33 @@ export function TypesPage() {
         </p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-6 border-b border-slate-200 dark:border-slate-700">
-        {TABS.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => {
-              setActiveTab(tab.key);
-              setSearch('');
-              resetForm();
-              setEditing(null);
-            }}
-            className={`pb-2.5 transition-colors ${
-              activeTab === tab.key
-                ? 'border-b-2 border-blue-600 text-blue-600 text-[13px] font-semibold'
-                : 'border-b-2 border-transparent text-slate-400 dark:text-slate-500 text-[13px] font-semibold hover:text-slate-600 dark:hover:text-slate-200'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      {/* Tabs — People UX M5 (E-20 / E-27). Shared component renders
+          role=tablist/tab, aria-selected, arrow-key navigation, and mirrors
+          the active tab to `?tab=` in the URL via useUrlTab above. */}
+      <Tabs
+        idBase="templates-types"
+        ariaLabel="Types and categories sub-views"
+        value={activeTab}
+        onChange={(next) => {
+          setActiveTabRaw(next);
+          // Preserve original side-effects on tab switch: clear the
+          // search box and any in-progress add / inline edit so the
+          // new tab lands in a clean state.
+          setSearch('');
+          resetForm();
+          setEditing(null);
+        }}
+        items={TABS}
+      />
 
-      {/* Card */}
-      <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 overflow-hidden">
+      {/* Card — wraps the tab's content as the tabpanel paired with the
+          shared Tabs component above. */}
+      <div
+        role="tabpanel"
+        id={tabPanelId('templates-types', activeTab)}
+        aria-labelledby={tabTriggerId('templates-types', activeTab)}
+        className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 overflow-hidden"
+      >
         {/* Toolbar: search + add button */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100 dark:border-slate-800">
           <div className="relative flex-1">
@@ -675,7 +684,7 @@ export function TypesPage() {
             icon={LayoutGrid}
             title={search
               ? 'No types match your search'
-              : `No ${TABS.find((t) => t.key === activeTab)?.label?.toLowerCase()} configured yet`}
+              : `No ${TABS.find((t) => t.value === activeTab)?.label?.toLowerCase()} configured yet`}
             description={search ? 'Try a different name.' : undefined}
           />
         ) : (
