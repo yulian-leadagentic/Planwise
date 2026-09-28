@@ -39,7 +39,6 @@ import {
   Check,
   AlertTriangle,
   Users as UsersIcon,
-  RefreshCw,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -177,6 +176,20 @@ export function TeamTab({
       }),
   });
 
+  // QA4 D7 (2026-09-28) — discipline catalog for the inline Discipline
+  // cell. Long staleTime because the list changes rarely and the same
+  // key is used by the partner drawer / create-partner modal, so we hit
+  // warm cache most of the time.
+  const { data: disciplineCatalog = [] } = useQuery<Array<{ id: number; name: string; nameHe: string | null; isActive: boolean }>>({
+    queryKey: ['admin', 'disciplines', 'picker'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/config/disciplines').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+
   const customerContactRoleType = roleCatalog.find((rt) => rt.code === 'customer_contact') ?? null;
 
   // Roles that appear in the "+ Add" role-first picker — excludes the
@@ -219,9 +232,6 @@ export function TeamTab({
   const [addPickerOpen, setAddPickerOpen] = useState(false);
   const [roleAssignmentTarget, setRoleAssignmentTarget] = useState<ProjectRoleTypeRow | null>(null);
   const [showCustomerContactPicker, setShowCustomerContactPicker] = useState(false);
-  // QA4 D3 — "Change role" flow on Our-Team rows. Holds the target row
-  // whose role the operator is reassigning. See ChangeRoleModal.
-  const [changeRoleRow, setChangeRoleRow] = useState<TeamRow | null>(null);
   // showAddMember (participant role) is lifted state; opening happens
   // via onToggleAddMember, which the parent detail-page owns.
 
@@ -246,6 +256,69 @@ export function TeamTab({
       notify.success('Removed from project', { code: 'PROJECT-PPR-DELETE-200' });
     },
     onError: (err: unknown) => notify.apiError(err, 'Failed to remove from project'),
+  });
+
+  // ─── QA4 D7 inline-edit mutations ──────────────────────────────────
+  // Extends and supersedes D3's ChangeRoleModal — the reassignment
+  // logic now lives here so the inline Project Role cell can trigger it
+  // directly without a modal. Ordering: CREATE new PPR first (runs
+  // server-side eligibility), THEN soft-end the source PPR (only when
+  // one exists) — a failure between the two calls leaves the member
+  // over-covered rather than stranded unassigned.
+
+  /** Reassign a party from one Project Role to another (D3 mechanism,
+   *  inline). `sourcePprId === null` means "add a role" — used when the
+   *  row currently holds no non-participant role. */
+  const reassignRole = useMutation({
+    mutationFn: async (vars: {
+      partyId: number;
+      sourcePprId: number | null;
+      targetRoleId: number;
+    }) => {
+      const created = await client
+        .post('/project-partner-roles', {
+          projectId,
+          partyId: vars.partyId,
+          roleId: vars.targetRoleId,
+        })
+        .then((r) => r.data);
+      if (vars.sourcePprId != null) {
+        try {
+          await client.delete(`/project-partner-roles/${vars.sourcePprId}`);
+        } catch (e) {
+          notify.apiError(e, 'New role added, but the old role could not be ended');
+        }
+      }
+      return created;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['project-role-eligible-parties'] });
+      notify.success('Role updated', { code: 'PPR-CHANGE-200' });
+    },
+    onError: (err: unknown) => notify.apiError(err, 'Failed to update role'),
+  });
+
+  /** Single-field PATCH /business-partners/:id — used by the inline
+   *  Discipline / Email / Phone cells. Field values flow through the
+   *  same UpdateBusinessPartnerDto that the partner-drawer's Save uses,
+   *  so validation rules (email format, discipline id existence) match. */
+  const updateBP = useMutation({
+    mutationFn: (vars: {
+      bpId: number;
+      patch: { disciplineId?: number | null; email?: string | null; phone?: string | null };
+      successMessage: string;
+      successCode: string;
+    }) =>
+      client.patch(`/business-partners/${vars.bpId}`, vars.patch).then((r) => r.data),
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['business-partners'] });
+      queryClient.invalidateQueries({ queryKey: ['business-partner', vars.bpId] });
+      notify.success(vars.successMessage, { code: vars.successCode });
+    },
+    onError: (err: unknown) => notify.apiError(err, 'Failed to save change'),
   });
 
   // ─── Remove helpers ────────────────────────────────────────────────
@@ -1075,7 +1148,14 @@ export function TeamTab({
                 ? () => setShowCustomerContactPicker(true)
                 : null
             }
-            onChangeRole={(row) => setChangeRoleRow(row)}
+            projectId={projectId}
+            roleAssignments={team.roleAssignments}
+            addableRoles={addableRoles}
+            disciplineCatalog={disciplineCatalog}
+            reassignRolePending={reassignRole.isPending}
+            updateBPPending={updateBP.isPending}
+            onReassignRole={(vars) => reassignRole.mutate(vars)}
+            onUpdateBP={(vars) => updateBP.mutate(vars)}
           />
         ) : (
           <CardsBody rows={sorted} openDrawer={openDrawer} />
@@ -1154,18 +1234,6 @@ export function TeamTab({
             setFocusedPartnerId(null);
             queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
           }}
-        />
-      )}
-
-      {changeRoleRow && (
-        <ChangeRoleModal
-          projectId={projectId}
-          row={changeRoleRow}
-          heldRoles={team.roleAssignments
-            .filter((a) => a.party.id === changeRoleRow.bpId)
-            .map((a) => ({ pprId: a.id, roleId: a.role.id, roleName: a.role.name, roleCode: a.role.code }))}
-          addableRoles={addableRoles}
-          onClose={() => setChangeRoleRow(null)}
         />
       )}
     </div>
@@ -1466,7 +1534,14 @@ function TableBody({
   openDrawer,
   canWrite,
   onAddContactAtOrg,
-  onChangeRole,
+  projectId,
+  roleAssignments,
+  addableRoles,
+  disciplineCatalog,
+  reassignRolePending,
+  updateBPPending,
+  onReassignRole,
+  onUpdateBP,
 }: {
   groups: { key: string; rows: TeamRow[] }[];
   population: Population;
@@ -1477,11 +1552,24 @@ function TableBody({
   openDrawer: (bpId: number) => void;
   canWrite: boolean;
   onAddContactAtOrg: (() => void) | null;
-  /** QA4 D3 — open the Change-role modal for the given row. Only
-   *  wired for Our-Team rows (employees); for other row types the
-   *  reassign flow doesn't apply (customer/contact/related are not
-   *  free-to-reassign role holders). */
-  onChangeRole?: (row: TeamRow) => void;
+  /** QA4 D7 — inline-edit context. `projectId` scopes the
+   *  eligible-parties query the Project Role cell fires when opened.
+   *  `roleAssignments` maps party -> held PPRs so the cell knows which
+   *  PPR to soft-end on reassign, and which roles to hide from the
+   *  target list (duplicates are pointless). */
+  projectId: number;
+  roleAssignments: ProjectRoleAssignment[];
+  addableRoles: ProjectRoleTypeRow[];
+  disciplineCatalog: Array<{ id: number; name: string; nameHe: string | null; isActive: boolean }>;
+  reassignRolePending: boolean;
+  updateBPPending: boolean;
+  onReassignRole: (vars: { partyId: number; sourcePprId: number | null; targetRoleId: number }) => void;
+  onUpdateBP: (vars: {
+    bpId: number;
+    patch: { disciplineId?: number | null; email?: string | null; phone?: string | null };
+    successMessage: string;
+    successCode: string;
+  }) => void;
 }) {
   const showType = population === 'all';
   const showRepresents = population === 'stake';
@@ -1640,61 +1728,54 @@ function TableBody({
                         <TypePill type={r.rowType} />
                       </td>
                     )}
-                    {/* Role / Represents */}
+                    {/* Role / Represents — QA4 D7: inline-editable
+                        Project Role cell (supersedes the D3 Change-role
+                        row-action button). Each pill click-to-edits its
+                        own PPR; the "Team member" fallback click adds a
+                        role. Represents view stays read-only (orgName).
+                        Related / non-employee rows stay read-only. */}
                     <td className={CELL}>
-                      {showRepresents
-                        ? r.orgName ?? '—'
-                        : r.roleNames.length > 0
-                          ? (
-                            <div className="flex flex-wrap gap-1">
-                              {r.roleNames.map((n) => (
-                                <span
-                                  key={n}
-                                  className="inline-flex items-center rounded-md bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300"
-                                >
-                                  {n}
-                                </span>
-                              ))}
-                            </div>
-                          )
-                          : r.rowType === 'related'
-                            ? (
-                              // D4-4 — related rows have no project role.
-                              // Show a soft em-dash rather than the
-                              // "Team member" fallback (they are NOT
-                              // team members).
-                              <span className="text-slate-300 dark:text-slate-600">—</span>
-                            )
-                            : (
-                              <span className="text-[11.5px] italic text-slate-400 dark:text-slate-500">
-                                Team member
-                              </span>
-                            )}
-                    </td>
-                    {/* Discipline */}
-                    <td className={CELL}>
-                      {r.discipline ? (
-                        r.discipline
+                      {showRepresents ? (
+                        r.orgName ?? '—'
                       ) : (
-                        <span className="text-slate-300 dark:text-slate-600">—</span>
+                        <ProjectRoleCell
+                          row={r}
+                          projectId={projectId}
+                          roleAssignments={roleAssignments}
+                          addableRoles={addableRoles}
+                          canEdit={canWrite && r.rowType === 'employee'}
+                          pending={reassignRolePending}
+                          onReassign={onReassignRole}
+                        />
                       )}
                     </td>
-                    {/* Email */}
+                    {/* Discipline — inline-editable for person BPs. */}
                     <td className={CELL}>
-                      {r.email ? (
-                        <a
-                          href={`mailto:${r.email}`}
-                          className="text-blue-600 dark:text-blue-400 hover:underline truncate"
-                        >
-                          {r.email}
-                        </a>
-                      ) : (
-                        <span className="text-slate-300 dark:text-slate-600">—</span>
-                      )}
+                      <DisciplineCell
+                        row={r}
+                        catalog={disciplineCatalog}
+                        canEdit={canWrite && r.rowType !== 'related' && r.rowType !== 'org'}
+                        pending={updateBPPending}
+                        onUpdate={onUpdateBP}
+                      />
                     </td>
-                    {/* Phone */}
+                    {/* Email — click-to-edit inline input. */}
+                    <td className={CELL}>
+                      <EmailCell
+                        row={r}
+                        canEdit={canWrite && r.rowType !== 'related'}
+                        pending={updateBPPending}
+                        onUpdate={onUpdateBP}
+                      />
+                    </td>
+                    {/* Phone — click-to-edit inline input. */}
                     <td className={cn(CELL, 'font-mono whitespace-nowrap')}>
-                      {r.phone ?? <span className="text-slate-300 dark:text-slate-600">—</span>}
+                      <PhoneCell
+                        row={r}
+                        canEdit={canWrite && r.rowType !== 'related'}
+                        pending={updateBPPending}
+                        onUpdate={onUpdateBP}
+                      />
                     </td>
                     {/* Row actions */}
                     <td className={cn(CELL, 'text-right')}>
@@ -1708,20 +1789,6 @@ function TableBody({
                         >
                           <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
                         </button>
-                        {/* QA4 D3 — Change role. Only offered on Our-Team
-                            rows: customer / contact / related rows are
-                            not free-to-reassign role holders. */}
-                        {onChangeRole && canWrite && r.rowType === 'employee' && (
-                          <button
-                            type="button"
-                            onClick={() => onChangeRole(r)}
-                            aria-label={`Change ${r.displayName}'s role`}
-                            title="Change role"
-                            className="rounded p-1 text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30"
-                          >
-                            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-                          </button>
-                        )}
                         {r.onRemove && canWrite && (
                           <button
                             type="button"
@@ -1742,6 +1809,445 @@ function TableBody({
         })}
       </table>
     </div>
+  );
+}
+
+/* ─── QA4 D7 inline-editable cells ──────────────────────────────────
+   Small, self-contained cells that manage their own local editing
+   state. All four follow the People-page inline pattern (`get-columns.tsx`):
+   click-to-edit affordance, ESC cancels, commit on blur/Enter or on
+   select-change, and the row is disabled while the enclosing mutation
+   is in-flight. Success/error toasts come from the parent mutation. */
+
+/**
+ * Project Role — pill-per-role rendering, but each pill is a click
+ * target that opens an inline `<select>` scoped to reassigning that
+ * specific PPR. The "Team member" italic fallback (no non-participant
+ * roles yet) opens the same select in "add role" mode (POST only, no
+ * DELETE). Target options are filtered to `addableRoles` whose
+ * `allowedPartnerKind` matches the party (or is 'any'), minus roles
+ * the party already holds — the server still runs the full eligibility
+ * check (allowedPartnerKind + requiredPartnerRoleCode +
+ * requiredProfessionIds) on the POST and toasts the reason on 4xx.
+ *
+ * Deferred (spec §D7): the "N target roles not eligible — show why"
+ * expander is not implemented inline; server 4xx surfaces the reason
+ * on save. See report.
+ */
+function ProjectRoleCell({
+  row,
+  projectId: _projectId,
+  roleAssignments,
+  addableRoles,
+  canEdit,
+  pending,
+  onReassign,
+}: {
+  row: TeamRow;
+  projectId: number;
+  roleAssignments: ProjectRoleAssignment[];
+  addableRoles: ProjectRoleTypeRow[];
+  canEdit: boolean;
+  pending: boolean;
+  onReassign: (vars: { partyId: number; sourcePprId: number | null; targetRoleId: number }) => void;
+}) {
+  // `editingSourcePprId === undefined` → not editing.
+  // `null` → editing in "add role" mode (row currently holds no PPR).
+  // `number` → editing an existing PPR (reassign mode).
+  const [editingSourcePprId, setEditingSourcePprId] = useState<number | null | undefined>(undefined);
+
+  // PPRs THIS party holds — used to (a) resolve source pprId for pill
+  // clicks by role name, (b) hide already-held roles from the target
+  // dropdown.
+  const heldPprs = useMemo(
+    () => roleAssignments
+      .filter((a) => a.party.id === row.bpId)
+      .map((a) => ({ pprId: a.id, roleId: a.role.id, roleName: a.role.name })),
+    [roleAssignments, row.bpId],
+  );
+
+  // Target options: kind-match + not already held. Server enforces the
+  // rest (requiredPartnerRoleCode, requiredProfessionIds).
+  const heldRoleIds = useMemo(() => new Set(heldPprs.map((h) => h.roleId)), [heldPprs]);
+  const targetOptions = useMemo(
+    () => addableRoles.filter((rt) => {
+      if (heldRoleIds.has(rt.id)) return false;
+      if (rt.allowedPartnerKind === 'any') return true;
+      return row.partyKind ? rt.allowedPartnerKind === row.partyKind : true;
+    }),
+    [addableRoles, heldRoleIds, row.partyKind],
+  );
+
+  // Read-only render for related / contact / org rows, or when the
+  // caller says we can't edit.
+  if (!canEdit) {
+    return row.roleNames.length > 0 ? (
+      <div className="flex flex-wrap gap-1">
+        {row.roleNames.map((n) => (
+          <span
+            key={n}
+            className="inline-flex items-center rounded-md bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300"
+          >
+            {n}
+          </span>
+        ))}
+      </div>
+    ) : row.rowType === 'related' ? (
+      <span className="text-slate-300 dark:text-slate-600">—</span>
+    ) : (
+      <span className="text-[11.5px] italic text-slate-400 dark:text-slate-500">Team member</span>
+    );
+  }
+
+  // Editing — render the inline select.
+  if (editingSourcePprId !== undefined) {
+    const sourceRoleName =
+      editingSourcePprId != null
+        ? heldPprs.find((h) => h.pprId === editingSourcePprId)?.roleName ?? null
+        : null;
+    return (
+      <select
+        autoFocus
+        disabled={pending}
+        defaultValue=""
+        aria-label={
+          sourceRoleName
+            ? `Change ${sourceRoleName} for ${row.displayName}`
+            : `Add project role for ${row.displayName}`
+        }
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            setEditingSourcePprId(undefined);
+          }
+        }}
+        onBlur={() => setEditingSourcePprId(undefined)}
+        onChange={(e) => {
+          const next = Number(e.target.value);
+          if (!Number.isFinite(next) || next <= 0) {
+            setEditingSourcePprId(undefined);
+            return;
+          }
+          onReassign({
+            partyId: row.bpId,
+            sourcePprId: editingSourcePprId,
+            targetRoleId: next,
+          });
+          setEditingSourcePprId(undefined);
+        }}
+        className={cn(
+          'w-full min-w-[9rem] rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none',
+          pending && 'opacity-50 cursor-wait',
+        )}
+      >
+        <option value="">
+          {sourceRoleName ? `Change ${sourceRoleName} to…` : 'Select a role…'}
+        </option>
+        {targetOptions.map((rt) => (
+          <option key={rt.id} value={rt.id}>{rt.name}</option>
+        ))}
+      </select>
+    );
+  }
+
+  // At-rest — pills (or "Team member" fallback) with click-to-edit.
+  if (row.roleNames.length > 0) {
+    return (
+      <div className="flex flex-wrap gap-1">
+        {heldPprs.map((h) => (
+          <button
+            key={h.pprId}
+            type="button"
+            onClick={() => setEditingSourcePprId(h.pprId)}
+            title="Change role (click to reassign)"
+            className="inline-flex items-center rounded-md bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:text-blue-700 dark:hover:text-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          >
+            {h.roleName}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditingSourcePprId(null)}
+      title="Add project role"
+      className="text-[11.5px] italic text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:not-italic focus:outline-none focus:ring-2 focus:ring-blue-400 rounded"
+    >
+      Team member
+    </button>
+  );
+}
+
+/**
+ * Discipline — always-visible `<select>` when editable (People pattern).
+ * Writes `disciplineId` via PATCH /business-partners/:id. Read-only
+ * text on organization and related rows.
+ */
+function DisciplineCell({
+  row,
+  catalog,
+  canEdit,
+  pending,
+  onUpdate,
+}: {
+  row: TeamRow;
+  catalog: Array<{ id: number; name: string; nameHe: string | null; isActive: boolean }>;
+  canEdit: boolean;
+  pending: boolean;
+  onUpdate: (vars: {
+    bpId: number;
+    patch: { disciplineId?: number | null; email?: string | null; phone?: string | null };
+    successMessage: string;
+    successCode: string;
+  }) => void;
+}) {
+  if (!canEdit) {
+    return row.discipline
+      ? <>{row.discipline}</>
+      : <span className="text-slate-300 dark:text-slate-600">—</span>;
+  }
+  const currentId = row.disciplineId ?? '';
+  return (
+    <select
+      aria-label={`Discipline for ${row.displayName}`}
+      value={currentId}
+      disabled={pending}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') (e.target as HTMLSelectElement).blur();
+      }}
+      onChange={(e) => {
+        const raw = e.target.value;
+        const next = raw === '' ? null : Number(raw);
+        if (next === (row.disciplineId ?? null)) return;
+        onUpdate({
+          bpId: row.bpId,
+          patch: { disciplineId: next },
+          successMessage: 'Discipline updated',
+          successCode: 'BP-DISCIPLINE-200',
+        });
+      }}
+      className={cn(
+        'rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none',
+        pending && 'opacity-50 cursor-wait',
+      )}
+    >
+      <option value="">— None —</option>
+      {catalog
+        .filter((d) => d.isActive || d.id === row.disciplineId)
+        .map((d) => (
+          <option key={d.id} value={d.id}>{d.name}</option>
+        ))}
+    </select>
+  );
+}
+
+/**
+ * Email — click-to-edit inline text input. Enter/blur commits, ESC
+ * cancels. Empty allowed; a non-empty value must match a light email
+ * shape (contains `@` with dots on the right side) or the save is
+ * rejected inline with red text. Full server validation still runs.
+ */
+function EmailCell({
+  row,
+  canEdit,
+  pending,
+  onUpdate,
+}: {
+  row: TeamRow;
+  canEdit: boolean;
+  pending: boolean;
+  onUpdate: (vars: {
+    bpId: number;
+    patch: { disciplineId?: number | null; email?: string | null; phone?: string | null };
+    successMessage: string;
+    successCode: string;
+  }) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const validate = (v: string): string | null => {
+    const s = v.trim();
+    if (s.length === 0) return null;
+    // Light guard — server has the authoritative rule.
+    if (!/^\S+@\S+\.\S+$/.test(s)) return 'Not a valid email address';
+    return null;
+  };
+
+  const commit = () => {
+    const s = draft.trim();
+    const err = validate(s);
+    if (err) {
+      setError(err);
+      return;
+    }
+    const next = s.length === 0 ? null : s;
+    setEditing(false);
+    setError(null);
+    if (next === (row.email ?? null)) return;
+    onUpdate({
+      bpId: row.bpId,
+      patch: { email: next },
+      successMessage: 'Email updated',
+      successCode: 'BP-EMAIL-200',
+    });
+  };
+
+  const cancel = () => {
+    setEditing(false);
+    setError(null);
+    setDraft('');
+  };
+
+  if (!canEdit) {
+    return row.email ? (
+      <a
+        href={`mailto:${row.email}`}
+        className="text-blue-600 dark:text-blue-400 hover:underline truncate"
+      >
+        {row.email}
+      </a>
+    ) : (
+      <span className="text-slate-300 dark:text-slate-600">—</span>
+    );
+  }
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <input
+          autoFocus
+          type="email"
+          value={draft}
+          disabled={pending}
+          placeholder="name@example.com"
+          aria-label={`Email for ${row.displayName}`}
+          onChange={(e) => { setDraft(e.target.value); if (error) setError(null); }}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+          }}
+          className={cn(
+            'w-full min-w-[10rem] rounded-md border px-2 py-1 text-[12px] bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none',
+            error
+              ? 'border-red-500 focus:border-red-500'
+              : 'border-slate-200 dark:border-slate-700 focus:border-blue-500',
+            pending && 'opacity-50 cursor-wait',
+          )}
+        />
+        {error && (
+          <span className="text-[10.5px] text-red-600 dark:text-red-400">{error}</span>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => { setDraft(row.email ?? ''); setEditing(true); }}
+      aria-label={`Edit email for ${row.displayName}`}
+      className={cn(
+        'text-left w-full truncate rounded focus:outline-none focus:ring-2 focus:ring-blue-400',
+        row.email
+          ? 'text-blue-600 dark:text-blue-400 hover:underline'
+          : 'text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400',
+      )}
+    >
+      {row.email ?? '—'}
+    </button>
+  );
+}
+
+/**
+ * Phone — click-to-edit inline text input. Enter/blur commits, ESC
+ * cancels. No format guard beyond trim; the server normalises.
+ */
+function PhoneCell({
+  row,
+  canEdit,
+  pending,
+  onUpdate,
+}: {
+  row: TeamRow;
+  canEdit: boolean;
+  pending: boolean;
+  onUpdate: (vars: {
+    bpId: number;
+    patch: { disciplineId?: number | null; email?: string | null; phone?: string | null };
+    successMessage: string;
+    successCode: string;
+  }) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  const commit = () => {
+    const s = draft.trim();
+    const next = s.length === 0 ? null : s;
+    setEditing(false);
+    if (next === (row.phone ?? null)) return;
+    onUpdate({
+      bpId: row.bpId,
+      patch: { phone: next },
+      successMessage: 'Phone updated',
+      successCode: 'BP-PHONE-200',
+    });
+  };
+
+  const cancel = () => {
+    setEditing(false);
+    setDraft('');
+  };
+
+  if (!canEdit) {
+    return row.phone
+      ? <>{row.phone}</>
+      : <span className="text-slate-300 dark:text-slate-600">—</span>;
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        type="tel"
+        value={draft}
+        disabled={pending}
+        placeholder="+972 …"
+        aria-label={`Phone for ${row.displayName}`}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+          if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+        }}
+        className={cn(
+          'w-full min-w-[8rem] rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-[12px] font-mono text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none',
+          pending && 'opacity-50 cursor-wait',
+        )}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => { setDraft(row.phone ?? ''); setEditing(true); }}
+      aria-label={`Edit phone for ${row.displayName}`}
+      className={cn(
+        'text-left w-full truncate rounded focus:outline-none focus:ring-2 focus:ring-blue-400',
+        row.phone
+          ? 'text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400'
+          : 'text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400',
+      )}
+    >
+      {row.phone ?? '—'}
+    </button>
   );
 }
 
@@ -1910,249 +2416,3 @@ function RoleFirstPicker({
   );
 }
 
-/* ─── ChangeRoleModal (QA4 D3) ────────────────────────────────────────
-   Reassigns an Our-Team member from one project role to another,
-   preserving history. Strategy: CREATE the new PPR first (which runs
-   eligibility validation server-side, matching the M3 / Team-tab
-   picker path) and THEN soft-end the old PPR — that ordering keeps
-   the member covered by SOME role on failure instead of leaving them
-   unassigned. The backend DTO deliberately does NOT accept `roleId`
-   on PATCH (see project-partner-roles.service `UpdateProjectPartnerRoleDto`),
-   so the client owns the two-step orchestration.
-
-   UX contract:
-     • If the row already holds a specific non-participant role, we
-       ask which one to end (defaults to the first / only one).
-     • Target role picker is filtered to `addableRoles` (same set the
-       "+ Add person" flow uses — customer / participant / customer_
-       contact excluded).
-     • The eligible-parties query drives an inline "eligible?" preview
-       for the target role scoped to this party; ineligible targets
-       are blocked with the same reasons text used by the M3 picker.
-     • On success invalidates the project-team cache; the D1
-       classifier re-renders the row under the new role. */
-
-interface HeldRole { pprId: number; roleId: number; roleName: string; roleCode: string }
-
-function ChangeRoleModal({
-  projectId,
-  row,
-  heldRoles,
-  addableRoles,
-  onClose,
-}: {
-  projectId: number;
-  row: TeamRow;
-  heldRoles: HeldRole[];
-  addableRoles: ProjectRoleTypeRow[];
-  onClose: () => void;
-}) {
-  const queryClient = useQueryClient();
-  // Source PPR to end. When the person is ONLY a participant (no
-  // non-participant roles), there is nothing to end — sourcePprId
-  // stays null and the flow becomes "add a role" without a delete.
-  const [sourcePprId, setSourcePprId] = useState<number | null>(
-    heldRoles.length > 0 ? heldRoles[0]!.pprId : null,
-  );
-  const [targetRoleId, setTargetRoleId] = useState<number | null>(null);
-  const [showIneligibleReasons, setShowIneligibleReasons] = useState(false);
-
-  const targetRole = useMemo(
-    () => addableRoles.find((rt) => rt.id === targetRoleId) ?? null,
-    [addableRoles, targetRoleId],
-  );
-
-  // Same eligibility endpoint the Team-tab picker + New-Project form
-  // use. `projectId` scopes out parties already assigned to that role
-  // on this project — but since we're reassigning THIS party, we look
-  // it up by id in the returned list rather than picking from the
-  // dropdown. Enabled only once a target role is selected.
-  const { data: candidates = [], isLoading: candidatesLoading } = useQuery<
-    Array<{ id: number; displayName: string; eligible: boolean; reasons: string[] }>
-  >({
-    queryKey: ['project-role-eligible-parties', targetRole?.code ?? null, projectId],
-    enabled: !!targetRole,
-    queryFn: () =>
-      client
-        .get(`/admin/project-role-types/${encodeURIComponent(targetRole!.code)}/eligible-parties`, {
-          params: { projectId },
-        })
-        .then((r) => {
-          const d = r.data?.data ?? r.data;
-          return Array.isArray(d) ? d : [];
-        }),
-  });
-
-  // Locate this party in the returned catalog. If they're not in the
-  // list at all (already assigned to the target role, or not of the
-  // required kind), we treat that as "not eligible". `reasons` powers
-  // the readable-error line.
-  const selfCandidate = useMemo(
-    () => candidates.find((c) => c.id === row.bpId) ?? null,
-    [candidates, row.bpId],
-  );
-  const selfEligible = selfCandidate ? selfCandidate.eligible : false;
-  const selfReasons = selfCandidate?.reasons ?? (
-    targetRole && !candidatesLoading
-      ? [`${row.displayName} is not a candidate for ${targetRole.name} (or already holds it).`]
-      : []
-  );
-  const ineligible = useMemo(() => candidates.filter((c) => !c.eligible), [candidates]);
-
-  const reassign = useMutation({
-    mutationFn: async () => {
-      if (!targetRole) return null;
-      // 1. Create the new PPR — runs allowedPartnerKind /
-      //    requiredPartnerRoleCode / requiredProfessionIds validation +
-      //    team_leader → leaderId hook.
-      const created = await client
-        .post('/project-partner-roles', {
-          projectId,
-          partyId: row.bpId,
-          roleId: targetRole.id,
-        })
-        .then((r) => r.data);
-      // 2. Soft-end the old PPR (only if there was one to end).
-      if (sourcePprId != null) {
-        try {
-          await client.delete(`/project-partner-roles/${sourcePprId}`);
-        } catch (e) {
-          notify.apiError(e, 'New role added, but the old role could not be ended');
-        }
-      }
-      return created;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
-      queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
-      queryClient.invalidateQueries({ queryKey: ['project-role-eligible-parties'] });
-      notify.success(`${row.displayName}'s role updated`, { code: 'PPR-CHANGE-200' });
-      onClose();
-    },
-    onError: (err: unknown) => notify.apiError(err, "Failed to change this member's role"),
-  });
-
-  const submitDisabled =
-    reassign.isPending
-    || !targetRole
-    || candidatesLoading
-    || !selfEligible
-    || (sourcePprId != null && targetRole && heldRoles.find((h) => h.pprId === sourcePprId)?.roleId === targetRole.id);
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={`Change ${row.displayName}'s role`}
-      description="Adds the new role first, then ends the old one — history is preserved."
-      widthClass="w-[520px] max-w-[92vw]"
-      isDirty={targetRoleId != null}
-      footer={
-        <>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-slate-200 dark:border-slate-700 px-3.5 py-2 text-[13px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => reassign.mutate()}
-            disabled={submitDisabled}
-            className="rounded-lg bg-blue-600 px-3.5 py-2 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {reassign.isPending ? 'Updating…' : 'Update role'}
-          </button>
-        </>
-      }
-    >
-      <div className="space-y-3">
-        {/* Source role — only meaningful when the person already holds
-            a non-participant role. Otherwise we say so and the flow
-            becomes "add a role" (no soft-end). */}
-        <div>
-          <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">
-            Current role
-          </label>
-          {heldRoles.length === 0 ? (
-            <p className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-[12px] text-slate-500 dark:text-slate-400">
-              {row.displayName} currently holds no project role beyond Team member — the new role will simply be added.
-            </p>
-          ) : (
-            <select
-              value={sourcePprId ?? ''}
-              onChange={(e) => setSourcePprId(Number(e.target.value) || null)}
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-            >
-              {heldRoles.map((h) => (
-                <option key={h.pprId} value={h.pprId}>{h.roleName}</option>
-              ))}
-            </select>
-          )}
-        </div>
-        {/* Target role picker — restricted to `addableRoles` (same set
-            the "+ Add" flow uses; customer / participant / customer_
-            contact are excluded). */}
-        <div>
-          <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">
-            New role
-          </label>
-          <select
-            value={targetRoleId ?? ''}
-            onChange={(e) => setTargetRoleId(Number(e.target.value) || null)}
-            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-          >
-            <option value="">Select a role…</option>
-            {addableRoles.map((rt) => (
-              <option key={rt.id} value={rt.id}>{rt.name}</option>
-            ))}
-          </select>
-        </div>
-        {/* Eligibility banner — mirrors the M3 picker's "why not"
-            surface, scoped to THIS party. */}
-        {targetRole && !candidatesLoading && !selfEligible && (
-          <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
-            <div className="font-semibold mb-0.5">Not eligible for {targetRole.name}</div>
-            {selfReasons.length > 0 ? (
-              <ul className="list-disc ps-4 space-y-0.5">
-                {selfReasons.map((r) => (
-                  <li key={r}>{r}</li>
-                ))}
-              </ul>
-            ) : (
-              <p>Ask an admin to check the role's criteria.</p>
-            )}
-          </div>
-        )}
-        {targetRole && !candidatesLoading && selfEligible && ineligible.length > 0 && (
-          <div>
-            <button
-              type="button"
-              onClick={() => setShowIneligibleReasons((v) => !v)}
-              aria-expanded={showIneligibleReasons}
-              className="text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 underline decoration-dotted underline-offset-2"
-            >
-              {ineligible.length} others not eligible — {showIneligibleReasons ? 'hide' : 'show why'}
-            </button>
-            {showIneligibleReasons && (
-              <ul className="mt-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 px-2 py-1.5 text-[11px] text-slate-500 dark:text-slate-400 space-y-0.5 max-h-32 overflow-y-auto">
-                {ineligible.map((p) => (
-                  <li key={p.id} className="leading-snug">
-                    <span className="text-slate-600 dark:text-slate-300 font-medium">{p.displayName}</span>
-                    {p.reasons.length > 0 && (
-                      <>
-                        {' '}
-                        <span className="text-slate-400 dark:text-slate-500">— {p.reasons.join(' · ')}</span>
-                      </>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-      </div>
-    </Modal>
-  );
-}
