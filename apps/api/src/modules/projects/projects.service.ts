@@ -246,19 +246,54 @@ export class ProjectsService {
     // M4a.2 — Persist the role assignments. The picker on the frontend
     // already filters candidates by allowedPartnerKind/requiredPartnerRoleCode,
     // and the create endpoint on project-partner-roles re-checks server-side.
-    // We use the same service so the same validation runs.
+    // QA4 D2 (2026-09-28) — route each row through
+    // ProjectPartnerRolesService.create() instead of a raw
+    // prisma.projectPartnerRole.create so the SAME hooks the Team-tab
+    // picker triggers fire here too:
+    //   • Eligibility validation (allowedPartnerKind / requiredPartnerRoleCode
+    //     / requiredProfessionIds) — M3.
+    //   • team_leader → Project.leaderId + ProjectMember(role='Project
+    //     Leader') hook — U7 T-05.
+    //   • Activity-log write + audit.
+    // Previously the raw prisma.create skipped all of the above, so a
+    // Team Leader chosen at creation time didn't set Project.leaderId
+    // and got no ProjectMember row (broke ProjectAccess, project-list
+    // grouping, "message the leader"). For internal parties (linked
+    // User) we also upsert the participant mirror so subsequent access
+    // paths that still consult ProjectMember + participant-PPR see the
+    // person — matches "adding the same via the Team tab" post-D1.
     if (roleAssignments?.length) {
       for (const a of roleAssignments) {
         try {
-          await this.prisma.projectPartnerRole.create({
-            data: {
+          const created = await this.projectPartnerRoles.create(
+            {
               projectId: project.id,
               partyId: a.partyId,
               roleId: a.roleId,
               isPrimary: a.isPrimary ?? false,
               titleInProject: a.titleInProject ?? null,
             },
+            userId,
+          );
+          // Participant mirror — best-effort, only for internal parties.
+          // The team_leader hook inside .create() already handles the
+          // ProjectMember row for leaders; this covers non-leader
+          // employees added at project-creation time (BIM Manager,
+          // Architect, …). External parties (no linked User) are
+          // skipped: they are stakeholders, not members.
+          const partyUser = await this.prisma.user.findFirst({
+            where: { businessPartnerId: a.partyId },
+            select: { id: true },
           });
+          if (partyUser) {
+            try {
+              await this.projectPartnerRoles.upsertProjectMemberRelationship({
+                userId: partyUser.id,
+                projectId: project.id,
+                roleInContext: created.role?.name ?? null,
+              });
+            } catch (e) { Sentry.captureException(e); /* best-effort mirror */ }
+          }
         } catch (err) {
           // Roll back: project + customer rel + any already-created assignments.
           await this.prisma.projectPartnerRole.deleteMany({ where: { projectId: project.id } }).catch(() => undefined);
