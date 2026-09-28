@@ -174,6 +174,17 @@ export function ProjectFormPage() {
     ),
     [projectRoleTypes],
   );
+  // QA4 D6 (2026-09-28) — required roles surfaced on New-Project as a
+  // SOFT coverage hint (item 7). `customer` is filtered out here even
+  // if flagged isPrimaryRequired — it's already hard-required via
+  // `customerOrgId` (Project Details section), so echoing it in Team
+  // would just noise the strip. Everything else is displayed as a
+  // "not yet assigned" chip until the operator queues an assignment
+  // for it; nothing hard-blocks submit (PR-023 stance retained).
+  const requiredRoles = useMemo(
+    () => teamRoles.filter((rt: any) => rt.isPrimaryRequired),
+    [teamRoles],
+  );
 
   // Team assignments the user has queued up before submit. Each row is
   // { tempId, roleId, partyId } — the tempId is a client-side stable key
@@ -843,6 +854,61 @@ export function ProjectFormPage() {
               <h2 className={sectionHeadingClass}>TEAM</h2>
 
               <div className="mt-4 flex flex-col gap-3">
+                {/* QA4 D6 (2026-09-28) — required-roles coverage strip.
+                    Mirrors the Team-tab coverage strip so operators see
+                    the same "REQUIRED" surface at create time. Soft:
+                    unfilled roles render an amber "not yet assigned"
+                    chip but do NOT block submit. Filled ones flip to a
+                    green ✓ once queued in TeamPicker. Empty when no
+                    required roles are configured. */}
+                {!isEdit && requiredRoles.length > 0 && (
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 px-3 py-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+                      Required roles · coverage
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {requiredRoles.map((rt: any) => {
+                        const filled = teamAssignments.some((a) => a.roleId === rt.id);
+                        return filled ? (
+                          <span
+                            key={rt.id}
+                            className="inline-flex items-center gap-1 rounded-full border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-0.5 text-[11.5px] font-semibold text-emerald-800 dark:text-emerald-300"
+                            title={`${rt.name} — assigned`}
+                          >
+                            <svg
+                              className="h-2.5 w-2.5"
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                              aria-hidden="true"
+                            >
+                              <path
+                                fillRule="evenodd"
+                                d="M16.7 5.3a1 1 0 010 1.4l-8 8a1 1 0 01-1.4 0l-4-4a1 1 0 011.4-1.4L8 12.6l7.3-7.3a1 1 0 011.4 0z"
+                                clipRule="evenodd"
+                              />
+                            </svg>
+                            {rt.name}
+                          </span>
+                        ) : (
+                          <span
+                            key={rt.id}
+                            className="inline-flex items-center gap-1 rounded-full border border-dashed border-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2.5 py-0.5 text-[11.5px] font-semibold text-amber-800 dark:text-amber-300"
+                            title={`${rt.name} — not yet assigned (you can add it now or later from the Team tab)`}
+                          >
+                            <span className="rounded-full bg-amber-500/70 px-1 py-[1px] text-[9px] font-bold text-white tracking-wide uppercase">
+                              Required
+                            </span>
+                            {rt.name}
+                            <span className="text-amber-600 dark:text-amber-400">· not yet assigned</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+                      These roles are configured as required. Missing ones don't block Save — assign them here or from the project's Team tab afterwards.
+                    </p>
+                  </div>
+                )}
                 {/* QA3 Commit B — replaced the long stack of one <select>
                     per role-type with a single "+ Add role" picker.
                     Nothing is forced (PR-023 lives on): zero assignments

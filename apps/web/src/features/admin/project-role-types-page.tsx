@@ -483,14 +483,14 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
         </div>
         <label
           className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300 pt-1"
-          title="When checked, this role is REQUIRED at project creation — the project create form will render a required picker for it, and the server rejects projects without a primary assignment. Use for roles every project must have (Customer, Project Lead, …). Leave unchecked for optional roles (Architect, Engineer, etc.)."
+          title="When checked, this role is REQUIRED for every project. It is surfaced on the New-Project form as a coverage badge and tracked on the project's Team tab; the operator gets a soft 'not yet assigned' warning if it's blank, but the create is NOT hard-blocked (customer is the only hard-required participant, enforced separately via customerOrgId)."
         >
           <input
             type="checkbox"
             checked={form.isPrimaryRequired}
             onChange={(e) => setForm((f) => ({ ...f, isPrimaryRequired: e.target.checked }))}
           />
-          Required on every project — exactly one party must hold this role as primary
+          Required on every project — surfaced on New-Project and Team tab (soft)
         </label>
         {/* BM2 Phase 6 — "org role" flag. Drives the contact-person picker
              in the operational add-participant flow when the participant
