@@ -34,7 +34,12 @@ const partnerInclude = {
       project: { select: { id: true, name: true, number: true } },
     },
   },
-  user: { select: { id: true, isActive: true, lastLoginAt: true, roleId: true } },
+  // People UX M6 (D1, 2026-09-27) — `email` is now surfaced so the
+  // service can compute `isEmployee` per row without a second query.
+  // No PII exposure change — the BP payload was already returning the
+  // user id/isActive/roleId, and the User.email column is not sensitive
+  // in this app (already surfaced across People / Contacts screens).
+  user: { select: { id: true, isActive: true, lastLoginAt: true, roleId: true, email: true } },
   // Main Role — single primary categorization of the contact.
   // Surfaced in the drawer header + BP list badge + relationship pickers.
   mainRoleType: true,
@@ -124,6 +129,109 @@ export class BusinessPartnersService {
   ) {}
 
   // ─────────────────────────────────────────────────────────────────────────
+  // People UX M6 (P-03 / D1) — home-org resolution.
+  //
+  // The AMEC organization is marked with `isHomeOrg = true` at the BP
+  // row level (see migration 20260927100000_amec_home_org). Every
+  // consumer that used to test `displayName === 'Internal'` should
+  // instead read `getHomeOrg()` and derive its behaviour from the
+  // home org's owned domain list. Renaming the org therefore has no
+  // effect on employee classification — that was the entire point of
+  // M6.
+  //
+  // Exactly one BP is expected to carry the flag. If several do
+  // (data corruption), we return the lowest id and log a warning via
+  // Sentry so a future admin can clean it up.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Return the AMEC home organization + its domains, or null when no
+   * BP is flagged. Callers that need only the id/domains can destructure.
+   *
+   * NOTE: `getHomeOrg` is a hot path (called by every `excludeInternal`
+   * query and by the person-payload enrichment). It's cheap — one row
+   * with a small include — and the query cache handles repeat calls
+   * inside a single request; a full memoisation layer would need
+   * cache-busting on domain writes and isn't worth the complexity here.
+   */
+  async getHomeOrg() {
+    const rows = await this.prisma.businessPartner.findMany({
+      where: {
+        partnerType: 'organization',
+        isHomeOrg: true,
+        deletedAt: null,
+      },
+      include: { domains: true },
+      orderBy: { id: 'asc' },
+      take: 2, // 2 so we notice the "more than one holder" corruption case.
+    });
+    if (rows.length === 0) return null;
+    if (rows.length > 1) {
+      Sentry.captureMessage(
+        `Multiple BPs carry isHomeOrg=true (ids: ${rows.map((r) => r.id).join(', ')}). ` +
+        `Reading the lowest id; admin should demote the others.`,
+        'warning',
+      );
+    }
+    return rows[0];
+  }
+
+  /**
+   * People UX M6 (D1) — pure helper. Given a user email + the list of
+   * corporate domains the home org owns, does the email place the user
+   * inside AMEC? Domain matching is case-insensitive and anchored to
+   * the '@' so "amec.co.il" doesn't match "notamec.co.il".
+   *
+   * `null`-safe: any missing input short-circuits to `false`, so
+   * "no user" and "no email" both classify as external.
+   */
+  private static emailBelongsToHomeOrg(
+    email: string | null | undefined,
+    ownedDomains: string[],
+  ): boolean {
+    if (!email) return false;
+    const at = email.indexOf('@');
+    if (at < 0 || at === email.length - 1) return false;
+    const dom = email.slice(at + 1).trim().toLowerCase();
+    return ownedDomains.includes(dom);
+  }
+
+  /**
+   * People UX M6 (D1) — compute `isEmployee` for a payload row that
+   * carries `partnerType` + optional `user.email`. Applied by the
+   * findAll/findOne enrichment step so downstream UI reads a single
+   * boolean instead of reconstructing the rule.
+   */
+  private computeIsEmployee(
+    row: { partnerType: string; user?: { email?: string | null } | null },
+    ownedDomains: string[],
+  ): boolean {
+    if (row.partnerType !== 'person') return false;
+    if (!row.user) return false;
+    return BusinessPartnersService.emailBelongsToHomeOrg(row.user.email ?? null, ownedDomains);
+  }
+
+  /**
+   * People UX M6 (P-03) — enforce the "exactly one home org" invariant
+   * at write time. Runs INSIDE a transaction so a caller flipping the
+   * flag on a new row can't race with the demote of the previous
+   * holder. `exceptId` lets an update re-affirm its own flag without
+   * demoting itself.
+   */
+  private async demoteExistingHomeOrgs(
+    tx: Prisma.TransactionClient,
+    exceptId?: number,
+  ): Promise<void> {
+    await tx.businessPartner.updateMany({
+      where: {
+        isHomeOrg: true,
+        ...(exceptId ? { id: { not: exceptId } } : {}),
+      },
+      data: { isHomeOrg: false },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // CRUD
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -184,34 +292,64 @@ export class BusinessPartnersService {
       };
     }
 
-    // QA3 Commit D (Item 5) — exclude internal staff from candidate
-    // pickers. Two combined rules that match the client-side filter in
-    // contacts-page.tsx (which we can now drop from the customer-contact
-    // picker):
-    //   1. `user is null` — no login account.
-    //   2. NOT worker_of an org whose name is "Internal" (the seeded
-    //      self-org). Guarded by an OR clause so persons with no worker_of
-    //      edge (unaffiliated externals) still match.
+    // People UX M6 (P-03 / D1, 2026-09-27) — exclude EMPLOYEES from the
+    // set. D1 employee = has a User AND that user's email domain is
+    // owned by the AMEC "home org" (see `getHomeOrg` below). This
+    // replaces the pre-M6 rule which matched the seeded org's literal
+    // display_name = "Internal": that broke the moment the org was
+    // renamed to "AMEC" and mis-classified anyone whose worker_of edge
+    // still pointed at the legacy row.
+    //
+    // Two behaviours combined:
+    //   1. `user IS NULL`  — no login account at all → definitely NOT an
+    //      employee, always kept in the "external" bucket.
+    //   2. If a user IS present, keep the row only when the user's email
+    //      lives on a domain the home org does NOT own. The list of
+    //      owned domains is read from `business_partner_domains` at the
+    //      time of the query.
+    //
+    // Fallback: when the home org isn't set (fresh DB / seed didn't
+    // find AMEC / no domains registered), the excludeInternal rule
+    // degrades to the strict "user IS NULL" filter — safer to drop
+    // authenticated identities than to leak internal staff.
     if (query.excludeInternal) {
-      // Prisma nullable one-to-one — use `is: null` (bare `null` shorthand
-      // works on newer versions but the explicit form is unambiguous).
-      where.user = { is: null };
-      where.NOT = [
-        {
-          partnerRelationshipsA: {
-            some: {
-              type: { code: 'worker_of' },
-              validTo: { gt: new Date() },
-              partyB: {
-                OR: [
-                  { displayName: { equals: 'Internal' } },
-                  { companyName: { equals: 'Internal' } },
-                ],
+      const homeOrg = await this.getHomeOrg();
+      const ownedDomains = (homeOrg?.domains ?? [])
+        .filter((d) => !d.isPersonal)
+        .map((d) => d.domain.toLowerCase());
+
+      if (ownedDomains.length === 0) {
+        // No corporate domains claimed by the home org — collapse to
+        // "no user account" as a defensive fallback so authenticated
+        // identities are never leaked into the externals view even
+        // when the seed data is incomplete.
+        where.user = { is: null };
+      } else {
+        // D1 employee = user is present AND user.email ends with
+        // "@<owned-domain>". We reject those rows via NOT so the
+        // remaining set contains everyone else (no user, or user on a
+        // non-owned domain). The leading '@' anchors the match to a
+        // real domain boundary — "@amec.co.il" never matches
+        // "notamec.co.il".
+        const notEmployee: Prisma.BusinessPartnerWhereInput = {
+          NOT: {
+            AND: [
+              { user: { isNot: null } },
+              {
+                user: {
+                  is: {
+                    OR: ownedDomains.map((d) => ({ email: { endsWith: `@${d}` } })),
+                  },
+                },
               },
-            },
+            ],
           },
-        },
-      ];
+        };
+        where.AND = [
+          ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+          notEmployee,
+        ];
+      }
     }
 
     if (query.search) {
@@ -268,10 +406,38 @@ export class BusinessPartnersService {
       ? await this.attachProjectsForContacts(data as any[])
       : data;
 
+    // People UX M6 (D1) — attach `isEmployee` to each person payload.
+    // Only one home-org lookup per request; skipped when the query
+    // returned zero rows or when every row is an org.
+    const withEmployeeFlag = await this.attachIsEmployee(enriched as any[]);
+
     return {
-      data: enriched,
+      data: withEmployeeFlag,
       meta: { total, page, perPage, totalPages: Math.ceil(total / perPage) },
     };
+  }
+
+  /**
+   * People UX M6 (D1) — enrich each person payload with an `isEmployee`
+   * boolean derived from the home org's owned domain list. Orgs pass
+   * through untouched. Cheap: one findFirst for the home org (cached
+   * inside `getHomeOrg`) + an in-memory scan.
+   */
+  private async attachIsEmployee<T extends { id: number; partnerType: string; user?: { email?: string | null } | null }>(
+    rows: T[],
+  ): Promise<Array<T & { isEmployee?: boolean }>> {
+    if (rows.length === 0) return rows as any;
+    const hasPerson = rows.some((r) => r.partnerType === 'person');
+    if (!hasPerson) return rows as any;
+    const homeOrg = await this.getHomeOrg();
+    const ownedDomains = (homeOrg?.domains ?? [])
+      .filter((d) => !d.isPersonal)
+      .map((d) => d.domain.toLowerCase());
+    return rows.map((r) =>
+      r.partnerType === 'person'
+        ? { ...r, isEmployee: this.computeIsEmployee(r, ownedDomains) }
+        : r,
+    );
   }
 
   /**
@@ -419,8 +585,12 @@ export class BusinessPartnersService {
       orderBy: { createdAt: 'desc' },
     });
 
+    // People UX M6 (D1) — enrich single fetch too so drawers can show
+    // the "Employee" badge based on the same rule the list uses.
+    const [enrichedBp] = await this.attachIsEmployee([bp as any]);
+
     return {
-      ...bp,
+      ...(enrichedBp as any),
       incomingRelationships: incoming.map((r) => ({
         id: r.id,
         relationshipType: r.type,
@@ -458,49 +628,63 @@ export class BusinessPartnersService {
       throw new BadRequestException('Person partners require firstName/lastName or displayName');
     }
 
-    const bp = await this.prisma.businessPartner.create({
-      data: {
-        partnerType: dto.partnerType,
-        displayName: toDisplayName(dto),
-        firstName: dto.partnerType === 'person' ? dto.firstName ?? null : null,
-        lastName: dto.partnerType === 'person' ? dto.lastName ?? null : null,
-        // People UX M2c (P-11 / P-37): Hebrew names are DTO-validated but
-        // used to be dropped on the floor here — bilingual search still
-        // matched them because the CSV importer wrote directly to the
-        // column, but the create-partner-modal's `firstNameHe/lastNameHe`
-        // values never survived a POST. Persist them now so the drawer
-        // parity edits round-trip cleanly.
-        firstNameHe: dto.partnerType === 'person' ? dto.firstNameHe ?? null : null,
-        lastNameHe: dto.partnerType === 'person' ? dto.lastNameHe ?? null : null,
-        companyName: dto.companyName ?? null,
-        taxId: dto.taxId ?? null,
-        email: dto.email ?? null,
-        phone: dto.phone ?? null,
-        mobile: dto.mobile ?? null,
-        address: dto.address ?? null,
-        website: dto.website ?? null,
-        linkedinUrl: dto.linkedinUrl ?? null,
-        facebookUrl: dto.facebookUrl ?? null,
-        twitterUrl: dto.twitterUrl ?? null,
-        instagramUrl: dto.instagramUrl ?? null,
-        notes: dto.notes ?? null,
-        source: dto.source ?? 'manual',
-        mainRoleTypeId: dto.mainRoleTypeId ?? null,
-        disciplineId: dto.disciplineId ?? null,
-        roles:
-          dto.initialRoleTypeIds && dto.initialRoleTypeIds.length > 0
-            ? {
-                createMany: {
-                  data: [...new Set(dto.initialRoleTypeIds)].map((roleTypeId) => ({
-                    roleTypeId,
-                    isPrimary: false,
-                  })),
-                  skipDuplicates: true,
-                },
-              }
-            : undefined,
-      },
-      include: partnerInclude,
+    // People UX M6 (P-03) — `isHomeOrg` may only be set on orgs. On
+    // persons we silently drop the flag rather than 400 so a UI form
+    // that always sends the field can't get stuck.
+    const wantsHomeOrg =
+      dto.partnerType === 'organization' && dto.isHomeOrg === true;
+
+    const bp = await this.prisma.$transaction(async (tx) => {
+      // Demote every previous holder before creating the new one so
+      // there's never a window where two rows carry the flag.
+      if (wantsHomeOrg) {
+        await this.demoteExistingHomeOrgs(tx);
+      }
+      return tx.businessPartner.create({
+        data: {
+          partnerType: dto.partnerType,
+          displayName: toDisplayName(dto),
+          firstName: dto.partnerType === 'person' ? dto.firstName ?? null : null,
+          lastName: dto.partnerType === 'person' ? dto.lastName ?? null : null,
+          // People UX M2c (P-11 / P-37): Hebrew names are DTO-validated but
+          // used to be dropped on the floor here — bilingual search still
+          // matched them because the CSV importer wrote directly to the
+          // column, but the create-partner-modal's `firstNameHe/lastNameHe`
+          // values never survived a POST. Persist them now so the drawer
+          // parity edits round-trip cleanly.
+          firstNameHe: dto.partnerType === 'person' ? dto.firstNameHe ?? null : null,
+          lastNameHe: dto.partnerType === 'person' ? dto.lastNameHe ?? null : null,
+          companyName: dto.companyName ?? null,
+          taxId: dto.taxId ?? null,
+          email: dto.email ?? null,
+          phone: dto.phone ?? null,
+          mobile: dto.mobile ?? null,
+          address: dto.address ?? null,
+          website: dto.website ?? null,
+          linkedinUrl: dto.linkedinUrl ?? null,
+          facebookUrl: dto.facebookUrl ?? null,
+          twitterUrl: dto.twitterUrl ?? null,
+          instagramUrl: dto.instagramUrl ?? null,
+          notes: dto.notes ?? null,
+          source: dto.source ?? 'manual',
+          mainRoleTypeId: dto.mainRoleTypeId ?? null,
+          disciplineId: dto.disciplineId ?? null,
+          isHomeOrg: wantsHomeOrg,
+          roles:
+            dto.initialRoleTypeIds && dto.initialRoleTypeIds.length > 0
+              ? {
+                  createMany: {
+                    data: [...new Set(dto.initialRoleTypeIds)].map((roleTypeId) => ({
+                      roleTypeId,
+                      isPrimary: false,
+                    })),
+                    skipDuplicates: true,
+                  },
+                }
+              : undefined,
+        },
+        include: partnerInclude,
+      });
     });
 
     // A BP's Main Role must also appear in its roles list, otherwise
@@ -579,39 +763,56 @@ export class BusinessPartnersService {
           })
         : undefined);
 
-    const updated = await this.prisma.businessPartner.update({
-      where: { id },
-      data: {
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        // People UX M2c — see create() above. Explicit-undefined leaves
-        // the column untouched, so callers that don't touch these fields
-        // are unaffected.
-        firstNameHe: dto.firstNameHe,
-        lastNameHe: dto.lastNameHe,
-        companyName: dto.companyName,
-        taxId: dto.taxId,
-        email: dto.email,
-        phone: dto.phone,
-        mobile: dto.mobile,
-        address: dto.address,
-        website: dto.website,
-        linkedinUrl: dto.linkedinUrl,
-        facebookUrl: dto.facebookUrl,
-        twitterUrl: dto.twitterUrl,
-        instagramUrl: dto.instagramUrl,
-        notes: dto.notes,
-        status: dto.status,
-        // Main Role — explicit-undefined vs explicit-null matters. If the
-        // caller sent the field at all (including null = "clear it"),
-        // forward it. If the field is absent from the PATCH body it
-        // stays untouched.
-        ...(dto.mainRoleTypeId !== undefined ? { mainRoleTypeId: dto.mainRoleTypeId } : {}),
-        // Discipline — same explicit-null-vs-undefined pattern.
-        ...(dto.disciplineId !== undefined ? { disciplineId: dto.disciplineId } : {}),
-        ...(displayName !== undefined ? { displayName } : {}),
-      },
-      include: partnerInclude,
+    // People UX M6 (P-03) — same rule as create: `isHomeOrg` only lives
+    // on orgs, and setting it to `true` demotes every other holder
+    // inside the same transaction.
+    const wantsHomeOrgSet =
+      existing.partnerType === 'organization' && dto.isHomeOrg === true;
+    const wantsHomeOrgClear =
+      existing.partnerType === 'organization' && dto.isHomeOrg === false;
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (wantsHomeOrgSet) {
+        await this.demoteExistingHomeOrgs(tx, id);
+      }
+      return tx.businessPartner.update({
+        where: { id },
+        data: {
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          // People UX M2c — see create() above. Explicit-undefined leaves
+          // the column untouched, so callers that don't touch these fields
+          // are unaffected.
+          firstNameHe: dto.firstNameHe,
+          lastNameHe: dto.lastNameHe,
+          companyName: dto.companyName,
+          taxId: dto.taxId,
+          email: dto.email,
+          phone: dto.phone,
+          mobile: dto.mobile,
+          address: dto.address,
+          website: dto.website,
+          linkedinUrl: dto.linkedinUrl,
+          facebookUrl: dto.facebookUrl,
+          twitterUrl: dto.twitterUrl,
+          instagramUrl: dto.instagramUrl,
+          notes: dto.notes,
+          status: dto.status,
+          // Main Role — explicit-undefined vs explicit-null matters. If the
+          // caller sent the field at all (including null = "clear it"),
+          // forward it. If the field is absent from the PATCH body it
+          // stays untouched.
+          ...(dto.mainRoleTypeId !== undefined ? { mainRoleTypeId: dto.mainRoleTypeId } : {}),
+          // Discipline — same explicit-null-vs-undefined pattern.
+          ...(dto.disciplineId !== undefined ? { disciplineId: dto.disciplineId } : {}),
+          ...(displayName !== undefined ? { displayName } : {}),
+          // Home-org flag — only touched when the caller sent it AND
+          // the row is an org.
+          ...(wantsHomeOrgSet ? { isHomeOrg: true } : {}),
+          ...(wantsHomeOrgClear ? { isHomeOrg: false } : {}),
+        },
+        include: partnerInclude,
+      });
     });
 
     // Keep the Main Role / roles-list invariant in sync — a BP's main role

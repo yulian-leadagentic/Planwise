@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional, IsString, IsEmail, MaxLength, ValidateIf, IsArray, IsInt } from 'class-validator';
+import { IsEnum, IsOptional, IsString, IsEmail, MaxLength, ValidateIf, IsArray, IsInt, IsBoolean } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PartnerType, PartnerSource } from '@prisma/client';
 
@@ -148,4 +148,15 @@ export class CreateBusinessPartnerDto {
   @IsOptional()
   @IsInt()
   disciplineId?: number | null;
+
+  /**
+   * People UX M6 (P-03) — mark this BP as the AMEC home org. Only ONE
+   * org may hold `true` at a time; the service enforces the invariant
+   * at write time by demoting the previous holder in the same
+   * transaction. Ignored on person partners.
+   */
+  @ApiPropertyOptional({ type: Boolean })
+  @IsOptional()
+  @IsBoolean()
+  isHomeOrg?: boolean;
 }

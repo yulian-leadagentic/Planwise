@@ -83,13 +83,20 @@ export class QueryBusinessPartnersDto {
   includeProjectCustomers?: boolean;
 
   /**
-   * QA3 Commit D (Item 5) — customer-contact candidates must NOT surface
-   * internal staff. Two rules combined:
-   *   - the person has a login user account (User row) — they're internal;
-   *   - the person's active `worker_of` targets an org whose displayName
-   *     or companyName is "Internal" (the seeded self-org).
-   * Enforced on the server so the Contacts / candidate flows can't drift
-   * from what the UI-side filter does.
+   * Exclude employees from the returned set (D1 rule).
+   *
+   * People UX M6 (P-03, 2026-09-27) — the D1 rule replaced the pre-M6
+   * "displayName is Internal" string match. An employee is now defined
+   * as a person BP with a User row whose `email` domain is owned by
+   * the AMEC home org (see `BusinessPartner.isHomeOrg`). When the
+   * home org is unresolved, the filter degrades to "user IS NULL" as
+   * a safe default — no authenticated identities leak into external-
+   * facing pickers.
+   *
+   * Used by:
+   *   - Contacts page ("Include AMEC employees" toggle OFF).
+   *   - Customer-contact and role-assignment pickers that intentionally
+   *     hide internal staff.
    */
   @ApiPropertyOptional({ default: false })
   @IsOptional()

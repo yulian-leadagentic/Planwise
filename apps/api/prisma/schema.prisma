@@ -1801,6 +1801,19 @@ model BusinessPartner {
   createdByImportId Int?        @map("created_by_import_id")
   createdByImport   DataImport? @relation("PartnersCreatedByImport", fields: [createdByImportId], references: [id], onDelete: SetNull)
 
+  /// People UX M6 (P-03 / P-05, 2026-09-27) — the AMEC home-org flag.
+  /// Exactly ONE organization BP should ever carry `true` (write path
+  /// demotes any other holder before setting; there is no partial
+  /// unique index because MySQL doesn't support them cleanly). The D1
+  /// employee rule reads this to build the "own domains" set:
+  /// employee = has a User AND user.email domain is owned by the home
+  /// org (see BusinessPartnerDomain). The `excludeInternal` filter and
+  /// the `isEmployee` boolean on person payloads both flow from here.
+  /// Renaming the AMEC org does not change who counts as an employee
+  /// — that was the entire point of moving off the
+  /// `displayName === 'Internal'` string check.
+  isHomeOrg Boolean @default(false) @map("is_home_org")
+
   @@index([partnerType])
   @@index([status])
   @@index([companyName])
@@ -1812,6 +1825,8 @@ model BusinessPartner {
   // dropped; the DB still needs fast lookups by email for import dedup
   // and worker-of-user backfill).
   @@index([email])
+  // People UX M6 — hot lookup: the home-org helper filters on this.
+  @@index([isHomeOrg])
   @@map("business_partners")
 }
 
