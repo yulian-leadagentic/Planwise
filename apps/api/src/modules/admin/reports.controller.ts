@@ -137,4 +137,128 @@ export class ReportsController {
       onDomainWithoutUser,
     };
   }
+
+  /**
+   * Labor Category M17 — mismatch report between the User cache column
+   * and the UserSeniority history that owns the truth. Two independent
+   * lists so an admin can resolve each manually (no auto-fix — history
+   * writes must be date-effective, and only a human knows the correct
+   * effective-from):
+   *
+   *   • `cacheMismatches` — Users whose `user.seniorityLevelId` is not
+   *     the same as the level on the currently-effective history row
+   *     (as of today). Almost always caused by a pre-M17 direct
+   *     `PATCH /users/:id { seniorityLevelId }` write that never made
+   *     it into the history chain.
+   *   • `categoryWithoutHistory` — Users with `user.seniorityLevelId`
+   *     set but zero rows in `user_seniorities`. Same root cause; kept
+   *     as its own bucket because the fix is "seed a history row with
+   *     a sensible effective-from" rather than "reconcile which row is
+   *     wrong".
+   *
+   * Response shape is bounded — one query per bucket. Route only; no
+   * UI surface. Yulian resolves via the People edit modal's Labor
+   * Category History section.
+   */
+  @Get('labor-category-mismatches')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'M17 — Users whose Labor Category cache disagrees with history' })
+  async laborCategoryMismatches() {
+    const today = new Date();
+
+    // Pull every user that has a cached seniorityLevelId. The two
+    // buckets are subsets of this set — no need to scan users without
+    // any category.
+    const users = await this.prisma.user.findMany({
+      where: { deletedAt: null, seniorityLevelId: { not: null } },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        seniorityLevelId: true,
+        seniorityLevel: { select: { id: true, code: true, name: true } },
+      },
+    });
+
+    // Batch-load the history rows covering "today" for the same set —
+    // one query per user would be O(N). We fetch all history for these
+    // users and pick the current row in memory.
+    const userIds = users.map((u) => u.id);
+    const allHistory =
+      userIds.length === 0
+        ? []
+        : await this.prisma.userSeniority.findMany({
+            where: { userId: { in: userIds } },
+            include: { seniorityLevel: { select: { id: true, code: true, name: true } } },
+            orderBy: [{ userId: 'asc' }, { startDate: 'desc' }],
+          });
+
+    const historyByUser = new Map<number, typeof allHistory>();
+    for (const row of allHistory) {
+      const list = historyByUser.get(row.userId) ?? [];
+      list.push(row);
+      historyByUser.set(row.userId, list);
+    }
+
+    const cacheMismatches: Array<{
+      userId: number;
+      email: string | null;
+      name: string;
+      cachedLevel: { id: number; code: string; name: string } | null;
+      currentHistoryLevel: { id: number; code: string; name: string } | null;
+      effectiveFrom: string | null;
+    }> = [];
+    const categoryWithoutHistory: Array<{
+      userId: number;
+      email: string | null;
+      name: string;
+      cachedLevel: { id: number; code: string; name: string } | null;
+    }> = [];
+
+    for (const u of users) {
+      const rows = historyByUser.get(u.id) ?? [];
+      const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email || `#${u.id}`;
+      const cachedLevel = u.seniorityLevel
+        ? { id: u.seniorityLevel.id, code: u.seniorityLevel.code, name: u.seniorityLevel.name }
+        : null;
+
+      if (rows.length === 0) {
+        categoryWithoutHistory.push({
+          userId: u.id,
+          email: u.email,
+          name,
+          cachedLevel,
+        });
+        continue;
+      }
+
+      // Current row = the one whose [startDate, endDate] covers today.
+      // Fall back to the newest startDate <= today when none is
+      // currently open — matches the resolver's behavior.
+      const current =
+        rows.find((r) => r.startDate <= today && (r.endDate === null || r.endDate >= today)) ??
+        rows.find((r) => r.startDate <= today) ??
+        null;
+      const currentLevelId = current?.seniorityLevelId ?? null;
+      if (currentLevelId !== u.seniorityLevelId) {
+        cacheMismatches.push({
+          userId: u.id,
+          email: u.email,
+          name,
+          cachedLevel,
+          currentHistoryLevel: current?.seniorityLevel
+            ? {
+                id: current.seniorityLevel.id,
+                code: current.seniorityLevel.code,
+                name: current.seniorityLevel.name,
+              }
+            : null,
+          effectiveFrom: current ? current.startDate.toISOString().slice(0, 10) : null,
+        });
+      }
+    }
+
+    return { cacheMismatches, categoryWithoutHistory };
+  }
 }

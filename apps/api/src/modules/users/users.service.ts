@@ -4,6 +4,7 @@ import * as bcrypt from 'bcrypt';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { NumberRangesService } from '../number-ranges/number-ranges.service';
+import { UserSenioritiesService } from './user-seniorities.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
@@ -15,6 +16,7 @@ export class UsersService implements OnModuleInit {
   constructor(
     private prisma: PrismaService,
     private numberRanges: NumberRangesService,
+    private userSeniorities: UserSenioritiesService,
   ) {}
 
   /**
@@ -207,7 +209,28 @@ export class UsersService implements OnModuleInit {
       },
     });
 
-    // 5) Mirror Job Title onto the BP's professions list — see syncPositionToProfession().
+    // 5) M17 — Labor Category single source. If the DTO carried a
+    // seniorityLevelId, seed the first UserSeniority history row so
+    // the cost resolver has a date-effective interval to hit. This
+    // mirrors what the users importer already does (see
+    // users-importer.service.ts). Uses employmentDate when present;
+    // falls back to today when not. Skip-on-error keeps the user row
+    // safe if the history seed hiccups — the mismatch report will
+    // catch it and the admin resolves manually.
+    if (dto.seniorityLevelId) {
+      const startIso = (dto.employmentDate ?? new Date().toISOString()).slice(0, 10);
+      try {
+        await this.userSeniorities.addEntry(user.id, {
+          seniorityLevelId: dto.seniorityLevelId,
+          startDate: startIso,
+        });
+      } catch (e) {
+        Sentry.captureException(e);
+        /* swallow — user row already committed; mismatch report surfaces it */
+      }
+    }
+
+    // 6) Mirror Job Title onto the BP's professions list — see syncPositionToProfession().
     // Same skip-on-error policy as update(): the user create already
     // committed; a failed mirror just delays role-picker visibility.
     if (dto.position) {
@@ -422,6 +445,23 @@ export class UsersService implements OnModuleInit {
       }
     }
 
+    // M17 — Labor Category single source. `PATCH /users/:id` used to
+    // write `seniorityLevelId` straight onto the User row, bypassing
+    // the UserSeniority history and leaving the cost resolver's
+    // date-effective lookup with no interval to hit. Now: if a caller
+    // still sends `seniorityLevelId` (inline table edit, edit modal
+    // fallback path), we transparently route it through the history
+    // service — one open-ended row starting today, previous open row
+    // auto-closed at the day before. The `syncUserSeniorityLevel()`
+    // step inside addEntry keeps `User.seniorityLevelId` correct as
+    // the cache the FE reads. Strip from the direct update so we
+    // don't double-write; the sync call inside addEntry owns it.
+    const routedSeniorityLevelId =
+      'seniorityLevelId' in data ? (data.seniorityLevelId as number | null | undefined) : undefined;
+    if ('seniorityLevelId' in data) {
+      delete data.seniorityLevelId;
+    }
+
     const updated = await this.prisma.user.update({
       where: { id },
       data,
@@ -444,6 +484,54 @@ export class UsersService implements OnModuleInit {
         role: { select: { id: true, name: true } },
       },
     });
+
+    // M17 — after the direct update, route `seniorityLevelId` through
+    // the history service if it was on the DTO. `null` clears — since
+    // addEntry only accepts a real level id we translate null into
+    // "close any current open history row without adding a replacement"
+    // (the direct update above ALREADY cleared the cache column, and
+    // syncUserSeniorityLevel would just re-set it; do the closure
+    // ourselves so the semantics match "no current category").
+    if (routedSeniorityLevelId !== undefined) {
+      if (routedSeniorityLevelId === null) {
+        // Close the current open-ended row so history reflects "no
+        // category as of today"; leave the cache column null.
+        await this.prisma.userSeniority.updateMany({
+          where: { userId: id, endDate: null },
+          data: { endDate: new Date() },
+        });
+        await this.prisma.user.update({ where: { id }, data: { seniorityLevelId: null } });
+      } else {
+        // Effective-date = today by default. If we already have an open
+        // row on the same level, skip — no state change to record.
+        const openRow = await this.prisma.userSeniority.findFirst({
+          where: { userId: id, endDate: null },
+          orderBy: { startDate: 'desc' },
+        });
+        if (!openRow || openRow.seniorityLevelId !== routedSeniorityLevelId) {
+          const today = new Date().toISOString().slice(0, 10);
+          try {
+            await this.userSeniorities.addEntry(id, {
+              seniorityLevelId: routedSeniorityLevelId,
+              startDate: today,
+            });
+          } catch (e) {
+            // If the previous open row started today, addEntry would
+            // fail the overlap check. In that case reassign the open
+            // row's level in-place — this is the same "correcting a
+            // just-made change" semantics the History section already
+            // supports via updateEntry.
+            if (openRow && openRow.startDate.toISOString().slice(0, 10) === today) {
+              await this.userSeniorities.updateEntry(openRow.id, {
+                seniorityLevelId: routedSeniorityLevelId,
+              });
+            } else {
+              throw e;
+            }
+          }
+        }
+      }
+    }
 
     // Mirror Job Title onto the linked BP's professions list so the
     // project role-pickers see it. Safe to skip-on-error: the user write
