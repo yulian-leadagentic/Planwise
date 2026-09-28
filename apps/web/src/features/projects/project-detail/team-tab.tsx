@@ -39,6 +39,7 @@ import {
   Check,
   AlertTriangle,
   Users as UsersIcon,
+  RefreshCw,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -218,6 +219,9 @@ export function TeamTab({
   const [addPickerOpen, setAddPickerOpen] = useState(false);
   const [roleAssignmentTarget, setRoleAssignmentTarget] = useState<ProjectRoleTypeRow | null>(null);
   const [showCustomerContactPicker, setShowCustomerContactPicker] = useState(false);
+  // QA4 D3 — "Change role" flow on Our-Team rows. Holds the target row
+  // whose role the operator is reassigning. See ChangeRoleModal.
+  const [changeRoleRow, setChangeRoleRow] = useState<TeamRow | null>(null);
   // showAddMember (participant role) is lifted state; opening happens
   // via onToggleAddMember, which the parent detail-page owns.
 
@@ -1071,6 +1075,7 @@ export function TeamTab({
                 ? () => setShowCustomerContactPicker(true)
                 : null
             }
+            onChangeRole={(row) => setChangeRoleRow(row)}
           />
         ) : (
           <CardsBody rows={sorted} openDrawer={openDrawer} />
@@ -1149,6 +1154,18 @@ export function TeamTab({
             setFocusedPartnerId(null);
             queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
           }}
+        />
+      )}
+
+      {changeRoleRow && (
+        <ChangeRoleModal
+          projectId={projectId}
+          row={changeRoleRow}
+          heldRoles={team.roleAssignments
+            .filter((a) => a.party.id === changeRoleRow.bpId)
+            .map((a) => ({ pprId: a.id, roleId: a.role.id, roleName: a.role.name, roleCode: a.role.code }))}
+          addableRoles={addableRoles}
+          onClose={() => setChangeRoleRow(null)}
         />
       )}
     </div>
@@ -1449,6 +1466,7 @@ function TableBody({
   openDrawer,
   canWrite,
   onAddContactAtOrg,
+  onChangeRole,
 }: {
   groups: { key: string; rows: TeamRow[] }[];
   population: Population;
@@ -1459,6 +1477,11 @@ function TableBody({
   openDrawer: (bpId: number) => void;
   canWrite: boolean;
   onAddContactAtOrg: (() => void) | null;
+  /** QA4 D3 — open the Change-role modal for the given row. Only
+   *  wired for Our-Team rows (employees); for other row types the
+   *  reassign flow doesn't apply (customer/contact/related are not
+   *  free-to-reassign role holders). */
+  onChangeRole?: (row: TeamRow) => void;
 }) {
   const showType = population === 'all';
   const showRepresents = population === 'stake';
@@ -1685,6 +1708,20 @@ function TableBody({
                         >
                           <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
                         </button>
+                        {/* QA4 D3 — Change role. Only offered on Our-Team
+                            rows: customer / contact / related rows are
+                            not free-to-reassign role holders. */}
+                        {onChangeRole && canWrite && r.rowType === 'employee' && (
+                          <button
+                            type="button"
+                            onClick={() => onChangeRole(r)}
+                            aria-label={`Change ${r.displayName}'s role`}
+                            title="Change role"
+                            className="rounded p-1 text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                        )}
                         {r.onRemove && canWrite && (
                           <button
                             type="button"
@@ -1868,6 +1905,253 @@ function RoleFirstPicker({
             </div>
           </button>
         ))}
+      </div>
+    </Modal>
+  );
+}
+
+/* ─── ChangeRoleModal (QA4 D3) ────────────────────────────────────────
+   Reassigns an Our-Team member from one project role to another,
+   preserving history. Strategy: CREATE the new PPR first (which runs
+   eligibility validation server-side, matching the M3 / Team-tab
+   picker path) and THEN soft-end the old PPR — that ordering keeps
+   the member covered by SOME role on failure instead of leaving them
+   unassigned. The backend DTO deliberately does NOT accept `roleId`
+   on PATCH (see project-partner-roles.service `UpdateProjectPartnerRoleDto`),
+   so the client owns the two-step orchestration.
+
+   UX contract:
+     • If the row already holds a specific non-participant role, we
+       ask which one to end (defaults to the first / only one).
+     • Target role picker is filtered to `addableRoles` (same set the
+       "+ Add person" flow uses — customer / participant / customer_
+       contact excluded).
+     • The eligible-parties query drives an inline "eligible?" preview
+       for the target role scoped to this party; ineligible targets
+       are blocked with the same reasons text used by the M3 picker.
+     • On success invalidates the project-team cache; the D1
+       classifier re-renders the row under the new role. */
+
+interface HeldRole { pprId: number; roleId: number; roleName: string; roleCode: string }
+
+function ChangeRoleModal({
+  projectId,
+  row,
+  heldRoles,
+  addableRoles,
+  onClose,
+}: {
+  projectId: number;
+  row: TeamRow;
+  heldRoles: HeldRole[];
+  addableRoles: ProjectRoleTypeRow[];
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  // Source PPR to end. When the person is ONLY a participant (no
+  // non-participant roles), there is nothing to end — sourcePprId
+  // stays null and the flow becomes "add a role" without a delete.
+  const [sourcePprId, setSourcePprId] = useState<number | null>(
+    heldRoles.length > 0 ? heldRoles[0]!.pprId : null,
+  );
+  const [targetRoleId, setTargetRoleId] = useState<number | null>(null);
+  const [showIneligibleReasons, setShowIneligibleReasons] = useState(false);
+
+  const targetRole = useMemo(
+    () => addableRoles.find((rt) => rt.id === targetRoleId) ?? null,
+    [addableRoles, targetRoleId],
+  );
+
+  // Same eligibility endpoint the Team-tab picker + New-Project form
+  // use. `projectId` scopes out parties already assigned to that role
+  // on this project — but since we're reassigning THIS party, we look
+  // it up by id in the returned list rather than picking from the
+  // dropdown. Enabled only once a target role is selected.
+  const { data: candidates = [], isLoading: candidatesLoading } = useQuery<
+    Array<{ id: number; displayName: string; eligible: boolean; reasons: string[] }>
+  >({
+    queryKey: ['project-role-eligible-parties', targetRole?.code ?? null, projectId],
+    enabled: !!targetRole,
+    queryFn: () =>
+      client
+        .get(`/admin/project-role-types/${encodeURIComponent(targetRole!.code)}/eligible-parties`, {
+          params: { projectId },
+        })
+        .then((r) => {
+          const d = r.data?.data ?? r.data;
+          return Array.isArray(d) ? d : [];
+        }),
+  });
+
+  // Locate this party in the returned catalog. If they're not in the
+  // list at all (already assigned to the target role, or not of the
+  // required kind), we treat that as "not eligible". `reasons` powers
+  // the readable-error line.
+  const selfCandidate = useMemo(
+    () => candidates.find((c) => c.id === row.bpId) ?? null,
+    [candidates, row.bpId],
+  );
+  const selfEligible = selfCandidate ? selfCandidate.eligible : false;
+  const selfReasons = selfCandidate?.reasons ?? (
+    targetRole && !candidatesLoading
+      ? [`${row.displayName} is not a candidate for ${targetRole.name} (or already holds it).`]
+      : []
+  );
+  const ineligible = useMemo(() => candidates.filter((c) => !c.eligible), [candidates]);
+
+  const reassign = useMutation({
+    mutationFn: async () => {
+      if (!targetRole) return null;
+      // 1. Create the new PPR — runs allowedPartnerKind /
+      //    requiredPartnerRoleCode / requiredProfessionIds validation +
+      //    team_leader → leaderId hook.
+      const created = await client
+        .post('/project-partner-roles', {
+          projectId,
+          partyId: row.bpId,
+          roleId: targetRole.id,
+        })
+        .then((r) => r.data);
+      // 2. Soft-end the old PPR (only if there was one to end).
+      if (sourcePprId != null) {
+        try {
+          await client.delete(`/project-partner-roles/${sourcePprId}`);
+        } catch (e) {
+          notify.apiError(e, 'New role added, but the old role could not be ended');
+        }
+      }
+      return created;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['project-role-eligible-parties'] });
+      notify.success(`${row.displayName}'s role updated`, { code: 'PPR-CHANGE-200' });
+      onClose();
+    },
+    onError: (err: unknown) => notify.apiError(err, "Failed to change this member's role"),
+  });
+
+  const submitDisabled =
+    reassign.isPending
+    || !targetRole
+    || candidatesLoading
+    || !selfEligible
+    || (sourcePprId != null && targetRole && heldRoles.find((h) => h.pprId === sourcePprId)?.roleId === targetRole.id);
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Change ${row.displayName}'s role`}
+      description="Adds the new role first, then ends the old one — history is preserved."
+      widthClass="w-[520px] max-w-[92vw]"
+      isDirty={targetRoleId != null}
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 dark:border-slate-700 px-3.5 py-2 text-[13px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => reassign.mutate()}
+            disabled={submitDisabled}
+            className="rounded-lg bg-blue-600 px-3.5 py-2 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {reassign.isPending ? 'Updating…' : 'Update role'}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        {/* Source role — only meaningful when the person already holds
+            a non-participant role. Otherwise we say so and the flow
+            becomes "add a role" (no soft-end). */}
+        <div>
+          <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">
+            Current role
+          </label>
+          {heldRoles.length === 0 ? (
+            <p className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-[12px] text-slate-500 dark:text-slate-400">
+              {row.displayName} currently holds no project role beyond Team member — the new role will simply be added.
+            </p>
+          ) : (
+            <select
+              value={sourcePprId ?? ''}
+              onChange={(e) => setSourcePprId(Number(e.target.value) || null)}
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+            >
+              {heldRoles.map((h) => (
+                <option key={h.pprId} value={h.pprId}>{h.roleName}</option>
+              ))}
+            </select>
+          )}
+        </div>
+        {/* Target role picker — restricted to `addableRoles` (same set
+            the "+ Add" flow uses; customer / participant / customer_
+            contact are excluded). */}
+        <div>
+          <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">
+            New role
+          </label>
+          <select
+            value={targetRoleId ?? ''}
+            onChange={(e) => setTargetRoleId(Number(e.target.value) || null)}
+            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+          >
+            <option value="">Select a role…</option>
+            {addableRoles.map((rt) => (
+              <option key={rt.id} value={rt.id}>{rt.name}</option>
+            ))}
+          </select>
+        </div>
+        {/* Eligibility banner — mirrors the M3 picker's "why not"
+            surface, scoped to THIS party. */}
+        {targetRole && !candidatesLoading && !selfEligible && (
+          <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
+            <div className="font-semibold mb-0.5">Not eligible for {targetRole.name}</div>
+            {selfReasons.length > 0 ? (
+              <ul className="list-disc ps-4 space-y-0.5">
+                {selfReasons.map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
+            ) : (
+              <p>Ask an admin to check the role's criteria.</p>
+            )}
+          </div>
+        )}
+        {targetRole && !candidatesLoading && selfEligible && ineligible.length > 0 && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowIneligibleReasons((v) => !v)}
+              aria-expanded={showIneligibleReasons}
+              className="text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 underline decoration-dotted underline-offset-2"
+            >
+              {ineligible.length} others not eligible — {showIneligibleReasons ? 'hide' : 'show why'}
+            </button>
+            {showIneligibleReasons && (
+              <ul className="mt-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 px-2 py-1.5 text-[11px] text-slate-500 dark:text-slate-400 space-y-0.5 max-h-32 overflow-y-auto">
+                {ineligible.map((p) => (
+                  <li key={p.id} className="leading-snug">
+                    <span className="text-slate-600 dark:text-slate-300 font-medium">{p.displayName}</span>
+                    {p.reasons.length > 0 && (
+                      <>
+                        {' '}
+                        <span className="text-slate-400 dark:text-slate-500">— {p.reasons.join(' · ')}</span>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
     </Modal>
   );
