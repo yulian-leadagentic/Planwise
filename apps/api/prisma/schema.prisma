@@ -564,6 +564,11 @@ model Project {
   description              String?
   projectTypeId            Int           @map("project_type_id")
   departmentId             Int?          @map("department_id")
+  /// Phase 4 · Stage 2 (2026-09-28) — OrgUnit link. Additive: reads
+  /// prefer `orgUnitId` when set, falling back to the legacy
+  /// `departmentId` cache for one release. A follow-up ticket drops
+  /// `departmentId` once every reader is migrated.
+  orgUnitId                Int?          @map("org_unit_id")
   leaderId                 Int?          @map("leader_id")
   status                   ProjectStatus @default(draft)
   budget                   Decimal?      @db.Decimal(14, 2)
@@ -611,6 +616,7 @@ model Project {
 
   projectType ProjectType @relation(fields: [projectTypeId], references: [id])
   department  Department? @relation(fields: [departmentId], references: [id])
+  orgUnit     OrgUnit?    @relation("ProjectOrgUnit", fields: [orgUnitId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   creator     User        @relation("ProjectCreatedBy", fields: [createdBy], references: [id])
   leader      User?       @relation("ProjectLeader", fields: [leaderId], references: [id])
 
@@ -635,6 +641,7 @@ model Project {
 
   @@index([projectTypeId])
   @@index([departmentId])
+  @@index([orgUnitId])
   @@index([createdBy])
   @@index([leaderId])
   @@index([status])
@@ -2707,6 +2714,11 @@ model OrgUnit {
   sortOrder     Int       @default(0) @map("sort_order")
   deletedAt     DateTime? @map("deleted_at")
   members       User[]    @relation("UserOrgUnit")
+  /// Phase 4 · Stage 2 (2026-09-28) — Projects hosted by this unit.
+  /// Reverse side of Project.orgUnitId. Access rules read this side
+  /// (subtree via `path startsWith`) instead of the legacy
+  /// User.department string.
+  projects      Project[] @relation("ProjectOrgUnit")
 
   @@index([parentId])
   @@index([path])

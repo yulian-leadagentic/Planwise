@@ -93,17 +93,26 @@ export class ProjectAccessService {
     });
     if (membership) return;
 
-    // Department-level backup access (feat/ops-complete, 2026-08).
-    // Mirrors getAccessibleProjectIds: a user can READ any project in
-    // their department for backup, even without a direct membership
-    // or task assignment. Kept as a fallback below leader/member
-    // checks so the fast-path (direct access) still short-circuits.
-    if (project.departmentId != null) {
+    // Phase 4 · Stage 2 (2026-09-28) — OrgUnit-based backup access.
+    // Prefer `Project.orgUnitId` + `User.orgUnitId` when both are set;
+    // fall back to the legacy `User.department` string match while
+    // both columns coexist. Once every project + user carries a real
+    // orgUnitId, the legacy branch below becomes dead code and gets
+    // dropped alongside `User.department` in a follow-up.
+    const projectForAccess = await this.prisma.project.findFirst({
+      where: { id: projectId, deletedAt: null },
+      select: { orgUnitId: true },
+    });
+    const projectOrgUnitId = projectForAccess?.orgUnitId ?? null;
+    if (projectOrgUnitId != null || project.departmentId != null) {
       const caller = await this.prisma.user.findUnique({
         where: { id: userId },
-        select: { department: true },
+        select: { department: true, orgUnitId: true },
       });
-      if (caller?.department) {
+      // Preferred: same OrgUnit as the project.
+      if (projectOrgUnitId != null && caller?.orgUnitId === projectOrgUnitId) return;
+      // Legacy fallback: department-string match against a Department row.
+      if (project.departmentId != null && caller?.department) {
         const dept = await this.prisma.department.findUnique({
           where: { name: caller.department },
           select: { id: true },
@@ -237,14 +246,22 @@ export class ProjectAccessService {
     for (const m of memberships) ids.add(m.projectId);
     for (const p of led) ids.add(p.id);
 
-    // Department widen — the caller may READ every project in their
-    // own department for backup. Missing department (null) or an
-    // unrecognized name (no matching Department row) simply skips
-    // this step, keeping legacy behaviour.
+    // Phase 4 · Stage 2 (2026-09-28) — OrgUnit-based department
+    // widen. Prefer `User.orgUnitId` + `Project.orgUnitId`; keep the
+    // legacy `User.department` → Department.name → departmentId path
+    // in parallel until every row is migrated (a follow-up removes
+    // the legacy branch alongside `User.department`).
     const caller = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { department: true },
+      select: { department: true, orgUnitId: true },
     });
+    if (caller?.orgUnitId) {
+      const unitProjects = await this.prisma.project.findMany({
+        where: { orgUnitId: caller.orgUnitId, deletedAt: null },
+        select: { id: true },
+      });
+      for (const p of unitProjects) ids.add(p.id);
+    }
     if (caller?.department) {
       const dept = await this.prisma.department.findUnique({
         where: { name: caller.department },
