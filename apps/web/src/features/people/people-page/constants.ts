@@ -14,7 +14,10 @@ export const emptyPerson = {
   roleId: '',
   userType: 'employee' as string,
   position: '',
-  department: '',
+  // Retire-User.department Step 2/3 (2026-09-28) — the Create Person
+  // modal now writes an OrgUnit id (matches the inline cell + Edit
+  // modal). `'' | number`; empty means "no unit picked".
+  orgUnitId: '' as number | '',
   companyName: '',
   // M4a.4 — employment fields. End date defaults to the
   // OPEN_ENDED_SENTINEL (9999-12-31) — same convention used for

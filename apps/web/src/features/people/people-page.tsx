@@ -217,6 +217,14 @@ export function PeoplePage() {
     } else {
       payload.seniorityLevelId = Number(form.seniorityLevelId);
     }
+    // Retire-User.department Step 2/3 — orgUnitId is now the write
+    // field. Empty means "not picked" — omit so the DTO's IsInt check
+    // doesn't reject "".
+    if (form.orgUnitId === '' || form.orgUnitId == null) {
+      delete payload.orgUnitId;
+    } else {
+      payload.orgUnitId = Number(form.orgUnitId);
+    }
     // Only send businessPartnerId when the user explicitly picked one.
     // Empty string would otherwise be sent as the literal "" — server-side
     // validation would reject it as a non-int.
@@ -841,17 +849,18 @@ export function PeoplePage() {
                 </SelectField>
                 <SelectField
                   label="Department"
-                  name="department"
-                  value={form.department}
-                  onChange={(e) => patchCreate('department', e.target.value)}
+                  name="orgUnitId"
+                  value={form.orgUnitId}
+                  onChange={(e) => patchCreate('orgUnitId', e.target.value === '' ? '' : Number(e.target.value))}
                 >
-                  {/* Create-person Department picker still writes the
-                      legacy free-text `department` field for one release
-                      — see follow-up ticket to swap this to `orgUnitId`.
-                      The inline cell + Edit modal are already on
-                      OrgUnit (Phase 4 Stage 2 follow-up). */}
+                  {/* Retire-User.department Step 2/3 (2026-09-28) —
+                      the create modal now writes an OrgUnit id, matching
+                      the inline cell + Edit modal. `department` is gone
+                      from the backend write DTO (Step 1/3). */}
                   <option value="">Select department</option>
-                  {legacyDepartments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
+                  {orgUnits.map((u: { id: number; name: string }) => (
+                    <option key={u.id} value={u.id}>{u.name}</option>
+                  ))}
                 </SelectField>
               </div>
               {/* M5a — Labor Category (drives default hourly cost).

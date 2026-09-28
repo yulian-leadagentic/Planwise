@@ -671,7 +671,10 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     if (viewMode !== 'zone-tasks') return;
     if (phaseFilterTouched) return;
     if (phaseFilter.size > 0) return;
-    const dept = (me as any)?.department;
+    // Retire-User.department Step 2/3 (2026-09-28) — prefer the OrgUnit
+    // relation as the auto-filter source; free-text `department` stays
+    // as a one-release fallback.
+    const dept = (me as any)?.orgUnit?.name ?? (me as any)?.department;
     if (!dept || typeof dept !== 'string' || !dept.trim()) return;
     const deptLower = dept.trim().toLowerCase();
     const matched = availablePhases.filter((name) =>

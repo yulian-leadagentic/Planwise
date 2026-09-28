@@ -106,6 +106,10 @@ export function getColumns(
         // string only shows as a read-only fallback when the row hasn't
         // yet been backfilled onto an OrgUnit.
         const currentOrgUnitId: number | null = user.orgUnitId ?? user.orgUnit?.id ?? null;
+        // Retire-User.department Step 2/3 (2026-09-28) — prefer the
+        // OrgUnit relation; `user.department` (legacy free-text) is
+        // read as a one-release fallback until Step 3/3 drops both the
+        // column and this fallback.
         const legacyDept: string = user.department ?? '';
         const orgUnitName: string = user.orgUnit?.name ?? '';
         // Fall back to plain text when the callback isn't wired (e.g.

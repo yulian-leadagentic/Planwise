@@ -26,7 +26,12 @@ export interface CreateUserPayload {
   roleId: number;
   userType: string;
   position?: string;
-  department?: string;
+  /**
+   * Retire-User.department Step 2/3 (2026-09-28) — free-text
+   * `department` is gone from the write DTO on the backend. Send
+   * `orgUnitId` (OrgUnit tree id) instead. Step 3/3 drops the column.
+   */
+  orgUnitId?: number | null;
   companyName?: string;
   taxId?: string;
   address?: string;
