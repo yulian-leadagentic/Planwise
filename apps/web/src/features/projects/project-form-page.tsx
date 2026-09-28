@@ -1272,12 +1272,17 @@ function TeamPartyPicker({
   value: number[];
   onChange: (ids: number[]) => void;
 }) {
-  // People UX M3 (T-02): single eligibility source shared with the
-  // Team tab picker and the project-list role cell. The response now
-  // includes ineligible parties annotated with `eligible=false` +
-  // `reasons[]` — we render them via PeopleMultiSelect's disabled/
-  // disabledReason row (same pattern as AssigneeManager "External")
-  // instead of hiding them, so users see WHY someone is missing.
+  // People UX M3 (T-02) + QA4 D4 (2026-09-28): eligibility source
+  // shared with the Team-tab picker and the project-list role cell.
+  // The response includes ineligible parties annotated with
+  // `eligible=false` + `reasons[]`.
+  //
+  // D4 change: match the Team-tab picker (commit 8722396) — render
+  // eligible-ONLY rows in the dropdown, and expose the "N not eligible
+  // — show why" reasons behind an on-demand expander below. Previously
+  // ineligible parties were shown disabled inline with their reason,
+  // which was noisy for large catalogs and buried the eligible rows
+  // in a wall of grey.
   const { data: candidates = [], isLoading: candidatesLoading } = useQuery<any[]>({
     queryKey: ['team-role-candidates', role.id],
     staleTime: 60 * 1000,
@@ -1290,9 +1295,20 @@ function TeamPartyPicker({
         }),
   });
 
+  const [showIneligibleReasons, setShowIneligibleReasons] = useState(false);
+
+  const eligible = useMemo(
+    () => candidates.filter((c: any) => c.eligible !== false),
+    [candidates],
+  );
+  const ineligible = useMemo(
+    () => candidates.filter((c: any) => c.eligible === false),
+    [candidates],
+  );
+
   const people: Person[] = useMemo(
     () =>
-      candidates.map((c: any) => ({
+      eligible.map((c: any) => ({
         userId: c.id,
         displayName: c.displayName,
         avatarUrl: c.avatarUrl ?? null,
@@ -1300,15 +1316,8 @@ function TeamPartyPicker({
           c.partnerType === 'organization'
             ? 'Organization'
             : c.email ?? null,
-        disabled: c.eligible === false,
-        disabledReason:
-          Array.isArray(c.reasons) && c.reasons.length > 0
-            ? c.reasons.join(', ')
-            : c.eligible === false
-              ? 'Not eligible'
-              : null,
       })),
-    [candidates],
+    [eligible],
   );
 
   if (candidatesLoading) {
@@ -1327,14 +1336,54 @@ function TeamPartyPicker({
   }
 
   return (
-    <PeopleMultiSelect
-      people={people}
-      value={value}
-      onChange={onChange}
-      placeholder={`Select ${role.allowedPartnerKind === 'organization' ? 'Organization' : 'person'}…`}
-      triggerClassName="w-full"
-      title={`${role.name} — pick a ${role.allowedPartnerKind === 'organization' ? 'Organization' : 'person'}`}
-    />
+    <div className="space-y-1.5">
+      <PeopleMultiSelect
+        people={people}
+        value={value}
+        onChange={onChange}
+        placeholder={
+          eligible.length === 0
+            ? 'No eligible parties…'
+            : `Select ${role.allowedPartnerKind === 'organization' ? 'Organization' : 'person'}…`
+        }
+        triggerClassName="w-full"
+        title={`${role.name} — pick a ${role.allowedPartnerKind === 'organization' ? 'Organization' : 'person'}`}
+      />
+      {eligible.length === 0 && (
+        <p className="text-[11px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 px-2 py-1 rounded">
+          No eligible {role.allowedPartnerKind === 'organization' ? 'organizations' : 'people'} yet.
+          Add one that meets the criteria under People or Partners first, or
+          skip this role and assign it later from the project's Team tab.
+        </p>
+      )}
+      {ineligible.length > 0 && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowIneligibleReasons((v) => !v)}
+            aria-expanded={showIneligibleReasons}
+            className="text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 underline decoration-dotted underline-offset-2"
+          >
+            {ineligible.length} not eligible — {showIneligibleReasons ? 'hide' : 'show why'}
+          </button>
+          {showIneligibleReasons && (
+            <ul className="mt-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 px-2 py-1.5 text-[11px] text-slate-500 dark:text-slate-400 space-y-0.5 max-h-40 overflow-y-auto">
+              {ineligible.map((p: any) => (
+                <li key={p.id} className="leading-snug">
+                  <span className="text-slate-600 dark:text-slate-300 font-medium">{p.displayName}</span>
+                  {Array.isArray(p.reasons) && p.reasons.length > 0 && (
+                    <>
+                      {' '}
+                      <span className="text-slate-400 dark:text-slate-500">— {p.reasons.join(' · ')}</span>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
