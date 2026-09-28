@@ -868,12 +868,42 @@ function ContactStatusBadge({ status }: { status: string }) {
 /* ─── By Customer view ──────────────────────────────────────────────────── */
 
 /**
- * Grid of cards — one per customer organization, listing the contacts that
- * work_of that org. Cards are sorted by contact count (most populated first)
- * so the most actionable customers surface at the top. Customers with zero
- * known contacts still render so the user sees the full customer roster +
+ * Grid of cards — one per customer organization, listing the parties tied
+ * to that org via any of the four "client-facing" party↔party edges:
+ *   • worker_of           — Employee
+ *   • consultant_of       — Consultant     (D4-3, 2026-09-28)
+ *   • supplier_of         — Supplier       (D4-3, 2026-09-28)
+ *   • pm_supervision_for  — PM / supervisor (D4-3, 2026-09-28)
+ * Cards are sorted by contact count (most populated first) so the most
+ * actionable customers surface at the top. Customers with zero known
+ * contacts still render so the user sees the full customer roster +
  * a clear empty hint to add the first contact.
  */
+
+/** Relationship type codes surfaced under a customer group. Order here
+ *  drives the intra-group sort (Employees first, then Consultants,
+ *  Suppliers, then PM/supervisors). */
+const CUSTOMER_REL_TYPE_CODES = ['worker_of', 'consultant_of', 'supplier_of', 'pm_supervision_for'] as const;
+type CustomerRelTypeCode = (typeof CUSTOMER_REL_TYPE_CODES)[number];
+const CUSTOMER_REL_TYPE_SET = new Set<string>(CUSTOMER_REL_TYPE_CODES);
+const CUSTOMER_REL_TYPE_ORDER: Record<CustomerRelTypeCode, number> = {
+  worker_of: 0,
+  consultant_of: 1,
+  supplier_of: 2,
+  pm_supervision_for: 3,
+};
+const CUSTOMER_REL_TYPE_BADGE: Record<CustomerRelTypeCode, string> = {
+  worker_of: 'Employee',
+  consultant_of: 'Consultant',
+  supplier_of: 'Supplier',
+  pm_supervision_for: 'PM',
+};
+
+interface CustomerGroupEntry {
+  contact: Contact;
+  typeCode: CustomerRelTypeCode;
+}
+
 function ByCustomerView({
   customers, contacts, onSelect, onAddContact, onOpenCustomer,
 }: {
@@ -889,31 +919,53 @@ function ByCustomerView({
   // per-contact rows so refresh / back restore the open state.
   onOpenCustomer: (customerOrgId: number) => void;
 }) {
-  // Group contacts by their worker_of org id.
+  // Group contacts by their customer-facing party↔party edges. A single
+  // contact can appear under the same customer with more than one type
+  // (e.g. Employee AND Consultant); we dedupe per (contactId, typeCode)
+  // so the same person doesn't render twice under the same badge, but
+  // the same person CAN render twice under DIFFERENT badges (which is
+  // the correct read — the person plays two distinct roles for that
+  // customer).
   const byOrg = useMemo(() => {
-    const m = new Map<number, Contact[]>();
+    const m = new Map<number, CustomerGroupEntry[]>();
     for (const c of contacts) {
       for (const r of c.partnerRelationshipsA ?? []) {
-        if (r.type?.code === 'worker_of') {
-          const arr = m.get(r.partyBId) ?? [];
-          if (!arr.some((x) => x.id === c.id)) arr.push(c);
-          m.set(r.partyBId, arr);
+        const code = r.type?.code;
+        if (!code || !CUSTOMER_REL_TYPE_SET.has(code)) continue;
+        const arr = m.get(r.partyBId) ?? [];
+        if (!arr.some((x) => x.contact.id === c.id && x.typeCode === code)) {
+          arr.push({ contact: c, typeCode: code as CustomerRelTypeCode });
         }
+        m.set(r.partyBId, arr);
       }
+    }
+    // Intra-group sort: type priority (Employee → Consultant → Supplier
+    // → PM), then displayName. Employees keep the "core consultants
+    // first" leading position from the pre-D4 grouping.
+    for (const arr of m.values()) {
+      arr.sort((a, b) => {
+        const t = CUSTOMER_REL_TYPE_ORDER[a.typeCode] - CUSTOMER_REL_TYPE_ORDER[b.typeCode];
+        if (t !== 0) return t;
+        return a.contact.displayName.localeCompare(b.contact.displayName);
+      });
     }
     return m;
   }, [contacts]);
 
-  // Contacts whose employer org is NOT in the customer list — bucketed below
-  // the customer cards so they aren't invisible (e.g. supplier contacts, or
-  // contacts whose employer hasn't been tagged customer yet).
+  // Contacts with NO customer-facing edge (employee / consultant /
+  // supplier / PM) to any customer org in the list — bucketed below the
+  // customer cards so they aren't invisible (e.g. contacts whose only
+  // employer edge points at an org that hasn't been tagged customer
+  // yet).
   const customerIds = new Set(customers.map((c) => c.id));
   const orphanContacts = contacts.filter((c) => {
-    const workerOf = (c.partnerRelationshipsA ?? []).find(
-      (r) => r.type?.code === 'worker_of',
+    const hasCustomerEdge = (c.partnerRelationshipsA ?? []).some(
+      (r) =>
+        r.type?.code != null
+        && CUSTOMER_REL_TYPE_SET.has(r.type.code)
+        && customerIds.has(r.partyBId),
     );
-    if (!workerOf) return true; // contact with no employer
-    return !customerIds.has(workerOf.partyBId); // employer isn't a customer
+    return !hasCustomerEdge;
   });
 
   const sortedCustomers = [...customers].sort((a, b) => {
@@ -944,7 +996,7 @@ function ByCustomerView({
           <CustomerCard
             key={customer.id}
             customer={customer}
-            contacts={byOrg.get(customer.id) ?? []}
+            entries={byOrg.get(customer.id) ?? []}
             onSelect={onSelect}
             onAddContact={onAddContact}
             onOpenCustomer={onOpenCustomer}
@@ -973,10 +1025,10 @@ function ByCustomerView({
 }
 
 function CustomerCard({
-  customer, contacts, onSelect, onAddContact, onOpenCustomer,
+  customer, entries, onSelect, onAddContact, onOpenCustomer,
 }: {
   customer: Org;
-  contacts: Contact[];
+  entries: CustomerGroupEntry[];
   onSelect: (id: number) => void;
   onAddContact: (customerOrgId: number) => void;
   onOpenCustomer: (customerOrgId: number) => void;
@@ -1009,7 +1061,7 @@ function CustomerCard({
                   Customer
                 </span>
                 <span className="ml-2 tabular-nums">
-                  {contacts.length} {contacts.length === 1 ? 'contact' : 'contacts'}
+                  {entries.length} {entries.length === 1 ? 'contact' : 'contacts'}
                 </span>
               </p>
             </div>
@@ -1026,8 +1078,10 @@ function CustomerCard({
         </div>
       </div>
 
-      {/* Contact list */}
-      {contacts.length === 0 ? (
+      {/* Contact list — one row per (contact, type-code) so a person who
+          plays two distinct roles for this customer (e.g. Employee AND
+          Consultant) surfaces with both badges. */}
+      {entries.length === 0 ? (
         <button
           type="button"
           onClick={() => onAddContact(customer.id)}
@@ -1037,8 +1091,13 @@ function CustomerCard({
         </button>
       ) : (
         <div className="divide-y divide-slate-50 dark:divide-slate-800 max-h-[320px] overflow-y-auto">
-          {contacts.map((c) => (
-            <CompactContactRow key={c.id} contact={c} onSelect={onSelect} />
+          {entries.map((e) => (
+            <CompactContactRow
+              key={`${e.contact.id}-${e.typeCode}`}
+              contact={e.contact}
+              relTypeCode={e.typeCode}
+              onSelect={onSelect}
+            />
           ))}
         </div>
       )}
@@ -1199,21 +1258,43 @@ function ProjectContactRow({
   );
 }
 
-/** Tight contact row used inside CustomerCard + the orphan bucket. */
-function CompactContactRow({ contact: c, onSelect }: { contact: Contact; onSelect: (id: number) => void }) {
+/** Tight contact row used inside CustomerCard + the orphan bucket.
+ *
+ * D4-3 (2026-09-28) — accepts an optional `relTypeCode` so the By
+ * Customer grouping can label each row with the type of edge that
+ * placed it under that customer (Employee / Consultant / Supplier / PM).
+ * The badge uses the muted convention (bg-slate-100 dark:bg-slate-800,
+ * small rounded not rounded-full) shared by other status chips across
+ * the app. */
+function CompactContactRow({ contact: c, onSelect, relTypeCode }: {
+  contact: Contact;
+  onSelect: (id: number) => void;
+  relTypeCode?: CustomerRelTypeCode;
+}) {
   const phone = c.phone || c.mobile || '';
+  const badgeLabel = relTypeCode ? CUSTOMER_REL_TYPE_BADGE[relTypeCode] : null;
   return (
     <div
       onClick={() => onSelect(c.id)}
-      className="group flex items-center gap-3 px-3 py-2.5 hover:bg-blue-50/40 cursor-pointer transition-colors"
+      className="group flex items-center gap-3 px-3 py-2.5 hover:bg-blue-50/40 dark:hover:bg-blue-900/20 cursor-pointer transition-colors"
     >
       <UserAvatar firstName={c.firstName ?? ''} lastName={c.lastName ?? ''} avatarUrl={null} size="sm" />
       <div className="flex-1 min-w-0">
-        <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">{c.displayName}</p>
+        <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate flex items-center gap-1.5">
+          <span className="truncate">{c.displayName}</span>
+          {badgeLabel && (
+            <span
+              className="shrink-0 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-1.5 py-[1px] text-[10px] font-semibold uppercase tracking-wide"
+              title={`Related to this customer as ${badgeLabel}`}
+            >
+              {badgeLabel}
+            </span>
+          )}
+        </p>
         <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
           {c.mainRoleType?.name ?? <span className="italic text-slate-400 dark:text-slate-500">no role</span>}
           {c.projectCount.active > 0 && (
-            <> · <span className="font-semibold text-emerald-700">{c.projectCount.active}</span> active proj.</>
+            <> · <span className="font-semibold text-emerald-700 dark:text-emerald-400">{c.projectCount.active}</span> active proj.</>
           )}
         </p>
       </div>
