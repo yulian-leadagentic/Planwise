@@ -38,6 +38,7 @@ import { EntityKindsModule } from './modules/entity-kinds/entity-kinds.module';
 import { PartnerRelationshipsModule } from './modules/partner-relationships/partner-relationships.module';
 import { ProjectRoleTypesModule } from './modules/project-role-types/project-role-types.module';
 import { ProjectPartnerRolesModule } from './modules/project-partner-roles/project-partner-roles.module';
+import { TeamTemplatesModule } from './modules/team-templates/team-templates.module';
 import { DataImportModule } from './modules/data-import/data-import.module';
 import { ProjectStatusBoardModule } from './modules/project-status-board/project-status-board.module';
 import { ProjectDeliverablesModule } from './modules/project-deliverables/project-deliverables.module';
@@ -121,6 +122,7 @@ import { DriveModule } from './modules/drive/drive.module';
     PartnerRelationshipsModule,
     ProjectRoleTypesModule,
     ProjectPartnerRolesModule,
+    TeamTemplatesModule,
     DataImportModule,
     ProjectStatusBoardModule,
     ProjectDeliverablesModule,

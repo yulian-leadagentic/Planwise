@@ -1,11 +1,14 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft, Trash2, Users, Search } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Users, Search, Send, AlertCircle } from 'lucide-react';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { Modal } from '@/components/shared/modal';
+import { usePermissions } from '@/hooks/use-permissions';
+import { useProjects } from '@/hooks/use-projects';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -47,6 +50,29 @@ interface TeamTemplate {
   _count: { members: number };
 }
 
+// Phase 4 · Stage 4 follow-up (2026-09-28) — shape returned by
+// POST /team-templates/:templateId/apply. `applied` and `skipped` are
+// always both present (never throws on partial failure) so the FE
+// surfaces both.
+interface ApplyResult {
+  templateId: number;
+  templateName: string;
+  projectId: number;
+  applied: Array<{
+    memberId: number;
+    userId: number;
+    partyId: number;
+    roleName: string;
+    projectPartnerRoleId: number;
+  }>;
+  skipped: Array<{
+    memberId: number;
+    userId: number;
+    name: string;
+    reason: string[];
+  }>;
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function userInitials(u: { firstName: string; lastName: string }) {
@@ -86,10 +112,22 @@ export function TeamTemplatesPage() {
   const scrollRef = useStickyHScroll();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  // Phase 4 · Stage 4 follow-up (2026-09-28) — the Apply button is gated
+  // by `partners:write`, the same permission the Team-tab add flow uses.
+  // Admins bypass by convention.
+  const { isAdmin, can } = usePermissions();
+  const canApply = isAdmin || can('partners', 'write');
 
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   const [newTemplateName, setNewTemplateName] = useState('');
   const [showCreateInput, setShowCreateInput] = useState(false);
+  // Apply-to-project picker state. `applyTemplate` is the template
+  // currently being applied (null = picker closed). The picker itself
+  // owns project search + selection; commit lives on this outer page
+  // so the confirmation surface can also render the skipped-list
+  // dialog when the endpoint returns a partial success.
+  const [applyTemplate, setApplyTemplate] = useState<TeamTemplate | null>(null);
+  const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
 
   // ── Queries ────────────────────────────────────────────────────────────────
 
@@ -164,6 +202,48 @@ export function TeamTemplatesPage() {
       notify.success('Member removed');
     },
     onError: (err: any) => notify.apiError(err, 'Failed to remove member'),
+  });
+
+  // Phase 4 · Stage 4 follow-up (2026-09-28) — apply flow. Never throws
+  // on partial failure; the endpoint always returns 200 with
+  // { applied, skipped }. Success = `applied` toast; when `skipped` is
+  // non-empty we also open a dialog listing each skipped member and
+  // the reason(s), same pattern as M3's disabled-row hint. Both the
+  // target project's Team tab (`project-team`) and assignee-candidates
+  // cache are invalidated so the new rows are visible immediately.
+  const applyMutation = useMutation({
+    mutationFn: (args: { templateId: number; projectId: number }) =>
+      client
+        .post<ApplyResult>(`/team-templates/${args.templateId}/apply`, {
+          projectId: args.projectId,
+        })
+        .then((r) => (r.data as any)?.data ?? r.data as ApplyResult),
+    onSuccess: (result) => {
+      const applied = result.applied.length;
+      const skipped = result.skipped.length;
+      queryClient.invalidateQueries({ queryKey: ['project-team', result.projectId] });
+      queryClient.invalidateQueries({ queryKey: ['assignee-candidates', result.projectId] });
+      queryClient.invalidateQueries({ queryKey: ['team-templates'] });
+      if (applied > 0) {
+        notify.success(
+          `Applied ${applied} member${applied === 1 ? '' : 's'} to the project`
+          + (skipped > 0 ? ` — ${skipped} skipped, see details` : ''),
+          { code: 'TEAM-TEMPLATE-APPLY-200' },
+        );
+      } else if (skipped > 0) {
+        notify.info(
+          `Nothing applied — ${skipped} member${skipped === 1 ? '' : 's'} skipped, see details`,
+          { code: 'TEAM-TEMPLATE-APPLY-NOOP' },
+        );
+      } else {
+        notify.info('Template has no members to apply.', { code: 'TEAM-TEMPLATE-APPLY-EMPTY' });
+      }
+      setApplyTemplate(null);
+      // Keep the result on state ONLY when there's something to
+      // review — otherwise close cleanly.
+      setApplyResult(skipped > 0 ? result : null);
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to apply template'),
   });
 
   // ── Handlers ───────────────────────────────────────────────────────────────
@@ -294,24 +374,44 @@ export function TeamTemplatesPage() {
                     {t.name}
                   </span>
                 </div>
-                <button
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    // People UX U2 — danger variant + verb button.
-                    const ok = await confirm(
-                      `Projects that were built from this template keep their team; deleting only removes it from the "Apply template" picker.`,
-                      {
-                        title: `Delete team template "${t.name}"?`,
-                        variant: 'danger',
-                        confirmLabel: 'Delete',
-                      },
-                    );
-                    if (ok) deleteMutation.mutate(t.id);
-                  }}
-                  className="hover:bg-red-50 text-slate-300 dark:text-slate-600 hover:text-red-600 rounded-md p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {/* Phase 4 · Stage 4 follow-up — Apply to project…
+                      Gated by `partners:write`. Opens the picker
+                      modal; the endpoint returns applied + skipped
+                      with reasons. */}
+                  {canApply && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setApplyTemplate(t);
+                      }}
+                      title="Apply this template to a project"
+                      aria-label={`Apply template "${t.name}" to a project`}
+                      className="hover:bg-blue-50 dark:hover:bg-blue-900/30 text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-300 rounded-md p-1 inline-flex items-center gap-1 text-[11px] font-semibold"
+                    >
+                      <Send className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span className="pr-1">Apply</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      // People UX U2 — danger variant + verb button.
+                      const ok = await confirm(
+                        `Projects that were built from this template keep their team; deleting only removes it from the "Apply template" picker.`,
+                        {
+                          title: `Delete team template "${t.name}"?`,
+                          variant: 'danger',
+                          confirmLabel: 'Delete',
+                        },
+                      );
+                      if (ok) deleteMutation.mutate(t.id);
+                    }}
+                    className="hover:bg-red-50 text-slate-300 dark:text-slate-600 hover:text-red-600 rounded-md p-1"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
 
               <div className="mt-3 flex items-center justify-between">
@@ -335,7 +435,173 @@ export function TeamTemplatesPage() {
           ))}
         </div>
       )}
+
+      {/* Phase 4 · Stage 4 follow-up — Apply-to-project picker. Opens
+          when a user clicks Apply on any card. `applyTemplate` holds
+          the target template; committing calls the mutation, whose
+          onSuccess closes this modal and (when skipped rows exist)
+          opens the ApplyResultDialog below. */}
+      {applyTemplate && (
+        <ApplyPickerModal
+          template={applyTemplate}
+          onClose={() => setApplyTemplate(null)}
+          onApply={(projectId) =>
+            applyMutation.mutate({ templateId: applyTemplate.id, projectId })
+          }
+          applying={applyMutation.isPending}
+        />
+      )}
+      {applyResult && (
+        <ApplyResultDialog result={applyResult} onClose={() => setApplyResult(null)} />
+      )}
     </div>
+  );
+}
+
+// ── Apply Picker Modal ────────────────────────────────────────────────────────
+// Phase 4 · Stage 4 follow-up (2026-09-28). Small dialog that lets the
+// admin pick a target project. Uses the shared /projects list hook so
+// the search + list rendering matches the other in-app project pickers.
+function ApplyPickerModal({
+  template,
+  onClose,
+  onApply,
+  applying,
+}: {
+  template: TeamTemplate;
+  onClose: () => void;
+  onApply: (projectId: number) => void;
+  applying: boolean;
+}) {
+  const [search, setSearch] = useState('');
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const { data: projectsPage } = useProjects({ search: search || undefined });
+  // The list hook returns { data: Project[], meta } on success; guard
+  // in case an earlier fetch fired before the search debounced.
+  const projects: any[] = (projectsPage as any)?.data ?? (projectsPage as any) ?? [];
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Apply "${template.name}" to a project`}
+      description={`${template._count.members} template member${template._count.members === 1 ? '' : 's'} will be added via the standard team-add flow.`}
+      widthClass="w-[480px] max-w-[92vw]"
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => selectedProjectId && onApply(selectedProjectId)}
+            disabled={!selectedProjectId || applying}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {applying ? 'Applying…' : 'Apply'}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500" aria-hidden="true" />
+          <input
+            autoFocus
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search projects by name…"
+            className="w-full pl-9 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+          />
+        </div>
+        <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800">
+          {projects.length === 0 ? (
+            <div className="px-3 py-6 text-center text-sm text-slate-400 dark:text-slate-500">
+              No projects match.
+            </div>
+          ) : (
+            projects.slice(0, 50).map((p: any) => {
+              const isSelected = selectedProjectId === p.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setSelectedProjectId(p.id)}
+                  className={
+                    'w-full text-left px-3 py-2 flex items-center gap-2 text-sm '
+                    + (isSelected
+                      ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-200'
+                      : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200')
+                  }
+                >
+                  <span className="font-medium truncate flex-1">{p.name}</span>
+                  {p.number && (
+                    <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500 shrink-0">
+                      {p.number}
+                    </span>
+                  )}
+                </button>
+              );
+            })
+          )}
+        </div>
+        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+          Ineligible members (missing job title, wrong partner kind, no linked contact) are reported after applying — nothing is silently dropped.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Apply Result Dialog ──────────────────────────────────────────────
+// Phase 4 · Stage 4 follow-up. Renders the `skipped` list from the
+// apply-template response with the reason lines the M3 picker would
+// have shown ("Must be an Employee", "Needs job title: BIM Manager").
+function ApplyResultDialog({
+  result,
+  onClose,
+}: {
+  result: ApplyResult;
+  onClose: () => void;
+}) {
+  const skippedCount = result.skipped.length;
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`${skippedCount} skipped from "${result.templateName}"`}
+      description={`Applied ${result.applied.length} member${result.applied.length === 1 ? '' : 's'} to the project. Ineligible members below were not added.`}
+      widthClass="w-[520px] max-w-[92vw]"
+      footer={
+        <button
+          type="button"
+          onClick={onClose}
+          className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg"
+        >
+          Close
+        </button>
+      }
+    >
+      <ul className="divide-y divide-slate-100 dark:divide-slate-800 max-h-96 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700">
+        {result.skipped.map((s) => (
+          <li key={s.memberId} className="px-3 py-2 flex items-start gap-2">
+            <AlertCircle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">
+                {s.name}
+              </div>
+              <ul className="mt-0.5 text-[12px] text-slate-500 dark:text-slate-400 list-disc list-inside">
+                {s.reason.map((r, i) => <li key={i}>{r}</li>)}
+              </ul>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Modal>
   );
 }
 
