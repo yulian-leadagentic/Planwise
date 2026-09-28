@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { startOfDay, endOfDay, addDays, parseISO, format } from 'date-fns';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -128,6 +128,16 @@ export class TimeEntriesService {
     const dateParts = dto.date.split('-').map(Number);
     const localDate = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
 
+    // QA4 B4 — defense in depth. A single-entry create MUST carry a
+    // task (and, transitively, a project). The shared DTO stays lax
+    // because the batch endpoint accepts partial rows, so we enforce
+    // here instead of tightening the DTO for every call site. The
+    // projectId derivation below runs after this guard, so a missing
+    // projectId is still permitted when a taskId resolves to one.
+    if (!dto.taskId) {
+      throw new BadRequestException({ message: 'Task is required', code: 'TIME_ENTRY_TASK_REQUIRED', missing: ['taskId'] });
+    }
+
     // Auto-derive projectId from the task when the caller didn't pass it
     // (QuickTimeLog / TaskDrawer call sites historically did this
     // inconsistently — leaving a column that aggregations rely on
@@ -141,6 +151,14 @@ export class TimeEntriesService {
         select: { projectId: true },
       });
       if (t?.projectId != null) projectId = t.projectId;
+    }
+
+    // QA4 B4: after the task-derivation step every entry must have a
+    // resolvable project. Personal tasks (task.projectId=null) can't
+    // hit the timesheet — those go through Personal Task Dialog and
+    // are logged against the user's Home clock, not this path.
+    if (!projectId) {
+      throw new BadRequestException({ message: 'Project is required', code: 'TIME_ENTRY_PROJECT_REQUIRED', missing: ['projectId'] });
     }
 
     // Overlap validation — both same-task and cross-task overlaps are

@@ -106,6 +106,13 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
 
     const effectiveTaskId = overrideTaskId ?? taskId;
 
+    // QA4 B4: a time entry MUST be attached to both a project AND a
+    // task — the Quick-Task path creates the task first, then feeds
+    // its id here, so this guard also catches the pathological case
+    // where quick-task creation succeeded but returned no id.
+    if (!projectId) { notify.warning('Select a project'); return; }
+    if (!effectiveTaskId) { notify.warning('Select a task'); return; }
+
     // Task status is set only in the Planning tree — logging time never
     // changes task status. Only completionPct is updated (see
     // `time-entries.service#syncTaskCompletion` on the API). Removing
@@ -242,18 +249,27 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
         <div className="p-5 space-y-4">
           {/* Project selector */}
           <div>
-            <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">Project</label>
+            <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">Project *</label>
             <select value={projectId} onChange={(e) => { setProjectId(e.target.value); setTaskId(''); }}
-              className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+              className={cn(
+                'w-full rounded-lg border px-3 py-2 text-sm focus:outline-none',
+                !projectId
+                  ? 'border-red-300 dark:border-red-500/60 focus:border-red-500'
+                  : 'border-slate-200 dark:border-slate-700 focus:border-blue-500',
+              )}>
               <option value="">— Select project —</option>
               {projects.map((p: any) => <option key={p.id} value={p.id}>{p.number ? `${p.number} - ` : ''}{p.name}</option>)}
             </select>
+            {/* QA4 B4: inline required-field hint, matches create-task-modal error style */}
+            {!projectId && (
+              <p className="mt-1 text-[11px] font-medium text-red-600 dark:text-red-400">Project is required</p>
+            )}
           </div>
 
           {/* Task selector + Quick Task */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">Task</label>
+              <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">Task *</label>
               <div className="flex items-center gap-2">
                 {/* Edit the currently selected task — opens the task drawer
                     so users can rename / set due date / assignees on a Quick
@@ -297,7 +313,12 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
               </div>
             ) : (
               <select value={taskId} onChange={(e) => setTaskId(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                className={cn(
+                  'w-full rounded-lg border px-3 py-2 text-sm focus:outline-none',
+                  !taskId
+                    ? 'border-red-300 dark:border-red-500/60 focus:border-red-500'
+                    : 'border-slate-200 dark:border-slate-700 focus:border-blue-500',
+                )}>
                 <option value="">— Select task —</option>
                 {filteredTasks.map((t: any) => {
                   // Suffix the option label with a context hint so the user
@@ -321,6 +342,12 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
                   );
                 })}
               </select>
+            )}
+            {/* QA4 B4: task hint mirrors the project hint above — shown
+                only in the normal (non-Quick-Task) branch since the
+                Quick-Task form always creates + selects a task. */}
+            {!showQuickTask && !taskId && (
+              <p className="mt-1 text-[11px] font-medium text-red-600 dark:text-red-400">Task is required</p>
             )}
           </div>
 
@@ -380,8 +407,11 @@ function TimeEntryFormPopup({ date, startTime, endTime, onClose, onSaved }: {
           <button onClick={onClose} className="rounded-lg border border-slate-200 dark:border-slate-700 px-4 py-2 text-[13px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">
             Cancel
           </button>
-          <button onClick={handleSubmit} disabled={submitting || totalMinutes <= 0}
-            className="rounded-lg bg-blue-600 px-5 py-2 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+          {/* QA4 B4: Save is blocked without BOTH project + task so
+              orphan entries can't reach the API (the server still has
+              its own guard in time-entries.service.create). */}
+          <button onClick={handleSubmit} disabled={submitting || totalMinutes <= 0 || !projectId || !taskId}
+            className="rounded-lg bg-blue-600 px-5 py-2 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
             {submitting ? 'Saving…' : 'Save time entry'}
           </button>
         </div>
