@@ -1,12 +1,31 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Calendar, Save, RefreshCcw, Layers, LayoutGrid, GanttChart, AlertTriangle, ArrowUpDown, ChevronUp, ChevronDown, Filter } from 'lucide-react';
+import { Calendar, Save, RefreshCcw, Layers, LayoutGrid, GanttChart, AlertTriangle, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight, Filter } from 'lucide-react';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { OpenInDriveButton } from '@/features/drive/open-in-drive-button';
 import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
 import { EmptyState } from '@/components/shared/empty-state';
+
+/**
+ * Zone-type label map (DP-4). Values mirror the `ZoneType` enum on the
+ * schema (site/building/level/floor/zone/area/section/wing). Kept inline
+ * here to avoid a shared-module edit that could conflict with the other
+ * in-flight agent on this branch.
+ */
+const ZONE_TYPE_LABELS: Record<string, string> = {
+  site: 'Site',
+  building: 'Building',
+  level: 'Level',
+  floor: 'Floor',
+  zone: 'Zone',
+  area: 'Area',
+  section: 'Section',
+  wing: 'Wing',
+};
+const zoneTypeLabel = (type?: string | null): string =>
+  (type && ZONE_TYPE_LABELS[type]) || ZONE_TYPE_LABELS.zone;
 
 /**
  * Deliverable Planning tab (Tier E #10, revised 2026-08-02).
@@ -49,6 +68,37 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   // per mount — the user can still switch back to Table manually.
   const [defaultedToGantt, setDefaultedToGantt] = useState(false);
 
+  // DP-6 · Deliverable-group collapse state, LIFTED here so Table and
+  // Gantt share one source of truth (toggling in one view is reflected
+  // in the other). A `Set<number>` of collapsed deliverable ids —
+  // ABSENT = expanded, so brand-new deliverables default to expanded
+  // without a re-init. Persisted per-project to `localStorage` under
+  // `planwise:deliv:collapsed:v1:<projectId>`; a missing key = all
+  // expanded, and every read is `try/catch`-guarded because private-
+  // browsing mode / cleared site data can throw on access.
+  const collapsedKey = `planwise:deliv:collapsed:v1:${projectId}`;
+  const [collapsed, setCollapsed] = useState<Set<number>>(() => {
+    try {
+      const raw = localStorage.getItem(collapsedKey);
+      if (!raw) return new Set();
+      const arr = JSON.parse(raw);
+      return new Set(Array.isArray(arr) ? arr.filter((n) => typeof n === 'number') : []);
+    } catch { return new Set(); }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(collapsedKey, JSON.stringify(Array.from(collapsed)));
+    } catch { /* ignore — private mode / blocked storage */ }
+  }, [collapsed, collapsedKey]);
+  const toggleCollapse = (id: number) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   // Draft edits keyed by `${deliverableId}:${zoneId}`. Empty string = clear.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   // Duration drafts (calendar days) — parallel state so target months
@@ -84,7 +134,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   // not just top-level roots (bm2 fix #1: brand-new projects had NO
   // tasks yet, so tasks-driven rows produced an empty grid even with
   // zones + deliverables present).
-  type ZoneNode = { id: number; name: string; sortOrder?: number; children?: ZoneNode[] };
+  // `zoneType` (DP-4) is threaded through so the Table + Gantt can badge
+  // each zone with its type. Enum values live on `Zone.zoneType` and are
+  // already on the wire — the client just used to drop them.
+  type ZoneNode = { id: number; name: string; sortOrder?: number; zoneType?: string; children?: ZoneNode[] };
   const zonesFlat: ZoneNode[] = useMemo(() => {
     const roots: ZoneNode[] = Array.isArray(planningData?.zones) ? planningData.zones : [];
     const out: ZoneNode[] = [];
@@ -110,11 +163,18 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     deliverableName: string;
     zoneId: number | null;
     zoneName: string;
+    // Zone type enum (DP-4). Optional — the synthetic "Project Root"
+    // pseudo-row emitted for projects with no zones has no type.
+    zoneType?: string;
     serviceName: string | null;
     // Current server target (either from zoneTargets[zoneId] or the deliverable-level fallback)
     savedMonths: number | null;
     savedDate: string | null;
     savedDurationWeeks: number | null;
+    // Σ of `Task.budgetHours` for every task under this (zone × deliverable).
+    // DP-3 — the client used to drop this column even though the wire
+    // already carried it. 0 when the group has no tasks.
+    hours: number;
     // Aggregate task counts for this (zone × deliverable). Rendered
     // as a badge on each Gantt bar (client feedback 2026-08-02 item 4).
     // "started" = anything past To Do that isn't Done ("in_progress",
@@ -142,7 +202,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
 
     const list: Row[] = [];
     const emitted = new Set<string>();
-    const emit = (dId: number, deliverable: any, zoneId: number | null, zoneName: string) => {
+    const emit = (dId: number, deliverable: any, zoneId: number | null, zoneName: string, zoneType?: string) => {
       const key = `${dId}:${zoneId ?? 'root'}`;
       if (emitted.has(key)) return;
       emitted.add(key);
@@ -154,6 +214,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       const taskTotal = group.length;
       const taskDone = group.filter((t) => t.status === 'done').length;
       const taskStarted = group.filter((t) => t.status !== 'to_do' && t.status !== 'blocked').length;
+      // DP-3 · Σ budgetHours across every task in this (zone × deliverable).
+      // Prisma serializes `Decimal` as a string on the wire, so coerce
+      // with `Number(...)` and treat null/undefined as 0.
+      const hours = group.reduce((acc, t) => acc + Number((t as any).budgetHours || 0), 0);
       const taskList = group.map((t) => ({
         id: t.id,
         code: t.code ?? null,
@@ -167,10 +231,12 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         deliverableName: deliverable?.name ?? `Deliverable #${dId}`,
         zoneId,
         zoneName,
+        zoneType,
         serviceName: deliverable?.service?.name ?? null,
         savedMonths,
         savedDate: savedDate ? String(savedDate).slice(0, 10) : null,
         savedDurationWeeks,
+        hours,
         taskTotal,
         taskStarted,
         taskDone,
@@ -185,7 +251,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       if (zonesFlat.length === 0) {
         emit(d.id, d, null, 'Project Root');
       } else {
-        for (const z of zonesFlat) emit(d.id, d, z.id, z.name);
+        for (const z of zonesFlat) emit(d.id, d, z.id, z.name, z.zoneType);
       }
     }
 
@@ -200,7 +266,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       const zoneId: number | null = first.zoneId ?? null;
       const zone = zonesFlat.find((z) => z.id === zoneId);
       const deliverable = deliverables.find((d) => d.id === dId);
-      emit(dId, deliverable, zoneId, zone?.name ?? (zoneId == null ? 'Project Root' : `Zone #${zoneId}`));
+      emit(dId, deliverable, zoneId, zone?.name ?? (zoneId == null ? 'Project Root' : `Zone #${zoneId}`), zone?.zoneType);
     }
     // Sort: Commit 8 · Model B (drag-authoritative). Render order is
     // ProjectDeliverable.sortOrder ASC, then Zone.sortOrder ASC as a
@@ -495,6 +561,18 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     return out;
   }, [rows, drafts, filterHasDue, serviceFilter]);
 
+  // DP-6 · Bulk-collapse toolbar handlers. `collapseAll` uses the
+  // CURRENTLY VISIBLE rows so a filtered view collapses only what the
+  // user can see; `expandAll` clears the set outright (also expands any
+  // groups that were collapsed but hidden by filters — the intent of
+  // "expand all" is "leave nothing collapsed").
+  const collapseAll = () => {
+    const ids = new Set<number>();
+    for (const r of visibleRows) ids.add(r.deliverableId);
+    setCollapsed(ids);
+  };
+  const expandAll = () => setCollapsed(new Set());
+
   if (isLoading) return <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading deliverables...</div>;
   if (rows.length === 0) {
     return (
@@ -727,6 +805,27 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
               <GanttChart className="h-3.5 w-3.5" /> Gantt
             </button>
           </div>
+          {/* DP-6 · Collapse / Expand all deliverable groups. Shared
+              across the Table + Gantt views because the underlying set
+              is lifted to this parent (and persisted per project). */}
+          <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
+            <button
+              type="button"
+              onClick={collapseAll}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-100"
+              title="Collapse every deliverable group"
+            >
+              <ChevronRight className="h-3.5 w-3.5" /> Collapse all
+            </button>
+            <button
+              type="button"
+              onClick={expandAll}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-100"
+              title="Expand every deliverable group"
+            >
+              <ChevronDown className="h-3.5 w-3.5" /> Expand all
+            </button>
+          </div>
           {hasUnsavedChanges && (
             <button
               type="button"
@@ -761,9 +860,32 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           description="Adjust the Service or Due-date filter above to see more rows, or clear both to see everything."
         />
       ) : viewMode === 'table' ? (
-        <TableView rows={visibleRows} drafts={drafts} setDrafts={setDrafts} durationDrafts={durationDrafts} setDurationDrafts={setDurationDrafts} computePreview={computePreview} />
+        <TableView
+          rows={visibleRows}
+          drafts={drafts}
+          setDrafts={setDrafts}
+          durationDrafts={durationDrafts}
+          setDurationDrafts={setDurationDrafts}
+          targetDateDrafts={targetDateDrafts}
+          computePreview={computePreview}
+          collapsed={collapsed}
+          onToggleCollapse={toggleCollapse}
+        />
       ) : (
-        <GanttView projectId={projectId} rows={visibleRows} drafts={drafts} durationDrafts={durationDrafts} targetDateDrafts={targetDateDrafts} setDrafts={setDrafts} setDurationDrafts={setDurationDrafts} setTargetDateDrafts={setTargetDateDrafts} computePreview={computePreview} baseDate={baseDate} />
+        <GanttView
+          projectId={projectId}
+          rows={visibleRows}
+          drafts={drafts}
+          durationDrafts={durationDrafts}
+          targetDateDrafts={targetDateDrafts}
+          setDrafts={setDrafts}
+          setDurationDrafts={setDurationDrafts}
+          setTargetDateDrafts={setTargetDateDrafts}
+          computePreview={computePreview}
+          baseDate={baseDate}
+          collapsed={collapsed}
+          onToggleCollapse={toggleCollapse}
+        />
       )}
 
       {hasUnsavedChanges && (
@@ -786,23 +908,37 @@ function TableView({
   setDrafts,
   durationDrafts,
   setDurationDrafts,
+  targetDateDrafts,
   computePreview,
+  collapsed,
+  onToggleCollapse,
 }: {
   rows: any[];
   drafts: Record<string, string>;
   setDrafts: (updater: (prev: Record<string, string>) => Record<string, string>) => void;
   durationDrafts: Record<string, string>;
   setDurationDrafts: (updater: (prev: Record<string, string>) => Record<string, string>) => void;
+  // DP-2 · read-only view of the Gantt drag drafts, so the deliverable-
+  // header rollup resolves the latest target date the same way GanttRow
+  // does (`targetDateDrafts[r.key] || computePreview(draft) || savedDate`).
+  targetDateDrafts: Record<string, string>;
   computePreview: (m: string) => string;
+  // DP-6 · Collapse state (shared with GanttView, persisted per-project
+  // in the parent). Absent from the set = the group is expanded.
+  collapsed: Set<number>;
+  onToggleCollapse: (deliverableId: number) => void;
 }) {
   // Per-column filters — arrays of selected values (empty = no filter).
   // A row passes a column filter if its value is IN the selected array.
   // Values are cascading: each column's filter dropdown shows only the
   // values that are still available given the OTHER columns' filters,
   // so users can drill down without seeing dead options.
-  type ColKey = 'deliverable' | 'zone' | 'service' | 'months' | 'duration' | 'target';
+  // DP-3 · `hours` joined the union so the new Hours column sorts and
+  // filters like every other numeric column.
+  type ColKey = 'deliverable' | 'zone' | 'service' | 'months' | 'duration' | 'hours' | 'target';
+  const ALL_COLS: ColKey[] = ['deliverable', 'zone', 'service', 'months', 'duration', 'hours', 'target'];
   const [colFilters, setColFilters] = useState<Record<ColKey, string[]>>({
-    deliverable: [], zone: [], service: [], months: [], duration: [], target: [],
+    deliverable: [], zone: [], service: [], months: [], duration: [], hours: [], target: [],
   });
   const [openFilter, setOpenFilter] = useState<null | ColKey>(null);
   // Sort state — one column at a time; asc/desc toggle.
@@ -822,9 +958,14 @@ function TableView({
       const draft = durationDrafts[r.key] ?? '';
       return draft || (r.savedDurationWeeks == null ? '' : String(r.savedDurationWeeks));
     }
+    if (col === 'hours') {
+      // Hours is server-derived (Σ budgetHours per group) — no draft,
+      // so the raw row value is the sort/filter key.
+      return r.hours != null ? String(r.hours) : '';
+    }
     // target
     const draft = drafts[r.key] ?? '';
-    return computePreview(draft) || r.savedDate || '';
+    return targetDateDrafts[r.key] || computePreview(draft) || r.savedDate || '';
   };
 
   // Helper: does a row pass the currently selected filter for a given
@@ -839,15 +980,15 @@ function TableView({
 
   // Visible rows: pass every column filter.
   const filtered = useMemo(
-    () => rows.filter((r) => (['deliverable', 'zone', 'service', 'months', 'duration', 'target'] as ColKey[]).every((c) => rowPassesCol(r, c, colFilters))),
-    [rows, drafts, durationDrafts, colFilters],
+    () => rows.filter((r) => ALL_COLS.every((c) => rowPassesCol(r, c, colFilters))),
+    [rows, drafts, durationDrafts, targetDateDrafts, colFilters],
   );
 
   // For a given column, build the list of distinct values the user
   // CAN currently pick — computed against rows that pass every OTHER
   // filter (cascading). Result is `{ value, selected, count }[]`.
   const optionsFor = (col: ColKey) => {
-    const otherCols = (['deliverable', 'zone', 'service', 'months', 'duration', 'target'] as ColKey[]).filter((c) => c !== col);
+    const otherCols = ALL_COLS.filter((c) => c !== col);
     const eligible = rows.filter((r) => otherCols.every((c) => rowPassesCol(r, c, colFilters)));
     const counts = new Map<string, number>();
     for (const r of eligible) {
@@ -873,10 +1014,12 @@ function TableView({
     setColFilters((s) => ({ ...s, [col]: all }));
   };
 
-  // Effective date for sort/display
+  // Effective date for sort/display. Uses the SAME resolution order the
+  // Gantt bar geometry uses (see line ~1647): explicit-date draft →
+  // months preview → saved server value.
   const effectiveDate = (r: any) => {
     const draft = drafts[r.key] ?? '';
-    return computePreview(draft) || r.savedDate || '';
+    return targetDateDrafts[r.key] || computePreview(draft) || r.savedDate || '';
   };
   const effectiveMonths = (r: any) => {
     const draft = drafts[r.key] ?? '';
@@ -885,6 +1028,30 @@ function TableView({
   const effectiveDuration = (r: any) => {
     const draft = durationDrafts[r.key] ?? '';
     return draft || (r.savedDurationWeeks == null ? '' : String(r.savedDurationWeeks));
+  };
+  const effectiveHours = (r: any) => Number(r.hours || 0);
+
+  // DP-2 · Per-group rollup summary. Iterates the group's zone rows
+  // using the same effective-value helpers so it stays honest to whatever
+  // the user has drafted; a zero-out row contributes 0, a row with no
+  // date at all is skipped for the "latest end date" calculation. Kept
+  // inside TableView because it depends on drafts + targetDateDrafts.
+  const groupRollup = (zones: any[]): { totalWeeks: number; totalHours: number; latestDate: string | null } => {
+    let totalWeeks = 0;
+    let totalHours = 0;
+    let latestMs = -Infinity;
+    for (const r of zones) {
+      const w = Number(effectiveDuration(r) || 0);
+      if (Number.isFinite(w)) totalWeeks += w;
+      totalHours += Number(r.hours || 0);
+      const iso = effectiveDate(r);
+      if (iso) {
+        const ms = new Date(iso).getTime();
+        if (Number.isFinite(ms) && ms > latestMs) latestMs = ms;
+      }
+    }
+    const latestDate = latestMs === -Infinity ? null : new Date(latestMs).toISOString().slice(0, 10);
+    return { totalWeeks, totalHours, latestDate };
   };
 
   // Sort within the same deliverable group. Deliverable order is
@@ -915,6 +1082,7 @@ function TableView({
     else if (sort.col === 'zone') groups.sort((a, b) => cmp((a.zones[0]?.zoneName ?? '').toLowerCase(), (b.zones[0]?.zoneName ?? '').toLowerCase()));
     else if (sort.col === 'months') groups.sort((a, b) => cmp(Number(effectiveMonths(a.zones[0]) || 0), Number(effectiveMonths(b.zones[0]) || 0)));
     else if (sort.col === 'duration') groups.sort((a, b) => cmp(Number(effectiveDuration(a.zones[0]) || 0), Number(effectiveDuration(b.zones[0]) || 0)));
+    else if (sort.col === 'hours') groups.sort((a, b) => cmp(effectiveHours(a.zones[0]), effectiveHours(b.zones[0])));
     else if (sort.col === 'target') groups.sort((a, b) => cmp(effectiveDate(a.zones[0]) || '', effectiveDate(b.zones[0]) || ''));
 
     // Sort zone rows within each group
@@ -927,12 +1095,14 @@ function TableView({
         g.zones.sort((a: any, b: any) => zcmp(Number(effectiveMonths(a) || 0), Number(effectiveMonths(b) || 0)));
       } else if (sort.col === 'duration') {
         g.zones.sort((a: any, b: any) => zcmp(Number(effectiveDuration(a) || 0), Number(effectiveDuration(b) || 0)));
+      } else if (sort.col === 'hours') {
+        g.zones.sort((a: any, b: any) => zcmp(effectiveHours(a), effectiveHours(b)));
       } else if (sort.col === 'target') {
         g.zones.sort((a: any, b: any) => zcmp(effectiveDate(a) || '', effectiveDate(b) || ''));
       }
     }
     return groups;
-  }, [filtered, sort, drafts, durationDrafts]);
+  }, [filtered, sort, drafts, durationDrafts, targetDateDrafts]);
 
   const toggleSort = (col: typeof sort.col) => {
     setSort((s) => (s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'asc' }));
@@ -983,6 +1153,17 @@ function TableView({
               onClear={() => clearFilter('duration')} onSelectAll={() => selectAll('duration')}
               open={openFilter === 'duration'} onToggleOpen={() => setOpenFilter((c) => c === 'duration' ? null : 'duration')}
             />
+            {/* DP-3 · Hours = Σ Task.budgetHours per (zone × deliverable).
+                Right-aligned like the other numeric columns. The wire
+                already carried it; the client used to drop it. */}
+            <SortableFilterableHeader
+              label="Hours" width="w-[100px]" align="right"
+              sort={sort} col="hours" onToggleSort={() => toggleSort('hours')}
+              options={optionsFor('hours')} activeCount={colFilters.hours.length}
+              onToggleValue={(v) => toggleFilterValue('hours', v)}
+              onClear={() => clearFilter('hours')} onSelectAll={() => selectAll('hours')}
+              open={openFilter === 'hours'} onToggleOpen={() => setOpenFilter((c) => c === 'hours' ? null : 'hours')}
+            />
             <SortableFilterableHeader
               label="Target Date" width="w-[160px]"
               sort={sort} col="target" onToggleSort={() => toggleSort('target')}
@@ -994,36 +1175,104 @@ function TableView({
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-          {sortedGroups.map((g) => (
+          {sortedGroups.map((g) => {
+            const isCollapsed = collapsed.has(g.deliverableId);
+            const rollup = groupRollup(g.zones);
+            const groupBodyId = `deliv-group-${g.deliverableId}`;
+            const zoneCount = g.zones.length;
+            return (
             <FragmentGroup key={g.deliverableId}>
-              {/* Deliverable header row — deliverable name only. Service
-                  is deliberately NOT repeated here (it already shows in
-                  the Service column per row), otherwise the same value
-                  reads twice on every group and looked like a data
-                  leak. (Client feedback 2026-08-02.) */}
-              <tr className="bg-slate-50/70 dark:bg-slate-800/70">
-                <td colSpan={6} className="px-4 py-2 text-[12px] font-bold text-slate-700 dark:text-slate-200">
-                  <div className="flex items-center justify-between gap-3">
-                    <span>{g.deliverableName}</span>
-                    {/* Open the deliverable's Drive folder (create-if-
-                        missing on click). Rate-limited backend; a
-                        graceful "not configured" toast fires if the
-                        admin hasn't set up Drive yet. */}
-                    <OpenInDriveButton entity="deliverable" id={g.deliverableId} />
+              {/* DP-2 · Deliverable header row — rendered ACROSS the
+                  column grid (not one merged cell) so the rollup totals
+                  line up under Duration / Hours / Target. Chevron + name
+                  + N-zones badge in the first cell; Σ weeks in the
+                  Duration cell; Σ hours in the Hours cell; latest
+                  resolved date in the Target Date cell. Service column
+                  is deliberately left empty — the same value already
+                  reads twice per row and looked like a data leak. */}
+              <tr
+                className="bg-slate-50/70 dark:bg-slate-800/70 group cursor-pointer select-none hover:bg-slate-100/80 dark:hover:bg-slate-800"
+                onClick={() => onToggleCollapse(g.deliverableId)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onToggleCollapse(g.deliverableId);
+                  }
+                }}
+                aria-expanded={!isCollapsed}
+                aria-controls={groupBodyId}
+                tabIndex={0}
+              >
+                <td className="px-4 py-2 text-[12px] font-bold text-slate-700 dark:text-slate-200">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); onToggleCollapse(g.deliverableId); }}
+                      className="inline-flex items-center justify-center w-5 h-5 rounded hover:bg-slate-200/70 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400"
+                      aria-label={isCollapsed ? `Expand ${g.deliverableName}` : `Collapse ${g.deliverableName}`}
+                      title={isCollapsed ? 'Expand' : 'Collapse'}
+                    >
+                      {isCollapsed
+                        ? <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
+                        : <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />}
+                    </button>
+                    <span className="truncate">{g.deliverableName}</span>
+                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap tabular-nums">
+                      · {zoneCount} zone{zoneCount === 1 ? '' : 's'}
+                    </span>
+                    <span className="ml-auto" onClick={(e) => e.stopPropagation()}>
+                      {/* Open the deliverable's Drive folder (create-if-
+                          missing on click). Rate-limited backend; a
+                          graceful "not configured" toast fires if the
+                          admin hasn't set up Drive yet. */}
+                      <OpenInDriveButton entity="deliverable" id={g.deliverableId} />
+                    </span>
                   </div>
                 </td>
+                {/* Zone col (empty) */}
+                <td className="px-4 py-2" />
+                {/* Service col (empty — see comment above) */}
+                <td className="px-4 py-2" />
+                {/* Months col (no rollup — months is an offset, not
+                    additive; see spec § "Facts that shape the build") */}
+                <td className="px-4 py-2" />
+                {/* Σ Duration weeks */}
+                <td className="px-4 py-2 text-right text-[12px] font-semibold text-slate-600 dark:text-slate-300 tabular-nums whitespace-nowrap">
+                  {rollup.totalWeeks > 0 ? `Σ ${rollup.totalWeeks} wk` : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                </td>
+                {/* Σ Hours */}
+                <td className="px-4 py-2 text-right text-[12px] font-semibold text-slate-600 dark:text-slate-300 tabular-nums whitespace-nowrap">
+                  {rollup.totalHours > 0 ? `Σ ${rollup.totalHours}h` : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                </td>
+                {/* Latest resolved target date */}
+                <td className="px-4 py-2 text-[12px] font-semibold text-slate-600 dark:text-slate-300 tabular-nums whitespace-nowrap">
+                  {rollup.latestDate ? <>ends <span className="font-bold text-slate-700 dark:text-slate-200">{rollup.latestDate}</span></> : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                </td>
               </tr>
-              {g.zones.map((r) => {
+              {!isCollapsed && g.zones.map((r: any) => {
                 const draft = drafts[r.key] ?? '';
                 const durDraft = durationDrafts[r.key] ?? '';
                 const preview = computePreview(draft);
                 const serverMonths = r.savedMonths == null ? '' : String(r.savedMonths);
                 const serverDur = r.savedDurationWeeks == null ? '' : String(r.savedDurationWeeks);
                 const isDirty = draft !== serverMonths || durDraft !== serverDur;
+                const typeLabel = zoneTypeLabel(r.zoneType);
+                const hoursNum = Number(r.hours || 0);
                 return (
-                  <tr key={r.key} className={cn('hover:bg-slate-50/40 dark:hover:bg-slate-800/40', isDirty && 'bg-blue-50/30')}>
+                  <tr id={groupBodyId} key={r.key} className={cn('hover:bg-slate-50/40 dark:hover:bg-slate-800/40', isDirty && 'bg-blue-50/30 dark:bg-blue-950/20')}>
                     <td className="px-4 py-2 text-slate-400 dark:text-slate-500">—</td>
-                    <td className="px-4 py-2 text-slate-700 dark:text-slate-200">{r.zoneName}</td>
+                    <td className="px-4 py-2 text-slate-700 dark:text-slate-200">
+                      <span className="truncate">{r.zoneName}</span>
+                      {/* DP-4 · zone-type badge — muted, matches the
+                          existing row height (no `rounded-full` — the
+                          codebase's rectangular-badge convention). */}
+                      <span
+                        className="ml-2 rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 whitespace-nowrap"
+                        title={`Zone type: ${typeLabel}`}
+                      >
+                        {typeLabel}
+                      </span>
+                    </td>
                     <td className="px-4 py-2 text-slate-600 dark:text-slate-300 text-[13px]">{r.serviceName ?? '—'}</td>
                     <td className="px-4 py-2 text-right">
                       <input
@@ -1047,6 +1296,13 @@ function TableView({
                         className="w-[86px] px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 tabular-nums text-right focus:border-blue-500 focus:outline-none"
                       />
                     </td>
+                    {/* DP-3 · Hours cell — read-only (server-derived).
+                        `120h` when we have any; `—` when zero. */}
+                    <td className="px-4 py-2 text-right text-slate-700 dark:text-slate-200 tabular-nums text-[13px]">
+                      {hoursNum > 0
+                        ? `${hoursNum}h`
+                        : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                    </td>
                     <td className="px-4 py-2 text-slate-700 dark:text-slate-200 tabular-nums">
                       {preview
                         ? preview
@@ -1058,7 +1314,8 @@ function TableView({
                 );
               })}
             </FragmentGroup>
-          ))}
+          );
+          })}
         </tbody>
       </table>
       {/* Footnote — the Duration column is in CALENDAR days, not
@@ -1239,6 +1496,8 @@ function GanttView({
   setTargetDateDrafts,
   computePreview,
   baseDate,
+  collapsed,
+  onToggleCollapse,
 }: {
   projectId: number;
   rows: any[];
@@ -1250,6 +1509,10 @@ function GanttView({
   setTargetDateDrafts: (updater: (prev: Record<string, string>) => Record<string, string>) => void;
   computePreview: (m: string) => string;
   baseDate: string;
+  // DP-5/DP-6 · deliverable-group collapse state, shared with the Table
+  // view (parent owns the Set + persistence).
+  collapsed: Set<number>;
+  onToggleCollapse: (deliverableId: number) => void;
 }) {
   // Row order — persisted per browser via localStorage. Rebuilt from
   // the incoming rows whenever the row set changes, preserving any
@@ -1284,6 +1547,79 @@ function GanttView({
     const missing = rows.filter((r) => !rowOrder.includes(r.key));
     return [...ordered, ...missing];
   }, [rows, rowOrder]);
+
+  // DP-5 · Group orderedRows by deliverableId, preserving the encounter
+  // order (so a drag-persisted order still drives which deliverable
+  // shows first). Each display slot is either a `group` header (chevron
+  // + rollup) or a `zone` bar; the two columns of the Gantt iterate
+  // this list in lockstep so the label column and the timeline column
+  // stay vertically aligned when groups collapse/expand.
+  type GanttGroup = {
+    kind: 'group';
+    deliverableId: number;
+    deliverableName: string;
+    zones: any[];
+    isCollapsed: boolean;
+    zoneCount: number;
+    hoursSum: number;
+    latestTargetMs: number | null;
+    earliestStartMs: number | null;
+    latestTargetIso: string | null;
+  };
+  type GanttZoneSlot = { kind: 'zone'; r: any; zoneIdx: number };
+  type GanttSlot = GanttGroup | GanttZoneSlot;
+  const displaySlots: GanttSlot[] = useMemo(() => {
+    const groupOrder: number[] = [];
+    const groupZones = new Map<number, { z: any; zoneIdx: number }[]>();
+    orderedRows.forEach((r, idx) => {
+      if (!groupZones.has(r.deliverableId)) {
+        groupOrder.push(r.deliverableId);
+        groupZones.set(r.deliverableId, []);
+      }
+      groupZones.get(r.deliverableId)!.push({ z: r, zoneIdx: idx });
+    });
+    const out: GanttSlot[] = [];
+    for (const dId of groupOrder) {
+      const entries = groupZones.get(dId)!;
+      const zonesArr = entries.map((e) => e.z);
+      const isCollapsed = collapsed.has(dId);
+      // Rollup: sum hours, find latest resolved target, find earliest
+      // resolved start (target − durationWeeks × 7d). Uses the same
+      // resolution order as GanttRow (see comment at line ~1647).
+      let latestTgt = -Infinity;
+      let earliestStart = Infinity;
+      let hoursSum = 0;
+      for (const z of zonesArr) {
+        hoursSum += Number(z.hours || 0);
+        const tIso = targetDateDrafts[z.key] || computePreview(drafts[z.key] ?? '') || z.savedDate;
+        if (!tIso) continue;
+        const tMs = new Date(tIso).getTime();
+        if (!Number.isFinite(tMs)) continue;
+        if (tMs > latestTgt) latestTgt = tMs;
+        const durWeeks = Number(durationDrafts[z.key] || z.savedDurationWeeks || 0);
+        const sMs = tMs - durWeeks * 7 * 86_400_000;
+        if (sMs < earliestStart) earliestStart = sMs;
+      }
+      const latestTargetMs = latestTgt === -Infinity ? null : latestTgt;
+      const earliestStartMs = earliestStart === Infinity ? null : earliestStart;
+      out.push({
+        kind: 'group',
+        deliverableId: dId,
+        deliverableName: zonesArr[0]?.deliverableName ?? `Deliverable #${dId}`,
+        zones: zonesArr,
+        isCollapsed,
+        zoneCount: zonesArr.length,
+        hoursSum,
+        latestTargetMs,
+        earliestStartMs,
+        latestTargetIso: latestTargetMs ? new Date(latestTargetMs).toISOString().slice(0, 10) : null,
+      });
+      if (!isCollapsed) {
+        for (const { z, zoneIdx } of entries) out.push({ kind: 'zone', r: z, zoneIdx });
+      }
+    }
+    return out;
+  }, [orderedRows, collapsed, drafts, durationDrafts, targetDateDrafts, computePreview]);
 
   // Compact scale so 3 years fit in one viewport (client feedback
   // 2026-08-02 item 5). 8 px/week × 156 weeks (3 yr) ≈ 1250px, which
@@ -1508,35 +1844,85 @@ function GanttView({
       {/* Rows body — labels on left, scrollable bars on right. Both
           columns must scroll VERTICALLY in sync (they naturally do
           because both are in the same outer container); the timeline
-          column scrolls HORIZONTALLY on its own. */}
+          column scrolls HORIZONTALLY on its own.
+
+          DP-5 · The two columns iterate `displaySlots` in lockstep so
+          a `group` slot's label sits alongside its group track (rolled-
+          up bar when collapsed, empty divider when expanded), and each
+          `zone` slot's label sits alongside its GanttRow. */}
       <div className="grid grid-cols-[260px_1fr]">
         {/* Labels column */}
         <div className="divide-y divide-slate-100 dark:divide-slate-800 border-r border-slate-200 dark:border-slate-700">
-          {orderedRows.map((r, idx) => (
-            <div
-              key={r.key}
-              draggable
-              onDragStart={() => setDragKey(r.key)}
-              onDragEnd={() => { setDragKey(null); setDropIndicatorIdx(null); }}
-              onDragOver={(e) => { e.preventDefault(); setDropIndicatorIdx(idx); }}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (dragKey && dragKey !== r.key) handleReorder(dragKey, idx);
-                setDragKey(null);
-                setDropIndicatorIdx(null);
-              }}
-              className={cn(
-                'group h-8 px-4 text-[12px] flex items-center gap-2 cursor-grab active:cursor-grabbing hover:bg-slate-50/60 dark:hover:bg-slate-800/60',
-                dragKey === r.key && 'opacity-40',
-                dropIndicatorIdx === idx && dragKey && dragKey !== r.key && 'border-t-2 border-blue-500',
-              )}
-              title="Drag to reorder"
-            >
-              <span className="text-slate-300 dark:text-slate-600 group-hover:text-slate-500 leading-none">⋮⋮</span>
-              <span className="font-medium text-slate-800 dark:text-slate-100 truncate">{r.zoneName}</span>
-              <span className="text-slate-500 dark:text-slate-400 truncate">· {r.deliverableName}</span>
-            </div>
-          ))}
+          {displaySlots.map((slot, i) => {
+            if (slot.kind === 'group') {
+              const groupBodyId = `deliv-gantt-group-${slot.deliverableId}`;
+              return (
+                <div
+                  key={`g-${slot.deliverableId}`}
+                  className="group h-8 px-3 flex items-center gap-2 text-[12px] bg-slate-50 dark:bg-slate-800/60 cursor-pointer select-none hover:bg-slate-100 dark:hover:bg-slate-800"
+                  onClick={() => onToggleCollapse(slot.deliverableId)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onToggleCollapse(slot.deliverableId);
+                    }
+                  }}
+                  aria-expanded={!slot.isCollapsed}
+                  aria-controls={groupBodyId}
+                  tabIndex={0}
+                >
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onToggleCollapse(slot.deliverableId); }}
+                    className="inline-flex items-center justify-center w-5 h-5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 shrink-0"
+                    aria-label={slot.isCollapsed ? `Expand ${slot.deliverableName}` : `Collapse ${slot.deliverableName}`}
+                    title={slot.isCollapsed ? 'Expand' : 'Collapse'}
+                  >
+                    {slot.isCollapsed
+                      ? <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
+                      : <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />}
+                  </button>
+                  <span className="font-bold text-slate-800 dark:text-slate-100 truncate">{slot.deliverableName}</span>
+                  <span className="ml-auto text-[10px] font-medium text-slate-500 dark:text-slate-400 tabular-nums whitespace-nowrap">
+                    {slot.zoneCount}z{slot.hoursSum > 0 ? ` · ${slot.hoursSum}h` : ''}
+                  </span>
+                </div>
+              );
+            }
+            // zone slot
+            const r = slot.r;
+            const typeLabel = zoneTypeLabel(r.zoneType);
+            return (
+              <div
+                key={r.key}
+                draggable
+                onDragStart={() => setDragKey(r.key)}
+                onDragEnd={() => { setDragKey(null); setDropIndicatorIdx(null); }}
+                onDragOver={(e) => { e.preventDefault(); setDropIndicatorIdx(slot.zoneIdx); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragKey && dragKey !== r.key) handleReorder(dragKey, slot.zoneIdx);
+                  setDragKey(null);
+                  setDropIndicatorIdx(null);
+                }}
+                className={cn(
+                  'group h-8 pl-6 pr-4 text-[12px] flex items-center gap-2 cursor-grab active:cursor-grabbing hover:bg-slate-50/60 dark:hover:bg-slate-800/60',
+                  dragKey === r.key && 'opacity-40',
+                  dropIndicatorIdx === slot.zoneIdx && dragKey && dragKey !== r.key && 'border-t-2 border-blue-500',
+                )}
+                title="Drag to reorder"
+                data-slot-index={i}
+              >
+                <span className="text-slate-300 dark:text-slate-600 group-hover:text-slate-500 leading-none">⋮⋮</span>
+                <span className="font-medium text-slate-800 dark:text-slate-100 truncate">{r.zoneName}</span>
+                {/* DP-4 · zone-type badge in the Gantt label column,
+                    matching the Table badge exactly. */}
+                <span className="rounded px-1.5 py-0.5 text-[9px] font-medium bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 whitespace-nowrap">
+                  {typeLabel}
+                </span>
+              </div>
+            );
+          })}
         </div>
         {/* Timeline column — the ONLY horizontal scroller. Its scroll
             position drives the header's translateX so year/month
@@ -1560,24 +1946,74 @@ function GanttView({
                 </span>
               </div>
             )}
-            {orderedRows.map((r) => (
-              <GanttRow
-                key={r.key}
-                r={r}
-                projectId={projectId}
-                drafts={drafts}
-                durationDrafts={durationDrafts}
-                targetDateDrafts={targetDateDrafts}
-                setDrafts={setDrafts}
-                setDurationDrafts={setDurationDrafts}
-                setTargetDateDrafts={setTargetDateDrafts}
-                computePreview={computePreview}
-                startMs={startMs}
-                pxPerDay={PX_PER_DAY}
-                onRequestPastDate={(rowKey, newTargetMs, kind, apply) => setPastDateConfirm({ rowKey, newTargetMs, kind, apply })}
-                onBarClick={() => setTaskModalRow(r)}
-              />
-            ))}
+            {displaySlots.map((slot) => {
+              if (slot.kind === 'group') {
+                // DP-5 · Group track. Collapsed → single rolled-up bar
+                // spanning earliest start → latest target across the
+                // deliverable's zones, styled distinctly (taller, ring
+                // + darker fill) so it reads as an aggregate rather
+                // than a normal per-zone bar. Expanded → a thin muted
+                // divider strip so the label's chevron still lines up
+                // with a visible track (the zone bars follow below).
+                if (!slot.isCollapsed) {
+                  return (
+                    <div
+                      key={`gtrack-${slot.deliverableId}`}
+                      className="relative h-8 bg-slate-50 dark:bg-slate-800/60"
+                    />
+                  );
+                }
+                const hasSpan = slot.earliestStartMs != null && slot.latestTargetMs != null;
+                const rightPx = hasSpan ? ((slot.latestTargetMs! - startMs) / 86_400_000) * PX_PER_DAY : 0;
+                const leftPx = hasSpan ? ((slot.earliestStartMs! - startMs) / 86_400_000) * PX_PER_DAY : 0;
+                const widthPx = Math.max(6, rightPx - leftPx);
+                const todayMsLocal = Date.now();
+                const isPast = hasSpan && slot.latestTargetMs! < todayMsLocal;
+                return (
+                  <div
+                    key={`gtrack-${slot.deliverableId}`}
+                    className="relative h-8 bg-slate-50 dark:bg-slate-800/60 cursor-pointer"
+                    onClick={() => onToggleCollapse(slot.deliverableId)}
+                    title={`${slot.deliverableName} — click to expand`}
+                  >
+                    {hasSpan && (
+                      <div
+                        className={cn(
+                          'absolute top-1.5 h-5 rounded-md shadow-md flex items-center overflow-hidden',
+                          'bg-slate-700/90 hover:bg-slate-800 dark:bg-slate-500/90 dark:hover:bg-slate-400',
+                          'ring-1 ring-slate-900/20 dark:ring-slate-100/20',
+                          isPast && 'ring-2 ring-red-400/70',
+                        )}
+                        style={{ left: leftPx, width: widthPx }}
+                      >
+                        <span className="text-white text-[10px] font-bold tabular-nums whitespace-nowrap px-1.5 truncate">
+                          {slot.hoursSum > 0 ? `Σ ${slot.hoursSum}h · ` : ''}{slot.latestTargetIso ?? ''}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+              // zone slot → per-zone bar
+              return (
+                <GanttRow
+                  key={slot.r.key}
+                  r={slot.r}
+                  projectId={projectId}
+                  drafts={drafts}
+                  durationDrafts={durationDrafts}
+                  targetDateDrafts={targetDateDrafts}
+                  setDrafts={setDrafts}
+                  setDurationDrafts={setDurationDrafts}
+                  setTargetDateDrafts={setTargetDateDrafts}
+                  computePreview={computePreview}
+                  startMs={startMs}
+                  pxPerDay={PX_PER_DAY}
+                  onRequestPastDate={(rowKey, newTargetMs, kind, apply) => setPastDateConfirm({ rowKey, newTargetMs, kind, apply })}
+                  onBarClick={() => setTaskModalRow(slot.r)}
+                />
+              );
+            })}
           </div>
         </div>
       </div>
