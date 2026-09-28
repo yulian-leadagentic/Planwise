@@ -140,6 +140,18 @@ export class TasksService {
     }
     let projectId: number | null = null;
     if (dto.isPersonal) {
+      // QA4 B6 — defense in depth. The personal-task dialog now
+      // requires Service (`serviceTypeId`), matching the normal
+      // Create-Task form. Enforce here so a hand-rolled API caller
+      // can't slip a serviceless personal task past the client guard;
+      // structured `missing:['serviceTypeId']` lets the FE highlight.
+      if (!dto.serviceTypeId) {
+        throw new BadRequestException({
+          error: 'missing_required_fields',
+          message: 'Service is required for personal tasks.',
+          missing: ['serviceTypeId'],
+        });
+      }
       // Any / all of the project context fields may be supplied but none are required.
       projectId = dto.projectId ?? null;
       if (dto.zoneId) {

@@ -27,8 +27,26 @@ export function PersonalTaskDialog({ onClose, onCreated }: { onClose: () => void
   const [projectId, setProjectId] = useState<number | ''>('');
   const [zoneId, setZoneId] = useState<number | ''>('');
   const [projectDeliverableId, setProjectDeliverableId] = useState<number | ''>('');
+  // QA4 B6: Service (serviceTypeId) is now required for personal
+  // tasks — matches the "Service *" field on the normal Create-Task
+  // form (create-task-modal.tsx ~249). Personal tasks may have no
+  // project, so we cannot key off phaseId; the service-types catalog
+  // is project-agnostic and works here.
+  const [serviceTypeId, setServiceTypeId] = useState<string>('');
   // Personal tasks default to NO review — per client spec.
   const [saving, setSaving] = useState(false);
+
+  // QA4 B6: Service catalog — same query key/shape as create-task-modal
+  // so the two forms share cache entries.
+  const { data: serviceTypes = [] } = useQuery<any[]>({
+    queryKey: ['service-types', 'all'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () =>
+      client.get('/service-types').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : (d?.data ?? []);
+      }),
+  });
 
   // Projects the user can pick from. Same source the Time-log dialog uses.
   const { data: projectsResp } = useQuery({
@@ -54,7 +72,9 @@ export function PersonalTaskDialog({ onClose, onCreated }: { onClose: () => void
   const deliverables: any[] = Array.isArray(deliverablesResp) ? deliverablesResp : [];
 
   // Due date is required for personal tasks (client feedback).
-  const canSave = name.trim().length > 0 && !!endDate && !saving;
+  // QA4 B6: Service is now also required so personal tasks classify
+  // consistently in reporting alongside project tasks.
+  const canSave = name.trim().length > 0 && !!endDate && !!serviceTypeId && !saving;
 
   const submit = async () => {
     if (!canSave) return;
@@ -69,6 +89,10 @@ export function PersonalTaskDialog({ onClose, onCreated }: { onClose: () => void
         projectId: projectId || undefined,
         zoneId: zoneId || undefined,
         projectDeliverableId: projectDeliverableId || undefined,
+        // QA4 B6: send Service so the server-side isPersonal branch
+        // records it (and enforces its own guard) — same field name
+        // create-task-modal uses.
+        serviceTypeId: Number(serviceTypeId),
         isPersonal: true,
         // Personal tasks skip the review step by default.
         requiresReview: false,
@@ -100,7 +124,7 @@ export function PersonalTaskDialog({ onClose, onCreated }: { onClose: () => void
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
           <div>
             <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">New personal task</h2>
-            <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">Just for you. Project / zone / deliverable are optional; Due date is required.</p>
+            <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">Just for you. Project / zone / deliverable are optional; Service and Due date are required.</p>
           </div>
           <button onClick={onClose} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200" aria-label="Close">
             <X className="h-4 w-4"  aria-hidden="true" />
@@ -131,6 +155,31 @@ export function PersonalTaskDialog({ onClose, onCreated }: { onClose: () => void
               placeholder="Optional details…"
               className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none resize-none"
             />
+          </div>
+          {/* QA4 B6: Service picker — required. Mirrors the "Service *"
+              field on create-task-modal so users see the same option set
+              (and pick from the same /service-types catalog). */}
+          <div>
+            <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+              Service <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={serviceTypeId}
+              onChange={(e) => setServiceTypeId(e.target.value)}
+              className={
+                !serviceTypeId
+                  ? 'w-full px-3 py-2.5 rounded-lg border border-red-300 dark:border-red-500/60 text-sm text-slate-700 dark:text-slate-200 focus:border-red-500 focus:outline-none'
+                  : 'w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none'
+              }
+            >
+              <option value="">— Select service —</option>
+              {serviceTypes.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}{s.code ? ` (${s.code})` : ''}</option>
+              ))}
+            </select>
+            {!serviceTypeId && (
+              <p className="mt-1 text-[11px] font-medium text-red-600 dark:text-red-400">Service is required.</p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
