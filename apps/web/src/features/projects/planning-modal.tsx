@@ -914,7 +914,6 @@ const TASK_GRID = 'grid grid-cols-[16px_16px_80px_minmax(180px,2fr)_140px_96px_8
  * the picker's "show/hide column N" flips the correct cell.
  */
 export const PLANNING_COLUMNS = [
-  { key: 'code',        label: 'Code',        width: '80px' },
   { key: 'name',        label: 'Task Name',   width: 'minmax(180px,2fr)', required: true },
   { key: 'zone',        label: 'Zone',        width: '140px' },
   { key: 'deliverable', label: 'Deliverable', width: '96px' },
@@ -1119,9 +1118,6 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
         <GripVertical className="w-4 h-4" />
       </button>
       <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 cursor-pointer" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
-      {cols.isVisible('code') && (
-        <span className="font-mono text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate" title={task.code || ''}>{task.code || '-'}</span>
-      )}
       {/* Task name — clickable, opens the canonical task drawer
           (?task=N). Especially important in grouping mode where the
           name is the only entry point to the task's details (bm2
@@ -4060,7 +4056,6 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
                 <div style={{ marginLeft: 28, ...cols.gridStyle }} className={cn('grid gap-x-2 items-center py-1.5 px-4 bg-slate-50/70 dark:bg-slate-800/70 border-b border-l-[3px] border-l-transparent border-slate-100 dark:border-slate-800 text-[10px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-wider')}>
                   <span />
                   <span />
-                  {cols.isVisible('code') && <ColHeader label="Code" filterKey="code" kind="text" />}
                   <ColHeader label="Task Name" filterKey="name" kind="text" />
                   {cols.isVisible('zone') && <ColHeader label="Zone" filterKey="zone" kind="select" />}
                   {cols.isVisible('deliverable') && <ColHeader label="Deliverable" filterKey="deliverable" kind="select" />}
@@ -4667,7 +4662,6 @@ function ProjectRootDeliverableGroup({
         <>
           <div style={{ marginLeft: 28, ...cols.gridStyle }} className={cn('grid gap-x-2 items-center py-1.5 px-4 bg-slate-50/70 dark:bg-slate-800/70 border-b border-l-[3px] border-l-transparent border-slate-100 dark:border-slate-800 text-[10px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-wider')}>
             <span /><span />
-            {cols.isVisible('code') && <ColHeader label="Code" filterKey="code" kind="text" />}
             <ColHeader label="Task Name" filterKey="name" kind="text" />
             {cols.isVisible('zone') && <ColHeader label="Zone" filterKey="zone" kind="select" />}
             {cols.isVisible('deliverable') && <ColHeader label="Deliverable" filterKey="deliverable" kind="select" />}
@@ -5315,7 +5309,6 @@ function PlanningView({ projectId }: { projectId: number }) {
     staleTime: 60 * 1000,
   });
   const members: AssigneeCandidate[] = assigneeCandidates;
-  const budget = pd?.budgetSummary;
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
 
@@ -6931,24 +6924,6 @@ function PlanningView({ projectId }: { projectId: number }) {
               </DragOverlay>
             )}
           </DndContext>
-
-          <div className="flex items-center gap-6 px-4 py-2.5 border-t border-slate-200 dark:border-slate-700 bg-[#FAFBFC] text-[12px]">
-            <div><span className="text-slate-400 dark:text-slate-500">Total:</span> <span className="font-mono text-xs font-semibold text-slate-900 dark:text-slate-100 ml-1">{sorted.length} tasks · {totalHours}h · ₪{totalAmount.toLocaleString()}</span></div>
-            {totalLoggedHours > 0 && (
-              <>
-                <span className="text-slate-300 dark:text-slate-600">│</span>
-                <div><span className="text-slate-400 dark:text-slate-500">Logged:</span> <span className={cn('font-mono text-xs font-semibold ml-1', totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-600' : 'text-blue-600')}>{totalLoggedHours}h</span>{totalHours > 0 && <span className="text-slate-400 dark:text-slate-500 ml-1">/ {totalHours}h ({Math.round(totalLoggedHours / totalHours * 100)}%)</span>}</div>
-              </>
-            )}
-            {budget?.projectBudget > 0 && (
-              <>
-                <span className="text-slate-300 dark:text-slate-600">│</span>
-                <div><span className="text-slate-400 dark:text-slate-500">Budget:</span> <span className="font-mono text-xs font-semibold text-slate-900 dark:text-slate-100 ml-1">₪{Number(budget.projectBudget).toLocaleString()}</span></div>
-                <div><span className="text-slate-400 dark:text-slate-500">Remaining:</span> <span className={cn('font-mono text-xs font-semibold ml-1', budget.remaining >= 0 ? 'text-emerald-600' : 'text-red-600')}>₪{Number(budget.remaining).toLocaleString()}</span></div>
-                <div className="flex-1 max-w-[200px]"><div className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden"><div className="h-full bg-blue-500 rounded-full transition-all duration-400" style={{ width: `${Math.min(100, 100 - (budget.remainingPct || 0))}%` }} /></div></div>
-              </>
-            )}
-          </div>
         </div>
       ) : !showTemplatePicker && !showManualZone ? (
         <div className="bg-white dark:bg-slate-900 rounded-[14px] border border-slate-200 dark:border-slate-700 p-12 text-center">
