@@ -178,6 +178,21 @@ export interface CommitSummary {
 
 // ─── API ──────────────────────────────────────────────────────────────
 
+/**
+ * Every endpoint below runs through the API's global ResponseInterceptor,
+ * which wraps the handler's return value as `{ success: true, data: <payload> }`.
+ * Axios then puts that envelope on `response.data`, so the actual payload is
+ * at `response.data.data`. This helper unwraps defensively — if a caller
+ * happens to hit an un-intercepted route it still gets the raw payload.
+ *
+ * The bug this fixes: `contacts-import` upload returned the wrapper as the
+ * payload, so `data.triage` was undefined and the wizard crashed with
+ * "Cannot read properties of undefined (reading 'kind')" on line 189.
+ */
+function unwrap<T>(res: { data: any }): T {
+  return (res.data?.data ?? res.data) as T;
+}
+
 export const contactsImportApi = {
   /**
    * Stage 1 + Stage 2 — upload the file, receive triage + per-sheet
@@ -191,7 +206,7 @@ export const contactsImportApi = {
     // boundary token yields an unparseable body on the server (multer can't
     // split the parts) — this was the F28 upload failure. (BM2 · commit 6.)
     const r = await client.post<UploadResponse>('/data-import/contacts/upload', form);
-    return r.data;
+    return unwrap<UploadResponse>(r);
   },
 
   /**
@@ -203,7 +218,7 @@ export const contactsImportApi = {
     headerRowIndex?: number;
   }): Promise<SheetPreview> => {
     const r = await client.post<SheetPreview>('/data-import/contacts/preview', input);
-    return r.data;
+    return unwrap<SheetPreview>(r);
   },
 
   /**
@@ -227,14 +242,14 @@ export const contactsImportApi = {
     notes?: string;
   }): Promise<CommitSummary> => {
     const r = await client.post<CommitSummary>('/data-import/contacts/commit', input);
-    return r.data;
+    return unwrap<CommitSummary>(r);
   },
 
   // ─── Mapping presets (Stage 3) ─────────────────────────────────────
 
   listPresets: async (): Promise<MappingPreset[]> => {
     const r = await client.get<MappingPreset[]>('/data-import/contacts/mapping-presets');
-    return r.data;
+    return unwrap<MappingPreset[]>(r);
   },
 
   savePreset: async (input: {
@@ -247,7 +262,7 @@ export const contactsImportApi = {
       kind: 'contacts',
       ...input,
     });
-    return r.data;
+    return unwrap<MappingPreset>(r);
   },
 
   deletePreset: async (id: number): Promise<void> => {
