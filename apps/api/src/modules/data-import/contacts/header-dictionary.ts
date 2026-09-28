@@ -64,22 +64,42 @@ export const HEADER_DICTIONARY: Record<ContactField, readonly string[]> = {
   ],
   contact: [
     'שם', 'איש קשר', 'שם איש קשר', 'שם מלא',
+    // QA4 D9 (2026-09-28) — real developer sheet columns:
+    // "שם המתכנן" (planner name) is a person column even though it
+    // reads more specialised than the generic "שם"; keep both so
+    // dedup within a sheet still works.
+    'שם המתכנן',
     'name', 'contact', 'contact person', 'poc', 'full name', 'given name',
     'first name', 'last name',
   ],
   company: [
     'חברה', 'שם חברה', 'משרד', 'שם המשרד', 'ארגון', 'גוף',
+    // QA4 D9 (2026-09-28) — developer sheets frequently drop the
+    // organization column under "שיוך" (affiliation) or a plural
+    // "יועצים" (consultants). Both mean "the firm this person
+    // belongs to on the project".
+    'שיוך', 'יועצים',
     'company', 'office', 'firm', 'organization', 'organisation',
     'business name', 'company name',
   ],
   discipline: [
     'תחום', 'מקצוע', 'עיסוק',
+    // QA4 D9 (2026-09-28) — Hebrew developer sheets commonly print
+    // "דיסציפלינה" (a direct transliteration of "discipline") — a
+    // header the substring rule caught only weakly. Explicit
+    // dictionary entry gives it an exact hit.
+    'דיסציפלינה',
     'discipline', 'field', 'trade', 'domain', 'specialty', 'speciality',
     // §4 note: this is the discipline axis → maps to
     // `project-partner-roles.discipline` (Stage 6 wiring).
   ],
   role: [
     'תפקיד',
+    // QA4 D9 (2026-09-28) — real 260040-Contacts.xlsx uses "תפקיד
+    // בפרויקט" (role on project). Same axis as the generic "תפקיד";
+    // also captures "הרשאה" (permission/authority) which developers
+    // sometimes use interchangeably with role on the stakeholder list.
+    'תפקיד בפרויקט', 'הרשאה',
     'position', 'role', 'title', 'job title', 'jobtitle',
   ],
   address: [

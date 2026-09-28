@@ -40,10 +40,12 @@ import {
   AlertTriangle,
   Users as UsersIcon,
   Building2,
+  Upload as UploadIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import * as Sentry from '@sentry/react';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
@@ -54,6 +56,7 @@ import { PartnerDrawer } from '@/features/partners/partner-drawer';
 import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
 import { EmptyState } from '@/components/shared/empty-state';
 import { Modal } from '@/components/shared/modal';
+import { ContactsImportWizard } from '@/features/data-import/contacts/contacts-import-wizard';
 import { RoleAssignmentPicker } from './role-assignment-picker';
 import { CustomerContactPicker } from './customer-contact-picker';
 import { AddMemberDialog } from './add-member-dialog';
@@ -155,6 +158,11 @@ export function TeamTab({
   const confirm = useConfirm();
   const { isAdmin, can: canPerm } = usePermissions();
   const canWritePartners = isAdmin || canPerm('partners', 'write');
+  // QA4 D9 (2026-09-28) — separate gate from `partners:write`: importing
+  // stakeholders in bulk is a distinct authority even for a PM who can
+  // add people one at a time. Mirrors the wizard's own permission check
+  // on /admin/data-import.
+  const canImportContacts = isAdmin || canPerm('data-import/contacts', 'write');
 
   // ─── Data ──────────────────────────────────────────────────────────
   const {
@@ -233,6 +241,12 @@ export function TeamTab({
   const [addPickerOpen, setAddPickerOpen] = useState(false);
   const [roleAssignmentTarget, setRoleAssignmentTarget] = useState<ProjectRoleTypeRow | null>(null);
   const [showCustomerContactPicker, setShowCustomerContactPicker] = useState(false);
+  // QA4 D9 — project-scoped contacts import (Excel). Mounts the shared
+  // ContactsImportWizard in a modal with defaultProjectId={projectId}
+  // so imported people land as stakeholders on THIS project. `dirty`
+  // flag is fed by the wizard so the modal can gate discard on close.
+  const [showImportContacts, setShowImportContacts] = useState(false);
+  const [importContactsDirty, setImportContactsDirty] = useState(false);
   // showAddMember (participant role) is lifted state; opening happens
   // via onToggleAddMember, which the parent detail-page owns.
 
@@ -867,17 +881,30 @@ export function TeamTab({
             Company staff and outside parties, separated. Removals are <strong>ended</strong> (history preserved).
           </p>
         </div>
-        {canWritePartners && (
-          <button
-            type="button"
-            onClick={() => setAddPickerOpen(true)}
-            title="Add anyone to the project in a role"
-            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-blue-700"
-          >
-            <UserPlus className="h-3.5 w-3.5" />
-            Add person
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {canImportContacts && (
+            <button
+              type="button"
+              onClick={() => setShowImportContacts(true)}
+              title="Bulk-load stakeholders from a developer Excel sheet"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12.5px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
+            >
+              <UploadIcon className="h-3.5 w-3.5" aria-hidden="true" />
+              Import contacts (Excel)
+            </button>
+          )}
+          {canWritePartners && (
+            <button
+              type="button"
+              onClick={() => setAddPickerOpen(true)}
+              title="Add anyone to the project in a role"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-blue-700"
+            >
+              <UserPlus className="h-3.5 w-3.5" />
+              Add person
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
@@ -1228,6 +1255,78 @@ export function TeamTab({
           existingContactBpIds={team.customerContacts.map((p) => p.businessPartnerId)}
           onClose={() => setShowCustomerContactPicker(false)}
         />
+      )}
+
+      {/*
+        QA4 D9 — project-scoped contacts import. Mounts the same
+        six-stage wizard shipped on /admin/data-import, but seeded with
+        this project so committed rows land on THIS project as
+        stakeholders (see commit.service.ts `attachToProjectId` +
+        `pickProjectRoleId`). Wrapped in a Sentry.ErrorBoundary
+        (mirrors D10) so a wizard-side crash keeps the Team tab usable.
+      */}
+      {showImportContacts && (
+        <Modal
+          open={showImportContacts}
+          onClose={() => {
+            setShowImportContacts(false);
+            setImportContactsDirty(false);
+          }}
+          title="Import contacts from Excel"
+          description="Upload a developer stakeholders sheet — matched rows attach to this project."
+          widthClass="w-[960px] max-w-[95vw]"
+          bodyClassName="p-5"
+          isDirty={importContactsDirty}
+          dirtyWarning="Discard the row decisions you already made on the Preview step?"
+        >
+          <Sentry.ErrorBoundary
+            fallback={({ error, resetError }) => (
+              <div className="rounded-[14px] border border-red-200 dark:border-red-900/60 bg-red-50/60 dark:bg-red-950/30 p-5">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-600 dark:text-red-400" aria-hidden="true" />
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      Contacts importer hit an error
+                    </h3>
+                    <p className="mt-1 text-[13px] text-slate-600 dark:text-slate-300">
+                      Close the dialog, refresh the page, and try again. If the
+                      problem persists, use the standalone importer at
+                      /admin/data-import and file a bug.
+                    </p>
+                    {import.meta.env.DEV && error instanceof Error && (
+                      <pre className="mt-3 max-h-32 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-900/40 p-2 text-[11px] font-mono text-slate-700 dark:text-slate-200">
+                        {error.message}
+                      </pre>
+                    )}
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          resetError();
+                          setShowImportContacts(false);
+                          setImportContactsDirty(false);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          >
+            <ContactsImportWizard
+              defaultProjectId={projectId}
+              onDirtyChange={setImportContactsDirty}
+              onDone={() => {
+                queryClient.invalidateQueries({ queryKey: ['project-team', projectId] });
+                setImportContactsDirty(false);
+                setShowImportContacts(false);
+              }}
+            />
+          </Sentry.ErrorBoundary>
+        </Modal>
       )}
 
       {focusedPartnerId != null && (
