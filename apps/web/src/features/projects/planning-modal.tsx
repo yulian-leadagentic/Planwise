@@ -5713,9 +5713,17 @@ function PlanningView({ projectId }: { projectId: number }) {
         if (zn !== colFilters.zone) return false;
       }
       if (colFilters.deliverable) {
-        if (resolveTaskDeliverable(t, deliverableLookups) !== colFilters.deliverable) return false;
+        // QA4 B2: '(empty)' bucket — deliverables that resolve to
+        // 'No Deliverable' match this pick.
+        const resolved = resolveTaskDeliverable(t, deliverableLookups);
+        const rl = resolved === 'No Deliverable' ? '(empty)' : resolved;
+        if (rl !== colFilters.deliverable) return false;
       }
-      if (colFilters.service && (t.phase?.name ?? '') !== colFilters.service) return false;
+      if (colFilters.service) {
+        // QA4 B2: '(empty)' bucket — tasks with no phase/service.
+        const sv = t.phase?.name ? t.phase.name : '(empty)';
+        if (sv !== colFilters.service) return false;
+      }
       if (colFilters.status && t.status !== colFilters.status) return false;
       if (colFilters.assignee) {
         const aid = Number(colFilters.assignee);
@@ -5727,25 +5735,88 @@ function PlanningView({ projectId }: { projectId: number }) {
     });
   }, [tasks, search, filterStatus, filterPriority, filterAssigneeIds, filterStartFrom, filterStartTo, filterDueFrom, filterDueTo, filterHasDue, colFilters, deliverableLookups]);
 
-  // Distinct option lists for the column funnels, derived from the
-  // loaded task set so only present values are offered.
+  // Distinct option lists for the column funnels. QA4 B2 — cascading.
+  //
+  // Each column's option list is now derived from tasks that pass the
+  // OTHER columns' filters, not the raw task set. So selecting Service
+  // "BIM MANAGEMENT" narrows the Deliverable option list to only that
+  // service's deliverables, and vice versa — mirroring the Deliverable
+  // Planning tab's `optionsFor(col)` pattern.
+  //
+  // Text filters (code, name) are still substring matches over the
+  // whole task set; they participate as gates on the OTHER columns'
+  // option lists but don't themselves need option lists.
   const colFilterOptions = useMemo(() => {
+    // Per-column predicate — a task PASSES `col` when either the
+    // filter for that col is empty, or the task's resolved value for
+    // that col matches. Kept in sync with the `filtered` memo above so
+    // the option lists never advertise a value that would produce zero
+    // rows when picked.
+    const passes = (t: any, col: string): boolean => {
+      const v = (colFilters as any)[col];
+      if (!v) return true;
+      switch (col) {
+        case 'code':
+          return !!t.code && String(t.code).toLowerCase().includes(String(v).toLowerCase());
+        case 'name':
+          return !!t.name && String(t.name).toLowerCase().includes(String(v).toLowerCase());
+        case 'zone':
+          return (t.zone?.name ?? 'Project Root') === v;
+        case 'deliverable':
+          return resolveTaskDeliverable(t, deliverableLookups) === v;
+        case 'service':
+          return (t.phase?.name ?? '') === v;
+        case 'status':
+          return t.status === v;
+        case 'assignee': {
+          const aid = Number(v);
+          return Array.isArray(t.assignees)
+            && t.assignees.some((a: any) => a.userId === aid || a.user?.id === aid);
+        }
+        default:
+          return true;
+      }
+    };
+
+    // Tasks that pass EVERY column filter except `exclude`.
+    const eligibleFor = (exclude: string) =>
+      tasks.filter((t: any) =>
+        ['code', 'name', 'zone', 'deliverable', 'service', 'status', 'assignee']
+          .filter((c) => c !== exclude)
+          .every((c) => passes(t, c)),
+      );
+
+    const zoneEligible = eligibleFor('zone');
     const zone = new Set<string>();
+    for (const t of zoneEligible) zone.add(t.zone?.name ?? 'Project Root');
+
+    const delivEligible = eligibleFor('deliverable');
     const deliverable = new Set<string>();
-    const service = new Set<string>();
-    const status = new Set<string>();
-    const assigneeMap = new Map<string, string>();
-    for (const t of tasks) {
-      zone.add(t.zone?.name ?? 'Project Root');
-      // Use the SAME resolution as the group label + the matcher so the
+    for (const t of delivEligible) {
+      // Same resolution the group labels + row matcher use so the
       // dropdown lists every deliverable that actually appears —
-      // including ones identified only via a [SERVICE:xxx] description
-      // marker (e.g. "מיפוי סופי"), which the old
-      // deliverableTemplate?.name ?? serviceType?.name shortcut missed.
+      // including [SERVICE:xxx] description markers the old
+      // template/service shortcut missed. Empty resolutions
+      // ("No Deliverable") surface as the "(empty)" bucket below.
       const dn = resolveTaskDeliverable(t, deliverableLookups);
       if (dn && dn !== 'No Deliverable') deliverable.add(dn);
+      else deliverable.add('(empty)');
+    }
+
+    const serviceEligible = eligibleFor('service');
+    const service = new Set<string>();
+    for (const t of serviceEligible) {
       if (t.phase?.name) service.add(t.phase.name);
-      if (t.status) status.add(t.status);
+      else service.add('(empty)');
+    }
+
+    const statusEligible = eligibleFor('status');
+    const status = new Set<string>();
+    for (const t of statusEligible) if (t.status) status.add(t.status);
+
+    const assigneeEligible = eligibleFor('assignee');
+    const assigneeMap = new Map<string, string>();
+    for (const t of assigneeEligible) {
       for (const a of t.assignees ?? []) {
         const id = a.userId ?? a.user?.id;
         if (id == null) continue;
@@ -5753,6 +5824,7 @@ function PlanningView({ projectId }: { projectId: number }) {
         assigneeMap.set(String(id), name);
       }
     }
+
     return {
       zone: Array.from(zone).sort(),
       deliverable: Array.from(deliverable).sort(),
@@ -5760,7 +5832,7 @@ function PlanningView({ projectId }: { projectId: number }) {
       status: Array.from(status),
       assignee: Array.from(assigneeMap.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)),
     };
-  }, [tasks, deliverableLookups]);
+  }, [tasks, deliverableLookups, colFilters]);
 
   const hasColFilter = Object.values(colFilters).some(Boolean);
   const hasTaskFilter = !!(filterStatus || filterPriority || filterAssigneeIds.length > 0 || filterStartFrom || filterStartTo || filterDueFrom || filterDueTo || filterHasDue || hasColFilter);
