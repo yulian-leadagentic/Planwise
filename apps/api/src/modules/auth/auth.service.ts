@@ -231,7 +231,15 @@ export class AuthService {
         avatarUrl: true,
         userType: true,
         position: true,
+        // Retire-User.department Step 1/3 (2026-09-28) — surface the
+        // OrgUnit relation so /auth/me consumers can prefer
+        // `orgUnit.name` over the legacy free-text `department` string.
+        // `department` stays selected as a fallback for one release; the
+        // column drop in Step 3/3 removes both this select and the DB
+        // column.
         department: true,
+        orgUnitId: true,
+        orgUnit: { select: { id: true, name: true } },
         companyName: true,
         role: {
           include: {
@@ -249,7 +257,14 @@ export class AuthService {
   }
 
   async updateProfile(userId: number, data: any) {
-    const allowedFields = ['firstName', 'lastName', 'phone', 'position', 'department'];
+    // Retire-User.department Step 1/3 (2026-09-28) — `department` (the
+    // free-text string) is retired in favor of `orgUnitId`. The
+    // allowlist now accepts `orgUnitId`; `department` is dropped so a
+    // client that still sends it gets no write (silently ignored — the
+    // request itself is not rejected because /auth/me uses `@Body() any`
+    // rather than a whitelisted DTO). Step 2/3 flips the FE writer;
+    // Step 3/3 drops the column.
+    const allowedFields = ['firstName', 'lastName', 'phone', 'position', 'orgUnitId'];
     const updateData: Record<string, any> = {};
     for (const field of allowedFields) {
       if (data[field] !== undefined) {
@@ -267,7 +282,11 @@ export class AuthService {
         lastName: true,
         phone: true,
         position: true,
+        // See Step 1/3 note on getProfile — both fields returned; readers
+        // prefer `orgUnit.name`, `department` is the legacy fallback.
         department: true,
+        orgUnitId: true,
+        orgUnit: { select: { id: true, name: true } },
         avatarUrl: true,
       },
     });

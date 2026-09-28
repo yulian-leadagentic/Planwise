@@ -561,12 +561,20 @@ export class ExecutionPlanningService {
     const acc = await this.access.getAccessibleProjectIds(user.id, user.roleId);
     const projectScope = acc.all ? {} : { id: { in: acc.projectIds } };
 
+    // Retire-User.department Step 1/3 (2026-09-28) — "my dept" scope
+    // now prefers the caller's `orgUnitId` (the source of truth after
+    // Stage 2). Legacy free-text `department` still read as a fallback
+    // for one release: if the caller has no orgUnitId but does have a
+    // department string, the old name-match path applies. Step 2/3
+    // updates the FE readers; Step 3/3 drops the column and the
+    // fallback along with it.
     const caller = await this.prisma.user.findUnique({
       where: { id: user.id },
-      select: { department: true },
+      select: { department: true, orgUnitId: true, orgUnit: { select: { id: true, name: true } } },
     });
-    const callerDept = caller?.department ?? null;
-    const applyDeptScope = scopeToMyDept && !!callerDept;
+    const callerOrgUnitId = caller?.orgUnitId ?? null;
+    const callerDept = caller?.orgUnit?.name ?? caller?.department ?? null;
+    const applyDeptScope = scopeToMyDept && (callerOrgUnitId != null || !!callerDept);
 
     const activeProjects = await this.prisma.project.findMany({
       where: { ...projectScope, deletedAt: null, status: { in: ['active', 'on_hold'] } },
@@ -585,7 +593,7 @@ export class ExecutionPlanningService {
         project: { select: { id: true, name: true, number: true } },
         zone: { select: { id: true, name: true } },
         serviceType: { select: { id: true, name: true, code: true, color: true } },
-        assignees: { where: { deletedAt: null }, include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true, position: true, department: true } } } },
+        assignees: { where: { deletedAt: null }, include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true, position: true, department: true, orgUnitId: true, orgUnit: { select: { id: true, name: true } } } } } },
         dependencies: { include: { dependsOn: { select: { id: true, status: true } } } },
       },
     });
@@ -658,9 +666,16 @@ export class ExecutionPlanningService {
         isActive: true,
         userType: { in: ['employee', 'both'] },
         deletedAt: null,
-        ...(applyDeptScope ? { department: callerDept ?? undefined } : {}),
+        // Retire-User.department Step 1/3 — prefer `orgUnitId` for the
+        // "my dept" employee filter. Legacy `department` string is the
+        // fallback for callers not yet backfilled onto an OrgUnit.
+        ...(applyDeptScope
+          ? callerOrgUnitId != null
+            ? { orgUnitId: callerOrgUnitId }
+            : { department: callerDept ?? undefined }
+          : {}),
       },
-      select: { id: true, firstName: true, lastName: true, avatarUrl: true, position: true, department: true, dailyStandardHours: true },
+      select: { id: true, firstName: true, lastName: true, avatarUrl: true, position: true, department: true, orgUnitId: true, orgUnit: { select: { id: true, name: true } }, dailyStandardHours: true },
     });
 
     const weekStart = new Date(now); weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1); weekStart.setHours(0, 0, 0, 0);
@@ -699,7 +714,10 @@ export class ExecutionPlanningService {
     // status != completed/cancelled at query time).
     const deptMap = new Map<string, any>();
     for (const emp of employees) {
-      const deptName = emp.department || 'Unassigned';
+      // Retire-User.department Step 1/3 — prefer the OrgUnit relation
+      // for the grouping label; free-text `department` remains a
+      // fallback for one release.
+      const deptName = emp.orgUnit?.name || emp.department || 'Unassigned';
       if (!deptMap.has(deptName)) deptMap.set(deptName, { name: deptName, members: [], _projectIds: new Set<number>(), _deliverableIds: new Set<number>(), _openTasks: 0 });
       const dept = deptMap.get(deptName);
       const capacity = Number(emp.dailyStandardHours ?? 8) * 5;
@@ -760,7 +778,8 @@ export class ExecutionPlanningService {
         lastName: r.emp.lastName,
         avatarUrl: r.emp.avatarUrl,
         position: r.emp.position,
-        department: r.emp.department,
+        // Retire-User.department Step 1/3 — prefer OrgUnit name.
+        department: r.emp.orgUnit?.name ?? r.emp.department ?? null,
         hoursWeek: r.week,
         capacity: r.cap,
         overloadPct: r.cap > 0 ? Math.round(r.week / r.cap * 100) : 0,
@@ -803,8 +822,12 @@ export class ExecutionPlanningService {
     })).sort((a, b) => b.openTasks - a.openTasks);
 
     // ── Review queue ─────────────────────────────────────────────────
+    // Retire-User.department Step 1/3 — creator (submitter) scope prefers
+    // orgUnitId; legacy `department` string kept as fallback.
     const submitterFilter = applyDeptScope
-      ? { creator: { department: callerDept ?? undefined } }
+      ? callerOrgUnitId != null
+        ? { creator: { orgUnitId: callerOrgUnitId } }
+        : { creator: { department: callerDept ?? undefined } }
       : {};
     const reviewTasks = await this.prisma.task.findMany({
       where: {
@@ -817,7 +840,7 @@ export class ExecutionPlanningService {
       include: {
         project: { select: { id: true, name: true, number: true } },
         zone: { select: { id: true, name: true } },
-        creator: { select: { id: true, firstName: true, lastName: true, avatarUrl: true, department: true } },
+        creator: { select: { id: true, firstName: true, lastName: true, avatarUrl: true, department: true, orgUnitId: true, orgUnit: { select: { id: true, name: true } } } },
         assignees: { where: { deletedAt: null }, include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } } },
         reviewEvents: { orderBy: { createdAt: 'desc' }, take: 1, select: { action: true, actorId: true, createdAt: true, reason: true } },
       },
@@ -832,7 +855,7 @@ export class ExecutionPlanningService {
       projectId: t.projectId,
       projectName: t.project?.name,
       zone: t.zone?.name ?? 'Project Root',
-      submitter: t.creator ? { id: t.creator.id, firstName: t.creator.firstName, lastName: t.creator.lastName, department: t.creator.department } : null,
+      submitter: t.creator ? { id: t.creator.id, firstName: t.creator.firstName, lastName: t.creator.lastName, department: (t.creator as any).orgUnit?.name ?? t.creator.department ?? null } : null,
       assignee: t.assignees?.[0]?.user ?? null,
       submittedAt: t.reviewEvents?.[0]?.createdAt ?? t.updatedAt,
       lastAction: t.reviewEvents?.[0]?.action ?? 'submit',
@@ -888,23 +911,36 @@ export class ExecutionPlanningService {
     const acc = await this.access.getAccessibleProjectIds(user.id, user.roleId);
     const projectScope = acc.all ? {} : { id: { in: acc.projectIds } };
 
-    // Dept filter — resolve caller's department string → Department.id
-    // → narrow project scope to projects with that departmentId.
-    const caller = await this.prisma.user.findUnique({ where: { id: user.id }, select: { department: true } });
-    const callerDept = caller?.department ?? null;
+    // Dept filter — Retire-User.department Step 1/3 (2026-09-28) now
+    // prefers `orgUnitId` on both the caller AND the projects (Stage 2
+    // added `Project.orgUnitId` in 11457c5, backfilled from the
+    // legacy `departmentId → Department.name → OrgUnit.name` chain).
+    // Legacy path — caller.department string → Department.id →
+    // Project.departmentId — kept as a fallback for one release when
+    // the caller hasn't been backfilled onto an OrgUnit yet.
+    const caller = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: { department: true, orgUnitId: true, orgUnit: { select: { id: true, name: true } } },
+    });
+    const callerOrgUnitId = caller?.orgUnitId ?? null;
+    const callerDept = caller?.orgUnit?.name ?? caller?.department ?? null;
     let deptId: number | null = null;
-    if (scopeToMyDept && callerDept) {
-      const d = await this.prisma.department.findUnique({ where: { name: callerDept }, select: { id: true } });
+    if (scopeToMyDept && callerOrgUnitId == null && caller?.department) {
+      const d = await this.prisma.department.findUnique({ where: { name: caller.department }, select: { id: true } });
       deptId = d?.id ?? null;
     }
-    const applyDeptScope = scopeToMyDept && deptId != null;
+    const applyDeptScope = scopeToMyDept && (callerOrgUnitId != null || deptId != null);
 
     const projects = await this.prisma.project.findMany({
       where: {
         ...projectScope,
         deletedAt: null,
         status: { in: ['active', 'on_hold'] },
-        ...(applyDeptScope ? { departmentId: deptId! } : {}),
+        ...(applyDeptScope
+          ? callerOrgUnitId != null
+            ? { orgUnitId: callerOrgUnitId }
+            : { departmentId: deptId! }
+          : {}),
       },
       select: {
         id: true, name: true, number: true, status: true, endDate: true,
@@ -1064,21 +1100,31 @@ export class ExecutionPlanningService {
     const acc = await this.access.getAccessibleProjectIds(user.id, user.roleId);
     const projectScope = acc.all ? {} : { id: { in: acc.projectIds } };
 
-    const caller = await this.prisma.user.findUnique({ where: { id: user.id }, select: { department: true } });
-    const callerDept = caller?.department ?? null;
+    // See getBimLeaderDashboard's note on the OrgUnit-preferring
+    // "my dept" scope. Same shape here.
+    const caller = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: { department: true, orgUnitId: true, orgUnit: { select: { id: true, name: true } } },
+    });
+    const callerOrgUnitId = caller?.orgUnitId ?? null;
+    const callerDept = caller?.orgUnit?.name ?? caller?.department ?? null;
     let deptId: number | null = null;
-    if (scopeToMyDept && callerDept) {
-      const d = await this.prisma.department.findUnique({ where: { name: callerDept }, select: { id: true } });
+    if (scopeToMyDept && callerOrgUnitId == null && caller?.department) {
+      const d = await this.prisma.department.findUnique({ where: { name: caller.department }, select: { id: true } });
       deptId = d?.id ?? null;
     }
-    const applyDeptScope = scopeToMyDept && deptId != null;
+    const applyDeptScope = scopeToMyDept && (callerOrgUnitId != null || deptId != null);
 
     const projects = await this.prisma.project.findMany({
       where: {
         ...projectScope,
         deletedAt: null,
         status: { in: ['active', 'on_hold'] },
-        ...(applyDeptScope ? { departmentId: deptId! } : {}),
+        ...(applyDeptScope
+          ? callerOrgUnitId != null
+            ? { orgUnitId: callerOrgUnitId }
+            : { departmentId: deptId! }
+          : {}),
       },
       select: {
         id: true, name: true, number: true, status: true, endDate: true,
@@ -1241,21 +1287,32 @@ export class ExecutionPlanningService {
     const acc = await this.access.getAccessibleProjectIds(user.id, user.roleId);
     const projectScope = acc.all ? {} : { id: { in: acc.projectIds } };
 
-    const caller = await this.prisma.user.findUnique({ where: { id: user.id }, select: { department: true } });
-    const callerDept = caller?.department ?? null;
+    // See getBimLeaderDashboard — OrgUnit-preferring scope with the
+    // legacy `department`→`Department.id`→`Project.departmentId` chain
+    // as a one-release fallback.
+    const caller = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: { department: true, orgUnitId: true, orgUnit: { select: { id: true, name: true } } },
+    });
+    const callerOrgUnitId = caller?.orgUnitId ?? null;
+    const callerDept = caller?.orgUnit?.name ?? caller?.department ?? null;
     let deptId: number | null = null;
-    if (scopeToMyDept && callerDept) {
-      const d = await this.prisma.department.findUnique({ where: { name: callerDept }, select: { id: true } });
+    if (scopeToMyDept && callerOrgUnitId == null && caller?.department) {
+      const d = await this.prisma.department.findUnique({ where: { name: caller.department }, select: { id: true } });
       deptId = d?.id ?? null;
     }
-    const applyDeptScope = scopeToMyDept && deptId != null;
+    const applyDeptScope = scopeToMyDept && (callerOrgUnitId != null || deptId != null);
 
     const projects = await this.prisma.project.findMany({
       where: {
         ...projectScope,
         deletedAt: null,
         status: { in: ['active', 'on_hold'] },
-        ...(applyDeptScope ? { departmentId: deptId! } : {}),
+        ...(applyDeptScope
+          ? callerOrgUnitId != null
+            ? { orgUnitId: callerOrgUnitId }
+            : { departmentId: deptId! }
+          : {}),
       },
       select: { id: true },
     });

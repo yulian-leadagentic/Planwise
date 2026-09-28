@@ -26,7 +26,14 @@ interface UserImportRow {
   roleId: number;
   userType: UserType;
   position?: string;
-  department?: string;
+  /**
+   * Retire-User.department Step 1/3 (2026-09-28) — the imported
+   * "Department" cell is resolved to an OrgUnit id at parse time.
+   * A miss logs a warning and leaves `orgUnitId` undefined; the row
+   * still commits (position, category, etc.). The deprecated
+   * `department` free-text field is no longer written.
+   */
+  orgUnitId?: number;
   employeeCategory?: string;
   employmentDate?: Date;
   employmentEndDate?: Date;
@@ -134,12 +141,20 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
     // Pre-load all the lookup tables once so we don't N+1 the DB across
     // a 10k-row import. We compare case-insensitively because users
     // typing role names won't always match exact capitalization.
-    const [roles, seniorityLevels, existingEmails] = await Promise.all([
+    const [roles, seniorityLevels, existingEmails, orgUnits] = await Promise.all([
       this.prisma.role.findMany({ select: { id: true, name: true } }),
       this.prisma.seniorityLevel.findMany({ select: { id: true, name: true, code: true } }),
       this.prisma.user.findMany({
         where: { deletedAt: null },
         select: { email: true },
+      }),
+      // Retire-User.department Step 1/3 — resolve the imported
+      // "Department" cell to an OrgUnit id via the same case-insensitive
+      // trim match used by the Stage-2 backfill (11457c5). Legacy
+      // free-text `department` is no longer written.
+      this.prisma.orgUnit.findMany({
+        where: { deletedAt: null },
+        select: { id: true, name: true },
       }),
     ]);
 
@@ -150,6 +165,11 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
       if (s.code) seniorityByName.set(s.code.toLowerCase(), { id: s.id, name: s.name });
     }
     const existingEmailSet = new Set(existingEmails.map((u) => u.email.toLowerCase()));
+    const orgUnitByName = new Map<string, { id: number; name: string }>();
+    for (const u of orgUnits) {
+      const key = (u.name ?? '').trim().toLowerCase();
+      if (key && !orgUnitByName.has(key)) orgUnitByName.set(key, { id: u.id, name: u.name });
+    }
 
     // Also detect duplicates WITHIN the same upload — two rows with the
     // same email would fail the unique constraint mid-commit otherwise.
@@ -173,6 +193,20 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
       const userTypeRaw = (r['User Type'] ?? 'employee').trim().toLowerCase();
       const position = (r['Position'] ?? '').trim();
       const department = (r['Department'] ?? '').trim();
+      // Retire-User.department Step 1/3 — resolve to OrgUnit id.
+      // Miss = warn-and-skip: the row still commits, but no orgUnitId
+      // is written. Admins can fix from the People page's inline cell.
+      let orgUnitId: number | undefined;
+      if (department) {
+        const match = orgUnitByName.get(department.toLowerCase());
+        if (match) {
+          orgUnitId = match.id;
+        } else {
+          this.logger.warn(
+            `Row ${i + 1}: Department "${department}" has no matching OrgUnit — orgUnitId left unset.`,
+          );
+        }
+      }
       const employeeCategory = (r['Employee Category'] ?? '').trim();
       const employmentDateStr = (r['Employment Date'] ?? '').trim();
       const employmentEndDateStr = (r['Employment End Date'] ?? '').trim();
@@ -289,7 +323,9 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
               roleId: role.id,
               userType,
               position: position || undefined,
-              department: department || undefined,
+              // Retire-User.department Step 1/3 — carries the resolved
+              // OrgUnit id (may be undefined on a miss).
+              orgUnitId,
               employeeCategory: employeeCategory || undefined,
               employmentDate,
               employmentEndDate,
@@ -366,7 +402,9 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
               roleId: r.data!.roleId,
               userType: r.data!.userType,
               position: r.data!.position,
-              department: r.data!.department,
+              // Retire-User.department Step 1/3 — orgUnitId replaces the
+              // deprecated `department` write.
+              orgUnitId: r.data!.orgUnitId,
               employeeCategory: r.data!.employeeCategory,
               employmentDate: r.data!.employmentDate,
               employmentEndDate: r.data!.employmentEndDate,

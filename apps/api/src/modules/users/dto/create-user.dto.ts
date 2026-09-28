@@ -71,18 +71,20 @@ export class CreateUserDto {
   @IsString()
   position?: string;
 
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  department?: string;
-
   /**
-   * Phase 4 · Stage 2 follow-up (2026-09-28) — OrgUnit id (single
-   * source of truth for org-tree membership, replacing the free-text
-   * `department` string). Nullable / optional so the People inline
-   * cell and edit modal can PATCH just this field. `department` stays
-   * accepted for one release for back-compat; readers prefer
-   * `orgUnitId` when set (see ProjectAccessService).
+   * Retire-User.department Step 1/3 (2026-09-28) — the free-text
+   * `department` field is now retired from the write DTO. Clients
+   * must send `orgUnitId` instead. Because the global ValidationPipe
+   * runs with `forbidNonWhitelisted: true`, a stale FE that still
+   * posts `department: '...'` will now get a 400 — the Step 2/3 FE
+   * commit lands together with this one to keep the create/edit
+   * modals in sync. Reads still surface `department` for one release
+   * so mid-deploy consumers can fall back on it (see users.service.ts
+   * selects).
+   *
+   * `orgUnitId`: single source of truth for org-tree membership.
+   * Nullable / optional so the People inline cell and edit modal can
+   * PATCH just this field.
    */
   @ApiPropertyOptional({ description: 'OrgUnit id — replaces free-text department' })
   @IsOptional()

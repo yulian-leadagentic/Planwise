@@ -1800,7 +1800,12 @@ export class ProjectsService {
             email: true,
             avatarUrl: true,
             position: true,
+            // Retire-User.department Step 1/3 (2026-09-28) — surface
+            // both. The picker `discipline` fallback below now prefers
+            // `orgUnit.name`, keeping `department` string as a
+            // one-release fallback.
             department: true,
+            orgUnit: { select: { id: true, name: true } },
             businessPartnerId: true,
           },
         },
@@ -1838,7 +1843,10 @@ export class ProjectsService {
                 email: true,
                 avatarUrl: true,
                 position: true,
+                // Retire-User.department Step 1/3 — see legacyMembers'
+                // note above. Fallback pair.
                 department: true,
+                orgUnit: { select: { id: true, name: true } },
               },
             },
           },
@@ -1863,7 +1871,9 @@ export class ProjectsService {
                 email: true,
                 avatarUrl: true,
                 position: true,
+                // Retire-User.department Step 1/3 — fallback pair.
                 department: true,
+                orgUnit: { select: { id: true, name: true } },
               },
             },
           },
@@ -1948,7 +1958,10 @@ export class ProjectsService {
         email: m.user.email ?? null,
         avatarUrl: m.user.avatarUrl ?? null,
         position: m.user.position ?? null,
-        department: m.user.department ?? null,
+        // Retire-User.department Step 1/3 — this ends up in the picker's
+        // `discipline` subtitle. Prefer the OrgUnit relation over the
+        // legacy free-text `department` string.
+        department: (m.user as any).orgUnit?.name ?? m.user.department ?? null,
         role: m.role ?? 'Team Member',
         title: null,
       });
@@ -1975,7 +1988,8 @@ export class ProjectsService {
         email: candidate.email ?? user?.email ?? null,
         avatarUrl: user?.avatarUrl ?? null,
         position: user?.position ?? null,
-        department: user?.department ?? null,
+        // Retire-User.department Step 1/3 — prefer OrgUnit name.
+        department: (user as any)?.orgUnit?.name ?? user?.department ?? null,
         role: a.role.name,
         title: a.titleInProject,
       });
@@ -2029,7 +2043,9 @@ export class ProjectsService {
                 email: true,
                 avatarUrl: true,
                 position: true,
+                // Retire-User.department Step 1/3 — fallback pair.
                 department: true,
+                orgUnit: { select: { id: true, name: true } },
               },
             },
           },
@@ -2053,7 +2069,8 @@ export class ProjectsService {
             email: bp.email ?? user?.email ?? null,
             avatarUrl: user?.avatarUrl ?? null,
             position: user?.position ?? null,
-            department: user?.department ?? null,
+            // Retire-User.department Step 1/3 — prefer OrgUnit name.
+            department: (user as any)?.orgUnit?.name ?? user?.department ?? null,
             // Tag with the role NAME so the picker's `discipline`
             // subtitle shows why they're eligible; the upsert dedupes
             // roles so already-on-project members keep their existing

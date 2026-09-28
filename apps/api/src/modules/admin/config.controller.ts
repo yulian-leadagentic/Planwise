@@ -235,22 +235,44 @@ export class ConfigController {
     return { message: 'Department deleted' };
   }
 
-  // People UX M2d (E-08): usage count for a department, keyed by the
-  // department NAME (User.department is a plain string on this model —
-  // Stage 2's OrgUnit lift will replace it with an FK id). Returns the
-  // count of Users pointing at this row's current name so the Types
-  // rename / delete confirms can warn "N employees use this".
+  // People UX M2d (E-08): usage count for a department. Retire-
+  // User.department Step 1/3 (2026-09-28) — swapped from the legacy
+  // `where: { department: dept.name }` filter to a two-step resolve:
+  // Department.id → Department.name → OrgUnit (case-insensitive trim
+  // match, mirroring the Stage-2 backfill) → `where: { orgUnitId }`.
+  // The Types page (types-page.tsx) still passes a Department.id and
+  // still gets a "N employees use this" warning, but the count now
+  // reflects the source-of-truth org-tree membership instead of a
+  // string that will no longer exist after Step 3/3. Departments with
+  // no matching OrgUnit return 0 — Stage-2's backfill covered every
+  // used name, so this only happens on unused/legacy rows.
   @Get('departments/:id/usage')
   @RequirePermissions({ module: 'admin', action: 'read' })
-  @ApiOperation({ summary: 'Count Users referencing this department (by stored name)' })
+  @ApiOperation({ summary: 'Count Users referencing this department (via matching OrgUnit)' })
   async getDepartmentUsage(@Param('id', ParseIntPipe) id: number) {
     const dept = await this.prisma.department.findUnique({
       where: { id },
       select: { name: true },
     });
-    if (!dept) return { userCount: 0 };
+    if (!dept?.name) return { userCount: 0 };
+    const key = dept.name.trim().toLowerCase();
+    const orgUnit = key
+      ? await this.prisma.orgUnit.findFirst({
+          where: { deletedAt: null, name: dept.name },
+          select: { id: true, name: true },
+        })
+      : null;
+    // Prisma's default MySQL collation is case-insensitive so the direct
+    // `name: dept.name` match usually hits; fall back to a case-insensitive
+    // scan if the seeded org units differ only in case/whitespace from
+    // the legacy Department row.
+    const resolved = orgUnit ?? await this.prisma.orgUnit.findFirst({
+      where: { deletedAt: null, name: { contains: dept.name } },
+      select: { id: true, name: true },
+    }).then((u) => (u && u.name.trim().toLowerCase() === key ? u : null));
+    if (!resolved) return { userCount: 0 };
     const userCount = await this.prisma.user.count({
-      where: { department: dept.name, deletedAt: null },
+      where: { orgUnitId: resolved.id, deletedAt: null },
     });
     return { userCount };
   }
