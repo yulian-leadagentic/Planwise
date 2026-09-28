@@ -76,6 +76,20 @@ export class CreateUserDto {
   @IsString()
   department?: string;
 
+  /**
+   * Phase 4 · Stage 2 follow-up (2026-09-28) — OrgUnit id (single
+   * source of truth for org-tree membership, replacing the free-text
+   * `department` string). Nullable / optional so the People inline
+   * cell and edit modal can PATCH just this field. `department` stays
+   * accepted for one release for back-compat; readers prefer
+   * `orgUnitId` when set (see ProjectAccessService).
+   */
+  @ApiPropertyOptional({ description: 'OrgUnit id — replaces free-text department' })
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  orgUnitId?: number | null;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

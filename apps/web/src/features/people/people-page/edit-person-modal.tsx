@@ -35,14 +35,18 @@ function validateEdit(
 export function EditPersonModal({
   user,
   roles,
-  departments,
+  orgUnits,
   professions,
   seniorityLevels,
   onClose,
 }: {
   user: UserListItem;
   roles: any[];
-  departments: any[];
+  // Phase 4 · Stage 2 follow-up (2026-09-28) — the Department picker now
+  // sources from the OrgUnit tree, not `/admin/config/departments`, and
+  // writes `orgUnitId`. Legacy `User.department` (free text) still
+  // renders as a disabled hint when the row hasn't been backfilled.
+  orgUnits: Array<{ id: number; name: string }>;
   professions: any[];
   seniorityLevels: any[];
   onClose: () => void;
@@ -64,7 +68,10 @@ export function EditPersonModal({
     phone: (user as any).phone ?? '',
     roleId: String((user as any).roleId ?? ''),
     position: user.position ?? '',
-    department: user.department ?? '',
+    // Phase 4 · Stage 2 follow-up — Department is now an OrgUnit id.
+    // The legacy free-text `user.department` (a string) is still read
+    // for display as a disabled hint below when no OrgUnit is linked.
+    orgUnitId: (((user as any).orgUnitId ?? (user as any).orgUnit?.id) ?? '') as number | '',
     companyName: user.companyName ?? '',
     employmentDate: toDateInput((user as any).employmentDate),
     employmentEndDate: toDateInput((user as any).employmentEndDate) || '9999-12-31',
@@ -117,7 +124,11 @@ export function EditPersonModal({
       phone: form.phone || undefined,
       roleId: Number(form.roleId),
       position: form.position || undefined,
-      department: form.department || undefined,
+      // Phase 4 · Stage 2 follow-up — write `orgUnitId` (OrgUnit is the
+      // single source of truth); the legacy `department` field is not
+      // sent so we don't accidentally overwrite it. Empty selection
+      // sends null to clear the link.
+      orgUnitId: form.orgUnitId === '' ? null : Number(form.orgUnitId),
       companyName: form.companyName || undefined,
       employmentDate: form.employmentDate || undefined,
       employmentEndDate: form.employmentEndDate || undefined,
@@ -268,18 +279,23 @@ export function EditPersonModal({
             </SelectField>
             <SelectField
               label="Department"
-              name="department"
-              value={form.department}
-              onChange={(e) => patch('department', e.target.value)}
+              name="orgUnitId"
+              value={form.orgUnitId}
+              onChange={(e) => patch('orgUnitId', e.target.value === '' ? '' : Number(e.target.value))}
             >
+              {/* Phase 4 · Stage 2 follow-up — options come from the
+                  OrgUnit tree; selecting one writes `orgUnitId`. When
+                  the row hasn't been backfilled (no OrgUnit link), the
+                  legacy free-text `department` shows as a disabled
+                  fallback option so admins can see the pre-migration
+                  value before picking the matching unit. */}
               <option value="">Select department</option>
-              {departments.map((d: any) => (
-                <option key={d.id} value={d.name}>{d.name}</option>
+              {orgUnits.map((u) => (
+                <option key={u.id} value={u.id}>{u.name}</option>
               ))}
-              {form.department &&
-                !departments.some((d: any) => d.name === form.department) && (
-                  <option value={form.department}>{form.department} (legacy)</option>
-                )}
+              {form.orgUnitId === '' && (user as any).department && (
+                <option value="" disabled>{(user as any).department} (legacy)</option>
+              )}
             </SelectField>
           </div>
           {/* Seniority History — replaces the single-level dropdown. */}

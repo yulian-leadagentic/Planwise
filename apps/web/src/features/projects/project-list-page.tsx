@@ -354,7 +354,10 @@ export function ProjectListPage() {
       return p.leader ? `${p.leader.firstName ?? ''} ${p.leader.lastName ?? ''}`.trim() : '(no leader)';
     }
     if (groupBy === 'department') {
-      return p.department?.name ?? '(no department)';
+      // Phase 4 · Stage 2 follow-up — prefer the OrgUnit name over the
+      // legacy `department` cache. Falls back for projects that
+      // haven't been backfilled onto an OrgUnit yet.
+      return p.orgUnit?.name ?? p.department?.name ?? '(no department)';
     }
     if (groupBy === 'status') {
       return statusColors[p.status]?.label ?? p.status ?? '(no status)';
@@ -1092,7 +1095,11 @@ export function ProjectListPage() {
                     0,
                     Math.min(100, Math.round(Number(p.completionPct ?? 0))),
                   );
-                  const dept = p.department?.name ?? '-';
+                  // Phase 4 · Stage 2 follow-up — dead read kept in case
+                  // a future column reintroduces the label; prefer the
+                  // OrgUnit name when set, fall back to the legacy
+                  // department cache.
+                  const dept = p.orgUnit?.name ?? p.department?.name ?? '-';
                   // Category cell reads `projectType` directly (single FK
                   // via `projects.service#findAll`). The historical
                   // `p.categories` (many-to-many service-types) is a

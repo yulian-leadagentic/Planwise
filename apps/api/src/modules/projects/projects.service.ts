@@ -220,7 +220,13 @@ export class ProjectsService {
         },
       },
       include: {
-        projectType: true, department: true, categories: { include: { serviceType: true } },
+        projectType: true, department: true,
+        // Phase 4 · Stage 2 follow-up (2026-09-28) — OrgUnit relation on
+        // project reads. Additive: the legacy `department` relation
+        // stays for one release. FE readers prefer `orgUnit.name` when
+        // set (project list group-by, header, employees Department cell).
+        orgUnit: { select: { id: true, name: true } },
+        categories: { include: { serviceType: true } },
         categoryLinks: { include: { projectType: true } },
         creator: { select: { id: true, firstName: true, lastName: true } },
         leader: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
@@ -434,7 +440,13 @@ export class ProjectsService {
         take: query.take,
         orderBy: { createdAt: 'desc' },
         include: {
-          projectType: true, department: true, categories: { include: { serviceType: true } },
+          projectType: true, department: true,
+        // Phase 4 · Stage 2 follow-up (2026-09-28) — OrgUnit relation on
+        // project reads. Additive: the legacy `department` relation
+        // stays for one release. FE readers prefer `orgUnit.name` when
+        // set (project list group-by, header, employees Department cell).
+        orgUnit: { select: { id: true, name: true } },
+        categories: { include: { serviceType: true } },
         categoryLinks: { include: { projectType: true } },
           creator: { select: { id: true, firstName: true, lastName: true } },
           leader: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
@@ -615,7 +627,13 @@ export class ProjectsService {
     const project = await this.prisma.project.findFirst({
       where: { id },
       include: {
-        projectType: true, department: true, categories: { include: { serviceType: true } },
+        projectType: true, department: true,
+        // Phase 4 · Stage 2 follow-up (2026-09-28) — OrgUnit relation on
+        // project reads. Additive: the legacy `department` relation
+        // stays for one release. FE readers prefer `orgUnit.name` when
+        // set (project list group-by, header, employees Department cell).
+        orgUnit: { select: { id: true, name: true } },
+        categories: { include: { serviceType: true } },
         categoryLinks: { include: { projectType: true } },
         creator: { select: { id: true, firstName: true, lastName: true, email: true } },
         leader: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
@@ -767,7 +785,13 @@ export class ProjectsService {
         ...(categoryLinksWrite ? { categoryLinks: categoryLinksWrite } : {}),
       },
       include: {
-        projectType: true, department: true, categories: { include: { serviceType: true } },
+        projectType: true, department: true,
+        // Phase 4 · Stage 2 follow-up (2026-09-28) — OrgUnit relation on
+        // project reads. Additive: the legacy `department` relation
+        // stays for one release. FE readers prefer `orgUnit.name` when
+        // set (project list group-by, header, employees Department cell).
+        orgUnit: { select: { id: true, name: true } },
+        categories: { include: { serviceType: true } },
         categoryLinks: { include: { projectType: true } },
         creator: { select: { id: true, firstName: true, lastName: true } },
       },

@@ -22,9 +22,15 @@ export function getColumns(
   // each callback fires a single-field PATCH /users/:id. Optional so
   // the partners tab (which has no seniority/department concept today)
   // renders the columns as plain text.
+  //
+  // Phase 4 · Stage 2 follow-up (2026-09-28) — `departments` is now a
+  // list of ORG UNITS (id: number, name: string); the "Department" cell
+  // writes to `orgUnitId` via `onChangeDepartment`. Legacy free-text
+  // `User.department` still displays as a fallback when no OrgUnit is
+  // linked; picking any real option upgrades the user to an OrgUnit.
   departments: Array<{ id: number | string; name: string }> = [],
   seniorityLevels: Array<{ id: number; name: string; defaultHourlyCost?: any; currency?: string | null }> = [],
-  onChangeDepartment?: (userId: number, department: string | null) => void,
+  onChangeDepartment?: (userId: number, orgUnitId: number | null) => void,
   onChangeSeniority?: (userId: number, seniorityLevelId: number | null) => void,
   onChangeActive?: (userId: number, isActive: boolean) => void,
   // QA3 round-3 item 7b (2026-09-27) — finance-gated effective ₪/h
@@ -93,23 +99,31 @@ export function getColumns(
       accessorKey: 'department',
       header: 'Department',
       cell: ({ row }) => {
-        const user = row.original;
-        const currentDept = (user as any).department ?? '';
+        const user = row.original as any;
+        // Phase 4 · Stage 2 follow-up — prefer the OrgUnit relation over
+        // the legacy free-text `User.department` string. `orgUnitId` is
+        // the write field (via PATCH /users/:id { orgUnitId }); the
+        // string only shows as a read-only fallback when the row hasn't
+        // yet been backfilled onto an OrgUnit.
+        const currentOrgUnitId: number | null = user.orgUnitId ?? user.orgUnit?.id ?? null;
+        const legacyDept: string = user.department ?? '';
+        const orgUnitName: string = user.orgUnit?.name ?? '';
         // Fall back to plain text when the callback isn't wired (e.g.
         // partners tab, or a caller that just wants a read-only view).
         if (!onChangeDepartment || !canEdit) {
-          return currentDept ? currentDept : '-';
+          return orgUnitName || legacyDept || '-';
         }
         const isSaving = savingUserId === user.id;
         return (
           <select
             aria-label={`Department for ${user.firstName} ${user.lastName}`}
-            value={currentDept}
+            value={currentOrgUnitId ?? ''}
             disabled={isSaving}
             onChange={(e) => {
-              const next = e.target.value;
-              if (next === currentDept) return;
-              onChangeDepartment(user.id, next === '' ? null : next);
+              const raw = e.target.value;
+              const next = raw === '' ? null : Number(raw);
+              if (next === currentOrgUnitId) return;
+              onChangeDepartment(user.id, next);
             }}
             onClick={(e) => e.stopPropagation()}
             className={cn(
@@ -119,13 +133,14 @@ export function getColumns(
           >
             <option value="">— None —</option>
             {departments.map((d) => (
-              <option key={d.id} value={d.name}>{d.name}</option>
+              <option key={d.id} value={d.id}>{d.name}</option>
             ))}
-            {/* Preserve the current value even if the catalog no longer
-                contains it (legacy free-text departments) — otherwise
-                the select would show blank on load. */}
-            {currentDept && !departments.some((d) => d.name === currentDept) && (
-              <option value={currentDept}>{currentDept}</option>
+            {/* Legacy free-text `User.department` label shown as a
+                disabled hint when the user hasn't yet been mapped to
+                an OrgUnit — makes the pre-migration value visible so
+                admins can pick the matching OrgUnit deliberately. */}
+            {currentOrgUnitId == null && legacyDept && (
+              <option value="" disabled>{legacyDept} (legacy)</option>
             )}
           </select>
         );

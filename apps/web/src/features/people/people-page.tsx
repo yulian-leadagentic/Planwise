@@ -83,11 +83,34 @@ export function PeoplePage() {
     queryFn: () => client.get('/admin/roles').then((r) => { const d = r.data.data ?? r.data; return Array.isArray(d) ? d : []; }),
   });
 
-  const { data: departments = [] } = useQuery({
+  const { data: legacyDepartments = [] } = useQuery({
     queryKey: ['admin', 'departments'],
     staleTime: 10 * 60 * 1000,
     queryFn: () => client.get('/admin/config/departments').then((r) => { const d = r.data?.data ?? r.data; return Array.isArray(d) ? d : []; }),
   });
+
+  // Phase 4 · Stage 2 follow-up (2026-09-28) — OrgUnit is the single
+  // source of truth for org-tree membership. The inline "Department"
+  // cell and the Edit modal now write `orgUnitId`, so the options come
+  // from the org tree, not `/admin/config/departments`. Legacy list
+  // above is still fetched so the Create Person modal (out of scope for
+  // this follow-up) keeps working while the free-text field lives.
+  const { data: orgUnitsTree = [] } = useQuery<any[]>({
+    queryKey: ['org-units'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () => client.get('/org-units').then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : [];
+    }),
+  });
+  // Flat {id, name} for the <select> options — the picker doesn't need
+  // path/depth today (the tree stays flat visually because units are
+  // top-level for now per Stage 2's seed order; admins can re-parent
+  // later without breaking this list).
+  const orgUnits = useMemo(
+    () => orgUnitsTree.map((u: any) => ({ id: u.id, name: u.name })),
+    [orgUnitsTree],
+  );
 
   const { data: professions = [] } = useQuery({
     queryKey: ['admin', 'professions'],
@@ -259,9 +282,16 @@ export function PeoplePage() {
   // from the Role cell to Department / Seniority / Active. Each fires a
   // single-field PATCH /users/:id (partial update supported by
   // UpdateUserDto) and reuses `savingUserId` for the "row locked" hint.
+  //
+  // Phase 4 · Stage 2 follow-up (2026-09-28) — the Department cell now
+  // writes `orgUnitId` (int | null) instead of a free-text `department`
+  // string. `PATCH /users/:id` accepts `orgUnitId` via UpdateUserDto's
+  // partial extension of CreateUserDto (added in the same commit).
+  // ProjectAccessService already prefers OrgUnit for backup access, so
+  // the write immediately affects visibility rules.
   const updateDepartment = useMutation({
-    mutationFn: ({ userId, department }: { userId: number; department: string | null }) =>
-      client.patch(`/users/${userId}`, { department }).then((r) => r.data),
+    mutationFn: ({ userId, orgUnitId }: { userId: number; orgUnitId: number | null }) =>
+      client.patch(`/users/${userId}`, { orgUnitId }).then((r) => r.data),
     onMutate: ({ userId }) => setSavingUserId(userId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
@@ -377,11 +407,16 @@ export function PeoplePage() {
       // QA3 round-2 item 4 — inline cells for Department / Seniority / Active.
       // Only wire them on the Employees tab; external partners have no
       // seniority or department concept today.
-      isPartners ? [] : departments,
+      //
+      // Phase 4 · Stage 2 follow-up — the "Department" list here is the
+      // OrgUnit tree (id/name), and the callback writes `orgUnitId`.
+      // Legacy free-text `User.department` shows as a disabled hint in
+      // the cell when the row hasn't been migrated yet.
+      isPartners ? [] : orgUnits,
       isPartners ? [] : seniorityLevels,
       isPartners
         ? undefined
-        : (userId: number, department: string | null) => updateDepartment.mutate({ userId, department }),
+        : (userId: number, orgUnitId: number | null) => updateDepartment.mutate({ userId, orgUnitId }),
       isPartners
         ? undefined
         : (userId: number, seniorityLevelId: number | null) => updateSeniority.mutate({ userId, seniorityLevelId }),
@@ -409,7 +444,7 @@ export function PeoplePage() {
       // QA3 round-3 item 7b — finance-gated ₪/h column.
       showEffectiveRate,
     ),
-    [isPartners, roles, canEditPeople, savingUserId, departments, seniorityLevels, showEffectiveRate, users, confirm],
+    [isPartners, roles, canEditPeople, savingUserId, orgUnits, seniorityLevels, showEffectiveRate, users, confirm],
   );
 
   // Status filter: this is the ONLY page in the app that legitimately
@@ -810,8 +845,13 @@ export function PeoplePage() {
                   value={form.department}
                   onChange={(e) => patchCreate('department', e.target.value)}
                 >
+                  {/* Create-person Department picker still writes the
+                      legacy free-text `department` field for one release
+                      — see follow-up ticket to swap this to `orgUnitId`.
+                      The inline cell + Edit modal are already on
+                      OrgUnit (Phase 4 Stage 2 follow-up). */}
                   <option value="">Select department</option>
-                  {departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
+                  {legacyDepartments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
                 </SelectField>
               </div>
               {/* M5a — Labor Category (drives default hourly cost).
@@ -1030,7 +1070,11 @@ export function PeoplePage() {
         <EditPersonModal
           user={editingUser}
           roles={roles}
-          departments={departments}
+          // Phase 4 · Stage 2 follow-up — pass the OrgUnit list; the
+          // modal now writes `orgUnitId` (not the legacy `department`
+          // string). Legacy free-text `User.department` still shows as
+          // a read-only hint when the user hasn't been backfilled.
+          orgUnits={orgUnits}
           professions={professions}
           seniorityLevels={seniorityLevels}
           onClose={() => setEditingUser(null)}

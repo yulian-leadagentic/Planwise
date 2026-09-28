@@ -264,6 +264,10 @@ export class UsersService implements OnModuleInit {
         userType: true,
         position: true,
         department: true,
+        // Phase 4 · Stage 2 follow-up — surface the OrgUnit relation so
+        // FE readers can prefer `orgUnit.name` over the legacy string.
+        orgUnitId: true,
+        orgUnit: { select: { id: true, name: true } },
         companyName: true,
         roleId: true,
         isActive: true,
@@ -362,6 +366,11 @@ export class UsersService implements OnModuleInit {
           userType: true,
           position: true,
           department: true,
+          // Phase 4 · Stage 2 follow-up — surface the OrgUnit relation so
+          // the People page column, inline cell, and Edit modal can
+          // prefer `orgUnit.name` over the legacy `department` string.
+          orgUnitId: true,
+          orgUnit: { select: { id: true, name: true } },
           companyName: true,
           // M4a.4 — employment fields surfaced on the Employees list/edit.
           dailyStandardHours: true,
@@ -443,6 +452,9 @@ export class UsersService implements OnModuleInit {
         userType: true,
         position: true,
         department: true,
+        // Phase 4 · Stage 2 follow-up — surface the OrgUnit relation.
+        orgUnitId: true,
+        orgUnit: { select: { id: true, name: true } },
         companyName: true,
         taxId: true,
         address: true,
@@ -557,6 +569,9 @@ export class UsersService implements OnModuleInit {
         userType: true,
         position: true,
         department: true,
+        // Phase 4 · Stage 2 follow-up — surface the OrgUnit relation.
+        orgUnitId: true,
+        orgUnit: { select: { id: true, name: true } },
         companyName: true,
         dailyStandardHours: true,
         employmentDate: true,
