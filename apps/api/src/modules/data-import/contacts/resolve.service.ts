@@ -39,7 +39,7 @@ export class ContactsResolveService {
     // ── Build header-keyed rows from the raw 2D array ──────────────
     const headerIdx = headerRowIndex ?? findHeaderIndexFromGrade(sheet, mapping);
     const headerCells: string[] = (sheet.rows[headerIdx] ?? []).map((c) => (c ?? '').trim());
-    const dataRows = sheetToRecords(sheet.rows, headerIdx, headerCells);
+    const { records: dataRows, excelRowIndexes } = sheetToRecords(sheet.rows, headerIdx, headerCells);
 
     // Fail-fast: every mapped header must actually exist in the sheet.
     const missing = Object.entries(mapping)
@@ -52,7 +52,9 @@ export class ContactsResolveService {
     }
 
     // ── Stage 4 — split + forward-fill ─────────────────────────────
-    const resolved = this.splitMerge.resolve(dataRows, mapping);
+    // Pass Excel row numbers so `sourceRowIndex` on every resolved row
+    // is the actual sheet row the user would see in Excel (QA4 IMP-3).
+    const resolved = this.splitMerge.resolve(dataRows, mapping, excelRowIndexes);
 
     // ── Stage 5 dedup preview ──────────────────────────────────────
     const decisions = await this.dedup.decide(resolved);
@@ -123,12 +125,20 @@ function findHeaderIndexFromGrade(sheet: ExtractedSheet, mapping: ColumnMapping)
   return 0;
 }
 
+/**
+ * Convert the raw 2D sheet grid into header-keyed records, dropping
+ * empty rows. Returns a parallel array of 1-based Excel row numbers so
+ * downstream stages can report each row's actual sheet position (QA4
+ * IMP-3) — necessary because we skip blank rows and the position within
+ * the returned records no longer matches the sheet.
+ */
 function sheetToRecords(
   rows: string[][],
   headerIdx: number,
   headerCells: string[],
-): Array<Record<string, string>> {
-  const out: Array<Record<string, string>> = [];
+): { records: Array<Record<string, string>>; excelRowIndexes: number[] } {
+  const records: Array<Record<string, string>> = [];
+  const excelRowIndexes: number[] = [];
   for (let r = headerIdx + 1; r < rows.length; r++) {
     const row = rows[r] ?? [];
     const record: Record<string, string> = {};
@@ -141,9 +151,11 @@ function sheetToRecords(
       if (v) hasAny = true;
     }
     if (!hasAny) continue;
-    out.push(record);
+    records.push(record);
+    // Excel is 1-based; `r` is the 0-based index into the sheet grid.
+    excelRowIndexes.push(r + 1);
   }
-  return out;
+  return { records, excelRowIndexes };
 }
 
 function validateMapping(mapping: ColumnMapping) {

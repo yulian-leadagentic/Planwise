@@ -113,13 +113,24 @@ export class ContactsSplitMergeService {
    * @param dataRows rows AFTER the header row — one Record<header, string>
    *                 per row. This matches the Stage 5 preview shape.
    * @param mapping  canonical field → source header (from Stage 3).
+   * @param excelRowIndexes optional 1-based Excel row numbers matching
+   *   each element of `dataRows`. When present, `sourceRowIndex` on
+   *   every ResolvedRow becomes the actual sheet row number the user
+   *   sees when opening the file (QA4 IMP-3). When omitted, we fall
+   *   back to 1..N (legacy behaviour) so any caller that hasn't opted
+   *   in still gets stable indexes.
    */
-  resolve(dataRows: ReadonlyArray<Record<string, string>>, mapping: ColumnMapping): ResolvedRow[] {
+  resolve(
+    dataRows: ReadonlyArray<Record<string, string>>,
+    mapping: ColumnMapping,
+    excelRowIndexes?: ReadonlyArray<number>,
+  ): ResolvedRow[] {
     // ── Phase A: extract + split per row ────────────────────────────
     const out: ResolvedRow[] = [];
     for (let i = 0; i < dataRows.length; i++) {
       const raw = dataRows[i] ?? {};
-      out.push(this.resolveRow(raw, mapping, i + 1));
+      const sourceRowIndex = excelRowIndexes?.[i] ?? i + 1;
+      out.push(this.resolveRow(raw, mapping, sourceRowIndex));
     }
 
     // ── Phase B: forward-fill company + discipline top-down ─────────

@@ -1365,8 +1365,11 @@ function PreviewRow({
         belowContract && 'bg-red-50/40',
       )}
     >
-      <div className="font-mono text-[11px] text-slate-400 tabular-nums pt-1">
-        row {dec.sourceRowIndex}
+      <div
+        className="font-mono text-[11px] text-slate-400 dark:text-slate-500 tabular-nums pt-1"
+        title="Actual sheet row number — matches the source file"
+      >
+        Row {dec.sourceRowIndex}
       </div>
       <div className="min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap">
@@ -1623,7 +1626,7 @@ function CommitStep({
             .filter((r) => r.status === 'error')
             .map((r) => (
               <div key={r.sourceRowIndex} className="px-3 py-2 text-[12px] text-red-700">
-                <span className="font-mono text-[11px]">row {r.sourceRowIndex}</span> · {r.message}
+                <span className="font-mono text-[11px]">Row {r.sourceRowIndex}</span> · {r.message}
               </div>
             ))}
         </div>
