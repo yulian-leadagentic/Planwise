@@ -31,11 +31,8 @@ interface ProjectRoleType {
 interface TemplateMember {
   id: number;
   userId: number;
-  // Legacy free-text role. Kept for back-compat rendering; new writes
-  // go through `projectRoleTypeId` below.
-  role: string | null;
   // Phase 4 · Stage 4 (2026-09-28) — catalog Project Role. Null = the
-  // D9 default "Team member".
+  // D9 default "Team member". Legacy free-text `role` retired same day.
   projectRoleTypeId: number | null;
   projectRoleType: ProjectRoleType | null;
   user: UserInfo;
@@ -837,9 +834,8 @@ function EditorView({
                     </td>
                     <td className="px-5 py-3 text-sm text-slate-500 dark:text-slate-400">
                       {/* Phase 4 · Stage 4 — show catalog role name;
-                          fall back to legacy free text; null = the D9
-                          default "Team member". */}
-                      {m.projectRoleType?.name ?? m.role ?? 'Team member'}
+                          null = the D9 default "Team member". */}
+                      {m.projectRoleType?.name ?? 'Team member'}
                     </td>
                     <td className="px-5 py-3">
                       <button

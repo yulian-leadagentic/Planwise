@@ -535,63 +535,52 @@ export class ReportsController {
   }
 
   /**
-   * Stage 4 — TeamTemplateMember.role (free text) → ProjectRoleType
-   * mapping preview.
+   * Stage 4 — TeamTemplateMember → ProjectRoleType mapping preview.
    *
-   * One groupBy on the `role` string, split off the null/empty bucket
-   * as its own count so the UI shows "N members have no role" as a
-   * distinct fact from the mapping table. For each non-empty group we
-   * try both `name` and `code` on ProjectRoleType (case-insensitive)
-   * because historically some templates were seeded from role NAMES
-   * and others from codes — the migration in Stage 4 must consider
-   * both.
+   * Retirement (2026-09-28): the legacy free-text `role` column is
+   * gone. The preview now reports the distribution of catalog
+   * ProjectRoleType assignments (`projectRoleTypeId`) across every
+   * TeamTemplateMember row, plus the null/empty bucket for members
+   * that will land as the D9 "Team member" default when applied.
    */
   @Get('model-alignment/stage-4-template-role-mapping')
   @RequirePermissions({ module: 'admin', action: 'read' })
-  @ApiOperation({ summary: 'Phase 4 Stage 4 — TeamTemplateMember.role → ProjectRoleType mapping' })
+  @ApiOperation({ summary: 'Phase 4 Stage 4 — TeamTemplateMember → ProjectRoleType distribution' })
   async modelAlignmentStage4() {
     const roleTypes = await this.prisma.projectRoleType.findMany({
       select: { id: true, code: true, name: true },
     });
-    const roleByNameLc = new Map<string, { id: number; name: string }>();
-    const roleByCodeLc = new Map<string, { id: number; name: string }>();
-    for (const r of roleTypes) {
-      const nk = (r.name ?? '').trim().toLowerCase();
-      const ck = (r.code ?? '').trim().toLowerCase();
-      if (nk) roleByNameLc.set(nk, { id: r.id, name: r.name });
-      if (ck) roleByCodeLc.set(ck, { id: r.id, name: r.name });
-    }
+    const roleTypeById = new Map<number, { id: number; code: string; name: string }>();
+    for (const r of roleTypes) roleTypeById.set(r.id, r);
 
     const groups = await this.prisma.teamTemplateMember.groupBy({
-      by: ['role'],
+      by: ['projectRoleTypeId'],
       _count: { _all: true },
     });
 
-    let nullOrEmptyRole = 0;
-    const memberRoleStrings: Array<{
-      role: string;
+    let nullOrEmpty = 0;
+    const memberRoleTypes: Array<{
+      matchedProjectRoleTypeId: number;
+      matchedProjectRoleTypeName: string | null;
+      matchedProjectRoleTypeCode: string | null;
       memberCount: number;
-      matchingProjectRoleTypeId: number | null;
-      matchingProjectRoleTypeName: string | null;
     }> = [];
 
     for (const g of groups) {
-      const raw = (g.role ?? '').trim();
-      if (raw === '') {
-        nullOrEmptyRole += g._count._all;
+      if (g.projectRoleTypeId == null) {
+        nullOrEmpty += g._count._all;
         continue;
       }
-      const key = raw.toLowerCase();
-      const match = roleByNameLc.get(key) ?? roleByCodeLc.get(key) ?? null;
-      memberRoleStrings.push({
-        role: raw,
+      const rt = roleTypeById.get(g.projectRoleTypeId) ?? null;
+      memberRoleTypes.push({
+        matchedProjectRoleTypeId: g.projectRoleTypeId,
+        matchedProjectRoleTypeName: rt?.name ?? null,
+        matchedProjectRoleTypeCode: rt?.code ?? null,
         memberCount: g._count._all,
-        matchingProjectRoleTypeId: match?.id ?? null,
-        matchingProjectRoleTypeName: match?.name ?? null,
       });
     }
-    memberRoleStrings.sort((a, b) => b.memberCount - a.memberCount);
+    memberRoleTypes.sort((a, b) => b.memberCount - a.memberCount);
 
-    return { memberRoleStrings, nullOrEmptyRole };
+    return { memberRoleTypes, nullOrEmpty };
   }
 }

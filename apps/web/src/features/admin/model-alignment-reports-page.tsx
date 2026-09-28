@@ -85,13 +85,15 @@ interface Stage3Response {
 }
 
 interface Stage4Response {
-  memberRoleStrings: Array<{
-    role: string;
+  // Retirement (2026-09-28) — free-text `role` gone; every row is now
+  // pinned to a catalog ProjectRoleType or null (→ D9 "Team member").
+  memberRoleTypes: Array<{
+    matchedProjectRoleTypeId: number;
+    matchedProjectRoleTypeName: string | null;
+    matchedProjectRoleTypeCode: string | null;
     memberCount: number;
-    matchingProjectRoleTypeId: number | null;
-    matchingProjectRoleTypeName: string | null;
   }>;
-  nullOrEmptyRole: number;
+  nullOrEmpty: number;
 }
 
 // ─── Copy-to-clipboard helper ────────────────────────────────────────
@@ -535,52 +537,51 @@ function Stage4Card() {
   });
   const data = q.data;
 
-  const cols = useMemo<ColumnDef<Stage4Response['memberRoleStrings'][number], unknown>[]>(() => [
-    { accessorKey: 'role', header: 'Free-text role' },
+  const cols = useMemo<ColumnDef<Stage4Response['memberRoleTypes'][number], unknown>[]>(() => [
+    { id: 'match', header: 'Project Role Type',
+      cell: ({ row }) => (
+        <span className="text-slate-700 dark:text-slate-200">
+          {row.original.matchedProjectRoleTypeName ?? '—'}
+          <span className="ml-1 text-xs text-slate-500 dark:text-slate-400 font-mono">#{row.original.matchedProjectRoleTypeId}</span>
+          {row.original.matchedProjectRoleTypeCode && (
+            <span className="ml-2 rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[11px] font-mono text-slate-600 dark:text-slate-300">
+              {row.original.matchedProjectRoleTypeCode}
+            </span>
+          )}
+        </span>
+      ) },
     { accessorKey: 'memberCount', header: '# Members',
       cell: ({ row }) => <span className="font-mono tabular-nums">{row.original.memberCount}</span> },
-    { id: 'match', header: 'Matching Project Role Type',
-      cell: ({ row }) => row.original.matchingProjectRoleTypeId == null
-        ? <span className="text-amber-700 dark:text-amber-300">— no match —</span>
-        : (
-          <span className="text-slate-700 dark:text-slate-200">
-            {row.original.matchingProjectRoleTypeName}
-            <span className="ml-1 text-xs text-slate-500 dark:text-slate-400 font-mono">#{row.original.matchingProjectRoleTypeId}</span>
-          </span>
-        ) },
   ], []);
-
-  const unmatched = data?.memberRoleStrings.filter((r) => r.matchingProjectRoleTypeId == null).length ?? 0;
 
   return (
     <StageCard
       index={4}
-      title="Team Template roles → Project Role Types"
-      subtitle="Every free-text role string on a Team Template member and its best-effort catalog match."
+      title="Team Template members → Project Role Types"
+      subtitle="Distribution of catalog Project Role assignments across Team Template members."
       icon={Database}
       isLoading={q.isLoading}
       isError={q.isError}
       data={data}
       counts={[
-        { label: 'distinct role strings', value: data?.memberRoleStrings.length ?? 0 },
-        { label: 'unmatched', value: unmatched, tone: 'warn' },
-        { label: 'null / empty members', value: data?.nullOrEmptyRole ?? 0 },
+        { label: 'distinct role types', value: data?.memberRoleTypes.length ?? 0 },
+        { label: 'null / empty members', value: data?.nullOrEmpty ?? 0 },
       ]}
     >
       <div className="space-y-4">
         <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 px-3 py-2 text-xs text-slate-600 dark:text-slate-300">
-          Members with no role text will land as{' '}
+          Members with no Project Role will land as{' '}
           <span className="rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 font-mono text-[11px]">Team member</span>
           {' '}per D9.
         </div>
-        {(data?.memberRoleStrings.length ?? 0) === 0 ? (
+        {(data?.memberRoleTypes.length ?? 0) === 0 ? (
           <EmptyState
             icon={ClipboardCheck}
-            title="No role strings"
-            description="Every Team Template member is either roleless or already on the catalog."
+            title="No assigned Project Roles"
+            description="Every Team Template member is roleless (D9 default applies)."
           />
         ) : (
-          <DataTable columns={cols} data={data!.memberRoleStrings} pageSize={10} />
+          <DataTable columns={cols} data={data!.memberRoleTypes} pageSize={10} />
         )}
       </div>
     </StageCard>

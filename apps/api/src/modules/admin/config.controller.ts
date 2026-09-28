@@ -135,7 +135,14 @@ export class ConfigController {
       include: {
         creator: { select: { id: true, firstName: true, lastName: true } },
         members: {
-          include: {
+          // Retirement (2026-09-28) — legacy `role` scalar is being
+          // dropped; explicit select keeps the payload free of it once
+          // the column goes away and while it lingers.
+          select: {
+            id: true,
+            teamTemplateId: true,
+            userId: true,
+            projectRoleTypeId: true,
             user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true, userType: true, position: true } },
             // Phase 4 · Stage 4 — surface the catalog Project Role so
             // the FE can render its name (falling back to "Team member"
@@ -169,17 +176,15 @@ export class ConfigController {
   @RequirePermissions({ module: 'templates/team', action: 'write' })
   async addTeamTemplateMember(
     @Param('id', ParseIntPipe) templateId: number,
-    // Phase 4 · Stage 4 — `projectRoleTypeId` (new, preferred) sets the
-    // catalog Project Role. `role` (legacy free text) is still accepted
-    // for one release so existing UIs that haven't upgraded keep
-    // working. Null / omitted means "Team member" (D9 default).
-    @Body() body: { userId: number; role?: string; projectRoleTypeId?: number | null },
+    // Phase 4 · Stage 4 — `projectRoleTypeId` sets the catalog Project
+    // Role. Null / omitted means "Team member" (D9 default). Legacy
+    // free-text `role` retired 2026-09-28.
+    @Body() body: { userId: number; projectRoleTypeId?: number | null },
   ) {
     return this.prisma.teamTemplateMember.create({
       data: {
         teamTemplateId: templateId,
         userId: body.userId,
-        role: body.role || null,
         projectRoleTypeId:
           body.projectRoleTypeId === undefined ? null : body.projectRoleTypeId,
       },
