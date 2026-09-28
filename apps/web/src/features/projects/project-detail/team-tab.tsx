@@ -39,6 +39,7 @@ import {
   Check,
   AlertTriangle,
   Users as UsersIcon,
+  Building2,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -870,6 +871,7 @@ export function TeamTab({
           <button
             type="button"
             onClick={() => setAddPickerOpen(true)}
+            title="Add anyone to the project in a role"
             className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-blue-700"
           >
             <UserPlus className="h-3.5 w-3.5" />
@@ -1148,6 +1150,7 @@ export function TeamTab({
                 ? () => setShowCustomerContactPicker(true)
                 : null
             }
+            customerName={team.customer?.displayName ?? null}
             projectId={projectId}
             roleAssignments={team.roleAssignments}
             addableRoles={addableRoles}
@@ -1534,6 +1537,7 @@ function TableBody({
   openDrawer,
   canWrite,
   onAddContactAtOrg,
+  customerName,
   projectId,
   roleAssignments,
   addableRoles,
@@ -1552,6 +1556,11 @@ function TableBody({
   openDrawer: (bpId: number) => void;
   canWrite: boolean;
   onAddContactAtOrg: (() => void) | null;
+  /** QA4 D8 — used to spell out the customer's name in the grey
+   *  "Add contact" button so it doesn't read as a duplicate of the
+   *  blue "Add person" CTA. Nullable — the button only shows when
+   *  `onAddContactAtOrg` is set, which itself gates on a customer. */
+  customerName: string | null;
   /** QA4 D7 — inline-edit context. `projectId` scopes the
    *  eligible-parties query the Project Role cell fires when opened.
    *  `roleAssignments` maps party -> held PPRs so the cell knows which
@@ -1673,10 +1682,11 @@ function TableBody({
                         <button
                           type="button"
                           onClick={onAddContactAtOrg}
+                          title="Attach a person from the customer as a stakeholder"
                           className="ml-auto inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
                         >
-                          <UserPlus className="h-3 w-3" aria-hidden="true" />
-                          Add contact
+                          <Building2 className="h-3 w-3" aria-hidden="true" />
+                          {customerName ? `Add contact at ${customerName}` : 'Add customer contact'}
                         </button>
                       )}
                     </div>
