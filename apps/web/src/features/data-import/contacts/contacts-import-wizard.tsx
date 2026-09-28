@@ -52,6 +52,7 @@ import {
   DedupDecision,
   ExtractedSheet,
   MappingPreset,
+  ResolvedRow,
   RowDecision,
   SheetGrade,
   SheetPreview,
@@ -1006,34 +1007,14 @@ function PreviewStep({
         </div>
       )}
 
-      <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
-        <div className="bg-[#FAFBFC] dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800 px-3 py-1.5 text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em]">
-          Row-by-row preview{conflictsOnly && ' — conflicts only'}
-        </div>
-        <div className="max-h-[520px] overflow-y-auto divide-y divide-slate-50 dark:divide-slate-800">
-          {visibleDecisions.length === 0 ? (
-            <div className="px-3 py-10 text-center text-[12px] text-slate-400 dark:text-slate-500">
-              No rows match this filter.
-            </div>
-          ) : (
-            visibleDecisions.map((d) => {
-              const row = rowByIndex.get(d.sourceRowIndex);
-              if (!row) return null;
-              const dec = decisions[decisionKeyFor(d.sourceRowIndex)];
-              const effectiveOrgAction = dec?.orgAction ?? d.org.action;
-              return (
-                <PreviewRow
-                  key={d.sourceRowIndex}
-                  dec={d}
-                  row={row}
-                  effectiveOrgAction={effectiveOrgAction}
-                  onDecide={(patch) => onDecide(d.sourceRowIndex, patch)}
-                />
-              );
-            })
-          )}
-        </div>
-      </div>
+      <PreviewTable
+        visibleDecisions={visibleDecisions}
+        rowByIndex={rowByIndex}
+        decisions={decisions}
+        decisionKeyFor={decisionKeyFor}
+        conflictsOnly={conflictsOnly}
+        onDecide={onDecide}
+      />
 
       <ProjectAttachPanel
         attachToProjectId={attachToProjectId}
@@ -1331,206 +1312,447 @@ function SummaryTile({
   );
 }
 
-function PreviewRow({
-  dec,
-  row,
-  effectiveOrgAction,
+// ─── Preview table (QA4 IMP-1) ───────────────────────────────────────
+/**
+ * Tabular replacement for the old row-by-row card list. One column per
+ * parsed field so every value is scannable at a glance; inherited /
+ * split / extracted markers render inline on the cell that carries them
+ * (matching the Design Principle in `docs/bm2/qa4-import-preview.md`).
+ *
+ * Warnings / contract errors collapse into an expandable detail row
+ * revealed by the "!" icon in the Verdict column. Reuses the shared
+ * design-system tokens; hand-rolled `<table>` (not DataTable) because
+ * the cells have custom behaviour: inline overrides (IMP-2 wires in),
+ * bespoke verdict chips, secondary-contact rows (IMP-4).
+ */
+function PreviewTable({
+  visibleDecisions,
+  rowByIndex,
+  decisions,
+  decisionKeyFor,
+  conflictsOnly,
   onDecide,
 }: {
-  dec: DedupDecision;
-  row: {
-    sourceRowIndex: number;
-    values: Partial<Record<ContactField, string>>;
-    synthesis: {
-      emailSplit?: boolean;
-      phoneSplit?: boolean;
-      companyFilled?: boolean;
-      disciplineFilled?: boolean;
-      emailSplitFailed?: boolean;
-      phoneSplitFailed?: boolean;
-    };
-    extraEmails?: string[];
-    extraPhones?: string[];
-    errors: string[];
-  };
-  effectiveOrgAction: DedupDecision['org']['action'];
-  onDecide: (patch: Partial<RowDecision>) => void;
+  visibleDecisions: DedupDecision[];
+  rowByIndex: Map<number, ResolvedRow>;
+  decisions: Record<string, RowDecision>;
+  decisionKeyFor: (rowIndex: number) => string;
+  conflictsOnly: boolean;
+  onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
 }) {
-  const isConflict = dec.org.action === 'conflict';
-  const belowContract = !dec.meetsMinimumContract;
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+  const toggle = (i: number) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+
   return (
-    <div
-      className={cn(
-        'grid grid-cols-[72px_1fr_180px] gap-3 px-3 py-2.5 text-[12px]',
-        belowContract && 'bg-red-50/40',
-      )}
-    >
-      <div
-        className="font-mono text-[11px] text-slate-400 dark:text-slate-500 tabular-nums pt-1"
-        title="Actual sheet row number — matches the source file"
-      >
-        Row {dec.sourceRowIndex}
+    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+      <div className="bg-[#FAFBFC] dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800 px-3 py-1.5 text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em]">
+        Row-by-row preview{conflictsOnly && ' — conflicts only'}
       </div>
-      <div className="min-w-0">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-sm font-semibold text-slate-800">
-            {dec.values.contact || <span className="italic text-slate-400">no name</span>}
-          </span>
-          <span className="text-slate-400">·</span>
-          <SynthCell value={dec.values.company || null} inherited={row.synthesis.companyFilled} placeholder="no company" />
-        </div>
-        <div className="text-[11px] text-slate-500 mt-0.5 flex flex-wrap items-center gap-1.5">
-          {dec.values.email ? (
-            <SynthCell
-              value={dec.values.email}
-              inherited={false}
-              synthesized={row.synthesis.emailSplit}
-              failed={row.synthesis.emailSplitFailed}
-              title={
-                row.synthesis.emailSplit
-                  ? 'Split from a multi-email cell — first email chosen; overrides available.'
-                  : row.synthesis.emailSplitFailed
-                    ? 'Cell had a delimiter but one piece was not a valid email — routed to conflict.'
-                    : undefined
-              }
-            />
-          ) : (
-            <span className="italic text-slate-400">no email</span>
-          )}
-          {dec.domain && !dec.isPersonalDomain && (
-            <span className="font-mono text-emerald-600">·@{dec.domain}</span>
-          )}
-          {dec.domain && dec.isPersonalDomain && (
-            <span className="font-mono text-amber-600">·personal @{dec.domain}</span>
-          )}
-        </div>
-        <div className="text-[11px] text-slate-500 mt-0.5 flex flex-wrap items-center gap-1.5">
-          {dec.values.mobile && (
-            <>
-              m:{' '}
-              <SynthCell
-                value={dec.values.mobile}
-                inherited={false}
-                synthesized={row.synthesis.phoneSplit}
-              />
-            </>
-          )}
-          {dec.values.phone && (
-            <>
-              t:{' '}
-              <SynthCell
-                value={dec.values.phone}
-                inherited={false}
-                synthesized={row.synthesis.phoneSplit}
-              />
-            </>
-          )}
-          {row.extraPhones && row.extraPhones.length > 0 && (
-            <span className="text-slate-400">+{row.extraPhones.length} more</span>
-          )}
-          {dec.values.discipline && (
-            <>
-              ·{' '}
-              <SynthCell value={dec.values.discipline} inherited={row.synthesis.disciplineFilled} />
-            </>
-          )}
-        </div>
-        <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
-          <span>Organization:</span> <ActionBadge action={effectiveOrgAction} />
-          <span className="text-slate-400 truncate">{dec.org.reason}</span>
-          {dec.org.matchedBpName && (
-            <span className="text-slate-500">→ <strong>{dec.org.matchedBpName}</strong></span>
-          )}
-        </div>
-        <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1">
-          <span>Contact:</span> <ActionBadge action={dec.contact.action} />
-          <span className="text-slate-400 truncate">{dec.contact.reason}</span>
-        </div>
-        {dec.contractError && (
-          <div className="text-[11px] text-red-700 mt-1 flex items-center gap-1">
-            <XCircle className="h-3 w-3" /> {dec.contractError}
+      <div className="max-h-[520px] overflow-auto">
+        {visibleDecisions.length === 0 ? (
+          <div className="px-3 py-10 text-center text-[12px] text-slate-400 dark:text-slate-500">
+            No rows match this filter.
           </div>
+        ) : (
+          <table className="w-full text-[12px] border-collapse">
+            <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-800/70 text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              <tr>
+                <PreviewTh className="w-16">Sheet row</PreviewTh>
+                <PreviewTh>Discipline</PreviewTh>
+                <PreviewTh>Contact</PreviewTh>
+                <PreviewTh>Company</PreviewTh>
+                <PreviewTh>Phone</PreviewTh>
+                <PreviewTh>Mobile</PreviewTh>
+                <PreviewTh>Email</PreviewTh>
+                <PreviewTh>Office manager</PreviewTh>
+                <PreviewTh className="w-40">Verdict</PreviewTh>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {visibleDecisions.map((d) => {
+                const row = rowByIndex.get(d.sourceRowIndex);
+                if (!row) return null;
+                const rowDec = decisions[decisionKeyFor(d.sourceRowIndex)];
+                const effectiveOrgAction = rowDec?.orgAction ?? d.org.action;
+                const isExpanded = expanded.has(d.sourceRowIndex);
+                return (
+                  <PreviewTableRow
+                    key={d.sourceRowIndex}
+                    dec={d}
+                    row={row}
+                    rowDec={rowDec}
+                    effectiveOrgAction={effectiveOrgAction}
+                    isExpanded={isExpanded}
+                    onToggleExpand={() => toggle(d.sourceRowIndex)}
+                    onDecide={(patch) => onDecide(d.sourceRowIndex, patch)}
+                  />
+                );
+              })}
+            </tbody>
+          </table>
         )}
-        {row.errors.map((e, i) => (
-          <div key={i} className="text-[11px] text-amber-700 mt-0.5 flex items-center gap-1">
-            <AlertTriangle className="h-3 w-3" /> {e}
-          </div>
-        ))}
       </div>
-      {isConflict ? (
-        <div className="pt-1">
-          <select
-            value={effectiveOrgAction}
-            onChange={(e) => onDecide({ orgAction: e.target.value as 'link' | 'create' | 'skip' })}
-            className="w-full px-2 py-1 rounded-md border border-slate-200 bg-white text-[11px]"
-          >
-            <option value="conflict">— pick —</option>
-            <option value="skip">Skip row</option>
-            <option value="create">Create new org</option>
-            {dec.org.matchedBpId && <option value="link">Link to matched organization</option>}
-          </select>
-        </div>
-      ) : (
-        <span className="text-[11px] text-slate-300 italic pt-1">auto</span>
-      )}
     </div>
   );
 }
 
-function SynthCell({
+function PreviewTh({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <th
+      className={cn(
+        'text-left font-semibold px-2 py-2 border-b border-slate-200 dark:border-slate-700',
+        className,
+      )}
+    >
+      {children}
+    </th>
+  );
+}
+
+/** One data row + (optionally) an expanded detail row underneath. */
+function PreviewTableRow({
+  dec,
+  row,
+  rowDec,
+  effectiveOrgAction,
+  isExpanded,
+  onToggleExpand,
+  onDecide,
+}: {
+  dec: DedupDecision;
+  row: ResolvedRow;
+  rowDec: RowDecision | undefined;
+  effectiveOrgAction: DedupDecision['org']['action'];
+  isExpanded: boolean;
+  onToggleExpand: () => void;
+  onDecide: (patch: Partial<RowDecision>) => void;
+}) {
+  const isConflict = dec.org.action === 'conflict';
+  const belowContract = !dec.meetsMinimumContract;
+  const hasWarning = !!(
+    belowContract ||
+    row.errors.length > 0 ||
+    row.synthesis.emailSplitFailed ||
+    row.synthesis.phoneSplitFailed
+  );
+  const rowTint = belowContract
+    ? 'bg-red-50/40 dark:bg-red-950/20'
+    : hasWarning
+      ? 'bg-amber-50/30 dark:bg-amber-950/10'
+      : '';
+  return (
+    <>
+      <tr className={cn('align-top', rowTint)}>
+        <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+          <div className="pt-0.5" title="Actual sheet row number — matches the source file">
+            Row {dec.sourceRowIndex}
+          </div>
+        </td>
+        <td className="px-2 py-2">
+          <PreviewCell
+            value={dec.values.discipline || null}
+            inherited={row.synthesis.disciplineFilled}
+          />
+        </td>
+        <td className="px-2 py-2">
+          <PreviewCell
+            value={dec.values.contact || null}
+            strong
+            placeholder="no name"
+          />
+        </td>
+        <td className="px-2 py-2">
+          <PreviewCell
+            value={dec.values.company || null}
+            inherited={row.synthesis.companyFilled}
+            placeholder="no company"
+          />
+        </td>
+        <td className="px-2 py-2">
+          <PreviewCell
+            value={dec.values.phone || null}
+            synthesized={row.synthesis.phoneSplit}
+            failed={row.synthesis.phoneSplitFailed}
+          />
+        </td>
+        <td className="px-2 py-2">
+          <PreviewCell
+            value={dec.values.mobile || null}
+            synthesized={row.synthesis.phoneSplit}
+          />
+        </td>
+        <td className="px-2 py-2">
+          <PreviewCell
+            value={dec.values.email || null}
+            synthesized={row.synthesis.emailSplit}
+            failed={row.synthesis.emailSplitFailed}
+          />
+        </td>
+        <td className="px-2 py-2">
+          {/* IMP-4 fills this via extracted secondary contacts. IMP-1
+              keeps the column so the layout is stable when IMP-4 lands. */}
+          <PreviewCell value={null} placeholder="—" />
+        </td>
+        <td className="px-2 py-2">
+          <VerdictCell
+            dec={dec}
+            effectiveOrgAction={effectiveOrgAction}
+            isConflict={isConflict}
+            hasWarning={hasWarning}
+            isExpanded={isExpanded}
+            onToggleExpand={onToggleExpand}
+            onDecide={onDecide}
+          />
+        </td>
+      </tr>
+      {isExpanded && (
+        <tr className={cn('align-top', rowTint)}>
+          <td colSpan={9} className="px-3 pt-0 pb-2.5">
+            <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2 space-y-1">
+              <div className="text-[11px] text-slate-600 dark:text-slate-300 flex items-center gap-1">
+                <span className="font-semibold">Organization:</span>{' '}
+                <ActionBadge action={effectiveOrgAction} />
+                <span className="text-slate-400 dark:text-slate-500 truncate">{dec.org.reason}</span>
+                {dec.org.matchedBpName && (
+                  <span className="text-slate-500 dark:text-slate-300">
+                    → <strong>{dec.org.matchedBpName}</strong>
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-slate-600 dark:text-slate-300 flex items-center gap-1">
+                <span className="font-semibold">Contact:</span>{' '}
+                <ActionBadge action={dec.contact.action} />
+                <span className="text-slate-400 dark:text-slate-500 truncate">
+                  {dec.contact.reason}
+                </span>
+              </div>
+              {dec.domain && (
+                <div className="text-[11px] font-mono text-slate-600 dark:text-slate-300">
+                  Domain:{' '}
+                  <span
+                    className={cn(
+                      dec.isPersonalDomain
+                        ? 'text-amber-600 dark:text-amber-300'
+                        : 'text-emerald-600 dark:text-emerald-300',
+                    )}
+                  >
+                    @{dec.domain}
+                    {dec.isPersonalDomain && ' (personal)'}
+                  </span>
+                </div>
+              )}
+              {dec.contractError && (
+                <div className="text-[11px] text-red-700 dark:text-red-300 flex items-center gap-1">
+                  <XCircle className="h-3 w-3" /> {dec.contractError}
+                </div>
+              )}
+              {row.errors.map((e, i) => (
+                <div
+                  key={i}
+                  className="text-[11px] text-amber-700 dark:text-amber-300 flex items-center gap-1"
+                >
+                  <AlertTriangle className="h-3 w-3" /> {e}
+                </div>
+              ))}
+              {row.extraPhones && row.extraPhones.length > 0 && (
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Extra phones: <span className="font-mono">{row.extraPhones.join(', ')}</span>
+                </div>
+              )}
+              {row.extraEmails && row.extraEmails.length > 0 && (
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Extra emails: <span className="font-mono">{row.extraEmails.join(', ')}</span>
+                </div>
+              )}
+              {(rowDec?.orgBpId != null || rowDec?.contactBpId != null) && (
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Linking to{' '}
+                  {rowDec?.orgBpId != null && <>org BP #{rowDec.orgBpId} </>}
+                  {rowDec?.contactBpId != null && <>· person BP #{rowDec.contactBpId}</>}
+                </div>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+/**
+ * One cell in the preview table. Renders the value plus inline markers
+ * (inherited from forward-fill, synthesized from a split, failed split,
+ * extracted from a mixed cell). Placeholder shown when the value is
+ * blank. `strong` bolds the value (used for the primary contact name).
+ */
+function PreviewCell({
   value,
   inherited,
   synthesized,
   failed,
+  extracted,
+  strong,
   placeholder,
-  title,
 }: {
   value: string | null;
   inherited?: boolean;
   synthesized?: boolean;
   failed?: boolean;
+  extracted?: boolean;
+  strong?: boolean;
   placeholder?: string;
-  title?: string;
 }) {
-  if (!value) return <span className="italic text-slate-400">{placeholder ?? '—'}</span>;
+  if (!value) {
+    return (
+      <span className="italic text-slate-400 dark:text-slate-500">{placeholder ?? '—'}</span>
+    );
+  }
+  const title = inherited
+    ? 'Inherited from a row above (forward-fill)'
+    : synthesized
+      ? 'Split from a multi-value cell'
+      : failed
+        ? 'Split failed — cell has a delimiter but a piece is invalid'
+        : extracted
+          ? 'Extracted by the content classifier'
+          : undefined;
+  return (
+    <div className="min-w-0 flex flex-col gap-0.5">
+      <span
+        className={cn(
+          'truncate',
+          strong ? 'font-semibold text-slate-800 dark:text-slate-100' : 'text-slate-700 dark:text-slate-200',
+        )}
+        title={title}
+      >
+        {value}
+      </span>
+      {(inherited || synthesized || failed || extracted) && (
+        <span className="flex items-center gap-1 flex-wrap">
+          {inherited && <CellTag tone="inherited">inherited</CellTag>}
+          {synthesized && !failed && <CellTag tone="split">split</CellTag>}
+          {failed && <CellTag tone="failed">split failed</CellTag>}
+          {extracted && <CellTag tone="extracted">extracted</CellTag>}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function CellTag({
+  tone,
+  children,
+}: {
+  tone: 'inherited' | 'split' | 'failed' | 'extracted' | 'edited';
+  children: React.ReactNode;
+}) {
+  const cfg = {
+    inherited:
+      'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700',
+    split:
+      'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-900',
+    failed:
+      'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 border-amber-200 dark:border-amber-900',
+    extracted:
+      'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-900',
+    edited:
+      'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-900',
+  }[tone];
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1',
-        inherited && 'text-slate-500 underline decoration-dashed decoration-slate-300 underline-offset-2',
-        synthesized && 'text-slate-700 bg-blue-50 rounded-[5px] px-1',
-        failed && 'text-amber-800 bg-amber-50 rounded-[5px] px-1',
+        'inline-flex items-center rounded-[4px] border px-1 py-[1px] text-[9px] font-semibold uppercase tracking-wide',
+        cfg,
       )}
-      title={
-        title ??
-        (inherited
-          ? 'Inherited from a row above (forward-fill)'
-          : synthesized
-            ? 'Split from a multi-value cell'
-            : failed
-              ? 'Split failed — cell has a delimiter but a piece is invalid'
-              : undefined)
-      }
     >
-      {value}
-      {inherited && <sup className="text-[8px] font-bold text-blue-500 ml-0.5">FILL</sup>}
-      {synthesized && !inherited && !failed && (
-        <sup className="text-[8px] font-bold text-blue-500 ml-0.5">SPLIT</sup>
-      )}
-      {failed && <sup className="text-[8px] font-bold text-amber-700 ml-0.5">FAIL</sup>}
+      {children}
     </span>
+  );
+}
+
+/**
+ * Verdict column — the small chip + (for conflicts) the resolver
+ * dropdown + (when warnings exist) the "!" toggle for the detail row.
+ */
+function VerdictCell({
+  dec,
+  effectiveOrgAction,
+  isConflict,
+  hasWarning,
+  isExpanded,
+  onToggleExpand,
+  onDecide,
+}: {
+  dec: DedupDecision;
+  effectiveOrgAction: DedupDecision['org']['action'];
+  isConflict: boolean;
+  hasWarning: boolean;
+  isExpanded: boolean;
+  onToggleExpand: () => void;
+  onDecide: (patch: Partial<RowDecision>) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1 min-w-0">
+      <div className="flex items-center gap-1">
+        <ActionBadge action={effectiveOrgAction} />
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className={cn(
+            'ml-auto inline-flex items-center justify-center h-5 w-5 rounded border text-[10px] font-bold transition-colors focus:outline-none focus:border-blue-500 dark:focus:border-blue-400',
+            hasWarning
+              ? 'border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40'
+              : 'border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800',
+          )}
+          title={
+            isExpanded
+              ? 'Hide row details'
+              : hasWarning
+                ? 'Show warnings + dedup reasoning'
+                : 'Show dedup reasoning'
+          }
+          aria-expanded={isExpanded}
+        >
+          {hasWarning ? '!' : 'i'}
+        </button>
+      </div>
+      {isConflict ? (
+        <select
+          value={effectiveOrgAction}
+          onChange={(e) => onDecide({ orgAction: e.target.value as 'link' | 'create' | 'skip' })}
+          className="w-full px-1.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[11px] text-slate-700 dark:text-slate-200 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none"
+        >
+          <option value="conflict">— pick —</option>
+          <option value="skip">Skip row</option>
+          <option value="create">Create new org</option>
+          {dec.org.matchedBpId && <option value="link">Link to matched organization</option>}
+        </select>
+      ) : (
+        <span className="text-[10px] text-slate-300 dark:text-slate-600 italic">auto</span>
+      )}
+    </div>
   );
 }
 
 function ActionBadge({ action }: { action: string }) {
   const cfg = {
-    create: 'bg-emerald-50 text-emerald-700',
-    link: 'bg-blue-50 text-blue-700',
-    conflict: 'bg-amber-50 text-amber-700',
-    skip: 'bg-slate-100 text-slate-600',
-  }[action] ?? 'bg-slate-100 text-slate-500';
+    create:
+      'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300',
+    link: 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300',
+    conflict:
+      'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300',
+    skip: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300',
+  }[action] ?? 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400';
   return (
-    <span className={cn('font-mono text-[11px] font-bold px-1.5 py-0.5 rounded-[5px]', cfg)}>
+    <span
+      className={cn('font-mono text-[10px] font-bold px-1.5 py-0.5 rounded-[5px]', cfg)}
+    >
       {action}
     </span>
   );
