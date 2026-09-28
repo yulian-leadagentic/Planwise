@@ -3,8 +3,8 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Search, X, Mail, Phone, Building2, FolderKanban, Pencil, UserPlus, Upload,
-  List as ListIcon, FolderOpen, Building, ExternalLink, MapPin, UserCircle2,
-  ChevronLeft, ChevronRight, Plus, ArrowRight, Copy,
+  List as ListIcon, FolderOpen, Building, ExternalLink, MapPin,
+  ChevronLeft, ChevronRight, ChevronDown, Plus, ArrowRight, Copy,
 } from 'lucide-react';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
@@ -659,6 +659,7 @@ export function ContactsPage() {
         <ByCustomerView
           customers={customersData ?? []}
           contacts={visibleContacts}
+          includeEmployees={includeAmc}
           onSelect={openContact}
           onAddContact={(orgId) => setAddContactForOrgId(orgId)}
           onOpenCustomer={openContact}
@@ -905,10 +906,14 @@ interface CustomerGroupEntry {
 }
 
 function ByCustomerView({
-  customers, contacts, onSelect, onAddContact, onOpenCustomer,
+  customers, contacts, includeEmployees, onSelect, onAddContact, onOpenCustomer,
 }: {
   customers: Org[];
   contacts: Contact[];
+  // QA4 C1: gates the `worker_of` (Employee) edge. When false (the
+  // default surface state), employees live only on People and never
+  // appear under a customer card.
+  includeEmployees: boolean;
   onSelect: (id: number) => void;
   // QA3 Commit D (Item 6a) — parent-owned "Add contact for this customer"
   // trigger; opens the shared Person New-Contact modal with the employer
@@ -932,6 +937,10 @@ function ByCustomerView({
       for (const r of c.partnerRelationshipsA ?? []) {
         const code = r.type?.code;
         if (!code || !CUSTOMER_REL_TYPE_SET.has(code)) continue;
+        // QA4 C1: default hides internal employees (`worker_of`) —
+        // they live on People. The AMC toggle re-enables them for
+        // callers that specifically want the full roster.
+        if (code === 'worker_of' && !includeEmployees) continue;
         const arr = m.get(r.partyBId) ?? [];
         if (!arr.some((x) => x.contact.id === c.id && x.typeCode === code)) {
           arr.push({ contact: c, typeCode: code as CustomerRelTypeCode });
@@ -950,23 +959,12 @@ function ByCustomerView({
       });
     }
     return m;
-  }, [contacts]);
+  }, [contacts, includeEmployees]);
 
-  // Contacts with NO customer-facing edge (employee / consultant /
-  // supplier / PM) to any customer org in the list — bucketed below the
-  // customer cards so they aren't invisible (e.g. contacts whose only
-  // employer edge points at an org that hasn't been tagged customer
-  // yet).
-  const customerIds = new Set(customers.map((c) => c.id));
-  const orphanContacts = contacts.filter((c) => {
-    const hasCustomerEdge = (c.partnerRelationshipsA ?? []).some(
-      (r) =>
-        r.type?.code != null
-        && CUSTOMER_REL_TYPE_SET.has(r.type.code)
-        && customerIds.has(r.partyBId),
-    );
-    return !hasCustomerEdge;
-  });
+  // QA4 C4: the "Other contacts" orphan bucket is dropped from the
+  // By-Customer view — that surface now shows customer-grouped
+  // contacts only. Un-linked contacts are still findable via the
+  // List view.
 
   const sortedCustomers = [...customers].sort((a, b) => {
     const ca = byOrg.get(a.id)?.length ?? 0;
@@ -1003,23 +1001,7 @@ function ByCustomerView({
           />
         ))}
       </div>
-
-      {orphanContacts.length > 0 && (
-        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <UserCircle2 className="h-4 w-4 text-slate-500 dark:text-slate-400" />
-            <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200">Other contacts</h3>
-            <span className="text-[11px] text-slate-500 dark:text-slate-400">
-              ({orphanContacts.length} not linked to a customer)
-            </span>
-          </div>
-          <div className="divide-y divide-slate-100 dark:divide-slate-800 bg-white dark:bg-slate-900 rounded-md border border-slate-200 dark:border-slate-700">
-            {orphanContacts.map((c) => (
-              <CompactContactRow key={c.id} contact={c} onSelect={onSelect} />
-            ))}
-          </div>
-        </div>
-      )}
+      {/* QA4 C4: "Other contacts" orphan bucket removed. */}
     </div>
   );
 }
@@ -1033,22 +1015,32 @@ function CustomerCard({
   onAddContact: (customerOrgId: number) => void;
   onOpenCustomer: (customerOrgId: number) => void;
 }) {
+  // QA4 C2: each customer card collapses so a dense list of customers
+  // stays scannable — default expanded (matches the historical
+  // rendering; users still see everything on first paint). The header
+  // chevron flips based on state, and the Add-contact button inside
+  // the header stops propagation so it doesn't also toggle.
+  const [expanded, setExpanded] = useState(true);
   return (
     <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden hover:shadow-md transition-shadow">
-      {/* Header
-          QA3 Commit D (Item 6c) — the entire header is now a clickable
-          button that opens the org's partner drawer (`?contact=<id>`);
-          the Add-contact action inside stops propagation so it opens the
-          create modal instead of the drawer. Per-contact rows below
-          keep their own click handler with their own stopPropagation. */}
+      {/* Header — click toggles expand/collapse of the contact list.
+          Opening the org's own drawer moves to a small "Open" affordance
+          on the far right so the primary click surface stays predictable
+          (large single target = expand). Add-contact keeps its own
+          stopPropagation so it doesn't collapse the card. */}
       <div className="border-b border-slate-100 dark:border-slate-800 bg-gradient-to-br from-purple-50 to-white dark:from-purple-950/30 dark:to-slate-900">
         <div className="flex items-stretch">
           <button
             type="button"
-            onClick={() => onOpenCustomer(customer.id)}
+            onClick={() => setExpanded((v) => !v)}
             className="flex items-center gap-3 flex-1 min-w-0 px-4 py-3 text-left hover:bg-purple-50/60 dark:hover:bg-purple-900/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-l-[14px]"
-            title={`Open ${customer.displayName}`}
+            title={expanded ? 'Collapse' : 'Expand'}
+            aria-expanded={expanded}
           >
+            {/* Chevron affordance so the toggle is visually obvious. */}
+            <span className="shrink-0 text-slate-500 dark:text-slate-400" aria-hidden="true">
+              {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </span>
             <div className="rounded-lg bg-purple-100 dark:bg-purple-900/50 p-2 shrink-0">
               <Building2 className="h-5 w-5 text-purple-700 dark:text-purple-300" />
             </div>
@@ -1066,6 +1058,18 @@ function CustomerCard({
               </p>
             </div>
           </button>
+          {/* Small "Open" button — moved out of the header body so the
+              header itself stays a pure expand/collapse toggle. Reuses
+              the same drawer channel via onOpenCustomer. */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onOpenCustomer(customer.id); }}
+            className="shrink-0 px-2 flex items-center text-slate-400 dark:text-slate-500 hover:text-purple-700 dark:hover:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-900/30 border-l border-slate-200 dark:border-slate-700"
+            title={`Open ${customer.displayName}`}
+            aria-label={`Open ${customer.displayName}`}
+          >
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onAddContact(customer.id); }}
@@ -1080,26 +1084,29 @@ function CustomerCard({
 
       {/* Contact list — one row per (contact, type-code) so a person who
           plays two distinct roles for this customer (e.g. Employee AND
-          Consultant) surfaces with both badges. */}
-      {entries.length === 0 ? (
-        <button
-          type="button"
-          onClick={() => onAddContact(customer.id)}
-          className="w-full px-4 py-6 text-center text-[12px] text-slate-400 dark:text-slate-500 italic hover:bg-blue-50/40 dark:hover:bg-blue-900/20 hover:text-blue-700 dark:hover:text-blue-300"
-        >
-          No contacts at this customer yet. Click to add the first.
-        </button>
-      ) : (
-        <div className="divide-y divide-slate-50 dark:divide-slate-800 max-h-[320px] overflow-y-auto">
-          {entries.map((e) => (
-            <CompactContactRow
-              key={`${e.contact.id}-${e.typeCode}`}
-              contact={e.contact}
-              relTypeCode={e.typeCode}
-              onSelect={onSelect}
-            />
-          ))}
-        </div>
+          Consultant) surfaces with both badges. Hidden when the card is
+          collapsed (QA4 C2). */}
+      {expanded && (
+        entries.length === 0 ? (
+          <button
+            type="button"
+            onClick={() => onAddContact(customer.id)}
+            className="w-full px-4 py-6 text-center text-[12px] text-slate-400 dark:text-slate-500 italic hover:bg-blue-50/40 dark:hover:bg-blue-900/20 hover:text-blue-700 dark:hover:text-blue-300"
+          >
+            No contacts at this customer yet. Click to add the first.
+          </button>
+        ) : (
+          <div className="divide-y divide-slate-50 dark:divide-slate-800 max-h-[320px] overflow-y-auto">
+            {entries.map((e) => (
+              <CompactContactRow
+                key={`${e.contact.id}-${e.typeCode}`}
+                contact={e.contact}
+                relTypeCode={e.typeCode}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+        )
       )}
     </div>
   );
@@ -1273,10 +1280,21 @@ function CompactContactRow({ contact: c, onSelect, relTypeCode }: {
 }) {
   const phone = c.phone || c.mobile || '';
   const badgeLabel = relTypeCode ? CUSTOMER_REL_TYPE_BADGE[relTypeCode] : null;
+  // QA4 C3: an employee row (internal identity — the `worker_of` edge
+  // placed it under a customer, and the AMC toggle is on so it's
+  // showing here at all) should NOT open the external-contact drawer.
+  // Employees are managed on People. Suppress the click + swap the
+  // cursor so the row reads as informational.
+  const isEmployee = relTypeCode === 'worker_of';
   return (
     <div
-      onClick={() => onSelect(c.id)}
-      className="group flex items-center gap-3 px-3 py-2.5 hover:bg-blue-50/40 dark:hover:bg-blue-900/20 cursor-pointer transition-colors"
+      onClick={isEmployee ? undefined : () => onSelect(c.id)}
+      className={cn(
+        'group flex items-center gap-3 px-3 py-2.5 transition-colors',
+        isEmployee
+          ? 'cursor-default'
+          : 'hover:bg-blue-50/40 dark:hover:bg-blue-900/20 cursor-pointer',
+      )}
     >
       <UserAvatar firstName={c.firstName ?? ''} lastName={c.lastName ?? ''} avatarUrl={null} size="sm" />
       <div className="flex-1 min-w-0">
