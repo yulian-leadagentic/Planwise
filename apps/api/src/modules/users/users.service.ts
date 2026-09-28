@@ -1,10 +1,11 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException, OnModuleInit } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, UserType } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { NumberRangesService } from '../number-ranges/number-ranges.service';
 import { UserSenioritiesService } from './user-seniorities.service';
+import { BusinessPartnersService } from '../business-partners/business-partners.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
@@ -17,7 +18,72 @@ export class UsersService implements OnModuleInit {
     private prisma: PrismaService,
     private numberRanges: NumberRangesService,
     private userSeniorities: UserSenioritiesService,
+    private bpService: BusinessPartnersService,
   ) {}
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Phase 4 · Stage 1c — D1 rule as the SINGLE source of truth for
+  // `User.userType`. The DTO field is accepted for backward compatibility
+  // (existing FE forms still send it) but IGNORED — we always derive
+  // from the user's email against the home org's owned domains.
+  //
+  // Rule (locked 2026-09-28 §9 review):
+  //   email domain ∈ home-org corporate domains  →  'employee'
+  //   otherwise (including null email)           →  'partner'  (External User)
+  //
+  // The 'both' enum value is preserved by the schema but never written by
+  // this path; a follow-up ticket will drop the enum value once all
+  // legacy readers are gone.
+  //
+  // Access is DECOUPLED from userType — it flows from Access Role (D3).
+  // Flipping a user's email onto/off a home domain toggles their
+  // employee status + role `employee` sync but never widens or narrows
+  // permissions.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** Compute `userType` from an email using the home-org owned domains. */
+  private async deriveUserType(email: string | null | undefined): Promise<UserType> {
+    if (!email) return 'partner';
+    const at = email.lastIndexOf('@');
+    if (at < 0 || at === email.length - 1) return 'partner';
+    const dom = email.slice(at + 1).trim().toLowerCase();
+    const homeOrg = await this.bpService.getHomeOrg();
+    const ownedDomains = (homeOrg?.domains ?? [])
+      .filter((d) => !d.isPersonal)
+      .map((d) => d.domain.toLowerCase());
+    return ownedDomains.includes(dom) ? 'employee' : 'partner';
+  }
+
+  /**
+   * Sync the `employee` BusinessPartnerRole on the linked BP so it
+   * matches the derived userType. Add-or-remove — idempotent.
+   */
+  private async syncEmployeeBpRole(
+    businessPartnerId: number | null | undefined,
+    derived: UserType,
+  ): Promise<void> {
+    if (!businessPartnerId) return;
+    const employeeRole = await this.prisma.partnerRoleType.findUnique({
+      where: { code: 'employee' },
+    });
+    if (!employeeRole) return;
+    if (derived === 'employee') {
+      await this.prisma.businessPartnerRole.upsert({
+        where: {
+          businessPartnerId_roleTypeId: {
+            businessPartnerId,
+            roleTypeId: employeeRole.id,
+          },
+        },
+        create: { businessPartnerId, roleTypeId: employeeRole.id, isPrimary: false },
+        update: {},
+      });
+    } else {
+      await this.prisma.businessPartnerRole.deleteMany({
+        where: { businessPartnerId, roleTypeId: employeeRole.id },
+      });
+    }
+  }
 
   /**
    * M1.1 — Allocate or validate a User business code (employee number).
@@ -119,19 +185,12 @@ export class UsersService implements OnModuleInit {
       }
     }
 
-    // 2) Add the 'employee' role on the BP if user is an employee or both.
-    if (dto.userType === 'employee' || dto.userType === 'both') {
-      const employeeRole = await this.prisma.partnerRoleType.findUnique({
-        where: { code: 'employee' },
-      });
-      if (employeeRole) {
-        await this.prisma.businessPartnerRole.upsert({
-          where: { businessPartnerId_roleTypeId: { businessPartnerId, roleTypeId: employeeRole.id } },
-          create: { businessPartnerId, roleTypeId: employeeRole.id, isPrimary: true },
-          update: {},
-        });
-      }
-    }
+    // 2) Phase 4 · Stage 1c — derive userType from the D1 rule. The DTO
+    // field is IGNORED. Employee = user's email domain is owned by the
+    // home org; everyone else is a partner (External User). The BP role
+    // `employee` is synced to match.
+    const derivedUserType = await this.deriveUserType(dto.email);
+    await this.syncEmployeeBpRole(businessPartnerId, derivedUserType);
 
     // 3) Wire the worker_of relationship to the chosen organization.
     // BM2 Phase 1 (2026-08-13): writes to `partner_relationships` (BUT050).
@@ -180,10 +239,15 @@ export class UsersService implements OnModuleInit {
     const { code: codeFromDto, ...restUserData } = userData;
     const code = await this.resolveUserCode(codeFromDto);
 
-    // 4) Create the User row, linking to the BP.
+    // 4) Create the User row, linking to the BP. `userType` is
+    // overwritten by the derived value from step 2 — the DTO's field
+    // (if any) is dropped so the D1 rule owns writes.
+    const { userType: _dtoUserType, ...restNoUserType } = restUserData as any;
+    void _dtoUserType;
     const user = await this.prisma.user.create({
       data: {
-        ...restUserData,
+        ...restNoUserType,
+        userType: derivedUserType,
         code,
         password: hashedPassword,
         businessPartnerId,
@@ -421,12 +485,29 @@ export class UsersService implements OnModuleInit {
   }
 
   async update(id: number, dto: UpdateUserDto) {
-    await this.findOne(id);
+    const existing = await this.findOne(id);
 
     const data: any = { ...dto };
 
     if (dto.password) {
       data.password = await bcrypt.hash(dto.password, 12);
+    }
+
+    // Phase 4 · Stage 1c — the DTO field `userType` is read-only from
+    // the outside; the rule owns writes. Drop it silently.
+    if ('userType' in data) {
+      delete data.userType;
+    }
+
+    // If the email changed (or was set for the first time on an
+    // existing row), re-derive userType from the D1 rule and sync the
+    // BP `employee` role. When email is untouched, keep the row's
+    // current userType — the M6 write path already keeps this in sync
+    // on domain-list changes via a separate hook.
+    const nextEmail = 'email' in dto ? dto.email : (existing as any).email;
+    const emailChanged = 'email' in dto && dto.email !== (existing as any).email;
+    if (emailChanged) {
+      data.userType = await this.deriveUserType(nextEmail);
     }
 
     // Coerce date-only strings ("2026-06-14") to Date so Prisma accepts them
@@ -540,6 +621,17 @@ export class UsersService implements OnModuleInit {
     if ('position' in data) {
       try { await this.syncPositionToProfession(id, data.position); }
       catch (e) { Sentry.captureException(e); /* swallow — user.update already committed */ }
+    }
+
+    // Phase 4 · Stage 1c — when the email moved on/off a home domain,
+    // sync the BP `employee` role to match the newly-derived userType.
+    // Skip-on-error: the user row is already committed; a failed sync
+    // just delays the tag flip until the next write.
+    if (emailChanged) {
+      try {
+        const bpId = (existing as any).businessPartnerId ?? null;
+        await this.syncEmployeeBpRole(bpId, data.userType as UserType);
+      } catch (e) { Sentry.captureException(e); /* swallow */ }
     }
 
     return updated;

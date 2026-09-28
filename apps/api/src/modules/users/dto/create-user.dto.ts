@@ -53,9 +53,18 @@ export class CreateUserDto {
   @Type(() => Number)
   roleId: number;
 
-  @ApiProperty({ enum: UserType })
+  /**
+   * Phase 4 · Stage 1c (2026-09-28) — READ-ONLY from clients.
+   * Kept optional in the DTO for backward compatibility with existing FE
+   * forms that still post it, but the value is IGNORED server-side: the
+   * D1 rule (email domain vs. home org's owned domains) is the single
+   * source of truth and the service overwrites this field on every
+   * write.
+   */
+  @ApiPropertyOptional({ enum: UserType, description: 'IGNORED — derived from D1 rule server-side' })
+  @IsOptional()
   @IsEnum(UserType)
-  userType: UserType;
+  userType?: UserType;
 
   @ApiPropertyOptional()
   @IsOptional()
