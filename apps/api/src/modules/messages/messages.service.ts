@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { Prisma, MessageEntityType } from '@prisma/client';
+import { Prisma, MessageEntityType, MessageType } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateMessageDto } from './dto/create-message.dto';
@@ -371,6 +371,10 @@ export class MessagesService {
       where: {
         deletedAt: null,
         parentId: null,
+        // QA4 A1: badge counts authored (user) messages only —
+        // system/activity events live in the same table but must not
+        // turn the task-row bubble blue.
+        type: MessageType.user,
         entityType: entityType as MessageEntityType,
         entityId: { in: entityIds },
       },
@@ -391,9 +395,19 @@ export class MessagesService {
     if (dto.entityType) where.entityType = dto.entityType as MessageEntityType;
     if (dto.entityId) where.entityId = dto.entityId;
 
+    // QA4 A1: the thread renderer needs both user + system rows, so
+    // `data` is NEVER filtered by type here. `meta.total` however is
+    // always the authored-messages count (type=user) so the badge in
+    // the discussion sidebar / panel header reflects real activity.
+    // Callers can force a stricter data filter by passing `type`
+    // explicitly (e.g. an admin export of user messages only).
+    const dataWhere: Prisma.MessageWhereInput = { ...where };
+    if (dto.type) dataWhere.type = dto.type as MessageType;
+    const countWhere: Prisma.MessageWhereInput = { ...where, type: MessageType.user };
+
     const [data, total] = await Promise.all([
       this.prisma.message.findMany({
-        where,
+        where: dataWhere,
         include: {
           ...messageInclude,
           replies: {
@@ -407,7 +421,7 @@ export class MessagesService {
         skip: dto.skip,
         take: dto.take,
       }),
-      this.prisma.message.count({ where }),
+      this.prisma.message.count({ where: countWhere }),
     ]);
 
     return {

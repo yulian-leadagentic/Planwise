@@ -936,15 +936,22 @@ function ThreadActions({ messageId, entityType, entityId, isResolved }: {
 export function MessagePanel({ entityType, entityId }: MessagePanelProps) {
   const { data, isLoading } = useMessages(entityType, entityId);
   const messages = (data as any)?.data ?? [];
+  // QA4 A1: header pill counts authored messages only. The thread
+  // still renders system events (`type==='system'`) so `messages` is
+  // untouched, but `meta.total` from the API is now authored-only —
+  // fall back to a local filter when the API meta is missing.
+  const authoredCount: number =
+    (data as any)?.meta?.total ??
+    messages.filter((m: any) => m?.type !== 'system').length;
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <MessageSquare className="h-4 w-4 text-blue-600" />
         <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Discussion</h3>
-        {messages.length > 0 && (
-          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">
-            {messages.length}
+        {authoredCount > 0 && (
+          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700 dark:bg-blue-500/20 dark:text-blue-300">
+            {authoredCount}
           </span>
         )}
       </div>
