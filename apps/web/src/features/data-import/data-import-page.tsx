@@ -17,6 +17,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, ArrowLeft, ArrowRight, Download, History as HistoryIcon, Users, Building2, Contact as ContactIcon } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import * as Sentry from '@sentry/react';
 import { PageHeader } from '@/components/shared/page-header';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/shared/confirm-dialog';
@@ -217,11 +218,33 @@ export function DataImportPage() {
               Cancel
             </button>
           </div>
-          <ContactsImportWizard
-            onDone={reset}
-            defaultProjectId={defaultProjectId}
-            onDirtyChange={setWizardDirty}
-          />
+          {/*
+            QA4 D10 — defensive error boundary around the wizard mount.
+            The current source is fully guarded, but a stale bundle on
+            Railway (pre-U4 defensive fixes) or a data-shape regression
+            has been observed to throw at wizard mount and take down the
+            whole `/admin/data-import` route. Catching it here keeps the
+            page header + Cancel button usable, shows a friendly inline
+            message, and reports the error to Sentry when it's wired.
+          */}
+          <Sentry.ErrorBoundary
+            fallback={({ error, resetError }) => (
+              <ContactsWizardErrorFallback
+                error={error}
+                onReset={() => {
+                  resetError();
+                  reset();
+                }}
+              />
+            )}
+            onReset={reset}
+          >
+            <ContactsImportWizard
+              onDone={reset}
+              defaultProjectId={defaultProjectId}
+              onDirtyChange={setWizardDirty}
+            />
+          </Sentry.ErrorBoundary>
         </div>
       )}
 
@@ -610,6 +633,65 @@ function ReviewStep({
             {isCommitting ? 'Importing…' : `Import ${summary.validForInsert} ${target}`}
             <ArrowRight className="h-3.5 w-3.5" />
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Contacts wizard error fallback (QA4 D10) ────────────────────────
+//
+// Rendered when the ContactsImportWizard's subtree throws at render
+// time. Muted card with a title, one-line description, and two
+// affordances: "Reload page" (hard nav-refresh in case a stale
+// bundle is the cause) and "Reset" (drop wizard state, back to Pick).
+// FULL `dark:` variants — kept in slate to match the wizard's own
+// surface treatment.
+function ContactsWizardErrorFallback({
+  error,
+  onReset,
+}: {
+  error: unknown;
+  onReset: () => void;
+}) {
+  const isDev = import.meta.env.DEV;
+  const message = error instanceof Error ? error.message : undefined;
+  return (
+    <div className="rounded-[14px] border border-red-200 dark:border-red-900/60 bg-red-50/60 dark:bg-red-950/30 p-5">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/40">
+          <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+            Contacts importer hit an error
+          </h3>
+          <p className="mt-1 text-[13px] text-slate-600 dark:text-slate-300">
+            The wizard couldn&apos;t start. This is usually a stale build after a deploy
+            — reloading the page picks up the latest bundle. If it happens again,
+            resetting the wizard and re-uploading the file often clears it.
+          </p>
+          {isDev && message && (
+            <pre className="mt-3 max-h-32 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-900/40 p-2 text-[11px] font-mono text-slate-700 dark:text-slate-200">
+              {message}
+            </pre>
+          )}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+            >
+              Reload page
+            </button>
+            <button
+              type="button"
+              onClick={onReset}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
+            >
+              Reset
+            </button>
+          </div>
         </div>
       </div>
     </div>
