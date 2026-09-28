@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -14,12 +14,79 @@ export class ContractsService {
     private readonly activityLog: ActivityLogService,
   ) {}
 
+  /**
+   * Phase 4 · Stage 3 (2026-09-28) — Resolve the `partyId` +
+   * `partnerId` pair from a caller-supplied combination. Rules:
+   *   • Neither given → 400.
+   *   • `partyId` given → look up the BP; if it has a linked User,
+   *     use that as the legacy `partnerId`. If not (e.g. an org with
+   *     no login user), the legacy column can't be populated, so we
+   *     reject until the follow-up migration drops that NOT NULL.
+   *   • `partnerId` given (legacy only) → look up the user; if they
+   *     have a linked BP, populate `partyId` from that. Otherwise
+   *     `partyId` stays null (a legacy-only write).
+   * Returns both resolved values.
+   */
+  private async resolvePartyAndLegacyPartner(input: {
+    partyId?: number | null;
+    partnerId?: number | null;
+  }): Promise<{ partyId: number | null; partnerId: number }> {
+    if (input.partyId) {
+      const party = await this.prisma.businessPartner.findFirst({
+        where: { id: input.partyId, deletedAt: null },
+        include: { user: { select: { id: true } } },
+      });
+      if (!party) {
+        throw new NotFoundException(`Business partner ${input.partyId} not found`);
+      }
+      // Prefer an explicit `partnerId` if the caller sent one AND it
+      // matches the BP's linked User (defensive against inconsistent
+      // dual submits).
+      const legacyId = input.partnerId ?? party.user?.id ?? null;
+      if (legacyId == null) {
+        // Contracts.partnerId is still NOT NULL on the DB column
+        // until the follow-up migration retires it. Until then, a
+        // party-with-no-User can't be persisted through this write
+        // path — the caller must create the User first, or the
+        // follow-up column drop must land.
+        throw new BadRequestException(
+          `Business partner ${input.partyId} has no linked User account. ` +
+          `Attach a login user to the partner, or wait for the follow-up ` +
+          `migration that retires contracts.partner_id.`,
+        );
+      }
+      return { partyId: party.id, partnerId: legacyId };
+    }
+    if (input.partnerId) {
+      const user = await this.prisma.user.findFirst({
+        where: { id: input.partnerId },
+        select: { id: true, businessPartnerId: true },
+      });
+      if (!user) throw new NotFoundException(`User ${input.partnerId} not found`);
+      return { partyId: user.businessPartnerId ?? null, partnerId: user.id };
+    }
+    throw new BadRequestException(
+      'Contract requires either `partyId` (BusinessPartner) or `partnerId` (User).',
+    );
+  }
+
   async create(userId: number, dto: CreateContractDto) {
+    // Phase 4 · Stage 3 (2026-09-28) — accept either `partyId` (new,
+    // BusinessPartner FK — preferred) or `partnerId` (legacy, User
+    // FK). If only `partyId` is given, look up a linked User to
+    // populate the legacy `partnerId` (still NOT NULL on the column
+    // until the follow-up drops it). If neither is given, 400.
+    const { partyId, partnerId: legacyPartnerId } = await this.resolvePartyAndLegacyPartner({
+      partyId: dto.partyId,
+      partnerId: dto.partnerId,
+    });
+
     const contract = await this.prisma.contract.create({
       data: {
         name: dto.name,
         projectId: dto.projectId,
-        partnerId: dto.partnerId,
+        partnerId: legacyPartnerId,
+        partyId: partyId ?? undefined,
         status: dto.status,
         totalAmount: dto.totalAmount,
         startDate: dto.startDate ? new Date(dto.startDate) : undefined,
@@ -30,6 +97,7 @@ export class ContractsService {
       include: {
         project: { select: { id: true, name: true } },
         partner: { select: { id: true, firstName: true, lastName: true, companyName: true } },
+        party: { select: { id: true, partnerType: true, displayName: true, companyName: true, email: true } },
       },
     });
 

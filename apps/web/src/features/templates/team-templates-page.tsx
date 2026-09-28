@@ -19,10 +19,22 @@ interface UserInfo {
   position?: string | null;
 }
 
+interface ProjectRoleType {
+  id: number;
+  code: string;
+  name: string;
+}
+
 interface TemplateMember {
   id: number;
   userId: number;
+  // Legacy free-text role. Kept for back-compat rendering; new writes
+  // go through `projectRoleTypeId` below.
   role: string | null;
+  // Phase 4 · Stage 4 (2026-09-28) — catalog Project Role. Null = the
+  // D9 default "Team member".
+  projectRoleTypeId: number | null;
+  projectRoleType: ProjectRoleType | null;
   user: UserInfo;
 }
 
@@ -123,11 +135,18 @@ export function TeamTemplatesPage() {
   });
 
   const addMemberMutation = useMutation({
-    mutationFn: (data: { templateId: number; userId: number; role?: string }) =>
+    mutationFn: (data: {
+      templateId: number;
+      userId: number;
+      projectRoleTypeId?: number | null;
+    }) =>
       client
         .post(`/admin/config/team-templates/${data.templateId}/members`, {
           userId: data.userId,
-          role: data.role || undefined,
+          // Phase 4 · Stage 4 — write the catalog Project Role, not
+          // free-text. Null = "Team member" (D9 default) on apply.
+          projectRoleTypeId:
+            data.projectRoleTypeId ?? null,
         })
         .then((r) => r.data),
     onSuccess: () => {
@@ -162,8 +181,12 @@ export function TeamTemplatesPage() {
       <EditorView
         template={selectedTemplate}
         onBack={() => setSelectedTemplateId(null)}
-        onAddMember={(userId, role) =>
-          addMemberMutation.mutate({ templateId: selectedTemplate.id, userId, role })
+        onAddMember={(userId, projectRoleTypeId) =>
+          addMemberMutation.mutate({
+            templateId: selectedTemplate.id,
+            userId,
+            projectRoleTypeId,
+          })
         }
         onRemoveMember={(memberId) => removeMemberMutation.mutate(memberId)}
         addingMember={addMemberMutation.isPending}
@@ -327,15 +350,28 @@ function EditorView({
 }: {
   template: TeamTemplate;
   onBack: () => void;
-  onAddMember: (userId: number, role?: string) => void;
+  onAddMember: (userId: number, projectRoleTypeId: number | null) => void;
   onRemoveMember: (memberId: number) => void;
   addingMember: boolean;
 }) {
   const confirm = useConfirm();
   const [showAddSection, setShowAddSection] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [roleInput, setRoleInput] = useState('');
+  // Phase 4 · Stage 4 — catalog Project Role id; null = "Team member".
+  const [selectedRoleId, setSelectedRoleId] = useState<number | ''>('');
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+
+  // ProjectRoleType catalog — same list the Team tab / New Project use.
+  const { data: projectRoleTypes = [] } = useQuery<ProjectRoleType[]>({
+    queryKey: ['project-role-types'],
+    staleTime: 5 * 60 * 1000,
+    enabled: showAddSection,
+    queryFn: () =>
+      client.get('/admin/project-role-types').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
   // Sticky horizontal scrollbar for the wide members table. The parent
   // TeamTemplatesPage had its own scrollRef which isn't in this
   // component's scope; tsc flagged it (TS2552). Own the hook locally.
@@ -369,9 +405,9 @@ function EditorView({
 
   const handleAdd = () => {
     if (!selectedUserId) return;
-    onAddMember(selectedUserId, roleInput.trim() || undefined);
+    onAddMember(selectedUserId, selectedRoleId === '' ? null : Number(selectedRoleId));
     setSelectedUserId(null);
-    setRoleInput('');
+    setSelectedRoleId('');
     setSearchQuery('');
   };
 
@@ -451,17 +487,31 @@ function EditorView({
                 )}
               </div>
 
-              {/* Role */}
-              <div className="sm:w-48">
-                <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
-                  Role (optional)
+              {/* Project Role — Phase 4 · Stage 4. Catalog select
+                  replaces the pre-M11 free-text input. Empty selection
+                  means "Team member" (D9 default) on apply. */}
+              <div className="sm:w-56">
+                <label
+                  htmlFor="project-role-select"
+                  className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block"
+                >
+                  Project Role
                 </label>
-                <input
-                  value={roleInput}
-                  onChange={(e) => setRoleInput(e.target.value)}
-                  placeholder="e.g. Lead"
-                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-                />
+                <select
+                  id="project-role-select"
+                  value={selectedRoleId}
+                  onChange={(e) =>
+                    setSelectedRoleId(e.target.value === '' ? '' : Number(e.target.value))
+                  }
+                  className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="">Team member (default)</option>
+                  {projectRoleTypes.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {/* Add button */}
@@ -519,7 +569,12 @@ function EditorView({
                     <td className="px-5 py-3">
                       <TypeBadge type={m.user.userType} />
                     </td>
-                    <td className="px-5 py-3 text-sm text-slate-500 dark:text-slate-400">{m.role || '--'}</td>
+                    <td className="px-5 py-3 text-sm text-slate-500 dark:text-slate-400">
+                      {/* Phase 4 · Stage 4 — show catalog role name;
+                          fall back to legacy free text; null = the D9
+                          default "Team member". */}
+                      {m.projectRoleType?.name ?? m.role ?? 'Team member'}
+                    </td>
                     <td className="px-5 py-3">
                       <button
                         onClick={() => removeMemberMutation_confirm(m, onRemoveMember, confirm)}

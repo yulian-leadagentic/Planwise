@@ -810,6 +810,15 @@ model Contract {
   name        String
   projectId   Int?           @map("project_id")
   partnerId   Int            @map("partner_id")
+  /// Phase 4 · Stage 3 (2026-09-28) — Contract now points at a
+  /// BusinessPartner (org or person) via `partyId`. Additive: the
+  /// legacy `partnerId` (FK → User) stays for one release so existing
+  /// readers keep working; new writers should set `partyId` and
+  /// readers should prefer it when non-null. A follow-up drops
+  /// `partnerId` once every consumer is migrated. Nullable + ON
+  /// DELETE SET NULL — deleting a BP unlinks the contract rather than
+  /// deleting it.
+  partyId     Int?           @map("party_id")
   status      ContractStatus @default(draft)
   totalAmount Decimal?       @map("total_amount") @db.Decimal(14, 2)
   startDate   DateTime?      @map("start_date")
@@ -820,9 +829,11 @@ model Contract {
   updatedAt   DateTime       @updatedAt @map("updated_at")
   deletedAt   DateTime?      @map("deleted_at")
 
-  project Project? @relation(fields: [projectId], references: [id])
-  partner User     @relation("ContractPartner", fields: [partnerId], references: [id])
-  creator User     @relation("ContractCreatedBy", fields: [createdBy], references: [id])
+  project Project?         @relation(fields: [projectId], references: [id])
+  partner User             @relation("ContractPartner", fields: [partnerId], references: [id])
+  /// Phase 4 · Stage 3 (2026-09-28) — see partyId above.
+  party   BusinessPartner? @relation("ContractParty", fields: [partyId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  creator User             @relation("ContractCreatedBy", fields: [createdBy], references: [id])
 
   items    ContractItem[]
   billings Billing[]
@@ -832,6 +843,7 @@ model Contract {
 
   @@index([projectId])
   @@index([partnerId])
+  @@index([partyId])
   @@index([createdBy])
   @@index([status])
   @@index([deletedAt])
@@ -1052,13 +1064,22 @@ model TeamTemplateMember {
   id             Int     @id @default(autoincrement())
   teamTemplateId Int     @map("team_template_id")
   userId         Int     @map("user_id")
+  /// Legacy free-text role. Kept nullable one release; a follow-up
+  /// drops it once every template member has moved to the catalog
+  /// via `projectRoleTypeId` below.
   role           String?
+  /// Phase 4 · Stage 4 (2026-09-28) — catalog Project Role for this
+  /// member. Nullable; a null value means "Team member" (D9 default)
+  /// when the template is applied. Optional per M11 replacement rule.
+  projectRoleTypeId Int? @map("project_role_type_id")
 
-  teamTemplate TeamTemplate @relation(fields: [teamTemplateId], references: [id])
-  user         User         @relation(fields: [userId], references: [id])
+  teamTemplate    TeamTemplate     @relation(fields: [teamTemplateId], references: [id])
+  user            User             @relation(fields: [userId], references: [id])
+  projectRoleType ProjectRoleType? @relation("TeamTemplateMemberProjectRole", fields: [projectRoleTypeId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([teamTemplateId])
   @@index([userId])
+  @@index([projectRoleTypeId])
   @@map("team_template_members")
 }
 
@@ -1801,6 +1822,9 @@ model BusinessPartner {
   // organization) may own several domains (office + secondary).
   domains                       BusinessPartnerDomain[]
   professions                   BusinessPartnerProfession[]
+  /// Phase 4 · Stage 3 (2026-09-28) — reverse side of Contract.partyId.
+  /// A contract can name an ORG (with no login user) as its party.
+  contractsAsParty              Contract[]                  @relation("ContractParty")
 
   /// If this partner row was created by a bulk import, track which import.
   /// Used by the data-import rollback flow. NULL for partners created via
@@ -2367,7 +2391,12 @@ model ProjectRoleType {
   createdAt               DateTime @default(now()) @map("created_at")
   updatedAt               DateTime @updatedAt @map("updated_at")
 
-  roles ProjectPartnerRole[]
+  roles               ProjectPartnerRole[]
+  /// Phase 4 · Stage 4 (2026-09-28) — reverse of
+  /// TeamTemplateMember.projectRoleTypeId. Template members can carry
+  /// a role from this catalog so applying a template writes matching
+  /// ProjectPartnerRole rows.
+  teamTemplateMembers TeamTemplateMember[] @relation("TeamTemplateMemberProjectRole")
 
   @@map("project_role_types")
 }
