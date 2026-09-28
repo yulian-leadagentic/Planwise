@@ -41,6 +41,7 @@ import {
   Users as UsersIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
@@ -148,6 +149,7 @@ export function TeamTab({
   onToggleAddMember: (v: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const removeMember = useRemoveProjectMember();
   const confirm = useConfirm();
   const { isAdmin, can: canPerm } = usePermissions();
@@ -698,12 +700,26 @@ export function TeamTab({
   };
 
   // ─── Coverage strip helpers ────────────────────────────────────────
+  // QA4 D5 (2026-09-28) — the `customer` role is special:
+  // getTeam EXCLUDES role.code='customer' from `roleAssignments`
+  // (`projects.service.ts` ~1345), so reading `filled` from that list
+  // ALWAYS returned []. Previously the coverage chip therefore showed
+  // "Customer · not assigned" even on projects that had a customer,
+  // and its "+" opened the generic RoleAssignmentPicker which POSTed a
+  // duplicate customer PPR. We now special-case the customer coverage
+  // row to read `team.customer` and render a dedicated chip; the "+"
+  // routes to the project edit form (canonical customer path via
+  // `customerOrgId` → `setProjectCustomer`, which soft-ends the old
+  // customer row and never creates a duplicate).
   const coverage = useMemo(() => {
     return requiredRoles.map((rt) => {
+      if (rt.code === 'customer') {
+        return { role: rt, filled: [] as ProjectRoleAssignment[], customer: team?.customer ?? null };
+      }
       // team_leader also honours project.leaderId via ProjectPartnerRole,
       // so this simply reads the assignments list.
       const filled = team?.roleAssignments.filter((a) => a.role.id === rt.id) ?? [];
-      return { role: rt, filled };
+      return { role: rt, filled, customer: null };
     });
   }, [requiredRoles, team]);
 
@@ -738,10 +754,18 @@ export function TeamTab({
 
   // Trigger the role-first add for a specific role (from coverage
   // chip). The "participant" role opens the internal team-member
-  // dialog instead of the generic RoleAssignmentPicker.
+  // dialog instead of the generic RoleAssignmentPicker; the
+  // "customer" role NEVER opens the generic picker — customer is
+  // assigned via `customerOrgId` on Project Info / Edit
+  // (`setProjectCustomer`) so history is preserved and duplicate
+  // customer PPRs are impossible. See QA4 D5.
   const openAddForRole = (rt: ProjectRoleTypeRow) => {
     if (rt.code === 'participant') {
       onToggleAddMember(true);
+      return;
+    }
+    if (rt.code === 'customer') {
+      navigate(`/projects/${projectId}/edit`);
       return;
     }
     setRoleAssignmentTarget(rt);
@@ -990,11 +1014,12 @@ export function TeamTab({
               Required roles · coverage
             </div>
             <div className="flex flex-wrap gap-2">
-              {coverage.map(({ role, filled }) => (
+              {coverage.map(({ role, filled, customer }) => (
                 <CoverageChip
                   key={role.id}
                   role={role}
                   filled={filled}
+                  customer={customer}
                   onAdd={() => openAddForRole(role)}
                   onOpenProfile={openDrawer}
                   canWrite={canWritePartners}
@@ -1266,6 +1291,7 @@ function FilterGroup({ label, children }: { label: string; children: React.React
 function CoverageChip({
   role,
   filled,
+  customer,
   onAdd,
   onOpenProfile,
   canWrite,
@@ -1273,11 +1299,61 @@ function CoverageChip({
 }: {
   role: ProjectRoleTypeRow;
   filled: ProjectRoleAssignment[];
+  /** QA4 D5 — customer coverage bypass. When role.code === 'customer'
+   *  the coverage row reads `team.customer` (getTeam excludes the
+   *  customer role from `roleAssignments`); pass it through so we can
+   *  render "Customer · {name} ✓" without a fake PPR. Non-customer
+   *  chips pass null. */
+  customer: { organizationId: number; displayName: string } | null;
   onAdd: () => void;
   onOpenProfile: (bpId: number) => void;
   canWrite: boolean;
   teamLeaderBpIds: Set<number>;
 }) {
+  // QA4 D5 — customer role uses `team.customer`, not `filled`. When
+  // set, render a filled chip whose click opens the customer org's
+  // profile drawer (matches other filled chips). When unset, render
+  // the amber "not assigned" affordance whose "+" navigates to Project
+  // Info / Edit (handled by openAddForRole) so the customer is
+  // assigned via `customerOrgId` → `setProjectCustomer` — never a
+  // second customer PPR.
+  if (role.code === 'customer') {
+    if (customer) {
+      return (
+        <button
+          type="button"
+          onClick={() => onOpenProfile(customer.organizationId)}
+          title={`Open ${customer.displayName}`}
+          className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 pl-2 pr-2.5 py-0.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
+        >
+          <span className="text-slate-400 dark:text-slate-500 font-medium">{role.name}</span>
+          <span>·</span>
+          <span>{customer.displayName}</span>
+          <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+        </button>
+      );
+    }
+    return (
+      <button
+        type="button"
+        onClick={canWrite ? onAdd : undefined}
+        disabled={!canWrite}
+        aria-label={`Assign ${role.name}`}
+        title="Assign the customer on Project Info / Edit"
+        className={cn(
+          'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-semibold',
+          'border border-dashed border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300',
+          canWrite ? 'hover:border-amber-500' : 'opacity-60 cursor-not-allowed',
+        )}
+      >
+        <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+        <span>{role.name}</span>
+        <span>· not assigned</span>
+        <span className="text-amber-700 dark:text-amber-400 font-bold">+</span>
+      </button>
+    );
+  }
+
   if (filled.length === 0) {
     return (
       <button
