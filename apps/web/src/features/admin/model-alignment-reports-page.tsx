@@ -243,7 +243,10 @@ function Stage1Card() {
     queryFn: () =>
       client
         .get('/admin/reports/model-alignment/stage-1-usertype-vs-domain')
-        .then((r) => r.data),
+        // ResponseInterceptor on the API wraps payloads as
+        // { success: true, data: <payload> }; unwrap defensively so the
+        // page still works if a future call site returns raw payloads.
+        .then((r) => r.data?.data ?? r.data),
   });
 
   const offDomainCols = useMemo<ColumnDef<Stage1Response['employeesOffHomeDomain'][number], unknown>[]>(() => [
@@ -349,7 +352,7 @@ function Stage2Card() {
     queryFn: () =>
       client
         .get('/admin/reports/model-alignment/stage-2-department-mapping')
-        .then((r) => r.data),
+        .then((r) => r.data?.data ?? r.data),
   });
   const data = q.data;
 
@@ -442,7 +445,7 @@ function Stage3Card() {
     queryFn: () =>
       client
         .get('/admin/reports/model-alignment/stage-3-contracts-partners')
-        .then((r) => r.data),
+        .then((r) => r.data?.data ?? r.data),
   });
   const data = q.data;
 
@@ -528,7 +531,7 @@ function Stage4Card() {
     queryFn: () =>
       client
         .get('/admin/reports/model-alignment/stage-4-template-role-mapping')
-        .then((r) => r.data),
+        .then((r) => r.data?.data ?? r.data),
   });
   const data = q.data;
 
