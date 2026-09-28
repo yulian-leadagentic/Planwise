@@ -252,6 +252,13 @@ export function PartnerDrawer({
   // now come from the shared Sheet shell. The shell yields Escape to
   // any Modal mounted on top, so hitting Escape inside "Add Relationship"
   // closes only that modal, not the drawer behind it.
+  //
+  // People UX U6 (P-07) — dirty-guard on Escape / backdrop when the
+  // Details tab is in edit mode with unsaved changes. Lifted here so
+  // the Sheet shell can wire `isDirty` (its built-in "Discard changes?"
+  // confirm). DetailsTab computes the boolean (editing && form !==
+  // initialForm) and pushes it up via `onDirtyChange`.
+  const [detailsDirty, setDetailsDirty] = useState(false);
 
   const { data: bp, isLoading, isError, refetch } = useQuery<BusinessPartnerFull>({
     queryKey: ['business-partners', partnerId],
@@ -264,6 +271,8 @@ export function PartnerDrawer({
       onClose={onClose}
       widthClass="w-[560px] max-w-[92vw]"
       bodyClassName="p-0"
+      isDirty={detailsDirty}
+      dirtyWarning="Discard your unsaved changes?"
     >
       {/* Custom header — the drawer wants an avatar cluster next to the
           title, so we omit Sheet's default title/close-X and render our
@@ -343,7 +352,13 @@ export function PartnerDrawer({
         ) : isLoading || !bp ? (
           <div className="text-sm text-slate-400 dark:text-slate-500 text-center py-8">Loading...</div>
         ) : tab === 'details' ? (
-          <DetailsTab bp={bp} canWrite={canWrite} canDelete={canDelete} onClose={onClose} />
+          <DetailsTab
+            bp={bp}
+            canWrite={canWrite}
+            canDelete={canDelete}
+            onClose={onClose}
+            onDirtyChange={setDetailsDirty}
+          />
         ) : (
           <RelationshipsTab bp={bp} canWrite={canWrite} canDelete={canDelete} />
         )}
@@ -499,7 +514,22 @@ function MainRoleHeaderField({ bp, canWrite }: { bp: BusinessPartnerFull; canWri
 
 // ─── Details ─────────────────────────────────────────────────────────────────
 
-function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerFull; canWrite: boolean; canDelete: boolean; onClose: () => void }) {
+function DetailsTab({
+  bp,
+  canWrite,
+  canDelete,
+  onClose,
+  onDirtyChange,
+}: {
+  bp: BusinessPartnerFull;
+  canWrite: boolean;
+  canDelete: boolean;
+  onClose: () => void;
+  /** Bubbles the Details form's dirty state up to `PartnerDrawer` so the
+   *  Sheet shell can gate Escape / backdrop close with a "Discard
+   *  changes?" confirm (People UX U6 · P-07). */
+  onDirtyChange: (dirty: boolean) => void;
+}) {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
@@ -530,7 +560,11 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
     [orgs, employerRel, bp.companyName],
   );
 
-  const [form, setForm] = useState({
+  // Rebuild the form's initial values from the current bp + active
+  // worker_of edge. Recomputed whenever the underlying bp changes (e.g.
+  // after a save invalidates the list), which resets the diff baseline
+  // used by the dirty-guard.
+  const initialForm = useMemo(() => ({
     firstName: bp.firstName ?? '',
     lastName: bp.lastName ?? '',
     // People UX M2c — Hebrew names, Discipline, Role(s), Title at {Org}
@@ -568,17 +602,39 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
     notes: bp.notes ?? '',
     status: bp.status,
     // Persons-only — id of org chosen from the employer dropdown.
-    employerOrgId: employerRel?.partyBId ?? null,
-  });
+    employerOrgId: employerRel?.partyBId ?? null as number | null,
+  }), [bp, employerRel]);
 
-  // Re-sync employer-linked fields when relationships load.
+  const [form, setForm] = useState(initialForm);
+
+  // Re-sync form to the latest initialForm baseline when NOT editing —
+  // covers async loads (orgs list, employerRel becoming available) and
+  // post-save refetches. In edit mode we don't clobber the user's
+  // in-progress changes.
   useEffect(() => {
-    setForm((f) => ({
-      ...f,
-      employerOrgId: employerRel?.partyBId ?? null,
-      titleAtOrg: employerRel?.titleAtB ?? '',
-    }));
-  }, [employerRel?.partyBId, employerRel?.titleAtB]);
+    if (!editing) setForm(initialForm);
+  }, [initialForm, editing]);
+
+  // People UX U6 (P-07) — dirty-guard signal. True only while editing
+  // and the form diverges from the snapshot. Shallow diff is enough —
+  // roleTypeIds is the only array field.
+  const isDirty = useMemo(() => {
+    if (!editing) return false;
+    return (Object.keys(initialForm) as Array<keyof typeof initialForm>).some((k) => {
+      const a = (form as any)[k];
+      const b = (initialForm as any)[k];
+      if (Array.isArray(a) && Array.isArray(b)) {
+        if (a.length !== b.length) return true;
+        return a.some((v, i) => v !== b[i]);
+      }
+      return a !== b;
+    });
+  }, [editing, form, initialForm]);
+
+  useEffect(() => {
+    onDirtyChange(isDirty);
+    return () => onDirtyChange(false);
+  }, [isDirty, onDirtyChange]);
 
   // People UX M2c — discipline catalog + role-type catalog for the
   // person edit form. Both are cached elsewhere (create modal, admin
@@ -628,6 +684,14 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
       const toAdd = nextRoleIds.filter((id) => !currentRoleIds.has(id));
       const toRemove = (bp.roles ?? []).filter((r) => !nextRoleIds.includes(r.roleType.id));
 
+      // People UX U6 (P-09) — collect per-step failures. Mirrors the
+      // `create-partner-modal` partial-failure pattern: the main BP
+      // PATCH goes through `onError` normally, but every follow-up
+      // call (roles diff, worker_of delete/create/patch) is captured
+      // so `onSuccess` can decide between a success toast and a
+      // sticky warning that names what didn't stick.
+      const warnings: string[] = [];
+
       // 1. Update plain BP fields. Main Role goes on the same PATCH so
       //    the write is transactional server-side (the primary role
       //    also lives on `main_role_type_id`; the service's
@@ -667,12 +731,12 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
       for (const row of toRemove) {
         await client
           .delete(`/business-partners/${bp.id}/roles/${row.roleType.id}`)
-          .catch(() => undefined);
+          .catch(() => { warnings.push(`role "${row.roleType.name}" (remove)`); });
       }
       for (const id of toAdd) {
         await client
           .post(`/business-partners/${bp.id}/roles`, { roleTypeId: id, isPrimary: id === nextPrimary })
-          .catch(() => undefined);
+          .catch(() => { warnings.push('role (add)'); });
       }
 
       // 3. For persons, sync the worker_of relationship to the chosen employer.
@@ -681,42 +745,81 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
         const newEmployerId = form.employerOrgId;
         const oldEmployerId = employerRel?.partyBId ?? null;
         const nextTitle = form.titleAtOrg.trim();
+        // Title at {Org} — carried forward when the employer changes,
+        // and (People UX U6 · P-09) PATCHed in-place when only the
+        // title moved so we don't destroy the edge just to rewrite one
+        // column.
+        const oldTitle = employerRel?.titleAtB ?? '';
+        // Old-title carry-over: if the user cleared the title while
+        // swapping employers we still take the empty string; if they
+        // didn't touch it, `nextTitle` already reflects the old value
+        // (initialForm hydrated from employerRel.titleAtB).
         if (newEmployerId !== oldEmployerId) {
           // End the old worker_of (soft-delete) if it existed.
           if (employerRel) {
-            await client.delete(`/partner-relationships/${employerRel.id}`).catch(() => undefined);
+            await client
+              .delete(`/partner-relationships/${employerRel.id}`)
+              .catch(() => { warnings.push('previous employer link (remove)'); });
           }
           // Create the new one if employer is set.
           if (newEmployerId) {
-            const relTypes = await client.get('/admin/partner-types/relationship-types')
-              .then((r) => r.data?.data ?? r.data ?? []);
-            const workerOf = (Array.isArray(relTypes) ? relTypes : []).find((rt: any) => rt.code === 'worker_of');
+            let workerOf: { id: number; code: string } | undefined;
+            try {
+              const relTypes = await client
+                .get('/admin/partner-types/relationship-types')
+                .then((r) => r.data?.data ?? r.data ?? []);
+              workerOf = (Array.isArray(relTypes) ? relTypes : []).find(
+                (rt: any) => rt.code === 'worker_of',
+              );
+            } catch {
+              // Type catalog fetch failed — fall through to the warning.
+            }
             if (workerOf) {
-              await client.post('/partner-relationships', {
-                partyAId: bp.id,
-                partyBId: newEmployerId,
-                typeId: workerOf.id,
-                // People UX M2c — carry the new Title at {Org} into
-                // the fresh worker_of edge so the value survives an
-                // employer swap.
-                titleAtB: nextTitle || undefined,
-                isPrimary: true,
-              }).catch(() => undefined);
+              await client
+                .post('/partner-relationships', {
+                  partyAId: bp.id,
+                  partyBId: newEmployerId,
+                  typeId: workerOf.id,
+                  // People UX M2c / U6 P-09 — carry the (edited or
+                  // preserved) Title at {Org} onto the fresh worker_of
+                  // edge so the value survives an employer swap.
+                  titleAtB: nextTitle || undefined,
+                  isPrimary: true,
+                })
+                .catch(() => { warnings.push('new employer link (create)'); });
+            } else {
+              // No `worker_of` relationship-type row means the DB
+              // isn't seeded — the employer pick can't be materialised.
+              // Fail loudly (via warning) rather than silently drop it.
+              warnings.push('new employer link (worker_of type missing)');
             }
           }
-        } else if (employerRel && nextTitle !== (employerRel.titleAtB ?? '')) {
-          // Same employer, changed title — PATCH the existing edge.
+        } else if (employerRel && nextTitle !== oldTitle) {
+          // Same employer, title changed — PATCH the existing edge
+          // rather than delete+recreate (People UX U6 · P-09).
           await client
             .patch(`/partner-relationships/${employerRel.id}`, {
               titleAtB: nextTitle || null,
             })
-            .catch(() => undefined);
+            .catch(() => { warnings.push('Title at organization'); });
         }
       }
+
+      return { warnings };
     },
-    onSuccess: () => {
+    onSuccess: ({ warnings }) => {
       queryClient.invalidateQueries({ queryKey: ['business-partners'] });
-      notify.success('Updated', { code: 'BP-UPDATE-200' });
+      if (warnings.length > 0) {
+        // People UX U6 (P-09) — sticky warning naming the follow-up
+        // calls that failed, matching create-partner-modal's copy so
+        // the two surfaces read the same way.
+        notify.warning(
+          `Partner updated, but couldn't save: ${warnings.join(', ')}. Open the partner to finish setting it up.`,
+          { code: 'BP-UPDATE-207' },
+        );
+      } else {
+        notify.success('Updated', { code: 'BP-UPDATE-200' });
+      }
       setEditing(false);
     },
     onError: (err: any) => notify.apiError(err, 'Failed to update'),
@@ -748,7 +851,17 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
       <div className="space-y-4">
         <div className="flex items-center justify-end gap-2">
           {canWrite && (
-            <button onClick={() => setEditing(true)} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1">
+            <button
+              onClick={() => {
+                // People UX U6 (P-07) — snapshot the form to the
+                // current bp so the dirty-guard diff starts at zero
+                // (any prior half-typed values from an earlier Cancel
+                // don't leak forward as "unsaved changes").
+                setForm(initialForm);
+                setEditing(true);
+              }}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
+            >
               <Pencil className="h-3 w-3" /> Edit
             </button>
           )}
@@ -1075,7 +1188,20 @@ function DetailsTab({ bp, canWrite, canDelete, onClose }: { bp: BusinessPartnerF
       />
 
       <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-        <button type="button" onClick={() => setEditing(false)} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg">Cancel</button>
+        <button
+          type="button"
+          onClick={() => {
+            // People UX U6 (P-07) — drop half-typed changes when the
+            // operator explicitly cancels. The dirty-guard on the
+            // Sheet backdrop / Escape already prompts before losing
+            // work; here the user has said they want to discard.
+            setForm(initialForm);
+            setEditing(false);
+          }}
+          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[12px] font-semibold px-3 py-1.5 rounded-lg"
+        >
+          Cancel
+        </button>
         <button
           type="button"
           onClick={() => update.mutate()}
