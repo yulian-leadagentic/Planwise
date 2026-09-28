@@ -145,6 +145,24 @@ export interface MappingPreset {
   updatedAt: string;
 }
 
+/**
+ * Fields the PM can override inline on the Preview table (QA4 IMP-2).
+ * `officeManager` is not a canonical ContactField — it lives on
+ * extracted secondary-contact rows (see QA4 IMP-4) and, when edited on
+ * the primary row, carries an office-manager name the classifier pulled
+ * from the phone cell.
+ */
+export type OverrideField =
+  | 'contact'
+  | 'company'
+  | 'phone'
+  | 'mobile'
+  | 'email'
+  | 'discipline'
+  | 'officeManager';
+
+export type RowOverrides = Partial<Record<OverrideField, string | null>>;
+
 export interface RowDecision {
   sourceRowIndex: number;
   orgAction?: OrgAction;
@@ -153,6 +171,13 @@ export interface RowDecision {
   contactBpId?: number | null;
   /** When splitting produced multiple emails, this is the one to persist. */
   chosenEmail?: string;
+  /**
+   * QA4 IMP-2 — per-field inline overrides from the Preview table.
+   * When present, the backend prefers each override value over the
+   * parsed value at commit time. `null` explicitly clears a parsed
+   * value.
+   */
+  overrides?: RowOverrides;
 }
 
 export interface CommitSummary {

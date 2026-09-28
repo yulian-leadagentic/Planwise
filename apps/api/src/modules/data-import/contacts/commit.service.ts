@@ -141,6 +141,25 @@ export class ContactsCommitService {
         continue;
       }
 
+      // QA4 IMP-2 — per-row inline overrides win over the parsed values.
+      // `null` in the override map explicitly clears the value.
+      const eff = (field: OverrideField): string | null => {
+        const overrides = dp?.overrides ?? {};
+        if (field in overrides) return overrides[field] ?? null;
+        // officeManager is not a canonical ContactField; only overrides
+        // populate it (or IMP-4's classifier via its own emit path).
+        if (field === 'officeManager') return null;
+        return (dec.values as Partial<Record<ContactField, string>>)[field] ?? null;
+      };
+      // `chosenEmail` (multi-email split resolution) still takes priority
+      // over the override for the email field so a legacy caller that
+      // only supplies chosenEmail keeps working; overrides win when set.
+      const emailForCommit = (): string | null => {
+        const overrides = dp?.overrides ?? {};
+        if ('email' in overrides) return overrides.email ?? null;
+        return dp?.chosenEmail ?? dec.values.email ?? null;
+      };
+
       try {
         // ─── ORG SIDE ─────────────────────────────────────────────
         let orgBpId: number | null = null;
@@ -149,13 +168,14 @@ export class ContactsCommitService {
           if (!orgBpId) throw new Error('link action needs an org BP id');
           result.orgsLinked++;
         } else if (orgAction === 'create') {
+          const orgName = eff('company');
           const created = await this.prisma.businessPartner.create({
             data: {
               partnerType: 'organization',
-              displayName: dec.values.company ?? '(unnamed)',
-              companyName: dec.values.company ?? null,
-              email: dec.values.email ?? null,
-              phone: dec.values.phone ?? null,
+              displayName: orgName ?? '(unnamed)',
+              companyName: orgName,
+              email: emailForCommit(),
+              phone: eff('phone'),
               address: dec.values.address ?? null,
               notes: dec.values.note ?? null,
               source: 'import',
@@ -191,7 +211,7 @@ export class ContactsCommitService {
           if (!contactBpId) throw new Error('link person action needs a person BP id');
           result.contactsLinked++;
         } else if (contactAction === 'create') {
-          const email = dp?.chosenEmail ?? dec.values.email ?? null;
+          const email = emailForCommit();
           // Idempotency re-check — a preview computed 30 seconds ago
           // may be stale if another import committed the same person
           // in the meantime.
@@ -206,17 +226,18 @@ export class ContactsCommitService {
             }
           }
           if (contactBpId == null) {
-            const [firstName, ...restName] = (dec.values.contact ?? '').trim().split(/\s+/);
+            const contactName = eff('contact');
+            const [firstName, ...restName] = (contactName ?? '').trim().split(/\s+/);
             const lastName = restName.join(' ') || null;
             const created = await this.prisma.businessPartner.create({
               data: {
                 partnerType: 'person',
-                displayName: dec.values.contact ?? email ?? '(unnamed)',
+                displayName: contactName ?? email ?? '(unnamed)',
                 firstName: firstName || null,
                 lastName,
                 email,
-                phone: dec.values.phone ?? null,
-                mobile: dec.values.mobile ?? null,
+                phone: eff('phone'),
+                mobile: eff('mobile'),
                 address: dec.values.address ?? null,
                 notes: dec.values.note ?? null,
                 source: 'import',
@@ -248,7 +269,8 @@ export class ContactsCommitService {
                   partyBId: orgBpId,
                   typeId: workerOf.id,
                   isPrimary: true,
-                  titleAtB: dec.values.role ?? dec.values.discipline ?? null,
+                  titleAtB:
+                    dec.values.role ?? eff('discipline') ?? null,
                 },
               });
               result.workerOfLinksCreated++;
@@ -285,7 +307,8 @@ export class ContactsCommitService {
                     partyId: contactBpId,
                     roleId,
                     isPrimary: false,
-                    titleInProject: dec.values.discipline ?? dec.values.role ?? null,
+                    titleInProject:
+                      eff('discipline') ?? dec.values.role ?? null,
                     onBehalfOfPartyId: orgBpId ?? null,
                   },
                 });
@@ -430,6 +453,23 @@ export class ContactsCommitService {
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
+/**
+ * Fields the wizard's Preview table (QA4 IMP-2) can override inline.
+ * `officeManager` is not a canonical ContactField — see split-merge's
+ * office-manager extraction (QA4 IMP-4); when present on the primary
+ * row's override map it seeds a secondary Office-manager contact.
+ */
+export type OverrideField =
+  | 'contact'
+  | 'company'
+  | 'phone'
+  | 'mobile'
+  | 'email'
+  | 'discipline'
+  | 'officeManager';
+
+export type RowOverrides = Partial<Record<OverrideField, string | null>>;
+
 export interface RowDecision {
   sourceRowIndex: number;
   orgAction?: OrgAction;
@@ -437,6 +477,12 @@ export interface RowDecision {
   contactAction?: ContactAction;
   contactBpId?: number | null;
   chosenEmail?: string;
+  /**
+   * QA4 IMP-2 — per-field overrides applied at commit time. When a
+   * field is present in this map the override wins over the parsed
+   * value; `null` explicitly clears the parsed value.
+   */
+  overrides?: RowOverrides;
 }
 
 export interface CommitInput {

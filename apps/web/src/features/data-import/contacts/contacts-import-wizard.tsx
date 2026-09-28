@@ -52,8 +52,10 @@ import {
   DedupDecision,
   ExtractedSheet,
   MappingPreset,
+  OverrideField,
   ResolvedRow,
   RowDecision,
+  RowOverrides,
   SheetGrade,
   SheetPreview,
   TriageResult,
@@ -433,6 +435,34 @@ export function ContactsImportWizard({
             // Snapshot the mapping on first decision (or after a reset)
             // so mapping edits can be detected on the next Preview.
             // People UX U4 · 2026-09-27
+            if (decidedMapping == null) setDecidedMapping({ ...mapping });
+          }}
+          onOverride={(rowIndex, field, value) => {
+            // QA4 IMP-2 — inline per-field overrides. Merge into the
+            // row's decision's `overrides` map without clobbering
+            // sibling fields; `null` clears the parsed value; a fresh
+            // `undefined` value removes the override entirely so the
+            // cell falls back to the classifier output.
+            const key = decisionKey(rowIndex);
+            setDecisions((prev) => {
+              const existing = prev[key];
+              const prevOverrides = existing?.overrides ?? {};
+              const nextOverrides: RowOverrides = { ...prevOverrides };
+              if (value === undefined) {
+                delete nextOverrides[field];
+              } else {
+                nextOverrides[field] = value;
+              }
+              return {
+                ...prev,
+                [key]: {
+                  ...existing,
+                  sourceRowIndex: rowIndex,
+                  overrides:
+                    Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined,
+                },
+              };
+            });
             if (decidedMapping == null) setDecidedMapping({ ...mapping });
           }}
           attachToProjectId={attachToProjectId}
@@ -882,6 +912,7 @@ function PreviewStep({
   sheetName,
   decisions,
   onDecide,
+  onOverride,
   attachToProjectId,
   onAttachProjectChange,
   projectRoleId,
@@ -896,6 +927,7 @@ function PreviewStep({
   sheetName: string;
   decisions: Record<string, RowDecision>;
   onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
+  onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
   attachToProjectId: number | null;
   onAttachProjectChange: (id: number | null) => void;
   projectRoleId: number | null;
@@ -1014,6 +1046,7 @@ function PreviewStep({
         decisionKeyFor={decisionKeyFor}
         conflictsOnly={conflictsOnly}
         onDecide={onDecide}
+        onOverride={onOverride}
       />
 
       <ProjectAttachPanel
@@ -1332,6 +1365,7 @@ function PreviewTable({
   decisionKeyFor,
   conflictsOnly,
   onDecide,
+  onOverride,
 }: {
   visibleDecisions: DedupDecision[];
   rowByIndex: Map<number, ResolvedRow>;
@@ -1339,6 +1373,7 @@ function PreviewTable({
   decisionKeyFor: (rowIndex: number) => string;
   conflictsOnly: boolean;
   onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
+  onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
   const toggle = (i: number) =>
@@ -1391,6 +1426,9 @@ function PreviewTable({
                     isExpanded={isExpanded}
                     onToggleExpand={() => toggle(d.sourceRowIndex)}
                     onDecide={(patch) => onDecide(d.sourceRowIndex, patch)}
+                    onOverride={(field, value) =>
+                      onOverride(d.sourceRowIndex, field, value)
+                    }
                   />
                 );
               })}
@@ -1424,6 +1462,7 @@ function PreviewTableRow({
   isExpanded,
   onToggleExpand,
   onDecide,
+  onOverride,
 }: {
   dec: DedupDecision;
   row: ResolvedRow;
@@ -1432,6 +1471,7 @@ function PreviewTableRow({
   isExpanded: boolean;
   onToggleExpand: () => void;
   onDecide: (patch: Partial<RowDecision>) => void;
+  onOverride: (field: OverrideField, value: string | null | undefined) => void;
 }) {
   const isConflict = dec.org.action === 'conflict';
   const belowContract = !dec.meetsMinimumContract;
@@ -1446,6 +1486,15 @@ function PreviewTableRow({
     : hasWarning
       ? 'bg-amber-50/30 dark:bg-amber-950/10'
       : '';
+  // QA4 IMP-2 — per-cell effective value: an override wins over the
+  // parsed value; `null` means "PM cleared the cell"; `undefined` means
+  // "no override, use parsed".
+  const overrides = rowDec?.overrides ?? {};
+  const effective = (field: OverrideField, parsed: string | null | undefined): string | null => {
+    if (field in overrides) return overrides[field] ?? null;
+    return parsed ?? null;
+  };
+  const isEdited = (field: OverrideField) => field in overrides;
   return (
     <>
       <tr className={cn('align-top', rowTint)}>
@@ -1455,49 +1504,75 @@ function PreviewTableRow({
           </div>
         </td>
         <td className="px-2 py-2">
-          <PreviewCell
-            value={dec.values.discipline || null}
-            inherited={row.synthesis.disciplineFilled}
+          <EditableCell
+            field="discipline"
+            value={effective('discipline', dec.values.discipline)}
+            edited={isEdited('discipline')}
+            inherited={!isEdited('discipline') && row.synthesis.disciplineFilled}
+            onCommit={(v) => onOverride('discipline', v)}
           />
         </td>
         <td className="px-2 py-2">
-          <PreviewCell
-            value={dec.values.contact || null}
+          <EditableCell
+            field="contact"
+            value={effective('contact', dec.values.contact)}
+            edited={isEdited('contact')}
             strong
             placeholder="no name"
+            onCommit={(v) => onOverride('contact', v)}
           />
         </td>
         <td className="px-2 py-2">
-          <PreviewCell
-            value={dec.values.company || null}
-            inherited={row.synthesis.companyFilled}
+          <EditableCell
+            field="company"
+            value={effective('company', dec.values.company)}
+            edited={isEdited('company')}
+            inherited={!isEdited('company') && row.synthesis.companyFilled}
             placeholder="no company"
+            onCommit={(v) => onOverride('company', v)}
           />
         </td>
         <td className="px-2 py-2">
-          <PreviewCell
-            value={dec.values.phone || null}
-            synthesized={row.synthesis.phoneSplit}
-            failed={row.synthesis.phoneSplitFailed}
+          <EditableCell
+            field="phone"
+            value={effective('phone', dec.values.phone)}
+            edited={isEdited('phone')}
+            synthesized={!isEdited('phone') && row.synthesis.phoneSplit}
+            failed={!isEdited('phone') && row.synthesis.phoneSplitFailed}
+            onCommit={(v) => onOverride('phone', v)}
           />
         </td>
         <td className="px-2 py-2">
-          <PreviewCell
-            value={dec.values.mobile || null}
-            synthesized={row.synthesis.phoneSplit}
+          <EditableCell
+            field="mobile"
+            value={effective('mobile', dec.values.mobile)}
+            edited={isEdited('mobile')}
+            synthesized={!isEdited('mobile') && row.synthesis.phoneSplit}
+            onCommit={(v) => onOverride('mobile', v)}
           />
         </td>
         <td className="px-2 py-2">
-          <PreviewCell
-            value={dec.values.email || null}
-            synthesized={row.synthesis.emailSplit}
-            failed={row.synthesis.emailSplitFailed}
+          <EditableCell
+            field="email"
+            value={effective('email', dec.values.email)}
+            edited={isEdited('email')}
+            synthesized={!isEdited('email') && row.synthesis.emailSplit}
+            failed={!isEdited('email') && row.synthesis.emailSplitFailed}
+            onCommit={(v) => onOverride('email', v)}
           />
         </td>
         <td className="px-2 py-2">
-          {/* IMP-4 fills this via extracted secondary contacts. IMP-1
-              keeps the column so the layout is stable when IMP-4 lands. */}
-          <PreviewCell value={null} placeholder="—" />
+          {/* Populated by QA4 IMP-4's content classifier (extracted
+              office-manager names from the phone cell). Editable now so
+              the PM can add/correct one even on rows the classifier
+              missed. */}
+          <EditableCell
+            field="officeManager"
+            value={effective('officeManager', null)}
+            edited={isEdited('officeManager')}
+            placeholder="—"
+            onCommit={(v) => onOverride('officeManager', v)}
+          />
         </td>
         <td className="px-2 py-2">
           <VerdictCell
@@ -1642,6 +1717,153 @@ function PreviewCell({
         </span>
       )}
     </div>
+  );
+}
+
+/**
+ * QA4 IMP-2 — inline-editable version of PreviewCell. Click switches
+ * to an `<input>`; Enter or blur commits; ESC cancels. `edited` shows
+ * a small marker so it is obvious which cells the PM changed before
+ * committing. Overrides live on the row's decision (extends the wizard
+ * `decisions` model keyed by `${sheet}::${rowIndex}` — see the
+ * `onOverride` handler in the wizard body).
+ *
+ * Empty string commits are normalised to `null` (semantically "clear
+ * this parsed value"). Passing `undefined` back to onCommit isn't
+ * exposed on this control; the PM re-enters and clears the cell to
+ * remove the value.
+ */
+function EditableCell({
+  field: _field,
+  value,
+  edited,
+  inherited,
+  synthesized,
+  failed,
+  extracted,
+  strong,
+  placeholder,
+  onCommit,
+}: {
+  field: OverrideField;
+  value: string | null;
+  edited?: boolean;
+  inherited?: boolean;
+  synthesized?: boolean;
+  failed?: boolean;
+  extracted?: boolean;
+  strong?: boolean;
+  placeholder?: string;
+  onCommit: (value: string | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? '');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) {
+      setDraft(value ?? '');
+      // Focus + place caret at the end so quick single-char edits feel natural.
+      queueMicrotask(() => {
+        const el = inputRef.current;
+        if (el) {
+          el.focus();
+          const len = el.value.length;
+          el.setSelectionRange(len, len);
+        }
+      });
+    }
+  }, [editing, value]);
+
+  const commit = (raw: string) => {
+    const trimmed = raw.trim();
+    const next: string | null = trimmed === '' ? null : trimmed;
+    // Only fire when the value actually changed vs. what we currently render.
+    if ((value ?? '') !== (next ?? '')) onCommit(next);
+    setEditing(false);
+  };
+  const cancel = () => setEditing(false);
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => commit(draft)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            commit(draft);
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancel();
+          }
+        }}
+        className={cn(
+          'w-full px-1.5 py-1 rounded-md border text-[12px]',
+          'border-blue-400 dark:border-blue-500 bg-white dark:bg-slate-900',
+          'text-slate-800 dark:text-slate-100 focus:outline-none focus:border-blue-500 dark:focus:border-blue-400',
+        )}
+        aria-label="Edit cell value"
+      />
+    );
+  }
+
+  // Read mode — a button so the whole cell is keyboard-reachable + click-to-edit.
+  const hasValue = !!value;
+  const title = edited
+    ? 'Edited — this value overrides the parsed one on commit. Click to change.'
+    : inherited
+      ? 'Inherited from a row above (forward-fill). Click to override.'
+      : synthesized
+        ? 'Split from a multi-value cell. Click to override.'
+        : failed
+          ? 'Split failed — cell has a delimiter but a piece is invalid. Click to fix.'
+          : extracted
+            ? 'Extracted by the content classifier. Click to override.'
+            : 'Click to edit';
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      title={title}
+      className={cn(
+        'group w-full min-w-0 text-left rounded px-1 py-0.5 -mx-1 -my-0.5',
+        'hover:bg-slate-100 dark:hover:bg-slate-800 focus:outline-none',
+        'focus:bg-slate-100 dark:focus:bg-slate-800',
+      )}
+    >
+      <div className="flex flex-col gap-0.5 min-w-0">
+        {hasValue ? (
+          <span
+            className={cn(
+              'truncate block',
+              strong
+                ? 'font-semibold text-slate-800 dark:text-slate-100'
+                : 'text-slate-700 dark:text-slate-200',
+              edited && 'text-emerald-800 dark:text-emerald-200',
+            )}
+          >
+            {value}
+          </span>
+        ) : (
+          <span className="italic text-slate-400 dark:text-slate-500">
+            {placeholder ?? '—'}
+          </span>
+        )}
+        {(edited || inherited || synthesized || failed || extracted) && (
+          <span className="flex items-center gap-1 flex-wrap">
+            {edited && <CellTag tone="edited">edited</CellTag>}
+            {inherited && !edited && <CellTag tone="inherited">inherited</CellTag>}
+            {synthesized && !failed && !edited && <CellTag tone="split">split</CellTag>}
+            {failed && !edited && <CellTag tone="failed">split failed</CellTag>}
+            {extracted && !edited && <CellTag tone="extracted">extracted</CellTag>}
+          </span>
+        )}
+      </div>
+    </button>
   );
 }
 
