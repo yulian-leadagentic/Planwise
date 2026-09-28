@@ -1939,13 +1939,23 @@ function TableBody({
  * check (allowedPartnerKind + requiredPartnerRoleCode +
  * requiredProfessionIds) on the POST and toasts the reason on 4xx.
  *
- * Deferred (spec §D7): the "N target roles not eligible — show why"
- * expander is not implemented inline; server 4xx surfaces the reason
- * on save. See report.
+ * QA4 D7 follow-up (2026-09-28): while the editor is open we expose a
+ * lazy "N target roles not eligible — show why" expander mirroring the
+ * New-Project TeamPartyPicker pattern (`project-form-page.tsx`
+ * ~1517-1543) and RoleAssignmentPicker (~334-378). The eligibility
+ * endpoint is party-per-role-scoped (`GET /admin/project-role-types/
+ * :code/eligible-parties?projectId=…` returns the full party list),
+ * so we defer the fetch until the user clicks the expander, then fire
+ * `Promise.all(addableRoles.map(rt => queryClient.fetchQuery(...)))`
+ * in ONE round-trip. Cache key is per (roleCode, projectId, partyId)
+ * so opening the same cell twice reuses the react-query cache; the
+ * `<select>` itself still renders instantly from the client-side
+ * pre-filter (kind rules + already-held roles). If every addableRole
+ * turns out to be eligible for this party, the expander stays hidden.
  */
 function ProjectRoleCell({
   row,
-  projectId: _projectId,
+  projectId,
   roleAssignments,
   addableRoles,
   canEdit,
@@ -1960,10 +1970,31 @@ function ProjectRoleCell({
   pending: boolean;
   onReassign: (vars: { partyId: number; sourcePprId: number | null; targetRoleId: number }) => void;
 }) {
+  const queryClient = useQueryClient();
+
   // `editingSourcePprId === undefined` → not editing.
   // `null` → editing in "add role" mode (row currently holds no PPR).
   // `number` → editing an existing PPR (reassign mode).
   const [editingSourcePprId, setEditingSourcePprId] = useState<number | null | undefined>(undefined);
+
+  // QA4 D7 follow-up — ineligibility expander state (scoped per open).
+  // `ineligibleRows === null` → not yet fetched. Populated array →
+  // fetched; empty means every addableRole is eligible for this party.
+  const [ineligibleRows, setIneligibleRows] = useState<Array<{ roleName: string; reasons: string[] }> | null>(null);
+  const [ineligibleLoading, setIneligibleLoading] = useState(false);
+  const [showIneligible, setShowIneligible] = useState(false);
+  const editorRef = useRef<HTMLDivElement>(null);
+
+  // Reset expander state whenever the editor closes so re-opening the
+  // same cell starts clean (react-query still serves the fetch from
+  // cache — this only resets the local UI toggle).
+  useEffect(() => {
+    if (editingSourcePprId === undefined) {
+      setIneligibleRows(null);
+      setIneligibleLoading(false);
+      setShowIneligible(false);
+    }
+  }, [editingSourcePprId]);
 
   // PPRs THIS party holds — used to (a) resolve source pprId for pill
   // clicks by role name, (b) hide already-held roles from the target
@@ -1987,6 +2018,65 @@ function ProjectRoleCell({
     [addableRoles, heldRoleIds, row.partyKind],
   );
 
+  /**
+   * Fetch eligibility for every addableRole for THIS party in one
+   * `Promise.all`. Each per-role query hits `/admin/project-role-types/
+   * :code/eligible-parties?projectId=…` (which returns the full party
+   * list), then narrows to this party's row so we can surface the
+   * plain-English `reasons[]`. react-query dedupes on the
+   * (roleCode, projectId, partyId) key, so re-opening the same cell
+   * is a warm read.
+   */
+  const loadIneligibility = async () => {
+    if (ineligibleRows) {
+      setShowIneligible((v) => !v);
+      return;
+    }
+    setIneligibleLoading(true);
+    try {
+      const results = await Promise.all(
+        addableRoles.map((rt) =>
+          queryClient
+            .fetchQuery<{ eligible: boolean; reasons: string[] }>({
+              queryKey: ['role-eligibility', rt.code, projectId, row.bpId],
+              staleTime: 60 * 1000,
+              queryFn: () =>
+                client
+                  .get(`/admin/project-role-types/${encodeURIComponent(rt.code)}/eligible-parties`, {
+                    params: { projectId },
+                  })
+                  .then((r) => {
+                    const d = r.data?.data ?? r.data;
+                    const list = (Array.isArray(d) ? d : []) as Array<{
+                      id: number;
+                      eligible: boolean;
+                      reasons: string[];
+                    }>;
+                    const hit = list.find((p) => p.id === row.bpId);
+                    return {
+                      eligible: hit?.eligible ?? false,
+                      reasons: Array.isArray(hit?.reasons) ? hit!.reasons : [],
+                    };
+                  }),
+            })
+            .then((data) => ({ roleName: rt.name, ...data })),
+        ),
+      );
+      setIneligibleRows(
+        results
+          .filter((r) => !r.eligible)
+          .map(({ roleName, reasons }) => ({ roleName, reasons })),
+      );
+      setShowIneligible(true);
+    } catch {
+      // Silent — the reassign mutation surfaces real errors on save.
+      // Reset to null so the user can retry.
+      setIneligibleRows(null);
+    } finally {
+      setIneligibleLoading(false);
+    }
+  };
+
   // Read-only render for related / contact / org rows, or when the
   // caller says we can't edit.
   if (!canEdit) {
@@ -2008,54 +2098,107 @@ function ProjectRoleCell({
     );
   }
 
-  // Editing — render the inline select.
+  // Editing — render the inline select. Wrapped in a div so the
+  // ineligibility expander (below) shares a focus scope with the
+  // <select>: onBlur only closes the editor when focus leaves BOTH
+  // children (i.e. the user clicked outside the cell).
   if (editingSourcePprId !== undefined) {
     const sourceRoleName =
       editingSourcePprId != null
         ? heldPprs.find((h) => h.pprId === editingSourcePprId)?.roleName ?? null
         : null;
+    const showExpander = ineligibleLoading || ineligibleRows === null || ineligibleRows.length > 0;
+    const ineligibleCount = ineligibleRows?.length ?? 0;
     return (
-      <select
-        autoFocus
-        disabled={pending}
-        defaultValue=""
-        aria-label={
-          sourceRoleName
-            ? `Change ${sourceRoleName} for ${row.displayName}`
-            : `Add project role for ${row.displayName}`
-        }
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            e.preventDefault();
-            setEditingSourcePprId(undefined);
-          }
-        }}
-        onBlur={() => setEditingSourcePprId(undefined)}
-        onChange={(e) => {
-          const next = Number(e.target.value);
-          if (!Number.isFinite(next) || next <= 0) {
-            setEditingSourcePprId(undefined);
+      <div
+        ref={editorRef}
+        className="flex flex-col gap-1 min-w-[9rem]"
+        onBlur={(e) => {
+          // React onBlur bubbles via focusout — close only when focus
+          // truly leaves the wrapper (relatedTarget is outside).
+          const next = e.relatedTarget as Node | null;
+          if (editorRef.current && next && editorRef.current.contains(next)) {
             return;
           }
-          onReassign({
-            partyId: row.bpId,
-            sourcePprId: editingSourcePprId,
-            targetRoleId: next,
-          });
           setEditingSourcePprId(undefined);
         }}
-        className={cn(
-          'w-full min-w-[9rem] rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none',
-          pending && 'opacity-50 cursor-wait',
-        )}
       >
-        <option value="">
-          {sourceRoleName ? `Change ${sourceRoleName} to…` : 'Select a role…'}
-        </option>
-        {targetOptions.map((rt) => (
-          <option key={rt.id} value={rt.id}>{rt.name}</option>
-        ))}
-      </select>
+        <select
+          autoFocus
+          disabled={pending}
+          defaultValue=""
+          aria-label={
+            sourceRoleName
+              ? `Change ${sourceRoleName} for ${row.displayName}`
+              : `Add project role for ${row.displayName}`
+          }
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              setEditingSourcePprId(undefined);
+            }
+          }}
+          onChange={(e) => {
+            const next = Number(e.target.value);
+            if (!Number.isFinite(next) || next <= 0) {
+              setEditingSourcePprId(undefined);
+              return;
+            }
+            onReassign({
+              partyId: row.bpId,
+              sourcePprId: editingSourcePprId,
+              targetRoleId: next,
+            });
+            setEditingSourcePprId(undefined);
+          }}
+          className={cn(
+            'w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none',
+            pending && 'opacity-50 cursor-wait',
+          )}
+        >
+          <option value="">
+            {sourceRoleName ? `Change ${sourceRoleName} to…` : 'Select a role…'}
+          </option>
+          {targetOptions.map((rt) => (
+            <option key={rt.id} value={rt.id}>{rt.name}</option>
+          ))}
+        </select>
+        {/* QA4 D7 follow-up — lazy "N target roles not eligible — show
+            why" expander. Hidden entirely when the fetch confirms every
+            addableRole is eligible for this party. */}
+        {addableRoles.length > 0 && showExpander && (
+          <div>
+            <button
+              type="button"
+              onClick={loadIneligibility}
+              disabled={ineligibleLoading || pending}
+              aria-expanded={ineligibleRows ? showIneligible : false}
+              className="text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 underline decoration-dotted underline-offset-2 disabled:opacity-60 disabled:cursor-wait focus:outline-none focus:ring-2 focus:ring-blue-400 rounded"
+            >
+              {ineligibleLoading
+                ? 'Checking eligibility…'
+                : ineligibleRows === null
+                  ? 'Show why other roles may not be eligible'
+                  : `${ineligibleCount} not eligible — ${showIneligible ? 'hide' : 'show why'}`}
+            </button>
+            {ineligibleRows && showIneligible && ineligibleRows.length > 0 && (
+              <ul className="mt-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 px-2 py-1.5 text-[11px] text-slate-500 dark:text-slate-400 space-y-0.5 max-h-40 overflow-y-auto">
+                {ineligibleRows.map((r) => (
+                  <li key={r.roleName} className="leading-snug">
+                    <span className="text-slate-600 dark:text-slate-300 font-medium">{r.roleName}</span>
+                    {r.reasons.length > 0 && (
+                      <>
+                        {' '}
+                        <span className="text-slate-400 dark:text-slate-500">— {r.reasons.join(' · ')}</span>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
     );
   }
 
