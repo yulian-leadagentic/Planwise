@@ -414,26 +414,18 @@ export class ReportsController {
     }
 
     // — 1. User.department strings —
-    // groupBy on the (nullable) column; drop the null bucket for the
-    // mapping report.
-    const userDeptGroups = await this.prisma.user.groupBy({
-      by: ['department'],
-      where: { deletedAt: null, department: { not: null } },
-      _count: { _all: true },
-    });
-    const userDepartments = userDeptGroups
-      .filter((g) => (g.department ?? '').trim() !== '')
-      .map((g) => {
-        const dept = g.department as string;
-        const match = unitByNameLc.get(dept.trim().toLowerCase()) ?? null;
-        return {
-          department: dept,
-          userCount: g._count._all,
-          matchingOrgUnitId: match?.id ?? null,
-          matchingOrgUnitName: match?.name ?? null,
-        };
-      })
-      .sort((a, b) => b.userCount - a.userCount);
+    // Retire-User.department Step 3/3 (2026-09-28) — the free-text
+    // `User.department` column was dropped in the same commit that
+    // simplified the mapping report. The remaining table below
+    // (`Project.departmentId` → OrgUnit preview) is still useful for
+    // spotting projects that never got their orgUnitId backfilled; the
+    // user-side is complete, so this row set is always empty now.
+    const userDepartments: Array<{
+      department: string;
+      userCount: number;
+      matchingOrgUnitId: number | null;
+      matchingOrgUnitName: string | null;
+    }> = [];
 
     // — 2. Project.departmentId values —
     const projDeptGroups = await this.prisma.project.groupBy({

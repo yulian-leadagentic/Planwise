@@ -118,9 +118,9 @@ export function AssigneeManager({
         displayName: `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || u.email || `User #${u.id}`,
         email: u.email ?? null,
         role: null,
-        // Retire-User.department Step 2/3 (2026-09-28) — prefer OrgUnit
-        // name; `department` string kept as a one-release fallback.
-        discipline: u.position ?? u.orgUnit?.name ?? u.department ?? null,
+        // Retire-User.department Step 3/3 (2026-09-28) — OrgUnit name
+        // only; the free-text `department` field is gone.
+        discipline: u.position ?? u.orgUnit?.name ?? null,
         canAssign: true,
       }));
 

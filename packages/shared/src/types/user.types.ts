@@ -12,13 +12,10 @@ export interface User {
   userType: UserType;
   position: string | null;
   /**
-   * Retire-User.department Step 2/3 (2026-09-28) — org membership now
-   * comes from `orgUnit` (id + name). `department` is the legacy
-   * free-text string kept as a fallback for one release; Step 3/3
-   * drops it entirely and simplifies every `?? department ?? '—'`
-   * fallback down to `orgUnit?.name ?? '—'`.
+   * Retire-User.department Step 3/3 (2026-09-28) — free-text
+   * `department` is retired. Org membership lives on the `orgUnit`
+   * relation only.
    */
-  department: string | null;
   orgUnitId?: number | null;
   orgUnit?: { id: number; name: string } | null;
   companyName: string | null;
@@ -39,8 +36,7 @@ export interface UserListItem {
   avatarUrl: string | null;
   userType: UserType;
   position: string | null;
-  /** See User — retirement in progress, `orgUnit` is the source of truth. */
-  department: string | null;
+  /** See User — free-text `department` retired; `orgUnit` is the source of truth. */
   orgUnitId?: number | null;
   orgUnit?: { id: number; name: string } | null;
   companyName: string | null;

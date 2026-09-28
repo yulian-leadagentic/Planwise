@@ -106,16 +106,14 @@ export function getColumns(
         // string only shows as a read-only fallback when the row hasn't
         // yet been backfilled onto an OrgUnit.
         const currentOrgUnitId: number | null = user.orgUnitId ?? user.orgUnit?.id ?? null;
-        // Retire-User.department Step 2/3 (2026-09-28) — prefer the
-        // OrgUnit relation; `user.department` (legacy free-text) is
-        // read as a one-release fallback until Step 3/3 drops both the
-        // column and this fallback.
-        const legacyDept: string = user.department ?? '';
+        // Retire-User.department Step 3/3 (2026-09-28) — OrgUnit is
+        // the sole source. The legacy free-text `user.department`
+        // hint below is retired with the column.
         const orgUnitName: string = user.orgUnit?.name ?? '';
         // Fall back to plain text when the callback isn't wired (e.g.
         // partners tab, or a caller that just wants a read-only view).
         if (!onChangeDepartment || !canEdit) {
-          return orgUnitName || legacyDept || '-';
+          return orgUnitName || '-';
         }
         const isSaving = savingUserId === user.id;
         return (
@@ -139,13 +137,9 @@ export function getColumns(
             {departments.map((d) => (
               <option key={d.id} value={d.id}>{d.name}</option>
             ))}
-            {/* Legacy free-text `User.department` label shown as a
-                disabled hint when the user hasn't yet been mapped to
-                an OrgUnit — makes the pre-migration value visible so
-                admins can pick the matching OrgUnit deliberately. */}
-            {currentOrgUnitId == null && legacyDept && (
-              <option value="" disabled>{legacyDept} (legacy)</option>
-            )}
+            {/* Retire-User.department Step 3/3 (2026-09-28) — the
+                "legacy free-text" hint option was removed with the
+                column drop; every row is now on an OrgUnit or "— None —". */}
           </select>
         );
       },

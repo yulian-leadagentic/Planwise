@@ -162,10 +162,7 @@ export class RolesController {
         avatarUrl: true,
         userType: true,
         position: true,
-        // Retire-User.department Step 1/3 — surface both. FE readers
-        // prefer `orgUnit.name`; `department` string is a fallback for
-        // one release.
-        department: true,
+        // Retire-User.department Step 3/3 — OrgUnit only.
         orgUnitId: true,
         orgUnit: { select: { id: true, name: true } },
         isActive: true,

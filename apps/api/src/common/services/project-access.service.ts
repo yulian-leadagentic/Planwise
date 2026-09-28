@@ -93,32 +93,21 @@ export class ProjectAccessService {
     });
     if (membership) return;
 
-    // Phase 4 · Stage 2 (2026-09-28) — OrgUnit-based backup access.
-    // Prefer `Project.orgUnitId` + `User.orgUnitId` when both are set;
-    // fall back to the legacy `User.department` string match while
-    // both columns coexist. Once every project + user carries a real
-    // orgUnitId, the legacy branch below becomes dead code and gets
-    // dropped alongside `User.department` in a follow-up.
+    // Retire-User.department Step 3/3 (2026-09-28) — OrgUnit-based
+    // backup access. `User.department` (the free-text string) is now
+    // retired, so the legacy department-name fallback that used to run
+    // alongside this OrgUnit check is gone.
     const projectForAccess = await this.prisma.project.findFirst({
       where: { id: projectId, deletedAt: null },
       select: { orgUnitId: true },
     });
     const projectOrgUnitId = projectForAccess?.orgUnitId ?? null;
-    if (projectOrgUnitId != null || project.departmentId != null) {
+    if (projectOrgUnitId != null) {
       const caller = await this.prisma.user.findUnique({
         where: { id: userId },
-        select: { department: true, orgUnitId: true },
+        select: { orgUnitId: true },
       });
-      // Preferred: same OrgUnit as the project.
-      if (projectOrgUnitId != null && caller?.orgUnitId === projectOrgUnitId) return;
-      // Legacy fallback: department-string match against a Department row.
-      if (project.departmentId != null && caller?.department) {
-        const dept = await this.prisma.department.findUnique({
-          where: { name: caller.department },
-          select: { id: true },
-        });
-        if (dept && dept.id === project.departmentId) return;
-      }
+      if (caller?.orgUnitId === projectOrgUnitId) return;
     }
 
     // Hierarchical fallback — a manager whose subordinate touches the
@@ -216,17 +205,14 @@ export class ProjectAccessService {
    * set (no org-tree involvement) skips the widen step entirely —
    * bit-for-bit identical to the pre-feature behaviour.
    *
-   * Extended for department-level backup access (feat/ops-complete,
-   * 2026-08): a user can always READ the projects of their department
-   * for backup, even without a direct membership or task assignment.
-   * The caller's `User.department` (free-text) is matched against
-   * `Department.name` (unique) and every project with that
-   * `departmentId` is added to the accessible set. Task assignment
+   * Extended for org-unit-level backup access (feat/ops-complete,
+   * 2026-08; retirement of `User.department` completed 2026-09-28): a
+   * user can always READ the projects of their home OrgUnit for
+   * backup, even without a direct membership or task assignment. The
+   * caller's `User.orgUnitId` is matched against `Project.orgUnitId`
+   * and every match is added to the accessible set. Task assignment
    * only NARROWS what the UI shows in "my tasks"/filters — it never
-   * removes department-mates' projects from the reading set. This
-   * mirrors the BM requirements doc: "access is department-level; a
-   * user can always read the projects of their department hierarchy
-   * for backup even without a task assignment".
+   * removes org-mates' projects from the reading set.
    */
   async getAccessibleProjectIds(
     userId: number,
@@ -246,14 +232,13 @@ export class ProjectAccessService {
     for (const m of memberships) ids.add(m.projectId);
     for (const p of led) ids.add(p.id);
 
-    // Phase 4 · Stage 2 (2026-09-28) — OrgUnit-based department
-    // widen. Prefer `User.orgUnitId` + `Project.orgUnitId`; keep the
-    // legacy `User.department` → Department.name → departmentId path
-    // in parallel until every row is migrated (a follow-up removes
-    // the legacy branch alongside `User.department`).
+    // Retire-User.department Step 3/3 (2026-09-28) — OrgUnit-based
+    // department widen. The legacy `User.department` → Department.name
+    // → departmentId chain is retired; OrgUnit is the single source of
+    // truth for org-tree membership.
     const caller = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { department: true, orgUnitId: true },
+      select: { orgUnitId: true },
     });
     if (caller?.orgUnitId) {
       const unitProjects = await this.prisma.project.findMany({
@@ -261,19 +246,6 @@ export class ProjectAccessService {
         select: { id: true },
       });
       for (const p of unitProjects) ids.add(p.id);
-    }
-    if (caller?.department) {
-      const dept = await this.prisma.department.findUnique({
-        where: { name: caller.department },
-        select: { id: true },
-      });
-      if (dept) {
-        const deptProjects = await this.prisma.project.findMany({
-          where: { departmentId: dept.id, deletedAt: null },
-          select: { id: true },
-        });
-        for (const p of deptProjects) ids.add(p.id);
-      }
     }
 
     // Hierarchical widen.

@@ -210,10 +210,8 @@ export class ProjectRoleTypesController {
             id: true,
             avatarUrl: true,
             position: true,
-            // Retire-User.department Step 1/3 (2026-09-28) — return the
-            // OrgUnit relation alongside the legacy `department` string
-            // so the picker's `department` field prefers `orgUnit.name`.
-            department: true,
+            // Retire-User.department Step 3/3 (2026-09-28) — OrgUnit is
+            // the sole source for the picker's `department` subtitle.
             orgUnit: { select: { id: true, name: true } },
           },
         },
@@ -319,8 +317,8 @@ export class ProjectRoleTypesController {
         email: p.email,
         avatarUrl: p.user?.avatarUrl ?? null,
         position: p.user?.position ?? null,
-        // Retire-User.department Step 1/3 — prefer OrgUnit name.
-        department: (p.user as any)?.orgUnit?.name ?? p.user?.department ?? null,
+        // Retire-User.department Step 3/3 — OrgUnit name only.
+        department: (p.user as any)?.orgUnit?.name ?? null,
         eligible: reasons.length === 0,
         reasons,
       };

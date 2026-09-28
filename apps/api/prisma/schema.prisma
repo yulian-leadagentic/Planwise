@@ -231,7 +231,9 @@ model User {
   roleId             Int             @map("role_id")
   userType           UserType        @map("user_type")
   position           String?
-  department         String?
+  // Retire-User.department Step 3/3 (2026-09-28) — free-text
+  // `department` retired. Migration `20260928240000_drop_user_department`
+  // drops the column. Home org unit lives on `orgUnitId` below.
   companyName        String?         @map("company_name")
   taxId              String?         @map("tax_id")
   address            String?

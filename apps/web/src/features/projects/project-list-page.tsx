@@ -114,7 +114,9 @@ export function ProjectListPage() {
           lastName: string;
           avatarUrl?: string | null;
           position?: string | null;
-          department?: string | null;
+          // Retire-User.department Step 3/3 (2026-09-28) — OrgUnit is
+          // the sole source of truth; free-text `department` is gone.
+          orgUnit?: { id: number; name: string } | null;
         }>;
       }),
   });
@@ -707,7 +709,9 @@ export function ProjectListPage() {
             userId: u.id,
             displayName: `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || `User #${u.id}`,
             avatarUrl: u.avatarUrl ?? null,
-            subtitle: u.position ?? u.department ?? null,
+            // Retire-User.department Step 3/3 (2026-09-28) — OrgUnit
+            // name replaces the retired free-text `u.department`.
+            subtitle: u.position ?? u.orgUnit?.name ?? null,
           }))}
           value={memberFilter}
           onChange={setMemberFilter}

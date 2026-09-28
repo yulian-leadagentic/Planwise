@@ -263,9 +263,9 @@ export class UsersService implements OnModuleInit {
         phone: true,
         userType: true,
         position: true,
-        department: true,
-        // Phase 4 · Stage 2 follow-up — surface the OrgUnit relation so
-        // FE readers can prefer `orgUnit.name` over the legacy string.
+        // Retire-User.department Step 3/3 (2026-09-28) — the free-text
+        // `department` column is gone. OrgUnit is now the sole source
+        // of truth for org-tree membership.
         orgUnitId: true,
         orgUnit: { select: { id: true, name: true } },
         companyName: true,
@@ -365,10 +365,8 @@ export class UsersService implements OnModuleInit {
           avatarUrl: true,
           userType: true,
           position: true,
-          department: true,
-          // Phase 4 · Stage 2 follow-up — surface the OrgUnit relation so
-          // the People page column, inline cell, and Edit modal can
-          // prefer `orgUnit.name` over the legacy `department` string.
+          // Retire-User.department Step 3/3 — OrgUnit is the sole source
+          // of truth; free-text `department` retired in this commit.
           orgUnitId: true,
           orgUnit: { select: { id: true, name: true } },
           companyName: true,
@@ -451,8 +449,7 @@ export class UsersService implements OnModuleInit {
         avatarUrl: true,
         userType: true,
         position: true,
-        department: true,
-        // Phase 4 · Stage 2 follow-up — surface the OrgUnit relation.
+        // Retire-User.department Step 3/3 — OrgUnit only.
         orgUnitId: true,
         orgUnit: { select: { id: true, name: true } },
         companyName: true,
@@ -568,8 +565,7 @@ export class UsersService implements OnModuleInit {
         avatarUrl: true,
         userType: true,
         position: true,
-        department: true,
-        // Phase 4 · Stage 2 follow-up — surface the OrgUnit relation.
+        // Retire-User.department Step 3/3 — OrgUnit only.
         orgUnitId: true,
         orgUnit: { select: { id: true, name: true } },
         companyName: true,

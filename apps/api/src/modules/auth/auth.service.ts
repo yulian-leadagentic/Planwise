@@ -231,13 +231,9 @@ export class AuthService {
         avatarUrl: true,
         userType: true,
         position: true,
-        // Retire-User.department Step 1/3 (2026-09-28) — surface the
-        // OrgUnit relation so /auth/me consumers can prefer
-        // `orgUnit.name` over the legacy free-text `department` string.
-        // `department` stays selected as a fallback for one release; the
-        // column drop in Step 3/3 removes both this select and the DB
-        // column.
-        department: true,
+        // Retire-User.department Step 3/3 (2026-09-28) — free-text
+        // `department` retired. OrgUnit is the sole source of truth
+        // for org-tree membership on /auth/me.
         orgUnitId: true,
         orgUnit: { select: { id: true, name: true } },
         companyName: true,
@@ -282,9 +278,7 @@ export class AuthService {
         lastName: true,
         phone: true,
         position: true,
-        // See Step 1/3 note on getProfile — both fields returned; readers
-        // prefer `orgUnit.name`, `department` is the legacy fallback.
-        department: true,
+        // Retire-User.department Step 3/3 — OrgUnit only.
         orgUnitId: true,
         orgUnit: { select: { id: true, name: true } },
         avatarUrl: true,

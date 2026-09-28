@@ -68,9 +68,9 @@ export function EditPersonModal({
     phone: (user as any).phone ?? '',
     roleId: String((user as any).roleId ?? ''),
     position: user.position ?? '',
-    // Phase 4 · Stage 2 follow-up — Department is now an OrgUnit id.
-    // The legacy free-text `user.department` (a string) is still read
-    // for display as a disabled hint below when no OrgUnit is linked.
+    // Retire-User.department Step 3/3 (2026-09-28) — Department is
+    // sourced solely from `orgUnitId` now; the legacy free-text
+    // fallback is retired with the column.
     orgUnitId: (((user as any).orgUnitId ?? (user as any).orgUnit?.id) ?? '') as number | '',
     companyName: user.companyName ?? '',
     employmentDate: toDateInput((user as any).employmentDate),
@@ -283,19 +283,13 @@ export function EditPersonModal({
               value={form.orgUnitId}
               onChange={(e) => patch('orgUnitId', e.target.value === '' ? '' : Number(e.target.value))}
             >
-              {/* Phase 4 · Stage 2 follow-up — options come from the
-                  OrgUnit tree; selecting one writes `orgUnitId`. When
-                  the row hasn't been backfilled (no OrgUnit link), the
-                  legacy free-text `department` shows as a disabled
-                  fallback option so admins can see the pre-migration
-                  value before picking the matching unit. */}
+              {/* Retire-User.department Step 3/3 (2026-09-28) — the
+                  "legacy free-text" hint option was removed with the
+                  column drop. Options are the OrgUnit tree only. */}
               <option value="">Select department</option>
               {orgUnits.map((u) => (
                 <option key={u.id} value={u.id}>{u.name}</option>
               ))}
-              {form.orgUnitId === '' && (user as any).department && (
-                <option value="" disabled>{(user as any).department} (legacy)</option>
-              )}
             </SelectField>
           </div>
           {/* Seniority History — replaces the single-level dropdown. */}
