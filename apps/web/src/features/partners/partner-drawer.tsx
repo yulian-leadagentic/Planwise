@@ -1887,14 +1887,22 @@ function AddRelationshipModal({
       }),
   });
 
+  // D4-2 (2026-09-28) — the employer edge (`worker_of`) is edited under
+  // the Details tab as "Employer" (M2c). Hiding it here keeps a single
+  // path for changing it, so operators don't accidentally create a
+  // second active employer edge via Relationships while the Details
+  // tab shows a stale employer name.
+  const HIDDEN_TYPE_CODES = new Set(['worker_of']);
+  const visibleRelTypes = allRelTypes.filter((t) => !HIDDEN_TYPE_CODES.has(t.code));
+
   // Annotate each type with which side(s) accept this partner, and keep
   // only those where at least one side fits. For types where only Side B
   // fits, the modal will save the row in reverse (other party as source,
   // this partner as target).
-  const annotatedRelTypes = allRelTypes
+  const annotatedRelTypes = visibleRelTypes
     .map((t) => ({ type: t, side: sideFor(t) }))
     .filter((x): x is { type: RelationshipType; side: 'A' | 'B' | 'both' } => x.side != null);
-  const hiddenTypeCount = allRelTypes.length - annotatedRelTypes.length;
+  const hiddenTypeCount = visibleRelTypes.length - annotatedRelTypes.length;
 
   const selectedEntry = annotatedRelTypes.find((x) => x.type.id === relationshipTypeId) || null;
   const selectedType = selectedEntry?.type ?? null;
@@ -2062,33 +2070,40 @@ function AddRelationshipModal({
       }
     >
       <form id="add-relationship-form" onSubmit={handleSubmit} className="space-y-3">
-          <div>
-            <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Relationship type</label>
-            <select
-              value={relationshipTypeId ?? ''}
-              onChange={(e) => setRelationshipTypeId(Number(e.target.value) || null)}
-              className={inputClass}
-            >
-              <option value="">Select...</option>
-              {annotatedRelTypes.map(({ type, side }) => (
-                <option key={type.id} value={type.id}>
-                  {type.name}
-                  {side === 'B' ? ` — as ${type.sideBLabel || 'side B'}` : ''}
-                </option>
-              ))}
-            </select>
-            {hiddenTypeCount > 0 && (
-              <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
-                {hiddenTypeCount} type{hiddenTypeCount > 1 ? 's' : ''} hidden — neither side accepts this record ({partnerKind}
-                {partnerRoleCodes.length > 0 ? ` with roles: ${partnerRoleCodes.join(', ')}` : ''}).
-              </p>
+          {/* D4-2 (2026-09-28) — the form fields now use the shared
+              a11y-wired <Field> wrapper from components/shared/field so
+              label, aria-describedby, and aria-invalid are handled the
+              same way as the rest of the drawer. */}
+          <Field
+            label="Relationship type"
+            hint={
+              hiddenTypeCount > 0
+                ? `${hiddenTypeCount} type${hiddenTypeCount > 1 ? 's' : ''} hidden — neither side accepts this record (${partnerKind}${partnerRoleCodes.length > 0 ? ` with roles: ${partnerRoleCodes.join(', ')}` : ''}).`
+                : undefined
+            }
+          >
+            {({ id }) => (
+              <select
+                id={id}
+                value={relationshipTypeId ?? ''}
+                onChange={(e) => setRelationshipTypeId(Number(e.target.value) || null)}
+                className={inputClass}
+              >
+                <option value="">Select...</option>
+                {annotatedRelTypes.map(({ type, side }) => (
+                  <option key={type.id} value={type.id}>
+                    {type.name}
+                    {side === 'B' ? ` — as ${type.sideBLabel || 'side B'}` : ''}
+                  </option>
+                ))}
+              </select>
             )}
-            {annotatedRelTypes.length === 0 && (
-              <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded mt-1">
-                No relationship types accept this record on either side. Configure a type whose first or second party matches this record's kind or roles.
-              </p>
-            )}
-          </div>
+          </Field>
+          {annotatedRelTypes.length === 0 && (
+            <p className="text-[12px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 px-2 py-1.5 rounded">
+              No relationship types accept this record on either side. Configure a type whose first or second party matches this record's kind or roles.
+            </p>
+          )}
 
           {selectedType && (
             <>
@@ -2134,46 +2149,56 @@ function AddRelationshipModal({
               )}
 
               {chosenKind && (
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">
-                    {chosenKind === 'project' ? 'Project' : chosenKind === 'organization' ? 'Organization' : 'Person'}
-                  </label>
-                  {optionsForChosenKind.length > 0 ? (
-                    <select
-                      value={targetId ?? ''}
-                      onChange={(e) => setTargetId(Number(e.target.value) || null)}
-                      className={inputClass}
-                    >
-                      <option value="">Select...</option>
-                      {optionsForChosenKind.map((o) => (
-                        <option key={o.id} value={o.id}>
-                          {o.name}{o.code ? ` (${o.code})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded">
-                      No eligible {chosenKind}s — they may already be related to this partner under this type, or none match the type's role constraints.
-                    </p>
-                  )}
-                </div>
+                optionsForChosenKind.length > 0 ? (
+                  <Field
+                    label={
+                      chosenKind === 'project'
+                        ? 'Project'
+                        : chosenKind === 'organization'
+                          ? (selectedType?.sideBLabel && forSide === 'A' ? selectedType.sideBLabel : 'Organization')
+                          : 'Person'
+                    }
+                  >
+                    {({ id }) => (
+                      <select
+                        id={id}
+                        value={targetId ?? ''}
+                        onChange={(e) => setTargetId(Number(e.target.value) || null)}
+                        className={inputClass}
+                      >
+                        <option value="">Select...</option>
+                        {optionsForChosenKind.map((o) => (
+                          <option key={o.id} value={o.id}>
+                            {o.name}{o.code ? ` (${o.code})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </Field>
+                ) : (
+                  <p className="text-[12px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 px-2 py-1.5 rounded">
+                    No eligible {chosenKind}s — they may already be related to this partner under this type, or none match the type's role constraints.
+                  </p>
+                )
               )}
 
               {exhausted && (
-                <p className="text-[12px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded">
+                <p className="text-[12px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 px-2 py-1.5 rounded">
                   No eligible parties for this relationship type. Either all candidates are already related, or the type has constraints that no parties match.
                 </p>
               )}
 
-              <div>
-                <label className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1 block">Title / role in this context (optional)</label>
-                <input
-                  value={roleInContext}
-                  onChange={(e) => setRoleInContext(e.target.value)}
-                  placeholder='e.g. "Operations Manager"'
-                  className={inputClass}
-                />
-              </div>
+              <Field label={`Title at ${otherSideLabel.toLowerCase()} (optional)`}>
+                {({ id }) => (
+                  <input
+                    id={id}
+                    value={roleInContext}
+                    onChange={(e) => setRoleInContext(e.target.value)}
+                    placeholder='e.g. "Operations Manager"'
+                    className={inputClass}
+                  />
+                )}
+              </Field>
 
               <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200 pt-1">
                 <input type="checkbox" checked={isPrimary} onChange={(e) => setIsPrimary(e.target.checked)} className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-blue-600" />
