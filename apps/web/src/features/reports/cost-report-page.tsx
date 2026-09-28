@@ -1,11 +1,22 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
+import { Navigate } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/page-header';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
+import { usePermissions } from '@/hooks/use-permissions';
 import client from '@/api/client';
 
 export function CostReportPage() {
+  // Defense-in-depth: the route guard already maps '/reports/cost' → 'finance',
+  // but a future edit to ROUTE_MODULE_MAP could re-open the leak. Also short-
+  // circuit here so the ₪ figures on this page are never rendered for a non-
+  // finance user. All hooks are called unconditionally above the guard to
+  // respect the Rules of Hooks. The query is disabled when the user lacks
+  // finance:read so no cost data is fetched in the meantime.
+  // (FG-1, finance-gate-cost-report.md, 2026-09-28.)
+  const { can } = usePermissions();
+  const hasFinance = can('finance', 'read');
   const scrollRef = useStickyHScroll();
   const today = new Date();
   const [from, setFrom] = useState(new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]);
@@ -14,7 +25,10 @@ export function CostReportPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['reports', 'cost', from, to],
     queryFn: () => client.get('/reports/cost/by-project', { params: { from, to } }).then((r) => r.data.data),
+    enabled: hasFinance,
   });
+
+  if (!hasFinance) return <Navigate to="/reports" replace />;
 
   const rows = data?.rows ?? [];
   const totals = data?.totals;

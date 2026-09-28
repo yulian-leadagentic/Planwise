@@ -34,6 +34,16 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
   '/admin/sso': 'org',
   '/admin/drive': 'org',
 
+  // Reports sub-modules — fully-financial reports require finance:read even
+  // though the Reports hub only needs reports:read. SORTED_PREFIXES below
+  // orders longest-first, so these two override the generic '/reports' →
+  // 'reports' mapping and a user with reports:read but not finance:read is
+  // redirected to '/' when they hit these URLs directly. Timesheet stays on
+  // the 'reports' module — it has legitimate hours content and gates its ₪
+  // columns in-page. (FG-1, finance-gate-cost-report.md, 2026-09-28.)
+  '/reports/cost': 'finance',
+  '/reports/billing-forecast': 'finance',
+
   // Top-level modules
   '/admin': 'admin',
   '/contracts': 'contracts',

@@ -6219,11 +6219,20 @@ function PlanningView({ projectId }: { projectId: number }) {
                 : 'text-blue-600',
             )}>{totalLoggedHours}h</div>
           </div>
-          <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
-          <div title="Sum of task budget amounts allocated across the plan. Distinct from the Contract Budget on the top strip.">
-            <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Planned (Allocated)</div>
-            <div className="text-[18px] font-bold text-slate-900 dark:text-slate-100 tabular-nums">₪{totalAmount.toLocaleString()}</div>
-          </div>
+          {/* FG-2 · Planned (Allocated) is a ₪ total — hide it (and the
+              divider that precedes it) for non-finance users so no money
+              figure appears on the strip. The Labor Cost (Spent) / Cost
+              Utilization block below already uses the same showFinance gate.
+              (finance-gate-cost-report.md, 2026-09-28.) */}
+          {showFinance && (
+            <>
+              <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
+              <div title="Sum of task budget amounts allocated across the plan. Distinct from the Contract Budget on the top strip.">
+                <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Planned (Allocated)</div>
+                <div className="text-[18px] font-bold text-slate-900 dark:text-slate-100 tabular-nums">₪{totalAmount.toLocaleString()}</div>
+              </div>
+            </>
+          )}
           <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
           <div title="Hours Progress = logged / budget hours. Distinct from Cost Utilization (money) below.">
             <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Hours Progress</div>
