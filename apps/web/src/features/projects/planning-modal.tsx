@@ -3032,7 +3032,7 @@ function ProjectDeliverablePickerCell({
           wrapper. Only surfaces when the filter is actually hiding
           something. */}
       {isFiltered && (
-        <option value="__show_all__">— Show all Services… —</option>
+        <option value="__show_all__">— Show deliverables from all services… —</option>
       )}
       <option value="__new__">+ Create new…</option>
     </select>
@@ -5748,8 +5748,14 @@ function PlanningView({ projectId }: { projectId: number }) {
         if (rl !== colFilters.deliverable) return false;
       }
       if (colFilters.service) {
-        // QA4 B2: '(empty)' bucket — tasks with no phase/service.
-        const sv = t.phase?.name ? t.phase.name : '(empty)';
+        // QA4 Wave-2 PG-1: match on the SAME resolution the column
+        // renders — `resolveTaskService(...)` (includes the server
+        // marker-resolved service + deliverable.service fallbacks) —
+        // so the funnel filters exactly what the user sees. Before
+        // this fix `t.phase?.name` alone would miss every marker-only
+        // task even when its column cell showed a service name.
+        const svName = resolveTaskService(t, deliverableLookups)?.name ?? null;
+        const sv = svName ? svName : '(empty)';
         if (sv !== colFilters.service) return false;
       }
       if (colFilters.status && t.status !== colFilters.status) return false;
@@ -5792,8 +5798,11 @@ function PlanningView({ projectId }: { projectId: number }) {
           return (t.zone?.name ?? 'Project Root') === v;
         case 'deliverable':
           return resolveTaskDeliverable(t, deliverableLookups) === v;
-        case 'service':
-          return (t.phase?.name ?? '') === v;
+        case 'service': {
+          // QA4 Wave-2 PG-1 — mirror the filter apply above.
+          const nm = resolveTaskService(t, deliverableLookups)?.name ?? null;
+          return (nm ?? '(empty)') === v;
+        }
         case 'status':
           return t.status === v;
         case 'assignee': {
@@ -5834,7 +5843,11 @@ function PlanningView({ projectId }: { projectId: number }) {
     const serviceEligible = eligibleFor('service');
     const service = new Set<string>();
     for (const t of serviceEligible) {
-      if (t.phase?.name) service.add(t.phase.name);
+      // QA4 Wave-2 PG-1: use the SAME resolver the SERVICE cell
+      // renders through — so the dropdown lists exactly the services
+      // shown on screen (including marker-resolved rows).
+      const svName = resolveTaskService(t, deliverableLookups)?.name ?? null;
+      if (svName) service.add(svName);
       else service.add('(empty)');
     }
 
