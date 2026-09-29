@@ -150,6 +150,18 @@ export class CreateBusinessPartnerDto {
   disciplineId?: number | null;
 
   /**
+   * QA4 JT-1/JT-3 (2026-09-29) — Position is the person's descriptive
+   * org title (CEO / HR manager / VP / Finance…). Split out of the
+   * `professions` gate so titles that are NOT project-role capabilities
+   * live here instead of poisoning the eligibility check. Optional;
+   * SET NULL on delete of the catalog row.
+   */
+  @ApiPropertyOptional({ type: Number, nullable: true })
+  @IsOptional()
+  @IsInt()
+  positionId?: number | null;
+
+  /**
    * People UX M6 (P-03) — mark this BP as the AMEC home org. Only ONE
    * org may hold `true` at a time; the service enforces the invariant
    * at write time by demoting the previous holder in the same

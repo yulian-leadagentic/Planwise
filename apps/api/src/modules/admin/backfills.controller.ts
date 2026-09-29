@@ -206,4 +206,170 @@ export class BackfillsController {
       candidatesBefore: beforeNullCandidates,
     };
   }
+
+  /**
+   * QA4 JT-4 (2026-09-29) — Split "Job Title" into Position + Qualification.
+   * See docs/bm2/qa4-jobtitle-position-qualification-split.md.
+   *
+   * Taxonomy (Yulian-approved 2026-09-29, verified vs staging DB):
+   *   Positions (moved to `positions` catalog): CEO, HR manager, VP, Finance
+   *   Qualifications (kept in `professions`, gate): BIM Coordinator,
+   *   BIM manager, BIM Leader, BIM modeler, Domain lead, Lead MEP coordination
+   *
+   * SAFETY (per Yulian rule): before removing a moved profession from the
+   * gate, verify no `ProjectRoleType.requiredProfessionIds` references
+   * it. On the current staging DB, `team_leader` references CEO (id=5) +
+   * VP (id=8). For those two the migration keeps the catalog row in
+   * `professions` so gates continue to resolve; it moves ONLY the
+   * person-links off (to Position) so people no longer inherit the
+   * gate eligibility via them. HR manager (6) and Finance (10) are
+   * NOT referenced anywhere and can go fully.
+   *
+   * Steps (all inside a $transaction so a failure rolls back cleanly):
+   *   1. Upsert 4 rows in `positions` — codes are stable slugs (ceo,
+   *      hr-manager, vp, finance). English name + Hebrew names picked
+   *      to match the current profession names.
+   *   2. For every BusinessPartner holding any of those 4 professions,
+   *      set `positionId` to the matching new Position (first hit
+   *      wins — a person carrying both CEO and VP as professions is
+   *      exceedingly unlikely; if it does happen, the earlier match
+   *      by our fixed order — CEO > VP > HR manager > Finance —
+   *      wins). Then delete their `business_partner_professions`
+   *      row(s) for those profession ids so the gate no longer
+   *      resolves them.
+   *   3. For non-gate-referenced professions (HR manager, Finance),
+   *      also delete the `professions` catalog row so the list
+   *      stops offering them. CEO + VP stay in the catalog.
+   *
+   * Idempotency: re-running finds no BP with those profession rows
+   * (they were removed on the first pass) and no non-gated profession
+   * rows (also removed). Everything is upsert / DELETE-WHERE-IS with
+   * `updated: 0` on a second run.
+   *
+   * DoD (reported in the response):
+   *   • positionsUpserted — always 4 on first run, 0 on re-run
+   *   • personLinksMoved  — BP × Profession rows deleted (== people
+   *                          transitioned to Position)
+   *   • gateRowsRemoved   — `professions` catalog rows removed (2
+   *                          expected: HR manager, Finance)
+   *   • gateRowsKept      — profession rows kept because a gate
+   *                          references them (2 expected: CEO, VP)
+   */
+  @Post('jobtitle-position-split')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'Backfill · move CEO / VP / HR manager / Finance from Profession gate to Position (idempotent; keeps gate-referenced rows)',
+  })
+  async runJobTitlePositionSplit() {
+    // Yulian-approved catalog. Order is significant — earlier entries
+    // win when a BP happens to carry more than one moved profession.
+    const CATALOG: Array<{
+      profession: string;
+      positionCode: string;
+      positionName: string;
+      positionNameHe: string | null;
+      sortOrder: number;
+    }> = [
+      { profession: 'CEO',        positionCode: 'ceo',        positionName: 'CEO',        positionNameHe: 'מנכ״ל',      sortOrder: 10 },
+      { profession: 'VP',         positionCode: 'vp',         positionName: 'VP',         positionNameHe: 'סמנכ״ל',     sortOrder: 20 },
+      { profession: 'HR manager', positionCode: 'hr-manager', positionName: 'HR manager', positionNameHe: 'מנהל משאבי אנוש', sortOrder: 30 },
+      { profession: 'Finance',    positionCode: 'finance',    positionName: 'Finance',    positionNameHe: 'כספים',       sortOrder: 40 },
+    ];
+
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Upsert positions catalog.
+      let positionsUpserted = 0;
+      const positionByProfession = new Map<string, { id: number; profession: string }>();
+      for (const c of CATALOG) {
+        const pos = await tx.position.upsert({
+          where: { code: c.positionCode },
+          create: {
+            code: c.positionCode,
+            name: c.positionName,
+            nameHe: c.positionNameHe,
+            sortOrder: c.sortOrder,
+            isActive: true,
+          },
+          update: {},
+        });
+        positionByProfession.set(c.profession, { id: pos.id, profession: c.profession });
+        positionsUpserted++;
+      }
+
+      // 2. Find each source profession row + which BPs carry it.
+      const sourceProfessions = await tx.profession.findMany({
+        where: { name: { in: CATALOG.map((c) => c.profession) } },
+        select: {
+          id: true,
+          name: true,
+          partners: { select: { businessPartnerId: true, isPrimary: true } },
+        },
+      });
+
+      // 3. Which of them are referenced by any `ProjectRoleType.requiredProfessionIds`?
+      const referencedProfessionIds = new Set<number>();
+      const gates = await tx.projectRoleType.findMany({
+        where: { requiredProfessionIds: { not: null as any } },
+        select: { requiredProfessionIds: true },
+      });
+      for (const g of gates) {
+        const ids = Array.isArray(g.requiredProfessionIds)
+          ? (g.requiredProfessionIds as number[])
+          : [];
+        for (const id of ids) referencedProfessionIds.add(id);
+      }
+
+      // 4. For each source profession, set the BP's positionId (in
+      //    catalog order — earliest wins), then delete the BPP link.
+      //    Track which BPs already got a positionId so a later
+      //    profession doesn't overwrite.
+      let personLinksMoved = 0;
+      const bpsAlreadyPositioned = new Set<number>();
+      for (const c of CATALOG) {
+        const src = sourceProfessions.find((p) => p.name === c.profession);
+        if (!src) continue;
+        const pos = positionByProfession.get(c.profession);
+        if (!pos) continue;
+        for (const link of src.partners) {
+          if (!bpsAlreadyPositioned.has(link.businessPartnerId)) {
+            await tx.businessPartner.update({
+              where: { id: link.businessPartnerId },
+              data: { positionId: pos.id },
+            });
+            bpsAlreadyPositioned.add(link.businessPartnerId);
+          }
+        }
+        const del = await tx.businessPartnerProfession.deleteMany({
+          where: { professionId: src.id },
+        });
+        personLinksMoved += del.count;
+      }
+
+      // 5. Remove non-referenced profession catalog rows. Keep the
+      //    referenced ones (CEO/VP on current staging).
+      let gateRowsRemoved = 0;
+      let gateRowsKept = 0;
+      const removableIds: number[] = [];
+      for (const src of sourceProfessions) {
+        if (referencedProfessionIds.has(src.id)) {
+          gateRowsKept++;
+        } else {
+          removableIds.push(src.id);
+        }
+      }
+      if (removableIds.length > 0) {
+        const del = await tx.profession.deleteMany({ where: { id: { in: removableIds } } });
+        gateRowsRemoved = del.count;
+      }
+
+      return {
+        positionsUpserted,
+        personLinksMoved,
+        gateRowsRemoved,
+        gateRowsKept,
+        referencedProfessionIds: Array.from(referencedProfessionIds),
+      };
+    });
+  }
 }

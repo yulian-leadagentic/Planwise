@@ -723,6 +723,23 @@ export class ConfigController {
     });
   }
 
+  /**
+   * QA4 JT-3 (2026-09-29) — read-only catalog for the person drawer's
+   * Position picker. Positions are the descriptive org-title half of
+   * the JT-1 split (see docs/bm2/qa4-jobtitle-position-qualification-
+   * split.md). Full CRUD comes with JT-4's admin pages / backfill; the
+   * drawer only needs the list to render its dropdown for now.
+   */
+  @Get('positions')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({ summary: 'List positions (JT-3 read-only catalog)' })
+  async getPositions() {
+    return this.prisma.position.findMany({
+      where: { isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+  }
+
   @Post('disciplines')
   @RequirePermissions({ module: 'admin', action: 'write' })
   @ApiOperation({ summary: 'Create discipline' })

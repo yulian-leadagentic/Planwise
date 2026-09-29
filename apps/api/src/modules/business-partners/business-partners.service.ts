@@ -48,6 +48,10 @@ const partnerInclude = {
   // eligibility check on `project_partner_roles`. Surfaced so the Contacts
   // list can group and filter by it without a second round-trip.
   discipline: true,
+  // QA4 JT-1/JT-3 (2026-09-29) — Position is the descriptive org title
+  // (CEO / HR manager / VP / …). Surfaced so the drawer + person
+  // subtitle read it without a second fetch.
+  position: true,
   // Professions ("Job Titles") the party holds. Surfaced so the Project
   // Role assignment pickers can pre-filter candidates against a role's
   // requiredProfessionIds — without this the dropdown showed every
@@ -684,6 +688,8 @@ export class BusinessPartnersService {
           source: dto.source ?? 'manual',
           mainRoleTypeId: dto.mainRoleTypeId ?? null,
           disciplineId: dto.disciplineId ?? null,
+          // QA4 JT-1/JT-3 — descriptive Position (not the eligibility gate).
+          positionId: dto.positionId ?? null,
           isHomeOrg: wantsHomeOrg,
           roles:
             dto.initialRoleTypeIds && dto.initialRoleTypeIds.length > 0
@@ -820,6 +826,9 @@ export class BusinessPartnersService {
           ...(dto.mainRoleTypeId !== undefined ? { mainRoleTypeId: dto.mainRoleTypeId } : {}),
           // Discipline — same explicit-null-vs-undefined pattern.
           ...(dto.disciplineId !== undefined ? { disciplineId: dto.disciplineId } : {}),
+          // QA4 JT-1/JT-3 (2026-09-29) — Position (descriptive title).
+          // Same explicit-null-vs-undefined semantics as discipline.
+          ...(dto.positionId !== undefined ? { positionId: dto.positionId } : {}),
           ...(displayName !== undefined ? { displayName } : {}),
           // Home-org flag — only touched when the caller sent it AND
           // the row is an org.
