@@ -1821,6 +1821,16 @@ model BusinessPartner {
   disciplineId Int?        @map("discipline_id")
   discipline   Discipline? @relation(fields: [disciplineId], references: [id], onUpdate: Cascade, onDelete: SetNull)
 
+  /// QA4 JT-1 (2026-09-29) — Position is the person's DESCRIPTIVE
+  /// organizational title (CEO, VP, HR manager, Finance…). Purely
+  /// informational; renders as the person's subtitle and never gates
+  /// project-role eligibility (that lives on Profession /
+  /// Qualifications). Optional; SET NULL on delete so pruning the
+  /// catalog never orphans partners. See qa4-jobtitle-position-
+  /// qualification-split.md.
+  positionId Int?      @map("position_id")
+  position   Position? @relation(fields: [positionId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -2238,6 +2248,35 @@ model Discipline {
   partners BusinessPartner[]
 
   @@map("disciplines")
+}
+
+/// QA4 JT-1 (2026-09-29) — Descriptive organizational position for a
+/// person (CEO, VP, HR manager, Finance director…). Split out of the
+/// legacy `Profession` list, which was doing double duty as both a
+/// descriptive title AND a functional-capability gate on project-role
+/// eligibility. Position is the descriptive half; Profession stays as
+/// the eligibility gate (`ProjectRoleType.requiredProfessionIds`).
+///
+/// Managed catalog mirrors `Discipline`'s shape (code + name + Hebrew
+/// + sortOrder + isActive). Single value on `BusinessPartner.positionId`
+/// — a person has one org position at a time, not several.
+///
+/// See docs/bm2/qa4-jobtitle-position-qualification-split.md.
+model Position {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique @db.VarChar(50)
+  name      String   @db.VarChar(100)
+  /// Optional Hebrew rendering — matches the bilingual name pattern
+  /// used on User / BusinessPartner / Discipline.
+  nameHe    String?  @map("name_he") @db.VarChar(100)
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  partners BusinessPartner[]
+
+  @@map("positions")
 }
 
 // User-managed seniority ladder (Junior / Mid / Senior / Principal / …).
