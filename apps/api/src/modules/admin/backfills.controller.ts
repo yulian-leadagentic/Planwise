@@ -5,6 +5,10 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  extractServiceMarker,
+  resolvePhasesByMarkerNames,
+} from '../planning/marker-phase-resolver';
 
 /**
  * One-shot admin backfill endpoints — mutations that fix historical
@@ -97,5 +101,109 @@ export class BackfillsController {
           AND pd.deleted_at IS NULL`,
     );
     return { updated };
+  }
+
+  /**
+   * Task.phaseId backfill from `[SERVICE:xxx]` description marker
+   * (QA4 · BF-1 · 2026-09-29 · durable follow-up to 94ebb43).
+   *
+   * `94ebb43` resolves the marker at READ time by name. That works,
+   * but a future rename that is NOT a pure `\<suffix>` append silently
+   * breaks resolution again — the marker still holds the old name.
+   * The read resolver stays as defense-in-depth; this endpoint
+   * persists the resolved phase into `task.phaseId` so future reads
+   * use the FK (rename-proof).
+   *
+   * Candidate = every task with `phaseId IS NULL` + a `[SERVICE:`
+   * marker + no `projectDeliverable.service` + no
+   * `deliverableTemplate.phase`. Mirrors the resolver's own candidate
+   * test exactly, so the backfill fixes only rows the resolver would
+   * otherwise resolve at read time.
+   *
+   * Marker → template match is delegated to the SHARED helper
+   * (`resolvePhasesByMarkerNames`) used by the read resolver — no
+   * risk of drift between read and write.
+   *
+   * Writes `task.phaseId` ONLY. Does NOT touch `deliverableTemplateId`
+   * (matched template is a `task_list` — wrong FK type). Leaves the
+   * marker in `description` as provenance.
+   *
+   * Idempotent: once phaseId is set the candidate filter excludes the
+   * row on re-run. Markers with no matching template stay NULL and
+   * come back as `unresolved` on every run — safe.
+   */
+  @Post('task-service-phase')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'Backfill · task.phaseId ← [SERVICE:xxx] marker (idempotent, rename-proof follow-up to 94ebb43)',
+  })
+  async runTaskServicePhase() {
+    // 1. Candidate tasks — phaseId NULL + marker prefix. Prisma keeps
+    //    us safe from LIKE escaping here because `startsWith: '[SERVICE:'`
+    //    contains no LIKE wildcards; MySQL treats every char as literal.
+    const candidates = await this.prisma.task.findMany({
+      where: {
+        phaseId: null,
+        deletedAt: null,
+        description: { startsWith: '[SERVICE:' },
+      },
+      select: {
+        id: true,
+        description: true,
+        projectDeliverable: { select: { service: { select: { name: true } } } },
+        deliverableTemplate: { select: { phase: { select: { name: true } } } },
+      },
+    });
+
+    // 2. Keep only rows where BOTH sibling FKs are also empty and the
+    //    marker regex matches (mirrors the read-resolver's own gate).
+    type C = { id: number; marker: string };
+    const filtered: C[] = [];
+    for (const t of candidates) {
+      if (t.projectDeliverable?.service?.name) continue;
+      if (t.deliverableTemplate?.phase?.name) continue;
+      const marker = extractServiceMarker(t.description);
+      if (!marker) continue;
+      filtered.push({ id: t.id, marker });
+    }
+
+    const beforeNullCandidates = filtered.length;
+    if (filtered.length === 0) {
+      return { updated: 0, unresolved: 0, candidatesBefore: 0 };
+    }
+
+    // 3. Resolve markers → phase via the shared helper.
+    const markerNames = new Set(filtered.map((f) => f.marker));
+    const phaseByMarker = await resolvePhasesByMarkerNames(this.prisma as any, markerNames);
+
+    // 4. Group task ids by resolved phaseId so we can `updateMany`
+    //    once per distinct phase (small number of phases in practice).
+    const idsByPhase = new Map<number, number[]>();
+    let unresolved = 0;
+    for (const c of filtered) {
+      const p = phaseByMarker.get(c.marker);
+      if (!p) {
+        unresolved++;
+        continue;
+      }
+      if (!idsByPhase.has(p.id)) idsByPhase.set(p.id, []);
+      idsByPhase.get(p.id)!.push(c.id);
+    }
+
+    let updated = 0;
+    for (const [phaseId, ids] of idsByPhase) {
+      const res = await this.prisma.task.updateMany({
+        where: { id: { in: ids }, phaseId: null },
+        data: { phaseId },
+      });
+      updated += res.count;
+    }
+
+    return {
+      updated,
+      unresolved,
+      candidatesBefore: beforeNullCandidates,
+    };
   }
 }

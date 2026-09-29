@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { withQueryTimeout } from '../../common/query-timeout';
+import { extractServiceMarker, resolvePhasesByMarkerNames } from './marker-phase-resolver';
 
 @Injectable()
 export class PlanningService {
@@ -247,64 +248,19 @@ export class PlanningService {
     //   2. task.projectDeliverable.service               (via included relation)
     //   3. task.deliverableTemplate.phase                (via included relation)
     //   4. description marker → Template.name JOIN → phase
+    // Collect markers only for tasks with no FK-based service branch,
+    // then resolve via the shared helper (kept in
+    // ./marker-phase-resolver so backfills.controller can reuse it —
+    // see qa4-service-marker-backfill.md).
     const markerNames = new Set<string>();
     for (const t of tasks) {
       if ((t as any).phase?.name) continue;
       if ((t as any).projectDeliverable?.service?.name) continue;
       if ((t as any).deliverableTemplate?.phase?.name) continue;
-      const marker = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1];
+      const marker = extractServiceMarker(t.description);
       if (marker) markerNames.add(marker);
     }
-    // Match markers against Template names by exact-or-prefix. A common
-    // real-world pattern in the staging data: the marker holds the
-    // ORIGINAL deliverable name (e.g. "תכנון ראשוני") captured at
-    // template-authoring time, while the current Template row has been
-    // renamed to "<marker>\<detail-suffix>" (e.g. "תכנון ראשוני\תשתית
-    // ודוח קריטי").
-    //
-    // Earlier attempts used Prisma `startsWith: marker + '\\'`, which
-    // Prisma compiles to `LIKE 'marker\%'` — the backslash escapes the
-    // `%` in MySQL, so the query looks for the LITERAL string `marker%`
-    // and matches nothing. Rather than fight LIKE escaping, we fetch
-    // every task_list Template with a phase set (a small catalog — a
-    // handful of rows in practice) and filter in-memory. This also
-    // makes the semantics obvious in code.
-    const phaseByMarkerName = new Map<string, { id: number; name: string; color: string | null }>();
-    if (markerNames.size > 0) {
-      const allTemplates = await this.prisma.template.findMany({
-        where: { deletedAt: null, type: 'task_list', phaseId: { not: null } },
-        select: {
-          name: true,
-          phase: { select: { id: true, name: true, color: true } },
-        },
-      });
-      // First pass — exact name match wins.
-      for (const t of allTemplates) {
-        if (!t.phase) continue;
-        if (markerNames.has(t.name) && !phaseByMarkerName.has(t.name)) {
-          phaseByMarkerName.set(t.name, {
-            id: t.phase.id,
-            name: t.phase.name,
-            color: (t.phase as any).color ?? null,
-          });
-        }
-      }
-      // Second pass — prefix (marker + '\'). Sets only unresolved markers.
-      for (const t of allTemplates) {
-        if (!t.phase) continue;
-        for (const m of markerNames) {
-          if (phaseByMarkerName.has(m)) continue;
-          if (t.name.startsWith(`${m}\\`)) {
-            phaseByMarkerName.set(m, {
-              id: t.phase.id,
-              name: t.phase.name,
-              color: (t.phase as any).color ?? null,
-            });
-            break;
-          }
-        }
-      }
-    }
+    const phaseByMarkerName = await resolvePhasesByMarkerNames(this.prisma as any, markerNames);
     const resolveTaskService = (t: any): { id: number | null; name: string; color: string | null } | null => {
       if (t.phase?.name) {
         return { id: t.phase.id ?? null, name: t.phase.name, color: t.phase.color ?? null };
@@ -317,7 +273,7 @@ export class PlanningService {
         const p = t.deliverableTemplate.phase;
         return { id: p.id ?? null, name: p.name, color: p.color ?? null };
       }
-      const marker = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1];
+      const marker = extractServiceMarker(t.description);
       if (marker) {
         const p = phaseByMarkerName.get(marker);
         if (p) return p;
