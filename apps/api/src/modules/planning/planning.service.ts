@@ -233,6 +233,68 @@ export class PlanningService {
     const zoneNameById = new Map<number, string>();
     for (const z of flatZones) zoneNameById.set(z.id, z.name);
 
+    // ─── SERVICE resolver (server-side, marker-aware) ─────────────────
+    // The planning grid's Service column needs a Phase (a "service") for
+    // every task, but many project tasks materialized from legacy
+    // zone-templates (e.g. "Simple building") carry NO FK to a phase or
+    // deliverable-template — only the historical description marker
+    // `[SERVICE:<deliverable-template-name>]`.
+    //
+    // We resolve that here, once per request, so the FE can just render
+    // `task.service`. Priority (mirrors resolveTaskService on the FE
+    // but adds a final marker→template-name JOIN):
+    //   1. task.phase                                    (direct FK)
+    //   2. task.projectDeliverable.service               (via included relation)
+    //   3. task.deliverableTemplate.phase                (via included relation)
+    //   4. description marker → Template.name JOIN → phase
+    const markerNames = new Set<string>();
+    for (const t of tasks) {
+      if ((t as any).phase?.name) continue;
+      if ((t as any).projectDeliverable?.service?.name) continue;
+      if ((t as any).deliverableTemplate?.phase?.name) continue;
+      const marker = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1];
+      if (marker) markerNames.add(marker);
+    }
+    const markerTemplates = markerNames.size === 0 ? [] : await this.prisma.template.findMany({
+      where: { name: { in: Array.from(markerNames) }, deletedAt: null },
+      select: {
+        name: true,
+        phase: { select: { id: true, name: true, color: true } },
+      },
+    });
+    // Multiple templates can share a name (rare but legal). Keep the
+    // first one that resolves to a phase — this is a fallback path so
+    // "any" is fine; the correct fix is to populate deliverableTemplateId.
+    const phaseByMarkerName = new Map<string, { id: number; name: string; color: string | null }>();
+    for (const t of markerTemplates) {
+      if (t.phase && !phaseByMarkerName.has(t.name)) {
+        phaseByMarkerName.set(t.name, {
+          id: t.phase.id,
+          name: t.phase.name,
+          color: (t.phase as any).color ?? null,
+        });
+      }
+    }
+    const resolveTaskService = (t: any): { id: number | null; name: string; color: string | null } | null => {
+      if (t.phase?.name) {
+        return { id: t.phase.id ?? null, name: t.phase.name, color: t.phase.color ?? null };
+      }
+      if (t.projectDeliverable?.service?.name) {
+        const s = t.projectDeliverable.service;
+        return { id: s.id ?? null, name: s.name, color: s.color ?? null };
+      }
+      if (t.deliverableTemplate?.phase?.name) {
+        const p = t.deliverableTemplate.phase;
+        return { id: p.id ?? null, name: p.name, color: p.color ?? null };
+      }
+      const marker = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1];
+      if (marker) {
+        const p = phaseByMarkerName.get(marker);
+        if (p) return p;
+      }
+      return null;
+    };
+
     // Attach loggedMinutes + zoneBreadcrumb to each task. Breadcrumb
     // walks the zone.path (a slash-separated list of zone ids from
     // root → leaf). Falls back to an empty array for tasks at the
@@ -269,6 +331,10 @@ export class PlanningService {
         actualCostCurrency: actual?.currency ?? null,
         zoneBreadcrumb,
         deliverableTargetDate,
+        // Fully resolved SERVICE (Phase) — the FE prefers this over its
+        // own fallback chain because the server has the marker→template
+        // JOIN available in one place. Nullable when nothing resolves.
+        service: resolveTaskService(t),
       };
     });
 

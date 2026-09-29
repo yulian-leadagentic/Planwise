@@ -770,6 +770,13 @@ function resolveTaskService(
   t: any,
   lookups?: ProjectDeliverableLookups,
 ): { name: string | null; color: string | null } {
+  // Server-resolved service (planning.service.ts walks the full chain,
+  // including a marker→template.name JOIN for legacy inline zone-tasks
+  // that have no deliverableTemplateId FK). Preferred over any local
+  // fallback because it has DB access to the templates table.
+  if (t.service?.name) {
+    return { name: t.service.name, color: t.service.color ?? null };
+  }
   if (t.phase?.name) {
     return { name: t.phase.name, color: t.phase.color ?? null };
   }
