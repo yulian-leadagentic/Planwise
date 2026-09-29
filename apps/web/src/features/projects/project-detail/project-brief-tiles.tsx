@@ -80,18 +80,20 @@ function formatHours(hours: number): string {
   return `${hours.toLocaleString('en-US', { maximumFractionDigits: 1 })}h`;
 }
 
-// Shared token classes — mirrored from the design decisions in DN-2.
-const tileShell =
-  'rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3';
+// Shared token classes — DN-2 round 2 compact strip. Each slot lives in
+// a flex column with vertical dividers between; the strip reads as one
+// thin bar the same visual density as the old chip strip.
+const itemCls =
+  'flex flex-col justify-center px-4 first:pl-0 last:pr-0';
 const labelCls =
-  'text-[11px] font-semibold tracking-wide uppercase text-slate-500 dark:text-slate-400';
+  'text-[10px] font-semibold tracking-wide uppercase text-slate-500 dark:text-slate-400';
 const moneyValueCls =
-  'mt-1 font-mono text-lg font-semibold text-slate-900 dark:text-slate-100 tabular-nums';
+  'font-mono text-sm font-semibold text-slate-900 dark:text-slate-100 tabular-nums';
 const nonMoneyValueCls =
-  'mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100';
-const subtextCls = 'mt-0.5 text-[11px] text-slate-500 dark:text-slate-400';
+  'text-sm font-semibold text-slate-900 dark:text-slate-100';
+const subtextCls = 'text-[10px] text-slate-500 dark:text-slate-400';
 const gatedPlaceholderCls =
-  'mt-1 font-mono text-lg font-semibold text-slate-300 dark:text-slate-600 tabular-nums';
+  'font-mono text-sm font-semibold text-slate-300 dark:text-slate-600 tabular-nums';
 
 export function ProjectBriefTiles({
   projectId,
@@ -128,10 +130,10 @@ export function ProjectBriefTiles({
   const progressBarPct = Math.min(100, Math.max(0, progressPctRaw));
 
   return (
-    <div className="mt-3 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+    <div className="mt-3 flex flex-wrap items-center rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-2 divide-x divide-slate-200 dark:divide-slate-700">
       {/* CONTRACT */}
       <div
-        className={tileShell}
+        className={itemCls}
         title="Contract budget — the fixed contract value on the project record."
       >
         <div className={labelCls}>CONTRACT</div>
@@ -146,7 +148,7 @@ export function ProjectBriefTiles({
 
       {/* EST. AMOUNT */}
       <div
-        className={tileShell}
+        className={itemCls}
         title="Estimated amount = Σ of every task's budget amount across the plan (₪). Shown with task count and total budget hours."
       >
         <div className={labelCls}>EST. AMOUNT</div>
@@ -164,7 +166,7 @@ export function ProjectBriefTiles({
 
       {/* LOGGED COST */}
       <div
-        className={tileShell}
+        className={itemCls}
         title="Logged cost (actual labor cost) = Σ (logged hours × the effective hourly rate at each time entry's date). Shown with the number of tasks with logged time and total logged hours."
       >
         <div className={labelCls}>LOGGED COST</div>
@@ -185,11 +187,12 @@ export function ProjectBriefTiles({
         </div>
       </div>
 
-      {/* PROGRESS — visible to all (not money). */}
-      <div className={tileShell} title="Progress = logged hours ÷ budget hours.">
+      {/* PROGRESS — visible to all (not money). Bar shrunk to h-1 for the
+          compact strip; sits under the % on a second line. */}
+      <div className={itemCls} title="Progress = logged hours ÷ budget hours.">
         <div className={labelCls}>PROGRESS</div>
         <div className={nonMoneyValueCls}>{progressPctRaw}%</div>
-        <div className="mt-2 h-1 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+        <div className="mt-1 h-1 w-24 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
           <div
             className="h-full rounded-full bg-blue-600 dark:bg-blue-500"
             style={{ width: `${progressBarPct}%` }}
@@ -198,12 +201,12 @@ export function ProjectBriefTiles({
       </div>
 
       {/* AUTHORING TOOL — visible to all. */}
-      <div className={tileShell}>
+      <div className={itemCls}>
         <div className={labelCls}>AUTHORING TOOL</div>
         {authoringToolVersion ? (
           <div className={nonMoneyValueCls}>{authoringToolVersion}</div>
         ) : (
-          <div className="mt-1 text-lg font-semibold text-slate-300 dark:text-slate-600">—</div>
+          <div className="text-sm font-semibold text-slate-300 dark:text-slate-600">—</div>
         )}
       </div>
     </div>

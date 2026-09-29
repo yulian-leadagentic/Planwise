@@ -4928,37 +4928,6 @@ function PlanningView({ projectId }: { projectId: number }) {
   // Task drawer at the URL — a row click opens ?task=N (bm2 fix #2).
   // Every task-row renderer reads openDrawer via OpenTaskDrawerContext.
   const { drawerId: drawerTaskId, openDrawer: openTaskDrawer, closeDrawer: closeTaskDrawer } = useDrawerRoute('task');
-  // QA3 round-3 item 2 — finance-gated Labor Cost (Spent) + Cost
-  // Utilization on the totals strip. Reuses the same summary endpoint
-  // the Cost tab consumes so the two surfaces can never drift; hidden
-  // for non-finance users (as the tab is).
-  const { can: canPerm } = usePermissions();
-  const showFinance = canPerm('finance', 'read');
-  const laborCostQuery = useQuery<any>({
-    queryKey: ['projects', projectId, 'labor-cost'],
-    queryFn: () => client.get(`/projects/${projectId}/labor-cost`).then((r) => r.data?.data ?? r.data),
-    enabled: !!projectId && showFinance,
-    staleTime: 30 * 1000,
-  });
-  const projectMetaQuery = useQuery<any>({
-    // Fetches project.budget for the Cost Utilization %. Same query
-    // key the project detail page uses so it hits cache.
-    queryKey: ['projects', projectId],
-    queryFn: () => client.get(`/projects/${projectId}`).then((r) => r.data?.data ?? r.data),
-    enabled: !!projectId && showFinance,
-    staleTime: 60 * 1000,
-  });
-  const laborCostSpent = (() => {
-    const buckets = laborCostQuery.data?.totals?.byCurrency ?? [];
-    // Sum across buckets — ₪-only in practice (item 6b removes the
-    // multi-currency UI), but tolerate mixed for safety.
-    return buckets.reduce((s: number, b: any) => s + Number(b?.totalCost ?? 0), 0);
-  })();
-  const projectBudget = Number(projectMetaQuery.data?.budget ?? 0);
-  const costUtilization = projectBudget > 0
-    ? Math.round((laborCostSpent / projectBudget) * 100)
-    : null;
-
   // Loaded planning data (zones + tasks) — used below for the group
   // builder. We also use it here to derive the list of task IDs that
   // need a discussion-count, so the batch query runs ONCE for the whole
@@ -6256,83 +6225,6 @@ function PlanningView({ projectId }: { projectId: number }) {
               </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Project-level totals strip — sticky-ish summary at the top of the
-          planning view. Same numbers that already appear inline near the
-          task table, surfaced prominently so PMs see project-wide totals
-          without scrolling. Updates live as filters/edits change. */}
-      {!showTemplatePicker && !showManualZone && sorted.length > 0 && (
-        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-gradient-to-br from-blue-50/40 to-white px-5 py-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-[12px]">
-          <div>
-            <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Tasks</div>
-            <div className="text-[18px] font-bold text-slate-900 dark:text-slate-100 tabular-nums">{sorted.length}</div>
-          </div>
-          <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
-          <div>
-            <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Budget hours</div>
-            <div className="text-[18px] font-bold text-slate-900 dark:text-slate-100 tabular-nums">{totalHours}h</div>
-          </div>
-          <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
-          <div>
-            <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Logged hours</div>
-            <div className={cn(
-              'text-[18px] font-bold tabular-nums',
-              totalLoggedHours === 0 ? 'text-slate-400 dark:text-slate-500'
-                : totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-600'
-                : 'text-blue-600',
-            )}>{totalLoggedHours}h</div>
-          </div>
-          {/* FG-2 · Planned (Allocated) is a ₪ total — hide it (and the
-              divider that precedes it) for non-finance users so no money
-              figure appears on the strip. The Labor Cost (Spent) / Cost
-              Utilization block below already uses the same showFinance gate.
-              (finance-gate-cost-report.md, 2026-09-28.) */}
-          {showFinance && (
-            <>
-              <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
-              <div title="Sum of task budget amounts allocated across the plan. Distinct from the Contract Budget on the top strip.">
-                <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Planned (Allocated)</div>
-                <div className="text-[18px] font-bold text-slate-900 dark:text-slate-100 tabular-nums">₪{totalAmount.toLocaleString()}</div>
-              </div>
-            </>
-          )}
-          <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
-          <div title="Hours Progress = logged / budget hours. Distinct from Cost Utilization (money) below.">
-            <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Hours Progress</div>
-            <div className="text-[18px] font-bold text-slate-900 dark:text-slate-100 tabular-nums">
-              {totalHours > 0 ? `${Math.min(100, Math.round((totalLoggedHours / totalHours) * 100))}%` : '—'}
-            </div>
-          </div>
-          {/* QA3 round-3 item 2 — money-side stats, finance-only. Same
-              summary the Cost tab renders, so the number on the strip
-              always matches the tab. Reads 0 / — cleanly when no rates
-              or no logged hours exist (data, not error). */}
-          {showFinance && (
-            <>
-              <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
-              <div title="Actual labor cost = Σ logged hours × rate at each entry's date. Same total the Labor Cost tab shows.">
-                <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Labor Cost (Spent)</div>
-                <div className="text-[18px] font-bold text-slate-900 dark:text-slate-100 tabular-nums">
-                  ₪{Math.round(laborCostSpent).toLocaleString()}
-                </div>
-              </div>
-              <span className="h-8 w-px bg-slate-200 dark:bg-slate-700" />
-              <div title="Cost Utilization = Labor Cost ÷ Contract Budget. >100% overspend, >85% amber.">
-                <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Cost Utilization</div>
-                <div className={cn(
-                  'text-[18px] font-bold tabular-nums',
-                  costUtilization == null ? 'text-slate-400 dark:text-slate-500'
-                    : costUtilization > 100 ? 'text-red-600 dark:text-red-400'
-                    : costUtilization > 85 ? 'text-amber-600 dark:text-amber-400'
-                    : 'text-slate-900 dark:text-slate-100',
-                )}>
-                  {costUtilization == null ? '—' : `${costUtilization}%`}
-                </div>
-              </div>
-            </>
-          )}
         </div>
       )}
 
