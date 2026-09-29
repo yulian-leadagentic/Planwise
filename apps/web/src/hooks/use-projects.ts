@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { notify } from '@/lib/notify';
 import { projectsApi } from '@/api/projects.api';
 import type { ProjectQuery, CreateProjectPayload, AddMemberPayload } from '@/api/projects.api';
@@ -15,6 +15,12 @@ export function useProject(id: number) {
     queryKey: ['projects', id],
     queryFn: () => projectsApi.get(id),
     enabled: !!id,
+    // HDR-4 (QA4 · 2026-09-29): keep the previous project's payload on
+    // screen while the new id is fetching, so the header title / meta
+    // row don't blank out for a beat every time the user hits ← / → in
+    // the switcher. Downstream `data.id` still updates when the fetch
+    // resolves, so anything keyed on it stays honest.
+    placeholderData: keepPreviousData,
   });
 }
 
