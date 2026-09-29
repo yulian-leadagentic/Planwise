@@ -890,14 +890,41 @@ function DetailsTab({
           </div>
         )}
 
-        {/* M4a.3 — Job Titles. Lives on the Details tab (used to live on
-            the now-removed Roles tab). Persons only; organizations don't
-            have a profession concept. Drives the "Required Job Title"
-            constraint on Project Role Types. */}
+        {/* QA4 JT-3 (2026-09-29) — the old "Job Titles" section was
+            split into two:
+              • Position     — descriptive org title (CEO / VP / …),
+                               single value, no gate.
+              • Qualifications — functional capabilities (BIM Manager,
+                               etc.); the gate stayed here.
+            Both are person-only. For pure EXTERNAL contacts
+            (`bp.user` is null → no login, so no employee/consultant
+            relationship) we de-emphasize the Qualifications section
+            since the eligibility gate rarely applies — mirrors TM-2's
+            treatment of Discipline on Our-Team rows. Position stays. */}
         {bp.partnerType === 'person' && (
-          <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-            <JobTitlesSection bpId={bp.id} canWrite={canWrite} />
-          </div>
+          <>
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+              <PositionSection bpId={bp.id} canWrite={canWrite} currentPosition={(bp as any).position ?? null} />
+            </div>
+            {bp.user ? (
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                <JobTitlesSection bpId={bp.id} canWrite={canWrite} />
+              </div>
+            ) : (
+              <details className="pt-2 border-t border-slate-100 dark:border-slate-800 group">
+                <summary className="cursor-pointer text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase list-none flex items-center gap-1 hover:text-slate-600 dark:hover:text-slate-300">
+                  <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" aria-hidden="true" />
+                  Qualifications
+                  <span className="ml-1 text-[10px] font-normal text-slate-400 dark:text-slate-500 normal-case tracking-normal">
+                    · rarely used for external contacts
+                  </span>
+                </summary>
+                <div className="pt-2">
+                  <JobTitlesSection bpId={bp.id} canWrite={canWrite} />
+                </div>
+              </details>
+            )}
+          </>
         )}
 
         {/* BM2 Phase D — Domains. Orgs only. Feeds the import dedup
@@ -1391,6 +1418,94 @@ function JobTitleCombobox({ bpId }: { bpId: number }) {
   );
 }
 
+// ─── Position (QA4 JT-3) ─────────────────────────────────────────────────────
+//
+// The descriptive org-title half of the JT-1 split — separated from
+// the Qualifications gate so a "CEO" tag no longer accidentally
+// qualifies someone for a project role that gates on CEO. Single
+// value per person; catalog read-only for now (JT-4's admin backfill
+// seeds the initial rows from the existing profession names — CEO /
+// VP / HR manager / Finance — and full CRUD lands with the Admin
+// > Positions page as a follow-up).
+
+interface PositionCatalogRow { id: number; code: string; name: string; nameHe: string | null }
+
+function PositionSection({
+  bpId,
+  canWrite,
+  currentPosition,
+}: {
+  bpId: number;
+  canWrite: boolean;
+  currentPosition: { id: number; name: string; nameHe: string | null } | null;
+}) {
+  const queryClient = useQueryClient();
+  const { data: catalog = [] } = useQuery<PositionCatalogRow[]>({
+    queryKey: ['admin', 'config', 'positions'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/config/positions').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+
+  const save = useMutation({
+    mutationFn: (positionId: number | null) =>
+      client
+        .patch(`/business-partners/${bpId}`, { positionId })
+        .then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['business-partner', bpId] });
+      queryClient.invalidateQueries({ queryKey: ['business-partners'] });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update position'),
+  });
+
+  const currentId = currentPosition?.id ?? '';
+  return (
+    <div>
+      <p
+        className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1"
+        title="Descriptive organizational position; does not affect project-role eligibility."
+      >
+        Position
+      </p>
+      <p className="text-[11px] text-slate-400 dark:text-slate-500 mb-2">
+        The person's role at their organization (e.g. CEO). Not a gate.
+      </p>
+      {canWrite ? (
+        <select
+          value={currentId}
+          disabled={save.isPending}
+          onChange={(e) => {
+            const v = e.target.value;
+            save.mutate(v === '' ? null : Number(v));
+          }}
+          className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-[12px] text-slate-700 dark:text-slate-200 focus:outline-none focus-visible:border-blue-500 disabled:opacity-50"
+          aria-label="Position"
+        >
+          <option value="">— None —</option>
+          {catalog.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}{p.nameHe ? ` · ${p.nameHe}` : ''}
+            </option>
+          ))}
+        </select>
+      ) : currentPosition ? (
+        <p className="text-[12px] text-slate-700 dark:text-slate-200">{currentPosition.name}</p>
+      ) : (
+        <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">No position set.</p>
+      )}
+      {catalog.length === 0 && canWrite && (
+        <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500 italic">
+          No positions defined yet — run the JT-4 backfill or add rows via Admin › Positions.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── Job Titles (Professions) ────────────────────────────────────────────────
 
 interface JobTitle {
@@ -1454,7 +1569,11 @@ function JobTitlesSection({ bpId, canWrite }: { bpId: number; canWrite: boolean 
         className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase mb-1"
         title="Determines which project roles this person can be assigned to."
       >
-        Job titles
+        {/* QA4 JT-3 (2026-09-29): renamed "Job titles" → "Qualifications"
+            after the JT-1 split — the descriptive org-title concept
+            (CEO / VP / …) moved out into the separate Position field;
+            what remains here is the eligibility-gate axis. */}
+        Qualifications
       </p>
       <p className="text-[11px] text-slate-400 dark:text-slate-500 mb-2">
         Determines which project roles this person can be assigned to.
