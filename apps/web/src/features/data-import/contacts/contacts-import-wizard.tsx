@@ -717,9 +717,14 @@ function SheetPickerStep({
       <div className="flex items-center justify-between pt-2">
         <button
           onClick={onBack}
-          className="flex items-center gap-1 text-[13px] font-semibold text-slate-500 hover:text-slate-700"
+          className="flex items-center gap-1 text-[13px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 focus:outline-none focus:text-slate-700 dark:focus:text-slate-200"
         >
-          <ArrowLeft className="h-3.5 w-3.5" /> Cancel
+          {/* IMP-5 (QA4 · 2026-09-29): visible "Back" on every step.
+              onBack here reset()s the wizard to Upload after the
+              discard-decisions guard, so semantically it IS Back;
+              relabelled from "Cancel" for consistency with the other
+              steps' footers. */}
+          <ArrowLeft className="h-3.5 w-3.5" /> Back
         </button>
         <button
           onClick={onNext}
