@@ -17,7 +17,7 @@
  * shape of the retired BM2 Phase E BP-admin importer so a returning
  * user sees the same interaction model.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
@@ -56,6 +56,7 @@ import {
   ResolvedRow,
   RowDecision,
   RowOverrides,
+  SecondaryContact,
   SheetGrade,
   SheetPreview,
   TriageResult,
@@ -1416,20 +1417,35 @@ function PreviewTable({
                 const rowDec = decisions[decisionKeyFor(d.sourceRowIndex)];
                 const effectiveOrgAction = rowDec?.orgAction ?? d.org.action;
                 const isExpanded = expanded.has(d.sourceRowIndex);
+                // QA4 IMP-4 — extracted secondary contacts (office
+                // managers etc.) surface as their own rows immediately
+                // beneath the primary they came from, tagged
+                // "extracted". Not editable via the decisions model
+                // yet — a follow-up ticket can wire per-secondary
+                // overrides once the shape is proven in production.
+                const secondaries = d.secondaryContacts ?? [];
                 return (
-                  <PreviewTableRow
-                    key={d.sourceRowIndex}
-                    dec={d}
-                    row={row}
-                    rowDec={rowDec}
-                    effectiveOrgAction={effectiveOrgAction}
-                    isExpanded={isExpanded}
-                    onToggleExpand={() => toggle(d.sourceRowIndex)}
-                    onDecide={(patch) => onDecide(d.sourceRowIndex, patch)}
-                    onOverride={(field, value) =>
-                      onOverride(d.sourceRowIndex, field, value)
-                    }
-                  />
+                  <React.Fragment key={d.sourceRowIndex}>
+                    <PreviewTableRow
+                      dec={d}
+                      row={row}
+                      rowDec={rowDec}
+                      effectiveOrgAction={effectiveOrgAction}
+                      isExpanded={isExpanded}
+                      onToggleExpand={() => toggle(d.sourceRowIndex)}
+                      onDecide={(patch) => onDecide(d.sourceRowIndex, patch)}
+                      onOverride={(field, value) =>
+                        onOverride(d.sourceRowIndex, field, value)
+                      }
+                    />
+                    {secondaries.map((s, i) => (
+                      <SecondaryContactRow
+                        key={`${d.sourceRowIndex}-secondary-${i}`}
+                        primary={d}
+                        secondary={s}
+                      />
+                    ))}
+                  </React.Fragment>
                 );
               })}
             </tbody>
@@ -1562,17 +1578,28 @@ function PreviewTableRow({
           />
         </td>
         <td className="px-2 py-2">
-          {/* Populated by QA4 IMP-4's content classifier (extracted
-              office-manager names from the phone cell). Editable now so
-              the PM can add/correct one even on rows the classifier
-              missed. */}
-          <EditableCell
-            field="officeManager"
-            value={effective('officeManager', null)}
-            edited={isEdited('officeManager')}
-            placeholder="—"
-            onCommit={(v) => onOverride('officeManager', v)}
-          />
+          {/* QA4 IMP-4 — extracted office managers appear as their own
+              rows below; this cell summarizes them so the primary row
+              still reads as a complete record. When the PM types an
+              override here it wins on commit (per IMP-2). */}
+          {(() => {
+            const extractedSummary =
+              row.secondaryContacts && row.secondaryContacts.length > 0
+                ? row.secondaryContacts.map((s) => s.name).join(', ')
+                : null;
+            return (
+              <EditableCell
+                field="officeManager"
+                value={effective('officeManager', extractedSummary)}
+                edited={isEdited('officeManager')}
+                extracted={
+                  !isEdited('officeManager') && !!extractedSummary
+                }
+                placeholder="—"
+                onCommit={(v) => onOverride('officeManager', v)}
+              />
+            );
+          })()}
         </td>
         <td className="px-2 py-2">
           <VerdictCell
@@ -1666,6 +1693,85 @@ function PreviewTableRow({
  * extracted from a mixed cell). Placeholder shown when the value is
  * blank. `strong` bolds the value (used for the primary contact name).
  */
+/**
+ * QA4 IMP-4 — one extracted-secondary row. Rendered immediately under
+ * the primary row it was extracted from so the parent-child structure
+ * is obvious. Every cell that carries an extracted value shows the
+ * "extracted" tag. Fields inherit the primary row's discipline +
+ * company (mirroring the classifier's assembly rule). Not editable
+ * inline yet — the primary row's Office manager column is editable
+ * and is where the PM adjusts extractions today.
+ */
+function SecondaryContactRow({
+  primary,
+  secondary,
+}: {
+  primary: DedupDecision;
+  secondary: SecondaryContact;
+}) {
+  return (
+    <tr className="align-top bg-indigo-50/30 dark:bg-indigo-950/10">
+      <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+        <div className="pt-0.5">
+          <span className="text-indigo-500 dark:text-indigo-400 mr-1">↳</span>
+          Row {primary.sourceRowIndex}
+        </div>
+      </td>
+      <td className="px-2 py-2">
+        <PreviewCell value={primary.values.discipline || null} inherited />
+      </td>
+      <td className="px-2 py-2">
+        <PreviewCell value={secondary.name} extracted strong />
+      </td>
+      <td className="px-2 py-2">
+        <PreviewCell value={primary.values.company || null} inherited />
+      </td>
+      <td className="px-2 py-2">
+        <PreviewCell value={secondary.phone ?? null} extracted={!!secondary.phone} />
+      </td>
+      <td className="px-2 py-2">
+        <PreviewCell value={secondary.mobile ?? null} extracted={!!secondary.mobile} />
+      </td>
+      <td className="px-2 py-2">
+        <PreviewCell value={secondary.email ?? null} extracted={!!secondary.email} />
+      </td>
+      <td className="px-2 py-2">
+        <div className="flex flex-col gap-0.5">
+          <span
+            className="truncate text-slate-700 dark:text-slate-200 font-semibold"
+            title={
+              secondary.city
+                ? `Office manager · ${secondary.city}`
+                : 'Office manager (extracted from phone cell)'
+            }
+          >
+            {secondary.title}
+          </span>
+          <span className="flex items-center gap-1 flex-wrap">
+            <CellTag tone="extracted">extracted</CellTag>
+            {secondary.city && (
+              <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                {secondary.city}
+              </span>
+            )}
+          </span>
+        </div>
+      </td>
+      <td className="px-2 py-2">
+        <div className="flex flex-col gap-1">
+          <ActionBadge action="create" />
+          <span
+            className="text-[10px] text-slate-400 dark:text-slate-500 italic"
+            title={`Classifier confidence ${(secondary.confidence * 100).toFixed(0)}% · sourceField ${secondary.sourceField}`}
+          >
+            secondary
+          </span>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 function PreviewCell({
   value,
   inherited,

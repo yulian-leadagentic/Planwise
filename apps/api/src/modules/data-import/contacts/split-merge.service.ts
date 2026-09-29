@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 
 import { ContactField } from './header-dictionary';
+import { classifyCell } from './recognizers/classifier';
+import { DEFAULT_SECONDARY_TITLE } from './recognizers/titles';
 
 /**
  * BM2 · Contacts import wizard · Stage 4 — Split & merge.
@@ -80,6 +82,38 @@ export interface ResolvedRow {
   extraEmails?: string[];
   /** Best-effort human-readable errors for this row (never a stack trace). */
   errors: string[];
+  /**
+   * QA4 IMP-4 — secondary contacts assembled by the content classifier
+   * (e.g. an office manager whose name sat in the phone cell). Each
+   * secondary carries a `worker_of` back to the primary row's org and
+   * inherits the row's discipline. Dedup within the same org by
+   * (name, phone/email) happens in `dedupeSecondaryContactsByOrg`.
+   */
+  secondaryContacts?: SecondaryContact[];
+}
+
+/**
+ * Extracted secondary contact — a person the classifier assembled
+ * from tokens outside the primary contact-name cell (the office-
+ * manager case, per QA4 IMP-4).
+ */
+export interface SecondaryContact {
+  /** Assembled display name from the classifier. */
+  name: string;
+  /** Nearest phone token — usually the office landline. */
+  phone?: string;
+  /** Nearest mobile token, when the source cell carried one. */
+  mobile?: string;
+  /** Nearest email token, when the source cell carried one. */
+  email?: string;
+  /** Optional city extracted from the trailing ` - <city>` fragment. */
+  city?: string;
+  /** Default: `Office manager` unless the classifier hit a title. */
+  title: string;
+  /** Which mapped column the name was pulled from — for the preview. */
+  sourceField: 'phone' | 'mobile' | 'email' | 'company' | 'note';
+  /** 0..1; average of the underlying tokens' confidences. */
+  confidence: number;
 }
 
 export interface RowSynthesis {
@@ -137,6 +171,12 @@ export class ContactsSplitMergeService {
     forwardFillColumn(out, 'company');
     forwardFillColumn(out, 'discipline');
 
+    // ── Phase C: dedup secondary contacts within each org ──────────
+    // A phone-cell name (office manager) that repeats across two rows
+    // of the same company (same phone → same person) should collapse
+    // to a single contact. QA4 IMP-4 DoD.
+    dedupeSecondaryContactsByOrg(out);
+
     return out;
   }
 
@@ -184,26 +224,49 @@ export class ContactsSplitMergeService {
       }
     }
 
-    // ── PHONE split ─────────────────────────────────────────────────
-    // We handle two source columns: `mobile` and `phone`. Each is
-    // independently split. If a single-source cell contains a mixed
-    // set (05x + landline), we route to the right slot per pattern.
+    // ── PHONE split + name-in-phone-cell extraction ─────────────────
+    // QA4 IMP-4 — every phone-slot cell runs through the content
+    // classifier (deterministic recognizer chain). This lets us keep
+    // the existing "split into mobile/phone slots" behaviour AND pull
+    // a secretary/office-manager name out of the same cell as a
+    // secondary contact, without a per-file heuristic.
     const mobileHeader = mapping.mobile;
     const phoneHeader = mapping.phone;
 
     const collected: { mobile: string[]; phone: string[]; extra: string[]; anyFailed: boolean; anySplit: boolean } = {
       mobile: [], phone: [], extra: [], anyFailed: false, anySplit: false,
     };
+    const secondaries: SecondaryContact[] = [];
 
-    if (mobileHeader) processPhoneCell((raw[mobileHeader] ?? '').trim(), 'mobile', collected);
-    if (phoneHeader) processPhoneCell((raw[phoneHeader] ?? '').trim(), 'phone', collected);
+    if (mobileHeader) {
+      processPhoneCellWithClassifier(
+        (raw[mobileHeader] ?? '').trim(),
+        'mobile',
+        collected,
+        secondaries,
+        (values.contact ?? '').trim(),
+      );
+    }
+    if (phoneHeader) {
+      processPhoneCellWithClassifier(
+        (raw[phoneHeader] ?? '').trim(),
+        'phone',
+        collected,
+        secondaries,
+        (values.contact ?? '').trim(),
+      );
+    }
 
     if (collected.mobile.length) values.mobile = collected.mobile[0];
     if (collected.phone.length) values.phone = collected.phone[0];
     const spillover = [...collected.mobile.slice(1), ...collected.phone.slice(1), ...collected.extra];
     if (spillover.length) extraPhones = spillover;
     if (collected.anySplit) synthesis.phoneSplit = true;
-    if (collected.anyFailed) {
+    // Only hard-flag `phoneSplitFailed` when the classifier failed to
+    // extract anything useful (no phone AND no name). A cell that
+    // carried a real name + phone is a successful extraction, not a
+    // failure — QA4 IMP-4 DoD.
+    if (collected.anyFailed && secondaries.length === 0) {
       synthesis.phoneSplitFailed = true;
       errors.push('phone cell contains a delimiter but at least one piece is not a valid phone number');
     }
@@ -216,6 +279,7 @@ export class ContactsSplitMergeService {
       extraEmails,
       extraPhones,
       errors,
+      secondaryContacts: secondaries.length > 0 ? secondaries : undefined,
     };
   }
 }
@@ -300,37 +364,106 @@ export function splitPhoneCell(cell: string): {
 }
 
 /**
- * Process one raw source phone cell — either the mobile-column cell or
- * the phone-column cell — routing pieces to the collected mobile/phone
- * slots. `sourceSlot` is a preference: if the classifier can't decide,
- * pieces stay in the source slot (a mobile-column entry stays mobile
- * even if the format isn't 05x). This keeps user intent visible when
- * the classifier disagrees.
+ * QA4 IMP-4 — evolves `processPhoneCell` to route through the content
+ * classifier. Still routes phone tokens to the mobile/phone slots per
+ * grammar, and now also pulls out a name+city as a `SecondaryContact`
+ * when the classifier surfaces one. `primaryContactName` is the row's
+ * primary contact — used to skip echoes of the same person's name in
+ * the phone cell (some sheets repeat the person's name next to their
+ * mobile as a note).
+ */
+function processPhoneCellWithClassifier(
+  cell: string,
+  sourceSlot: 'mobile' | 'phone',
+  acc: { mobile: string[]; phone: string[]; extra: string[]; anyFailed: boolean; anySplit: boolean },
+  secondaries: SecondaryContact[],
+  primaryContactName: string,
+) {
+  if (!cell) return;
+  const classified = classifyCell(cell);
+
+  // ── Phone routing ────────────────────────────────────────────────
+  // Each phone match goes to its own slot per grammar (mobile vs
+  // landline). If the classifier found no phones at all but the cell
+  // was non-empty and looked like data, drop into the source slot
+  // verbatim — matches the legacy "single unclassifiable piece →
+  // source slot" behaviour.
+  if (classified.phones.length === 0) {
+    // Cell had text but no phone-shaped token — legacy fallback so
+    // "1234" style entries still land in the slot (Stage 6 validates).
+    if (!classified.name && !classified.title && !classified.city && cell.trim()) {
+      if (sourceSlot === 'mobile') acc.mobile.push(cell);
+      else acc.phone.push(cell);
+    }
+  } else {
+    if (classified.phones.length > 1) acc.anySplit = true;
+    for (const p of classified.phones) {
+      if (p.kind === 'mobile') acc.mobile.push(p.raw);
+      else acc.phone.push(p.raw);
+    }
+  }
+
+  // Detect a genuine "split failed" — cell had multiple tokens that
+  // weren't phone-shaped AND weren't classifiable as a name/title/city
+  // (real junk, not extracted metadata).
+  const unknowns = classified.tokens.filter((t) => t.type === 'unknown');
+  if (unknowns.length > 0 && classified.phones.length > 0) {
+    acc.anyFailed = true;
+  }
+
+  // ── Secondary contact assembly ───────────────────────────────────
+  // Emit a secondary contact when the classifier surfaced a name that
+  // isn't just a repeat of the primary contact and either (a) sits
+  // alongside a phone number in the cell or (b) sits alongside a
+  // title (rare — most sheets omit the title). `Office manager` is the
+  // default title, per the DoD in `docs/bm2/qa4-import-preview.md`.
+  const name = classified.name?.trim();
+  if (name) {
+    const isEchoOfPrimary = primaryContactName && normalizeForCompare(name) === normalizeForCompare(primaryContactName);
+    if (!isEchoOfPrimary && (classified.phones.length > 0 || classified.title)) {
+      const firstPhone = classified.phones[0];
+      const kind = firstPhone?.kind;
+      const secondary: SecondaryContact = {
+        name,
+        // Route the associated phone into the right slot on the
+        // secondary contact too. If the source slot was `mobile` we
+        // still let the grammar decide (a 03-x number from a mobile
+        // column is landline).
+        phone: firstPhone && kind !== 'mobile' ? firstPhone.raw : undefined,
+        mobile: firstPhone && kind === 'mobile' ? firstPhone.raw : undefined,
+        city: classified.city?.value,
+        title: classified.title ?? DEFAULT_SECONDARY_TITLE,
+        sourceField: sourceSlot,
+        confidence: averageConfidence(classified),
+      };
+      secondaries.push(secondary);
+    }
+  }
+}
+
+function averageConfidence(c: ReturnType<typeof classifyCell>): number {
+  const relevant = c.tokens.filter((t) => t.type !== 'unknown');
+  if (relevant.length === 0) return 0;
+  const sum = relevant.reduce((s, t) => s + t.confidence, 0);
+  return Number((sum / relevant.length).toFixed(2));
+}
+
+function normalizeForCompare(s: string): string {
+  return s.toLowerCase().replace(/[\s‐-―.\-'"׳״]+/g, '').trim();
+}
+
+/**
+ * Legacy wrapper kept for callers that used the plain-grammar path
+ * before the classifier landed (QA4 IMP-4). Delegates to the new
+ * processor with an empty secondaries sink and no primary-name echo
+ * suppression — the return-shape stays the same as before.
  */
 function processPhoneCell(
   cell: string,
   sourceSlot: 'mobile' | 'phone',
   acc: { mobile: string[]; phone: string[]; extra: string[]; anyFailed: boolean; anySplit: boolean },
 ) {
-  if (!cell) return;
-  const res = splitPhoneCell(cell);
-  if (res.status === 'fail') {
-    acc.anyFailed = true;
-    // Even on fail, keep the pieces we could classify.
-    acc.mobile.push(...res.mobiles);
-    acc.phone.push(...res.phones);
-    return;
-  }
-  if (res.status === 'split') acc.anySplit = true;
-
-  if (res.mobiles.length === 0 && res.phones.length === 0) {
-    // Single unclassifiable piece → stash into the source slot.
-    if (sourceSlot === 'mobile') acc.mobile.push(cell);
-    else acc.phone.push(cell);
-    return;
-  }
-  acc.mobile.push(...res.mobiles);
-  acc.phone.push(...res.phones);
+  processPhoneCellWithClassifier(cell, sourceSlot, acc, [], '');
 }
 
 // ─── Forward-fill helper ───────────────────────────────────────────────
@@ -374,4 +507,37 @@ function forwardFillColumn(rows: ResolvedRow[], field: 'company' | 'discipline')
 
 function truncate(s: string, n = 60): string {
   return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+/**
+ * QA4 IMP-4 — dedup secondary contacts within each (post-fill) org.
+ * Key = normalized (name, phone|mobile|email). When a secondary is
+ * already claimed on an earlier row for the same org, we DROP it from
+ * the later row so the preview shows only the first occurrence — the
+ * PM sees "one office manager per firm", not "3 duplicates".
+ *
+ * Runs after forward-fill so `row.values.company` is the effective
+ * company, not the raw source cell.
+ */
+function dedupeSecondaryContactsByOrg(rows: ResolvedRow[]): void {
+  const seen: Map<string, Set<string>> = new Map(); // orgKey → set of contactKeys
+  for (const row of rows) {
+    if (!row.secondaryContacts || row.secondaryContacts.length === 0) continue;
+    const orgKey = normalizeForCompare(row.values.company ?? '');
+    if (!seen.has(orgKey)) seen.set(orgKey, new Set());
+    const claimed = seen.get(orgKey)!;
+    const survivors: SecondaryContact[] = [];
+    for (const s of row.secondaryContacts) {
+      const dedupKey = [
+        normalizeForCompare(s.name),
+        s.phone ? normalizeForCompare(s.phone) : '',
+        s.mobile ? normalizeForCompare(s.mobile) : '',
+        s.email ? normalizeForCompare(s.email) : '',
+      ].join('|');
+      if (claimed.has(dedupKey)) continue;
+      claimed.add(dedupKey);
+      survivors.push(s);
+    }
+    row.secondaryContacts = survivors.length > 0 ? survivors : undefined;
+  }
 }

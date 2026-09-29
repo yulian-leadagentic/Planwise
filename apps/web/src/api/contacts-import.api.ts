@@ -78,6 +78,25 @@ export interface ResolvedRow {
   extraEmails?: string[];
   extraPhones?: string[];
   errors: string[];
+  /** QA4 IMP-4 — extracted office managers etc. attached to this row's org. */
+  secondaryContacts?: SecondaryContact[];
+}
+
+/**
+ * QA4 IMP-4 — a person the deterministic classifier assembled from
+ * tokens in a non-name cell (usually the phone cell, e.g. "04-8311191
+ * דפנה - חיפה" yielding name דפנה + city חיפה). Surfaces as its own
+ * row in the Preview table with an "extracted" tag.
+ */
+export interface SecondaryContact {
+  name: string;
+  phone?: string;
+  mobile?: string;
+  email?: string;
+  city?: string;
+  title: string;
+  sourceField: 'phone' | 'mobile' | 'email' | 'company' | 'note';
+  confidence: number;
 }
 
 export type OrgAction = 'link' | 'create' | 'skip' | 'conflict';
@@ -100,6 +119,9 @@ export interface DedupDecision {
   contractError: string | null;
   org: DedupSide;
   contact: DedupSide;
+  /** QA4 IMP-4 — mirrored from ResolvedRow so the preview table can
+   * insert extracted contacts as their own rows. */
+  secondaryContacts?: SecondaryContact[];
 }
 
 export interface PreviewSummary {

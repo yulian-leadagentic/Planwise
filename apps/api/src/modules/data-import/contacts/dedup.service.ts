@@ -6,7 +6,7 @@ import {
   extractEmailDomain,
   PERSONAL_EMAIL_DOMAIN_FALLBACK,
 } from '../../business-partners/business-partners.service';
-import { ResolvedRow } from './split-merge.service';
+import { ResolvedRow, SecondaryContact } from './split-merge.service';
 
 /**
  * BM2 · Contacts import wizard · Stage 5 (preview) + Stage 6 (commit)
@@ -140,6 +140,10 @@ export class ContactsDedupService {
       contractError,
       org,
       contact,
+      // QA4 IMP-4 — pass secondary contacts through to the preview so
+      // the Preview table can render each as its own row (tagged
+      // "extracted"). Commit reads them off ResolvedRow directly.
+      secondaryContacts: row.secondaryContacts,
     };
   }
 
@@ -174,6 +178,8 @@ export interface DedupDecision {
   contractError: string | null;
   org: DedupSide;
   contact: DedupSide;
+  /** QA4 IMP-4 — extracted office managers etc. (see split-merge). */
+  secondaryContacts?: SecondaryContact[];
 }
 
 function buildContractError(hasName: boolean, hasReach: boolean): string {

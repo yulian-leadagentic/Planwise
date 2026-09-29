@@ -7,7 +7,7 @@ import { ActivityLogService } from '../../../common/services/activity-log.servic
 import { ContactsResolveService } from './resolve.service';
 import { DedupDecision, ContactAction, OrgAction } from './dedup.service';
 import { ContactField } from './header-dictionary';
-import { ColumnMapping } from './split-merge.service';
+import { ColumnMapping, SecondaryContact } from './split-merge.service';
 import { ExtractedSheet } from './triage.service';
 import * as Sentry from '@sentry/node';
 
@@ -336,6 +336,96 @@ export class ContactsCommitService {
           null,
           dec.values,
         );
+
+        // ─── QA4 IMP-4 — secondary contacts (office managers etc.) ─
+        // Each extracted secondary attaches to the same org with a
+        // worker_of edge and a default "Office manager" title. Skipped
+        // when we have no org to bind to (secondary without a firm is
+        // not persisted — the classifier gives it back to the PM in
+        // the preview, but standalone people-only writes aren't the
+        // shape this importer supports). Idempotency: match on
+        // (partnerType='person', orgBpId, name/email/phone) so a
+        // re-import doesn't duplicate.
+        const secondaries = dec.secondaryContacts ?? [];
+        if (secondaries.length > 0 && orgBpId != null) {
+          for (const secondary of secondaries) {
+            try {
+              const secondaryBpId = await this.upsertSecondaryContact(
+                secondary,
+                orgBpId,
+                importRecord.id,
+              );
+              if (secondaryBpId != null && workerOf) {
+                await this.linkWorkerOf(
+                  secondaryBpId,
+                  orgBpId,
+                  workerOf.id,
+                  secondary.title,
+                );
+                result.workerOfLinksCreated++;
+              }
+              // Attach to project when the wizard asked for it.
+              if (
+                input.attachToProjectId != null &&
+                secondaryBpId != null
+              ) {
+                const roleId = await this.pickProjectRoleId(
+                  input.projectRoleId ?? null,
+                  dec.values,
+                );
+                if (roleId) {
+                  const existing = await this.prisma.projectPartnerRole.findFirst({
+                    where: {
+                      projectId: input.attachToProjectId,
+                      partyId: secondaryBpId,
+                      roleId,
+                      validTo: { gt: new Date() },
+                    },
+                    select: { id: true },
+                  });
+                  if (!existing) {
+                    try {
+                      await this.prisma.projectPartnerRole.create({
+                        data: {
+                          projectId: input.attachToProjectId,
+                          partyId: secondaryBpId,
+                          roleId,
+                          isPrimary: false,
+                          titleInProject: secondary.title,
+                          onBehalfOfPartyId: orgBpId,
+                        },
+                      });
+                      result.projectAttached++;
+                    } catch (err: unknown) {
+                      if (
+                        !(err instanceof Prisma.PrismaClientKnownRequestError &&
+                          err.code === 'P2002')
+                      ) {
+                        throw err;
+                      }
+                    }
+                  }
+                }
+              }
+            } catch (err: unknown) {
+              // Secondary-write failure is non-fatal for the row; log
+              // to the DataImport telemetry so the PM sees it.
+              const message = err instanceof Error ? err.message : String(err);
+              this.logger.warn(
+                `contacts-import row ${dec.sourceRowIndex} secondary "${secondary.name}" failed: ${message}`,
+              );
+              result.errors++;
+              await this.recordRow(
+                importRecord.id,
+                dec.sourceRowIndex,
+                'failed',
+                null,
+                `secondary "${secondary.name}": ${message}`,
+                dec.values,
+              );
+            }
+          }
+        }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.warn(`contacts-import row ${dec.sourceRowIndex} failed: ${message}`);
@@ -428,6 +518,124 @@ export class ContactsCommitService {
       orderBy: { sortOrder: 'asc' },
     });
     return fallback?.id ?? null;
+  }
+
+  /**
+   * QA4 IMP-4 — create or link a secondary contact person. Idempotent:
+   * looks for an existing person BP already `worker_of` this org whose
+   * (email OR phone OR normalized-name) matches; returns its id when
+   * found so a re-import doesn't duplicate. When nothing matches, a
+   * fresh person BP is created with `source: 'import'` so history +
+   * rollback still work.
+   */
+  private async upsertSecondaryContact(
+    secondary: SecondaryContact,
+    orgBpId: number,
+    importId: number,
+  ): Promise<number | null> {
+    if (!secondary.name) return null;
+    const normalizedName = normalizeCompare(secondary.name);
+
+    // Idempotency probe #1 — a person BP whose email matches (email
+    // is globally unique in this schema when set).
+    if (secondary.email) {
+      const byEmail = await this.prisma.businessPartner.findFirst({
+        where: { partnerType: 'person', email: secondary.email, deletedAt: null },
+        select: { id: true },
+      });
+      if (byEmail) return byEmail.id;
+    }
+
+    // Idempotency probe #2 — a person BP already linked worker_of
+    // this org, whose display name or phone matches. Covers the
+    // "same office manager appears in two rows of the same firm"
+    // shape that the split-merge dedup pass may not have caught (the
+    // pass runs per-import; probe covers cross-import runs).
+    const linkedOfThisOrg = await this.prisma.partnerRelationship.findMany({
+      where: {
+        partyBId: orgBpId,
+        typeId: { in: await this.workerOfTypeIds() },
+      },
+      select: { partyAId: true },
+    });
+    if (linkedOfThisOrg.length > 0) {
+      const ids = linkedOfThisOrg.map((r) => r.partyAId);
+      const candidates = await this.prisma.businessPartner.findMany({
+        where: { id: { in: ids }, partnerType: 'person', deletedAt: null },
+        select: { id: true, displayName: true, phone: true, mobile: true },
+      });
+      for (const c of candidates) {
+        if (secondary.phone && c.phone && normalizeCompare(c.phone) === normalizeCompare(secondary.phone)) {
+          return c.id;
+        }
+        if (secondary.mobile && c.mobile && normalizeCompare(c.mobile) === normalizeCompare(secondary.mobile)) {
+          return c.id;
+        }
+        if (normalizeCompare(c.displayName ?? '') === normalizedName) return c.id;
+      }
+    }
+
+    // Nothing matched — create.
+    const [firstName, ...restName] = secondary.name.trim().split(/\s+/);
+    const lastName = restName.join(' ') || null;
+    const created = await this.prisma.businessPartner.create({
+      data: {
+        partnerType: 'person',
+        displayName: secondary.name,
+        firstName: firstName || null,
+        lastName,
+        email: secondary.email ?? null,
+        phone: secondary.phone ?? null,
+        mobile: secondary.mobile ?? null,
+        notes: buildSecondaryNotes(secondary),
+        source: 'import',
+        createdByImportId: importId,
+      },
+    });
+    return created.id;
+  }
+
+  /**
+   * Cheap helper — creates the worker_of edge if it doesn't exist.
+   * Mirrors the primary-side write (P2002 raced → treat as no-op).
+   */
+  private async linkWorkerOf(
+    contactBpId: number,
+    orgBpId: number,
+    typeId: number,
+    titleAtB: string | null,
+  ): Promise<void> {
+    const existing = await this.prisma.partnerRelationship.findFirst({
+      where: { partyAId: contactBpId, partyBId: orgBpId, typeId },
+      select: { id: true },
+    });
+    if (existing) return;
+    try {
+      await this.prisma.partnerRelationship.create({
+        data: {
+          partyAId: contactBpId,
+          partyBId: orgBpId,
+          typeId,
+          isPrimary: false,
+          titleAtB,
+        },
+      });
+    } catch (err: unknown) {
+      if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) {
+        throw err;
+      }
+    }
+  }
+
+  private cachedWorkerOfIds: number[] | null = null;
+  private async workerOfTypeIds(): Promise<number[]> {
+    if (this.cachedWorkerOfIds != null) return this.cachedWorkerOfIds;
+    const row = await this.prisma.partnerRelationshipType.findUnique({
+      where: { code: 'worker_of' },
+      select: { id: true },
+    });
+    this.cachedWorkerOfIds = row ? [row.id] : [];
+    return this.cachedWorkerOfIds;
   }
 
   private async recordRow(
@@ -542,6 +750,31 @@ function computeContentHash(input: CommitInput): string {
   const samples = [...input.sheet.rows.slice(0, 5), ...input.sheet.rows.slice(-5)];
   h.update(JSON.stringify(samples));
   return h.digest('hex');
+}
+
+/**
+ * QA4 IMP-4 — normalize a name/phone/email for cheap idempotent
+ * comparison. Uppercases, strips punctuation + whitespace so a person
+ * seen twice under slightly different formatting collapses.
+ */
+function normalizeCompare(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[\s‐-―.\-'"׳״()]+/g, '')
+    .trim();
+}
+
+/**
+ * Build a compact notes body for a persisted secondary contact so the
+ * PM can see later where it came from (which column, what city, and
+ * the classifier's confidence). Truncated at 200 chars.
+ */
+function buildSecondaryNotes(s: SecondaryContact): string {
+  const parts: string[] = [`Extracted from ${s.sourceField} cell`];
+  if (s.city) parts.push(`city: ${s.city}`);
+  if (s.confidence < 1) parts.push(`confidence: ${s.confidence}`);
+  const joined = parts.join(' · ');
+  return joined.length > 200 ? joined.slice(0, 200) : joined;
 }
 
 function buildRunNotes(input: CommitInput, summary: { totalRows: number; eligible: number; belowContract: number }): string {
