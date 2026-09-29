@@ -80,15 +80,12 @@ function formatHours(hours: number): string {
   return `${hours.toLocaleString('en-US', { maximumFractionDigits: 1 })}h`;
 }
 
-// Shared token classes — DN-2 round 3 (2026-09-29). Round 2 was too
-// cramped (10px labels, 14px values, no min-width) and looked out of
-// place next to the rest of the app. This pass matches the
-// planwise-design tokens actually used elsewhere: 11px semibold uppercase
-// labels, 15px bold primary values (like the "Card title" and "Row item
-// name" tokens), 11px muted subtext. Each tile has `min-w-[140px]` and
-// consistent `min-h` so heights stay aligned across the row.
+// Shared token classes — DN-2 round 4 (2026-09-29). Aligns to the target
+// screenshot at `docs/bm2/assets/dn2-brief-target.png`: every tile is a
+// 2-line footprint (label + inline value line with `·` separators), so
+// heights are uniform across the strip. `divide-x` between tiles.
 const itemCls =
-  'flex flex-col justify-center gap-0.5 min-w-[140px] px-5 py-1 first:pl-0 last:pr-0';
+  'flex flex-1 flex-col justify-center gap-0.5 min-w-[160px] px-5 py-1 first:pl-0 last:pr-0';
 const labelCls =
   'text-[11px] font-semibold tracking-wide uppercase text-slate-400 dark:text-slate-500';
 const moneyValueCls =
@@ -150,54 +147,55 @@ export function ProjectBriefTiles({
         )}
       </div>
 
-      {/* EST. AMOUNT */}
+      {/* EST. AMOUNT — money value + counts inline on one row so every
+          tile in the strip has the same 2-line footprint (label + value). */}
       <div
         className={itemCls}
         title="Estimated amount = Σ of every task's budget amount across the plan (₪). Shown with task count and total budget hours."
       >
         <div className={labelCls}>EST. AMOUNT</div>
-        {showFinance ? (
-          <div className={moneyValueCls}>
-            &#8362;{formatBudget(totalBudgetAmount)}
-          </div>
-        ) : (
-          <div className={gatedPlaceholderCls} title="Finance-gated">—</div>
-        )}
-        <div className={subtextCls}>
-          {taskCount} task{taskCount === 1 ? '' : 's'} · {formatHours(totalBudgetHours)}
+        <div className="flex items-baseline gap-1.5">
+          {showFinance ? (
+            <span className={moneyValueCls}>
+              &#8362;{formatBudget(totalBudgetAmount)}
+            </span>
+          ) : (
+            <span className={gatedPlaceholderCls} title="Finance-gated">—</span>
+          )}
+          <span className={subtextCls}>
+            · {taskCount} task{taskCount === 1 ? '' : 's'} · {formatHours(totalBudgetHours)}
+          </span>
         </div>
       </div>
 
-      {/* LOGGED COST */}
+      {/* LOGGED COST — money value + tasks-with-logged + hours on one row. */}
       <div
         className={itemCls}
         title="Logged cost (actual labor cost) = Σ (logged hours × the effective hourly rate at each time entry's date). Shown with the number of tasks with logged time and total logged hours."
       >
         <div className={labelCls}>LOGGED COST</div>
-        {showFinance ? (
-          <>
-            <div className={moneyValueCls}>
+        <div className="flex items-baseline gap-1.5">
+          {showFinance ? (
+            <span className={moneyValueCls}>
               &#8362;{formatBudget(actualCostNum)}
-            </div>
-            {utilization != null && (
-              <div className={subtextCls}>{utilization}% of contract</div>
-            )}
-          </>
-        ) : (
-          <div className={gatedPlaceholderCls} title="Finance-gated">—</div>
-        )}
-        <div className={subtextCls}>
-          {tasksWithLogged} task{tasksWithLogged === 1 ? '' : 's'} · {formatHours(totalLoggedHours)}
+            </span>
+          ) : (
+            <span className={gatedPlaceholderCls} title="Finance-gated">—</span>
+          )}
+          <span className={subtextCls}>
+            · {tasksWithLogged} task{tasksWithLogged === 1 ? '' : 's'} · {formatHours(totalLoggedHours)}
+            {utilization != null ? ` · ${utilization}% of contract` : ''}
+          </span>
         </div>
       </div>
 
-      {/* PROGRESS — visible to all (not money). Bar shrunk to h-1 for the
-          compact strip; sits under the % on a second line. */}
+      {/* PROGRESS — visible to all (not money). % + bar inline (2-line
+          footprint matches the other tiles). */}
       <div className={itemCls} title="Progress = logged hours ÷ budget hours.">
         <div className={labelCls}>PROGRESS</div>
         <div className="flex items-center gap-2">
           <span className={nonMoneyValueCls}>{progressPctRaw}%</span>
-          <span className="h-1.5 flex-1 max-w-[80px] rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+          <span className="h-1.5 w-24 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
             <span
               className="block h-full rounded-full bg-blue-600 dark:bg-blue-500 transition-all"
               style={{ width: `${progressBarPct}%` }}
@@ -206,11 +204,14 @@ export function ProjectBriefTiles({
         </div>
       </div>
 
-      {/* AUTHORING TOOL — visible to all. */}
+      {/* AUTHORING TOOL — visible to all. Uses the accent color per the
+          DN-2 target (subtle brand highlight; not a link, no interaction). */}
       <div className={itemCls}>
         <div className={labelCls}>AUTHORING TOOL</div>
         {authoringToolVersion ? (
-          <div className={nonMoneyValueCls}>{authoringToolVersion}</div>
+          <div className="text-[15px] font-bold text-blue-600 dark:text-blue-400">
+            {authoringToolVersion}
+          </div>
         ) : (
           <div className="text-[15px] font-bold text-slate-300 dark:text-slate-600">—</div>
         )}
