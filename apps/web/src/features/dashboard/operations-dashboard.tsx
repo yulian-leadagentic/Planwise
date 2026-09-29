@@ -206,8 +206,12 @@ export function OperationsDashboardPage() {
         })}
       </div>
 
-      {/* Tab strip */}
-      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-700 overflow-x-auto">
+      {/* Tab strip.
+          OPS-1 (QA4 · 2026-09-29): `overflow-x-auto` alone lets the
+          browser also render a vertical scroll — the tiny ▲▼ chrome —
+          when the tab row's intrinsic height differs by even 1px.
+          Pin `overflow-y-hidden` to kill the stray arrows. */}
+      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-700 overflow-x-auto overflow-y-hidden">
         <button
           type="button"
           onClick={() => setTab('risk')}
