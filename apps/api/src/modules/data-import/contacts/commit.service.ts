@@ -207,6 +207,45 @@ export class ContactsCommitService {
       try {
         if (leaderAction === 'link') {
           orgBpId = leaderDp?.orgBpId ?? leader.org.matchedBpId ?? null;
+          // QA4 E5 (2026-09-29) — apply per-field conflict picks. Any
+          // field the reviewer flipped to `imported` is written to the
+          // matched org BP; `existing` is a no-op. Runs a single
+          // UPDATE keyed on the org's id.
+          if (orgBpId != null) {
+            const picks = input.conflictResolutions?.[`org:${key}`] ?? {};
+            const updates: Record<string, string | null> = {};
+            for (const [field, choice] of Object.entries(picks)) {
+              if (choice !== 'imported') continue;
+              const val = eff(field as OverrideField);
+              if (field === 'company') {
+                updates['displayName'] = val ?? '';
+                updates['companyName'] = val ?? null;
+              } else if (field === 'email') {
+                updates['email'] = val;
+              } else if (field === 'phone') {
+                updates['phone'] = val;
+              } else if (field === 'mobile') {
+                updates['mobile'] = val;
+              } else if (field === 'address') {
+                updates['address'] = val;
+              } else if (field === 'note') {
+                updates['notes'] = val;
+              }
+            }
+            if (Object.keys(updates).length > 0) {
+              try {
+                await this.prisma.businessPartner.update({
+                  where: { id: orgBpId },
+                  data: updates as Prisma.BusinessPartnerUpdateInput,
+                });
+              } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : String(err);
+                this.logger.warn(
+                  `contacts-import E5 org "${key}" field-update failed: ${message}`,
+                );
+              }
+            }
+          }
         } else if (leaderAction === 'create') {
           const rawOrgName = eff('company');
           // QA4 E2 (2026-09-29) — inline name override wins over the
@@ -572,6 +611,49 @@ export class ContactsCommitService {
           contactBpId = dp?.contactBpId ?? dec.contact.matchedBpId ?? null;
           if (!contactBpId) throw new Error('link person action needs a person BP id');
           result.contactsLinked++;
+          // QA4 E5 — apply per-field conflict picks against the
+          // matched person BP. `imported` overwrites; `existing` is a
+          // no-op. Discipline is resolved via the same helper as the
+          // create path so a "use imported discipline" pick lands on
+          // the structured discipline id, not on a raw string.
+          const picks = input.conflictResolutions?.[`person:${dec.sourceRowIndex}`] ?? {};
+          const updates: Record<string, unknown> = {};
+          for (const [field, choice] of Object.entries(picks)) {
+            if (choice !== 'imported') continue;
+            const val = eff(field as OverrideField);
+            if (field === 'contact') {
+              updates['displayName'] = val ?? '(unnamed)';
+              const [firstName, ...restName] = (val ?? '').trim().split(/\s+/);
+              updates['firstName'] = firstName || null;
+              updates['lastName'] = restName.join(' ') || null;
+            } else if (field === 'email') {
+              updates['email'] = val;
+            } else if (field === 'phone') {
+              updates['phone'] = val;
+            } else if (field === 'mobile') {
+              updates['mobile'] = val;
+            } else if (field === 'address') {
+              updates['address'] = val;
+            } else if (field === 'note') {
+              updates['notes'] = val;
+            } else if (field === 'discipline') {
+              const disciplineId = await this.resolveDisciplineId(val);
+              updates['disciplineId'] = disciplineId ?? null;
+            }
+          }
+          if (Object.keys(updates).length > 0) {
+            try {
+              await this.prisma.businessPartner.update({
+                where: { id: contactBpId },
+                data: updates as Prisma.BusinessPartnerUpdateInput,
+              });
+            } catch (err: unknown) {
+              const message = err instanceof Error ? err.message : String(err);
+              this.logger.warn(
+                `contacts-import E5 person row ${dec.sourceRowIndex} field-update failed: ${message}`,
+              );
+            }
+          }
         } else if (contactAction === 'create' && genericOnly) {
           // Skip person creation; the mailbox already went onto the org
           // via emailRouting.orgPrimary in the batch pass above.

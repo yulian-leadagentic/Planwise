@@ -60,7 +60,93 @@ export class ContactsDedupService {
     for (const row of rows) {
       out.push(await this.decideRow(row));
     }
-    return this.applyIntraBatchOrgDedupe(out);
+    const deduped = this.applyIntraBatchOrgDedupe(out);
+    // QA4 E5 (2026-09-29) — for every side that matched an existing
+    // BP, fetch the current field values so the FE can compute per-
+    // field diffs against the imported row and offer a keep/use
+    // chooser. Batched by unique BP id so we make one query per
+    // partnerType regardless of how many rows share a match.
+    await this.attachExistingFields(deduped);
+    return deduped;
+  }
+
+  /**
+   * QA4 E5 (2026-09-29) — populate `existingFields` on every DedupSide
+   * that matched an existing BP so the wizard can compute per-field
+   * diffs. Values are the raw BP columns (contact/company/email/phone/
+   * mobile/discipline/role/address/note); `null` for empty on the DB.
+   * Runs 2 queries max (persons + orgs).
+   */
+  private async attachExistingFields(decisions: DedupDecision[]): Promise<void> {
+    const orgIds = new Set<number>();
+    const personIds = new Set<number>();
+    for (const d of decisions) {
+      if (d.org.matchedBpId != null) orgIds.add(d.org.matchedBpId);
+      if (d.contact.matchedBpId != null) personIds.add(d.contact.matchedBpId);
+    }
+    const orgById = new Map<number, Record<string, string | null>>();
+    if (orgIds.size > 0) {
+      const rows = await this.prisma.businessPartner.findMany({
+        where: { id: { in: [...orgIds] } },
+        select: {
+          id: true,
+          displayName: true,
+          companyName: true,
+          email: true,
+          phone: true,
+          mobile: true,
+          address: true,
+          notes: true,
+        },
+      });
+      for (const r of rows) {
+        orgById.set(r.id, {
+          company: r.companyName ?? r.displayName ?? null,
+          email: r.email ?? null,
+          phone: r.phone ?? null,
+          mobile: r.mobile ?? null,
+          address: r.address ?? null,
+          note: r.notes ?? null,
+        });
+      }
+    }
+    const personById = new Map<number, Record<string, string | null>>();
+    if (personIds.size > 0) {
+      const rows = await this.prisma.businessPartner.findMany({
+        where: { id: { in: [...personIds] } },
+        select: {
+          id: true,
+          displayName: true,
+          email: true,
+          phone: true,
+          mobile: true,
+          address: true,
+          notes: true,
+          discipline: { select: { name: true } },
+        },
+      });
+      for (const r of rows) {
+        personById.set(r.id, {
+          contact: r.displayName ?? null,
+          email: r.email ?? null,
+          phone: r.phone ?? null,
+          mobile: r.mobile ?? null,
+          address: r.address ?? null,
+          note: r.notes ?? null,
+          discipline: r.discipline?.name ?? null,
+        });
+      }
+    }
+    for (const d of decisions) {
+      if (d.org.matchedBpId != null) {
+        const fields = orgById.get(d.org.matchedBpId);
+        if (fields) d.org.existingFields = fields;
+      }
+      if (d.contact.matchedBpId != null) {
+        const fields = personById.get(d.contact.matchedBpId);
+        if (fields) d.contact.existingFields = fields;
+      }
+    }
   }
 
   /**
@@ -261,6 +347,13 @@ export interface DedupSide {
   matchedBpId?: number;
   matchedBpName?: string | null;
   matchReason?: 'domain' | 'name';
+  /**
+   * QA4 E5 (2026-09-29) — the matched BP's current field values, so
+   * the wizard can diff against the imported row and show a per-field
+   * "keep existing / use imported" chooser. Populated only when
+   * `matchedBpId` is set. `null` = empty on the DB.
+   */
+  existingFields?: Record<string, string | null>;
 }
 
 export interface DedupDecision {

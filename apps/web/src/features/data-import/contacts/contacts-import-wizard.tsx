@@ -1851,6 +1851,8 @@ function GroupedReview({
           onOverride={onOverride}
           onMovePerson={onMovePerson}
           moveTargets={moveTargets}
+          conflictResolutions={conflictResolutions}
+          onConflictResolve={onConflictResolve}
         />
       )}
     </div>
@@ -2052,6 +2054,26 @@ function OrgCard({
               {group.personCount} {group.personCount === 1 ? 'person' : 'people'}
               {group.skippedCount > 0 && ` · ${group.skippedCount} removed`}
             </span>
+            {/* QA4 E5 — matched-existing org: show per-field diff chip
+                when the row's imported values disagree with the DB. */}
+            {!group.isNew && !isDeleted && group.people[0] && group.people[0].decision.org.existingFields && (
+              <ConflictResolver
+                recordKey={`org:${group.key}`}
+                existingFields={group.people[0].decision.org.existingFields}
+                importedFields={{
+                  company: group.people[0].decision.values.company ?? null,
+                  email: group.people[0].decision.values.email ?? null,
+                  phone: group.people[0].decision.values.phone ?? null,
+                  mobile: group.people[0].decision.values.mobile ?? null,
+                  address: group.people[0].decision.values.address ?? null,
+                  note: group.people[0].decision.values.note ?? null,
+                }}
+                picks={conflictResolutions[`org:${group.key}`] ?? {}}
+                onPick={onConflictResolve}
+                fieldOrder={[...ORG_CONFLICT_FIELDS]}
+                fieldLabels={ORG_CONFLICT_LABELS}
+              />
+            )}
             {isDeleted && (
               <span className="text-[10px] font-bold uppercase tracking-wide text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/40 rounded px-1.5 py-0.5">
                 deleted · {deleteMode === 'cascade' ? 'people dropped' : 'people moved to individuals'}
@@ -2164,6 +2186,8 @@ function OrgCard({
               onMovePerson={onMovePerson}
               moveTargets={moveTargets}
               currentGroupKey={group.key}
+              conflictResolutions={conflictResolutions}
+              onConflictResolve={onConflictResolve}
             />
           )}
         </div>
@@ -2188,6 +2212,8 @@ function IndividualsSection({
   onOverride,
   onMovePerson,
   moveTargets,
+  conflictResolutions,
+  onConflictResolve,
 }: {
   people: Array<{ decision: DedupDecision; skipped: boolean }>;
   totalPeople: number;
@@ -2199,6 +2225,9 @@ function IndividualsSection({
   /** QA4 E4 / E6 — assign an individual to an existing org card. */
   onMovePerson?: (rowIndex: number, targetKey: string | null) => void;
   moveTargets?: Array<{ key: string | null; label: string; domain?: string | null }>;
+  /** QA4 E5 — per-field conflict picks (kept/use imported). */
+  conflictResolutions?: Record<string, Record<string, 'existing' | 'imported'>>;
+  onConflictResolve?: (recordKey: string, field: string, choice: 'existing' | 'imported') => void;
 }) {
   return (
     <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
@@ -2229,6 +2258,8 @@ function IndividualsSection({
           onMovePerson={onMovePerson}
           moveTargets={moveTargets}
           currentGroupKey={null}
+          conflictResolutions={conflictResolutions}
+          onConflictResolve={onConflictResolve}
         />
       )}
     </div>
@@ -2253,6 +2284,8 @@ function PeopleTable({
   onMovePerson,
   moveTargets,
   currentGroupKey,
+  conflictResolutions,
+  onConflictResolve,
 }: {
   people: Array<{ decision: DedupDecision; skipped: boolean }>;
   rowByIndex: Map<number, ResolvedRow>;
@@ -2271,6 +2304,9 @@ function PeopleTable({
   moveTargets?: Array<{ key: string | null; label: string; domain?: string | null }>;
   /** QA4 E4 — the group this table lives in, filtered out of the "Move to" list. */
   currentGroupKey?: string | null;
+  /** QA4 E5 — per-field conflict picks (keep/use imported). */
+  conflictResolutions?: Record<string, Record<string, 'existing' | 'imported'>>;
+  onConflictResolve?: (recordKey: string, field: string, choice: 'existing' | 'imported') => void;
 }) {
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
   const [expandedFields, setExpandedFields] = useState<Set<number>>(() => new Set());
@@ -2342,6 +2378,8 @@ function PeopleTable({
                   onMovePerson={onMovePerson}
                   moveTargets={moveTargets}
                   currentGroupKey={currentGroupKey}
+                  conflictResolutions={conflictResolutions}
+                  onConflictResolve={onConflictResolve}
                 />
                 {secondaries.map((s, i) => (
                   <SecondaryContactRow
@@ -2697,6 +2735,8 @@ function PreviewTableRow({
   onMovePerson,
   moveTargets,
   currentGroupKey,
+  conflictResolutions,
+  onConflictResolve,
 }: {
   dec: DedupDecision;
   row: ResolvedRow;
@@ -2726,6 +2766,9 @@ function PreviewTableRow({
   onMovePerson?: (rowIndex: number, targetKey: string | null) => void;
   moveTargets?: Array<{ key: string | null; label: string; domain?: string | null }>;
   currentGroupKey?: string | null;
+  /** QA4 E5 (2026-09-29) — per-field conflict picks for matched people. */
+  conflictResolutions?: Record<string, Record<string, 'existing' | 'imported'>>;
+  onConflictResolve?: (recordKey: string, field: string, choice: 'existing' | 'imported') => void;
 }) {
   const isConflict = dec.org.action === 'conflict';
   const belowContract = !dec.meetsMinimumContract;
@@ -3043,6 +3086,31 @@ function PreviewTableRow({
                   />
                 </FieldEditorRow>
               </div>
+              {/* QA4 E5 — per-field diff chooser for matched people. */}
+              {dec.contact.action === 'link' && dec.contact.existingFields && onConflictResolve && (
+                <div className="mt-3 pt-3 border-t border-blue-200 dark:border-blue-900/50 flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                    Conflicts with existing:
+                  </span>
+                  <ConflictResolver
+                    recordKey={`person:${dec.sourceRowIndex}`}
+                    existingFields={dec.contact.existingFields}
+                    importedFields={{
+                      contact: (rowDec?.overrides && 'contact' in rowDec.overrides ? rowDec.overrides.contact ?? null : dec.values.contact ?? null),
+                      email: (rowDec?.overrides && 'email' in rowDec.overrides ? rowDec.overrides.email ?? null : dec.values.email ?? null),
+                      phone: (rowDec?.overrides && 'phone' in rowDec.overrides ? rowDec.overrides.phone ?? null : dec.values.phone ?? null),
+                      mobile: (rowDec?.overrides && 'mobile' in rowDec.overrides ? rowDec.overrides.mobile ?? null : dec.values.mobile ?? null),
+                      discipline: (rowDec?.overrides && 'discipline' in rowDec.overrides ? rowDec.overrides.discipline ?? null : dec.values.discipline ?? null),
+                      address: dec.values.address ?? null,
+                      note: dec.values.note ?? null,
+                    }}
+                    picks={conflictResolutions?.[`person:${dec.sourceRowIndex}`] ?? {}}
+                    onPick={onConflictResolve}
+                    fieldOrder={[...PERSON_CONFLICT_FIELDS]}
+                    fieldLabels={PERSON_CONFLICT_LABELS}
+                  />
+                </div>
+              )}
               {onMovePerson && moveTargets && moveTargets.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-blue-200 dark:border-blue-900/50 flex items-center gap-2 flex-wrap">
                   <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
@@ -3776,6 +3844,166 @@ function isPlausibleCompanyDisplay(raw: string | null | undefined): boolean {
   if (/^[-‐-―–—]+$/.test(s)) return false;
   return true;
 }
+
+/**
+ * QA4 E5 (2026-09-29) — per-field conflict chooser. Given the imported
+ * row's effective values and the matched BP's existingFields, renders
+ * one line per differing field with a small toggle between "keep
+ * existing" and "use imported". Nothing renders when there are no
+ * differences.
+ */
+function ConflictResolver({
+  recordKey,
+  existingFields,
+  importedFields,
+  picks,
+  onPick,
+  fieldOrder,
+  fieldLabels,
+}: {
+  recordKey: string;
+  existingFields: Partial<Record<string, string | null>>;
+  importedFields: Partial<Record<string, string | null>>;
+  picks: Record<string, 'existing' | 'imported'>;
+  onPick: (recordKey: string, field: string, choice: 'existing' | 'imported') => void;
+  fieldOrder: string[];
+  fieldLabels: Record<string, string>;
+}) {
+  const diffs = useMemo(() => {
+    const out: Array<{ field: string; existing: string | null; imported: string | null }> = [];
+    for (const field of fieldOrder) {
+      const existing = existingFields[field] ?? null;
+      const imported = importedFields[field] ?? null;
+      const e = (existing ?? '').trim();
+      const i = (imported ?? '').trim();
+      if (e === i) continue;
+      out.push({ field, existing, imported });
+    }
+    return out;
+  }, [fieldOrder, existingFields, importedFields]);
+  const [open, setOpen] = useState(false);
+  if (diffs.length === 0) return null;
+  const undecided = diffs.filter((d) => !picks[d.field]).length;
+  return (
+    <div className="inline-block">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={cn(
+          'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide focus:outline-none',
+          undecided > 0
+            ? 'border-amber-400 dark:border-amber-500 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 focus:border-amber-600'
+            : 'border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 focus:border-blue-500',
+        )}
+        title={
+          undecided > 0
+            ? `${undecided} field${undecided === 1 ? '' : 's'} differ from existing — click to review`
+            : `${diffs.length} conflict${diffs.length === 1 ? '' : 's'} resolved`
+        }
+      >
+        {diffs.length} {diffs.length === 1 ? 'diff' : 'diffs'}
+        <ChevronDown className={cn('h-3 w-3 transition-transform', open && 'rotate-180')} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="mt-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm p-2 max-w-xl">
+          <table className="w-full text-[11px] border-collapse">
+            <thead>
+              <tr className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                <th className="text-left font-semibold px-1 py-1 w-20">Field</th>
+                <th className="text-left font-semibold px-1 py-1">Existing</th>
+                <th className="text-left font-semibold px-1 py-1">Imported</th>
+                <th className="text-left font-semibold px-1 py-1 w-32">Keep</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {diffs.map((d) => {
+                const choice = picks[d.field] ?? 'existing';
+                return (
+                  <tr key={d.field} className="align-top">
+                    <td className="px-1 py-1 font-semibold text-slate-600 dark:text-slate-300">
+                      {fieldLabels[d.field] ?? d.field}
+                    </td>
+                    <td className="px-1 py-1">
+                      <span
+                        className={cn(
+                          'inline-block max-w-[10rem] truncate rounded px-1 py-0.5',
+                          choice === 'existing' && 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 font-semibold',
+                        )}
+                        title={d.existing ?? '(empty)'}
+                      >
+                        {d.existing ?? <span className="italic text-slate-400">empty</span>}
+                      </span>
+                    </td>
+                    <td className="px-1 py-1">
+                      <span
+                        className={cn(
+                          'inline-block max-w-[10rem] truncate rounded px-1 py-0.5',
+                          choice === 'imported' && 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 font-semibold',
+                        )}
+                        title={d.imported ?? '(empty)'}
+                      >
+                        {d.imported ?? <span className="italic text-slate-400">empty</span>}
+                      </span>
+                    </td>
+                    <td className="px-1 py-1">
+                      <div className="inline-flex rounded-md border border-slate-200 dark:border-slate-700 overflow-hidden text-[10px] font-semibold">
+                        <button
+                          type="button"
+                          onClick={() => onPick(recordKey, d.field, 'existing')}
+                          className={cn(
+                            'px-1.5 py-0.5',
+                            choice === 'existing'
+                              ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-200'
+                              : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800',
+                          )}
+                        >
+                          Keep
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onPick(recordKey, d.field, 'imported')}
+                          className={cn(
+                            'px-1.5 py-0.5 border-l border-slate-200 dark:border-slate-700',
+                            choice === 'imported'
+                              ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-200'
+                              : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800',
+                          )}
+                        >
+                          Use
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ORG_CONFLICT_FIELDS = ['company', 'email', 'phone', 'mobile', 'address', 'note'] as const;
+const ORG_CONFLICT_LABELS: Record<string, string> = {
+  company: 'Name',
+  email: 'Email',
+  phone: 'Phone',
+  mobile: 'Mobile',
+  address: 'Address',
+  note: 'Notes',
+};
+const PERSON_CONFLICT_FIELDS = ['contact', 'email', 'phone', 'mobile', 'discipline', 'address', 'note'] as const;
+const PERSON_CONFLICT_LABELS: Record<string, string> = {
+  contact: 'Name',
+  email: 'Email',
+  phone: 'Phone',
+  mobile: 'Mobile',
+  discipline: 'Discipline',
+  address: 'Address',
+  note: 'Notes',
+};
 
 /**
  * QA4 E1 (2026-09-29) — one label + editable cell in the stacked
