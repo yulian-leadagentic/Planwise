@@ -5,6 +5,7 @@ import { CONTACT_FIELDS, ContactField } from './header-dictionary';
 import { ContactsSplitMergeService, ColumnMapping, ResolvedRow, mappingHeaders } from './split-merge.service';
 import { ContactsDedupService, DedupDecision } from './dedup.service';
 import { ExtractedSheet, TriageResult } from './triage.service';
+import { BusinessPartnersService } from '../../business-partners/business-partners.service';
 
 /**
  * BM2 · Contacts import wizard · Stage 5 orchestrator — takes the
@@ -22,6 +23,7 @@ export class ContactsResolveService {
     private readonly headerDetection: ContactsHeaderDetectionService,
     private readonly splitMerge: ContactsSplitMergeService,
     private readonly dedup: ContactsDedupService,
+    private readonly bpService: BusinessPartnersService,
   ) {}
 
   /**
@@ -62,7 +64,40 @@ export class ContactsResolveService {
     // ── Stage 4 — split + forward-fill ─────────────────────────────
     // Pass Excel row numbers so `sourceRowIndex` on every resolved row
     // is the actual sheet row the user would see in Excel (QA4 IMP-3).
-    const resolved = this.splitMerge.resolve(dataRows, mapping, excelRowIndexes);
+    const resolvedAll = this.splitMerge.resolve(dataRows, mapping, excelRowIndexes);
+
+    // ── QA4 R2 ORG-5 — filter out home-org employees ──────────────
+    //
+    // Rows whose email domain is one of the home org's owned
+    // non-personal domains are INTERNAL employees, not external
+    // contacts. They must never surface in the external contacts /
+    // organizations import — a row like `yarden.f@amec.co.il`
+    // otherwise produced a spurious external person + org pair.
+    //
+    // Reuses `getHomeOrg().domains` (the mechanism from People UX M6 /
+    // migration `20260927100000_amec_home_org`), so a single source of
+    // truth handles both `excludeInternal` and this import filter — no
+    // parallel domain list to keep in sync.
+    //
+    // Rows are DROPPED (not marked "skip"): the wizard never shows
+    // them as importable — only a summary count so nothing is silently
+    // discarded. Rows without any email pass through as before; the
+    // classifier still catches them as external.
+    const homeOrg = await this.bpService.getHomeOrg();
+    const homeDomains = new Set<string>(
+      (homeOrg?.domains ?? [])
+        .filter((d) => !d.isPersonal)
+        .map((d) => d.domain.trim().toLowerCase()),
+    );
+    let internalSkipped = 0;
+    const resolved: ResolvedRow[] = [];
+    for (const row of resolvedAll) {
+      if (homeDomains.size > 0 && rowHitsHomeDomain(row, homeDomains)) {
+        internalSkipped++;
+        continue;
+      }
+      resolved.push(row);
+    }
 
     // ── Stage 5 dedup preview ──────────────────────────────────────
     const decisions = await this.dedup.decide(resolved);
@@ -75,9 +110,39 @@ export class ContactsResolveService {
       mapping,
       resolvedRows: resolved,
       decisions,
-      summary: summarize(resolved, decisions),
+      summary: {
+        ...summarize(resolved, decisions),
+        // Exposed at the top level of the summary so the wizard can
+        // render "N internal rows skipped (home domain)" without
+        // digging into per-row state.
+        internalSkipped,
+        homeOrgDomains: Array.from(homeDomains),
+      },
     };
   }
+}
+
+/**
+ * Does any email attached to this row live on a home-org owned domain?
+ * Checks the primary email + every extra email surfaced by split-merge
+ * (so a row that only carries a secondary personal email tied to the
+ * home domain still trips the filter). Case-insensitive; matches the
+ * segment after the final '@' against the domain set exactly, so
+ * `amec.co.il` does not match `notamec.co.il`.
+ */
+function rowHitsHomeDomain(row: ResolvedRow, homeDomains: Set<string>): boolean {
+  const emails: Array<string | undefined> = [
+    row.values.email,
+    ...((row.extraEmails ?? []) as string[]),
+  ];
+  for (const e of emails) {
+    if (!e) continue;
+    const at = e.lastIndexOf('@');
+    if (at < 0 || at === e.length - 1) continue;
+    const dom = e.slice(at + 1).trim().toLowerCase();
+    if (dom && homeDomains.has(dom)) return true;
+  }
+  return false;
 }
 
 // ─── Types ─────────────────────────────────────────────────────────────
@@ -118,6 +183,15 @@ export interface PreviewSummary {
   disciplineFilledRows: number;
   emailSplitFailedRows: number;
   phoneSplitFailedRows: number;
+  /**
+   * QA4 R2 ORG-5 (2026-09-29) — count of rows dropped from the
+   * preview because their email domain is one of the home org's
+   * owned domains (i.e. internal employees, not external contacts).
+   * The wizard shows this so the drop is visible.
+   */
+  internalSkipped?: number;
+  /** Home-org owned domains matched against. Empty when no home org is set. */
+  homeOrgDomains?: string[];
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────

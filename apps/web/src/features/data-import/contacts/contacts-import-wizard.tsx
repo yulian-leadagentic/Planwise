@@ -1284,6 +1284,22 @@ function PreviewStep({
         </div>
       )}
 
+      {/* QA4 R2 ORG-5 (2026-09-29) — internal-employee skip notice.
+          Rows whose email is on the home org's owned domain are dropped
+          before dedup so they never surface as importable external
+          contacts. The line makes the drop visible so nothing looks
+          like it silently vanished. */}
+      {(s.internalSkipped ?? 0) > 0 && (
+        <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-3 flex items-start gap-2 text-[12px] text-slate-700 dark:text-slate-200">
+          <Info className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            <strong>{s.internalSkipped} internal row{s.internalSkipped === 1 ? '' : 's'} skipped</strong>{' '}
+            (home domain{(s.homeOrgDomains?.length ?? 0) > 0 ? `: ${s.homeOrgDomains!.join(', ')}` : ''}).
+            <span className="text-slate-500 dark:text-slate-400"> These are AMEC employees, not external contacts, so they were dropped from the external import.</span>
+          </div>
+        </div>
+      )}
+
       {zeroClickEligible && (
         <div className="rounded-lg border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-950/30 p-3 flex items-center gap-2 text-[12px] text-emerald-800 dark:text-emerald-200">
           <Sparkles className="h-4 w-4" />

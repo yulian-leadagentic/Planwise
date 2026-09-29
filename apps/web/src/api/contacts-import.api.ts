@@ -167,6 +167,15 @@ export interface PreviewSummary {
   disciplineFilledRows: number;
   emailSplitFailedRows: number;
   phoneSplitFailedRows: number;
+  /**
+   * QA4 R2 ORG-5 (2026-09-29) — rows dropped from the import because
+   * their email lives on the home org's owned domain. Surfaced as a
+   * dedicated summary line ("N internal rows skipped") so the wizard
+   * user can see nothing was silently discarded.
+   */
+  internalSkipped?: number;
+  /** Home-org owned domains matched against. Empty when no home org is set. */
+  homeOrgDomains?: string[];
 }
 
 export interface SheetPreview {
