@@ -91,8 +91,12 @@ export function getColumns(
       cell: ({ row }) => <span className="text-sm text-slate-600 dark:text-slate-300">{row.original.email ?? '-'}</span>,
     },
     {
+      // JT-3b-4 (QA4 · 2026-09-29): column now shows Position (the
+      // descriptive org title) — see the JT-1 split. `User.position`
+      // string is kept in sync with `BusinessPartner.positionId` via
+      // the users.service.ts sync hook.
       accessorKey: 'position',
-      header: 'Job Title',
+      header: 'Position',
       cell: ({ row }) => row.original.position ?? '-',
     },
     {

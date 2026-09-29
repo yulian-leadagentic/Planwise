@@ -273,14 +273,14 @@ export function TypesPage() {
   const createProfession = useMutation({
     mutationFn: (payload: { name: string }) =>
       client.post('/admin/config/professions', payload).then((r) => r.data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'professions'] }); notify.success('Job title created'); resetForm(); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'professions'] }); notify.success('Qualification created'); resetForm(); },
     onError: (err: any) => notify.apiError(err, 'Failed to create profession'),
   });
 
   const updateProfession = useMutation({
     mutationFn: ({ id, ...payload }: { id: number; name?: string }) =>
       client.patch(`/admin/config/professions/${id}`, payload).then((r) => r.data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'professions'] }); notify.success('Job title updated'); setEditing(null); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'professions'] }); notify.success('Qualification updated'); setEditing(null); },
     onError: (err: any) => notify.apiError(err, 'Failed to update profession'),
   });
 
@@ -493,7 +493,7 @@ export function TypesPage() {
       if (trimmedName !== original) {
         const count = await fetchUsage(kind, editing.id as number);
         if (count > 0) {
-          const label = kind === 'department' ? 'department' : 'job title';
+          const label = kind === 'department' ? 'department' : 'qualification';
           const ok = await confirm(
             `${count} ${count === 1 ? 'employee' : 'employees'} use "${original}" as their ${label} — they'll see the new name "${trimmedName}" everywhere.`,
             {
@@ -625,7 +625,7 @@ export function TypesPage() {
   const isSimpleList = activeTab === 'profession';
   const addLabel =
     activeTab === 'department' ? 'Add Department' :
-    activeTab === 'profession' ? 'Add Job Title' :
+    activeTab === 'profession' ? 'Add Qualification' :
     activeTab === 'projectCategory' ? 'Add Category' :
     activeTab === 'service' ? 'Add Service' :
     'Add Type';
@@ -789,7 +789,7 @@ export function TypesPage() {
                 )}
                 <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em]">
                   {activeTab === 'department' ? 'Department Name' :
-                   activeTab === 'profession' ? 'Job Title Name' :
+                   activeTab === 'profession' ? 'Qualification Name' :
                    activeTab === 'projectCategory' ? 'Category Name' :
                    activeTab === 'service' ? 'Service Name' :
                    'Name'}

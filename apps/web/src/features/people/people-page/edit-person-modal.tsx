@@ -9,6 +9,7 @@ import { SeniorityHistorySection } from './seniority-history-section';
 import { UserRateModal } from './user-rate-modal';
 import { Modal } from '@/components/shared/modal';
 import { TextField, SelectField } from '@/components/shared/field';
+import { cn } from '@/lib/utils';
 
 /**
  * People UX M5 — validation rules for the edit form.
@@ -275,6 +276,17 @@ export function EditPersonModal({
               value={form.position}
               onChange={(v) => patch('position', v)}
             />
+            {/* JT-3b-2 (QA4 · 2026-09-29): Qualifications multi-select
+                alongside Position — same wire as the partner drawer's
+                Qualifications section, so a project-role picker sees
+                the person's functional capabilities. Only rendered
+                when the User is linked to a BusinessPartner (rare
+                otherwise; the create flow auto-links one). */}
+            {(user as any).businessPartnerId != null && (
+              <div className="col-span-2 -mt-1">
+                <QualificationsField bpId={(user as any).businessPartnerId as number} />
+              </div>
+            )}
             <SelectField
               label="Department"
               name="orgUnitId"
@@ -391,6 +403,133 @@ export function EditPersonModal({
  * behaviour, so opening the modal never silently changes what a user
  * had.
  */
+/**
+ * JT-3b-2 (QA4 · 2026-09-29) — Qualifications multi-select for the
+ * People edit modal. Mirrors the partner drawer's JobTitlesSection
+ * behaviour: fetch the person's current `business_partner_professions`,
+ * fetch the qualifications catalog (`professions`), allow add/remove
+ * + primary-toggle via a single PUT.
+ *
+ * Kept inline in the People modal rather than importing the drawer's
+ * component because the drawer's variant is styled for its own
+ * container; the modal wants a compact chip row that lines up with
+ * the other form fields.
+ */
+function QualificationsField({ bpId }: { bpId: number }) {
+  const queryClient = useQueryClient();
+  const { data: current = [], isLoading } = useQuery<Array<{ professionId: number; isPrimary: boolean; profession: { id: number; name: string } }>>({
+    queryKey: ['bp-professions', bpId],
+    queryFn: () =>
+      client.get(`/business-partners/${bpId}/professions`).then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+  const { data: catalog = [] } = useQuery<Array<{ id: number; name: string }>>({
+    queryKey: ['admin', 'professions'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/config/professions').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+
+  const assignedIds = new Set(current.map((c) => c.professionId));
+  const primaryId = current.find((c) => c.isPrimary)?.professionId ?? null;
+  const available = catalog.filter((p) => !assignedIds.has(p.id));
+
+  const save = useMutation({
+    mutationFn: (vars: { professionIds: number[]; primaryProfessionId: number | null }) =>
+      client.put(`/business-partners/${bpId}/professions`, vars).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bp-professions', bpId] });
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update qualifications'),
+  });
+
+  const addOne = (id: number) => {
+    const next = Array.from(new Set([...current.map((c) => c.professionId), id]));
+    save.mutate({ professionIds: next, primaryProfessionId: primaryId ?? id });
+  };
+  const removeOne = (id: number) => {
+    const next = current.map((c) => c.professionId).filter((x) => x !== id);
+    const nextPrimary = primaryId === id ? (next[0] ?? null) : primaryId;
+    save.mutate({ professionIds: next, primaryProfessionId: nextPrimary });
+  };
+  const setPrimary = (id: number) => {
+    save.mutate({ professionIds: current.map((c) => c.professionId), primaryProfessionId: id });
+  };
+
+  return (
+    <div>
+      <label
+        className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block"
+        title="Determines which project roles this person can be assigned to. Managed at /templates/types → Qualifications."
+      >
+        Qualifications
+      </label>
+      <p className="text-[11px] text-slate-400 dark:text-slate-500 mb-2">
+        Determines which project roles this person can be assigned to.
+      </p>
+      {isLoading ? (
+        <p className="text-[11px] text-slate-400 dark:text-slate-500">Loading…</p>
+      ) : current.length === 0 ? (
+        <p className="text-[12px] text-slate-400 dark:text-slate-500 italic mb-2">No qualifications yet.</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {current.map((c) => (
+            <span
+              key={c.professionId}
+              className="inline-flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 pl-2.5 pr-1 py-0.5 text-[12px] font-medium text-slate-700 dark:text-slate-200"
+            >
+              {c.profession.name}
+              <button
+                type="button"
+                onClick={() => setPrimary(c.professionId)}
+                title={c.isPrimary ? 'This is the primary qualification' : 'Mark as primary'}
+                className={cn(
+                  'ml-1 rounded-full px-1.5 text-[9px] font-bold uppercase tracking-wide',
+                  c.isPrimary
+                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200'
+                    : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300',
+                )}
+              >
+                {c.isPrimary ? 'Primary' : 'Make'}
+              </button>
+              <button
+                type="button"
+                onClick={() => removeOne(c.professionId)}
+                disabled={save.isPending}
+                className="ml-1 rounded-full text-slate-400 dark:text-slate-500 hover:text-red-600 disabled:opacity-40"
+                aria-label={`Remove ${c.profession.name}`}
+              >
+                <span className="text-[13px] leading-none">×</span>
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {available.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {available.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => addOne(p.id)}
+              disabled={save.isPending}
+              className="inline-flex items-center gap-1 rounded-full border border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-0.5 text-[12px] font-medium text-slate-500 dark:text-slate-400 hover:border-violet-400 hover:text-violet-700 dark:hover:text-violet-300 disabled:opacity-40"
+            >
+              + {p.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PositionSelectField({
   value,
   onChange,

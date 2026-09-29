@@ -185,12 +185,19 @@ export function ProjectRoleTypesPage() {
                               role: {t.requiredPartnerRoleCode}
                             </span>
                           )}
+                          {/* JT-3b-1 (QA4 · 2026-09-29) — the gate reads
+                              Qualifications after the JT-1 split (see
+                              qa4-jobtitle-position-qualification-split.md).
+                              Wire mechanism unchanged — still writes
+                              `requiredProfessionIds` because the underlying
+                              catalog is `professions` (Qualifications now).
+                              Only the user-facing label + tooltip flipped. */}
                           {t.requiredProfessionIds && t.requiredProfessionIds.length > 0 && (
                             <span
                               className="rounded-full bg-violet-50 px-2 py-0.5 font-semibold text-violet-700"
-                              title={`Job titles required: ${t.requiredProfessionIds.length} selected`}
+                              title={`Qualifications required: ${t.requiredProfessionIds.length} selected`}
                             >
-                              {t.requiredProfessionIds.length} job title{t.requiredProfessionIds.length > 1 ? 's' : ''}
+                              {t.requiredProfessionIds.length} qualification{t.requiredProfessionIds.length > 1 ? 's' : ''}
                             </span>
                           )}
                           {t.isPrimaryRequired && (
@@ -432,27 +439,28 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
           </select>
         </div>
 
-        {/* M4a.3 — Required Job Titles (Professions). Multi-select. The
-            picker filters assignable parties to those who hold AT LEAST ONE
-            of the chosen job titles. Person-only constraint conceptually,
-            but we render for orgs too in case an org has a registered
-            'profession' (rare but allowed). */}
+        {/* JT-3b-1 (QA4 · 2026-09-29): relabelled "Required Job
+            Title(s)" → "Required Qualification(s)" — after the JT-1
+            split, this gate reads the Qualifications catalog
+            (`professions` on the wire, exposed as the "Qualifications"
+            tab in Admin › Templates › Types). No mechanism change;
+            data source is still `requiredProfessionIds`. */}
         <div className="space-y-1 pt-1">
           <div className="flex items-center justify-between">
             <span
               className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase"
-              title="Filter assignable parties to those whose Job Title is in this list. Job titles are managed at /templates/types → Job Titles. Combined with Required role above as AND — the party must satisfy both."
+              title="Filter assignable parties to those whose Qualifications include one of these values. Manage the catalog at /templates/types → Qualifications. Combined with Required role above as AND — the party must satisfy both."
             >
-              Required job title(s)
+              Required qualification(s)
             </span>
             {professions.length === 0 && (
               <a
-                href="/templates/types"
+                href="/templates/types?tab=profession"
                 className="text-[10px] text-blue-600 hover:underline"
                 target="_blank"
                 rel="noreferrer"
               >
-                + Add job titles
+                + Add qualifications
               </a>
             )}
           </div>

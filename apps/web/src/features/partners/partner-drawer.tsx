@@ -1334,7 +1334,10 @@ function JobTitleCombobox({ bpId }: { bpId: number }) {
 
   return (
     <Field
-      label="Job Title"
+      // JT-3b-4 (QA4 · 2026-09-29): relabelled after the JT-1 split.
+      // The write still lives on `business_partner_professions`
+      // (Qualifications catalog); the label reflects the concept.
+      label="Qualification"
       hint="Determines which project roles this person can be assigned to. Searchable — type to filter."
       labelSuffix={
         savedFlash ? (

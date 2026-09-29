@@ -240,7 +240,7 @@ export function CreatePartnerModal({
             professionIds: [Number(form.primaryProfessionId)],
             primaryProfessionId: Number(form.primaryProfessionId),
           })
-          .catch(() => { warnings.push('job title'); });
+          .catch(() => { warnings.push('qualification'); });
       }
 
       // Wire the worker_of relationship to the chosen organization.
@@ -549,16 +549,19 @@ function PersonForm({
         ) : null}
       </div>
 
-      {/* Job Title (Profession). QA3 · PR-039: kept as-is (load-bearing —
-          gates ProjectRoleType.requiredProfessionIds on both the picker
-          and the backend guard). Label + tooltip clarified so users
-          don't confuse it with Role(s) or Discipline. */}
+      {/* Qualification (Profession). JT-3b-4 (QA4 · 2026-09-29):
+          relabelled after the JT-1 split. Wire is unchanged — still
+          `primaryProfessionId` writing to `business_partner_professions`
+          — but the concept is Qualification (functional capability
+          that gates project-role eligibility), not Job Title. Position
+          (org title, e.g. CEO) is a separate axis handled by the
+          drawer's PositionSection + People modal. */}
       <div>
         <label
           className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block"
-          title="Determines which project roles this person can be assigned to."
+          title="Determines which project roles this person can be assigned to. Managed at /templates/types → Qualifications."
         >
-          Job Title <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
+          Qualification <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
         </label>
         <select
           value={form.primaryProfessionId}
@@ -568,7 +571,7 @@ function PersonForm({
         >
           <option value="">
             {professions.length === 0
-              ? 'No job titles configured — add some under /admin first'
+              ? 'No qualifications configured — add some under Admin › Templates › Types first'
               : '— None / set later —'}
           </option>
           {professions.map((p) => (

@@ -43,4 +43,12 @@ export interface UserListItem {
   roleId: number;
   roleName: string;
   isActive: boolean;
+  /**
+   * QA4 JT-3b-2 (2026-09-29) — linked BusinessPartner id, when present.
+   * The People edit modal uses this to edit the person's Qualifications
+   * (`business_partner_professions`) alongside their User fields. Kept
+   * optional because non-employee users (rare, and the auth flow tends
+   * to auto-link one) may not have a BP.
+   */
+  businessPartnerId?: number | null;
 }

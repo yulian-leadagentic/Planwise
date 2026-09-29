@@ -381,6 +381,10 @@ export class UsersService implements OnModuleInit {
           createdAt: true,
           roleId: true,
           role: { select: { id: true, name: true } },
+          // QA4 JT-3b-2 (2026-09-29) — surface the linked BP id so the
+          // People edit modal can render + persist Qualifications
+          // (`business_partner_professions`) alongside Position.
+          businessPartnerId: true,
         },
       }),
       this.prisma.user.count({ where }),
