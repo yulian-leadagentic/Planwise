@@ -395,11 +395,27 @@ export class TimeEntriesService {
       excludeId: id,
     });
 
+    // Explicit column whitelist (mirrors create() ~176). Spreading
+    // ...dto pulls the non-column control flag `confirmOverlap` into
+    // Prisma's update input, which trips the *checked* variant where
+    // scalar `projectId`/`taskId` are rejected → TIME_ENTRIE-UPDATE-500.
+    // Fields the PATCH did not send stay `undefined` → Prisma skips
+    // them (partial-update semantics preserved). Overlap check runs
+    // regardless, so dropping `confirmOverlap` here is safe.
     const updated = await this.prisma.timeEntry.update({
       where: { id },
       data: {
-        ...dto,
+        timeClockId: dto.timeClockId,
+        projectId: dto.projectId,
+        taskId: dto.taskId,
         date: dto.date ? mergedDate : undefined,
+        startTime: dto.startTime,
+        endTime: dto.endTime,
+        minutes: dto.minutes,
+        note: dto.note,
+        isBillable: dto.isBillable,
+        location: dto.location,
+        completionPct: dto.completionPct,
       },
       include: {
         project: { select: { id: true, name: true } },
