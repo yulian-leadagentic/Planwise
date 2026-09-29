@@ -255,24 +255,61 @@ export class PlanningService {
       const marker = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1];
       if (marker) markerNames.add(marker);
     }
-    const markerTemplates = markerNames.size === 0 ? [] : await this.prisma.template.findMany({
-      where: { name: { in: Array.from(markerNames) }, deletedAt: null },
+    // Match markers against Template names by exact-or-prefix. A common
+    // real-world pattern in the staging data: the marker holds the
+    // ORIGINAL deliverable name (e.g. "תכנון ראשוני") captured at
+    // template-authoring time, while the current Template row has been
+    // renamed to "<marker>\<detail-suffix>" (e.g. "תכנון ראשוני\תשתית
+    // ודוח קריטי"). An exact IN(...) misses those rows.
+    //
+    // We fetch every task_list Template that COULD match — the union
+    // of `name = marker` and `name LIKE marker%` (using Prisma
+    // startsWith) — then, in-memory, we keep the closest match per
+    // marker (exact wins over prefix).
+    const markerArr = Array.from(markerNames);
+    const markerTemplates = markerArr.length === 0 ? [] : await this.prisma.template.findMany({
+      where: {
+        deletedAt: null,
+        type: 'task_list',
+        OR: markerArr.flatMap((m) => [
+          { name: m },
+          { name: { startsWith: `${m}\\` } },
+        ]),
+      },
       select: {
         name: true,
         phase: { select: { id: true, name: true, color: true } },
       },
     });
-    // Multiple templates can share a name (rare but legal). Keep the
-    // first one that resolves to a phase — this is a fallback path so
-    // "any" is fine; the correct fix is to populate deliverableTemplateId.
+    // Bucket per marker: prefer an EXACT name match; fall back to the
+    // first prefix match. All hits carry the same source template's
+    // phase, so any prefix hit is safe as a fallback.
     const phaseByMarkerName = new Map<string, { id: number; name: string; color: string | null }>();
+    // First pass — exact.
     for (const t of markerTemplates) {
-      if (t.phase && !phaseByMarkerName.has(t.name)) {
+      if (!t.phase) continue;
+      if (markerNames.has(t.name) && !phaseByMarkerName.has(t.name)) {
         phaseByMarkerName.set(t.name, {
           id: t.phase.id,
           name: t.phase.name,
           color: (t.phase as any).color ?? null,
         });
+      }
+    }
+    // Second pass — prefix (marker + '\'). Only sets the entry if the
+    // exact pass didn't already resolve it.
+    for (const t of markerTemplates) {
+      if (!t.phase) continue;
+      for (const m of markerNames) {
+        if (phaseByMarkerName.has(m)) continue;
+        if (t.name.startsWith(`${m}\\`)) {
+          phaseByMarkerName.set(m, {
+            id: t.phase.id,
+            name: t.phase.name,
+            color: (t.phase as any).color ?? null,
+          });
+          break;
+        }
       }
     }
     const resolveTaskService = (t: any): { id: number | null; name: string; color: string | null } | null => {
