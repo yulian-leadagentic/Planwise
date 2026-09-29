@@ -33,6 +33,10 @@ import {
   FolderKanban,
   Search,
   ChevronDown,
+  ChevronRight,
+  Building2,
+  Trash2,
+  RotateCcw,
   X,
 } from 'lucide-react';
 
@@ -70,6 +74,41 @@ interface ProjectRoleTypeLite {
   name: string;
   allowedPartnerKind?: 'person' | 'organization' | 'any';
   sortOrder?: number;
+}
+
+/**
+ * QA4 R2b ORG-3 — subset of PartnerRoleType used by the Organizations
+ * review panel's role selector. Matches the shape returned by
+ * `/admin/partner-types/role-types`; we only need name/code/appliesToKind.
+ */
+interface PartnerRoleTypeLite {
+  id: number;
+  code: string;
+  name: string;
+  appliesToKind: 'person' | 'organization' | 'any';
+  sortOrder?: number;
+  isSystem?: boolean;
+}
+
+/**
+ * QA4 R2b ORG-2 — one grouped organization in the review panel. Every
+ * DedupDecision folds into exactly one group (keyed by batchOrgKey, or
+ * `__row:<idx>` for the fallback ungrouped case). The people list
+ * carries every source row that would attach `worker_of` this org.
+ */
+interface OrgGroup {
+  key: string;
+  label: string;
+  domain: string | null;
+  matchedBpId: number | null;
+  /** true when the commit path would CREATE this org (matched-existing = false). */
+  isNew: boolean;
+  people: Array<{ decision: DedupDecision; skipped: boolean }>;
+  personCount: number;
+  skippedCount: number;
+  /** false when the row had no groupable signal — the panel labels
+   *  these as ungrouped so the reviewer notices. */
+  hasBatchKey: boolean;
 }
 
 /**
@@ -132,6 +171,11 @@ export function ContactsImportWizard({
   // "BPs + worker_of only" behaviour).
   const [attachToProjectId, setAttachToProjectId] = useState<number | null>(defaultProjectId);
   const [projectRoleId, setProjectRoleId] = useState<number | null>(null);
+  // QA4 R2b ORG-3 (2026-09-29) — user-picked BusinessPartnerRole per
+  // distinct batchOrgKey. Committed as `orgTypes` on the commit call;
+  // every NEW org must have an entry (matched-existing orgs are
+  // exempt — we never downgrade the role they already hold).
+  const [orgTypes, setOrgTypes] = useState<Record<string, string>>({});
   const [commitResult, setCommitResult] = useState<
     | (Awaited<ReturnType<typeof contactsImportApi.commit>>)
     | null
@@ -241,6 +285,9 @@ export function ContactsImportWizard({
         // explicit "no role".
         attachToProjectId: attachToProjectId ?? undefined,
         projectRoleId: projectRoleId ?? undefined,
+        // QA4 R2b ORG-3 — per-key role picks (only NEW orgs are here;
+        // matched-existing orgs never appear because their role stays).
+        orgTypes: Object.keys(orgTypes).length > 0 ? orgTypes : undefined,
       });
     },
     onSuccess: (data) => {
@@ -277,6 +324,7 @@ export function ContactsImportWizard({
     setPreview(null);
     setDecisions({});
     setDecidedMapping(null);
+    setOrgTypes({});
     setCommitResult(null);
     // Re-apply prefill for "Import another file" — if the wizard was
     // deep-linked from a project, that context still holds. The role
@@ -346,10 +394,46 @@ export function ContactsImportWizard({
     return ok;
   };
 
+  // ─── Top Back handler (QA4 R2b ORG-7) ────────────────────────────
+  // Mirrors the footer Back on each step so the reviewer can go back
+  // without scrolling. Hidden on step 1 (upload) and step 5 (commit
+  // is the terminal step — a fresh reset is offered there instead).
+  // Uses the same discard-decisions guard as the footer buttons.
+  const topBackHandler = async (): Promise<void> => {
+    if (step === 'sheet') {
+      // Same behaviour as the SheetPickerStep footer.
+      if (
+        await confirmDiscardDecisions(
+          `Cancelling discards ${decisionsCount} unsaved decision${
+            decisionsCount === 1 ? '' : 's'
+          } and returns to Upload.`,
+        )
+      ) {
+        reset();
+      }
+    } else if (step === 'map') {
+      if (
+        await confirmDiscardDecisions(
+          `Going back discards ${decisionsCount} unsaved decision${
+            decisionsCount === 1 ? '' : 's'
+          }.`,
+        )
+      ) {
+        setStep(sheets.length > 1 ? 'sheet' : 'upload');
+      }
+    } else if (step === 'preview') {
+      setStep('map');
+    }
+  };
+  const topBackEnabled = step !== 'upload' && step !== 'commit';
+
   // ─── Stepper ─────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
-      <Stepper step={step} />
+      <Stepper
+        step={step}
+        onBack={topBackEnabled ? topBackHandler : undefined}
+      />
 
       {step === 'upload' && (
         <UploadStep
@@ -427,6 +511,15 @@ export function ContactsImportWizard({
           preview={preview}
           sheetName={selectedSheet.name}
           decisions={decisions}
+          orgTypes={orgTypes}
+          onOrgTypeChange={(key, code) =>
+            setOrgTypes((prev) => {
+              const next = { ...prev };
+              if (!code) delete next[key];
+              else next[key] = code;
+              return next;
+            })
+          }
           onDecide={(rowIndex, patch) => {
             const key = decisionKey(rowIndex);
             setDecisions((prev) => ({
@@ -491,34 +584,71 @@ export function ContactsImportWizard({
 }
 
 // ─── Stepper ─────────────────────────────────────────────────────────
-function Stepper({ step }: { step: WizardStep }) {
+function Stepper({
+  step,
+  onBack,
+}: {
+  step: WizardStep;
+  /**
+   * QA4 R2b ORG-7 (2026-09-29) — optional top Back handler. When
+   * supplied a "← Back" control renders next to the progress row so
+   * the reviewer can rewind without scrolling to the footer. Hidden
+   * on step 1 (nothing to rewind to) and step 5 (commit is terminal).
+   */
+  onBack?: () => void;
+}) {
   const steps: WizardStep[] = ['upload', 'sheet', 'map', 'preview', 'commit'];
   const idx = steps.indexOf(step);
   return (
-    <ol className="flex items-center gap-2 text-[11px] font-semibold text-slate-500">
-      {steps.map((s, i) => {
-        const active = i === idx;
-        const done = i < idx;
-        return (
-          <li key={s} className="flex items-center gap-2">
-            <span
-              className={cn(
-                'inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-bold',
-                done && 'bg-emerald-500 text-white',
-                active && 'bg-blue-600 text-white',
-                !done && !active && 'bg-slate-200 text-slate-500',
+    <div className="flex items-center gap-3 flex-wrap">
+      {onBack && (
+        <button
+          type="button"
+          onClick={onBack}
+          className={cn(
+            'inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[12px] font-semibold',
+            'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300',
+            'hover:border-slate-400 dark:hover:border-slate-500 focus:outline-none focus:border-blue-500 dark:focus:border-blue-400',
+          )}
+          aria-label="Back to previous step"
+          title="Back to previous step"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" /> Back
+        </button>
+      )}
+      <ol className="flex items-center gap-2 text-[11px] font-semibold text-slate-500 dark:text-slate-400 flex-wrap">
+        {steps.map((s, i) => {
+          const active = i === idx;
+          const done = i < idx;
+          return (
+            <li key={s} className="flex items-center gap-2">
+              <span
+                className={cn(
+                  'inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-bold',
+                  done && 'bg-emerald-500 text-white',
+                  active && 'bg-blue-600 text-white',
+                  !done && !active && 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400',
+                )}
+              >
+                {done ? '✓' : i + 1}
+              </span>
+              <span
+                className={cn(
+                  active
+                    ? 'text-slate-900 dark:text-slate-100 font-semibold'
+                    : 'text-slate-500 dark:text-slate-400',
+                )}
+              >
+                {STEP_LABELS[s]}
+              </span>
+              {i < steps.length - 1 && (
+                <span className="text-slate-300 dark:text-slate-600">›</span>
               )}
-            >
-              {done ? '✓' : i + 1}
-            </span>
-            <span className={cn(active ? 'text-slate-900 font-semibold' : 'text-slate-500')}>
-              {STEP_LABELS[s]}
-            </span>
-            {i < steps.length - 1 && <span className="text-slate-300">›</span>}
-          </li>
-        );
-      })}
-    </ol>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
 }
 
@@ -981,6 +1111,8 @@ function PreviewStep({
   preview,
   sheetName,
   decisions,
+  orgTypes,
+  onOrgTypeChange,
   onDecide,
   onOverride,
   attachToProjectId,
@@ -996,6 +1128,9 @@ function PreviewStep({
   preview: SheetPreview;
   sheetName: string;
   decisions: Record<string, RowDecision>;
+  /** QA4 R2b ORG-3 — per-batchOrgKey role code chosen by the reviewer. */
+  orgTypes: Record<string, string>;
+  onOrgTypeChange: (batchOrgKey: string, code: string | null) => void;
   onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
   onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
   attachToProjectId: number | null;
@@ -1035,17 +1170,98 @@ function PreviewStep({
     return m;
   }, [preview.resolvedRows]);
 
+  // QA4 R2b ORG-6 — reviewer-marked skips subtract from the effective
+  // "rows that will land". Displayed inline on the summary tiles and
+  // used as the commit gate.
+  const skippedCount = useMemo(
+    () => preview.decisions.filter((d) => decisions[decisionKeyFor(d.sourceRowIndex)]?.skipped).length,
+    [preview.decisions, decisions, sheetName],
+  );
+  const effectiveEligible = Math.max(0, s.eligible - skippedCount);
+
+  // QA4 R2b ORG-2 — group the batch by batchOrgKey. The commit path
+  // creates the org once per key; the panel below shows that same
+  // grouping (matched-existing vs new, count of people, per-org role).
+  const orgGroups = useMemo<OrgGroup[]>(() => {
+    const map = new Map<string, OrgGroup>();
+    for (const d of preview.decisions) {
+      // Respect user-skipped rows for the person count so the panel
+      // matches what the commit will actually write.
+      const dec = decisions[decisionKeyFor(d.sourceRowIndex)];
+      const isSkipped = !!dec?.skipped;
+      const key = d.batchOrgKey ?? `__row:${d.sourceRowIndex}`;
+      const existing = map.get(key);
+      const isMatchedExisting =
+        d.org.action === 'link' ||
+        (d.org.action === 'create' && !!d.org.matchedBpId) ||
+        (key.startsWith('bp:') || d.org.matchReason === 'domain' || d.org.matchReason === 'name');
+      const label =
+        d.org.matchedBpName ??
+        d.values.company ??
+        (d.domain ? `@${d.domain}` : `Row ${d.sourceRowIndex}`);
+      if (!existing) {
+        map.set(key, {
+          key,
+          label,
+          domain: d.domain ?? null,
+          matchedBpId: d.org.matchedBpId ?? null,
+          isNew: !isMatchedExisting && !d.org.matchedBpId,
+          people: [],
+          personCount: 0,
+          skippedCount: 0,
+          hasBatchKey: !!d.batchOrgKey,
+        });
+      }
+      const g = map.get(key)!;
+      // Prefer a real name over "@domain" once we see a row that has one.
+      if (!g.label.includes(' ') && d.values.company) g.label = d.values.company;
+      g.people.push({ decision: d, skipped: isSkipped });
+      if (isSkipped) g.skippedCount++;
+      else g.personCount++;
+    }
+    return [...map.values()].sort((a, b) => b.personCount - a.personCount);
+  }, [preview.decisions, decisions, sheetName]);
+
+  // QA4 R2b ORG-3 gate — every NEW org must have a role code picked
+  // (matched-existing orgs never appear in this list). Commit stays
+  // disabled until the reviewer has typed every one.
+  const newOrgGroups = orgGroups.filter((g) => g.isNew && g.hasBatchKey && g.personCount > 0);
+  const untypedNewOrgs = newOrgGroups.filter((g) => !orgTypes[g.key]).length;
+
+  // Load org role types (customer / supplier / consultant / partner /
+  // …) once; shared with the ORG-3 selector on each row of the panel.
+  const orgRoleTypesQuery = useQuery({
+    queryKey: ['admin/partner-types/role-types'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () =>
+      client
+        .get('/admin/partner-types/role-types')
+        .then((r) => (r.data?.data ?? r.data ?? []) as PartnerRoleTypeLite[]),
+  });
+  const orgRoleTypes = useMemo(
+    () =>
+      (orgRoleTypesQuery.data ?? []).filter(
+        (rt) => rt.appliesToKind === 'organization' || rt.appliesToKind === 'any',
+      ),
+    [orgRoleTypesQuery.data],
+  );
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <SummaryTile label="Total rows" value={s.totalRows} />
-        <SummaryTile label="Eligible" value={s.eligible} tone="ok" />
+        {/* Effective eligible after ORG-6 reviewer skips subtract. */}
+        <SummaryTile label="Eligible" value={effectiveEligible} tone="ok" />
         <SummaryTile label="Missing email or phone" value={s.belowContract} tone={s.belowContract > 0 ? 'warn' : 'neutral'} />
         <SummaryTile label="Conflicts" value={s.orgConflicts} tone={s.orgConflicts > 0 ? 'warn' : 'neutral'} />
         <SummaryTile label="Orgs · create" value={s.orgsToCreate} tone="ok" />
         <SummaryTile label="Orgs · link" value={s.orgsToLink} tone="info" />
         <SummaryTile label="Contacts · create" value={s.contactsToCreate} tone="ok" />
-        <SummaryTile label="Contacts · link" value={s.contactsToLink} tone="info" />
+        <SummaryTile
+          label={skippedCount > 0 ? 'Removed by reviewer' : 'Contacts · link'}
+          value={skippedCount > 0 ? skippedCount : s.contactsToLink}
+          tone={skippedCount > 0 ? 'warn' : 'info'}
+        />
       </div>
 
       {(s.emailSplitRows > 0 || s.phoneSplitRows > 0 || s.companyFilledRows > 0 || s.disciplineFilledRows > 0) && (
@@ -1109,6 +1325,19 @@ function PreviewStep({
         </div>
       )}
 
+      {/* QA4 R2b ORG-2 · Organizations review panel (collapsible).
+          Sits between the summary tiles and the row-by-row table so
+          the reviewer sees the deduped org list first — matches the
+          intra-batch grouping the commit path will apply. */}
+      <OrganizationsPanel
+        groups={orgGroups}
+        orgTypes={orgTypes}
+        onOrgTypeChange={onOrgTypeChange}
+        orgRoleTypes={orgRoleTypes}
+        orgRoleTypesLoading={orgRoleTypesQuery.isLoading}
+        untypedNewOrgs={untypedNewOrgs}
+      />
+
       <PreviewTable
         visibleDecisions={visibleDecisions}
         rowByIndex={rowByIndex}
@@ -1139,17 +1368,226 @@ function PreviewStep({
         <button
           type="button"
           onClick={onCommit}
-          disabled={isBusy || s.eligible === 0 || unresolvedConflicts > 0}
+          disabled={
+            isBusy
+            || effectiveEligible === 0
+            || unresolvedConflicts > 0
+            || untypedNewOrgs > 0
+          }
           className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50 focus:outline-none focus:border-blue-400"
         >
           {isBusy
             ? 'Committing…'
             : unresolvedConflicts > 0
               ? `Resolve ${unresolvedConflicts} conflict${unresolvedConflicts === 1 ? '' : 's'} to continue`
-              : `Commit ${s.eligible} rows`}{' '}
-          {unresolvedConflicts === 0 && <ArrowRight className="h-3.5 w-3.5" />}
+              : untypedNewOrgs > 0
+                ? `Classify ${untypedNewOrgs} organization${untypedNewOrgs === 1 ? '' : 's'} to continue`
+                : `Commit ${effectiveEligible} rows`}{' '}
+          {unresolvedConflicts === 0 && untypedNewOrgs === 0 && <ArrowRight className="h-3.5 w-3.5" />}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ─── QA4 R2b ORG-2/ORG-3 · Organizations review panel ────────────────
+/**
+ * A collapsible section at the top of the Preview step that shows the
+ * intra-batch-deduped organization list (ORG-2). Every distinct org
+ * (matched-existing OR to-be-created) carries a role-type picker
+ * (ORG-3); NEW orgs must have a role picked before the reviewer can
+ * commit. Expanding an org row lists the people it will attach.
+ *
+ * Grouping input is the caller's `groups` array — computed in
+ * `PreviewStep` from the `batchOrgKey` on each DedupDecision, so this
+ * component is entirely presentational.
+ */
+function OrganizationsPanel({
+  groups,
+  orgTypes,
+  onOrgTypeChange,
+  orgRoleTypes,
+  orgRoleTypesLoading,
+  untypedNewOrgs,
+}: {
+  groups: OrgGroup[];
+  orgTypes: Record<string, string>;
+  onOrgTypeChange: (batchOrgKey: string, code: string | null) => void;
+  orgRoleTypes: PartnerRoleTypeLite[];
+  orgRoleTypesLoading: boolean;
+  untypedNewOrgs: number;
+}) {
+  // Default open when the reviewer still has NEW-org type picks to
+  // make — nudges them at the classification gate. Otherwise start
+  // collapsed so the row-by-row table stays the focal point.
+  const [open, setOpen] = useState<boolean>(untypedNewOrgs > 0);
+  useEffect(() => {
+    // Re-open automatically if a new NEW-org classification blocker
+    // surfaces after the reviewer collapsed the panel.
+    if (untypedNewOrgs > 0) setOpen(true);
+  }, [untypedNewOrgs]);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const toggle = (k: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+
+  const newCount = groups.filter((g) => g.isNew).length;
+  const linkCount = groups.filter((g) => !g.isNew).length;
+
+  return (
+    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-left focus:outline-none focus:bg-slate-50 dark:focus:bg-slate-800"
+      >
+        <Building2 className="h-4 w-4 text-indigo-500 dark:text-indigo-400" aria-hidden="true" />
+        <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">
+          Organizations ({groups.length})
+        </span>
+        <span className="text-[11px] text-slate-500 dark:text-slate-400">
+          {newCount > 0 && `${newCount} new`}{newCount > 0 && linkCount > 0 && ' · '}
+          {linkCount > 0 && `${linkCount} link${linkCount === 1 ? '' : 's'}`}
+        </span>
+        {untypedNewOrgs > 0 && (
+          <span className="ml-1 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            {untypedNewOrgs} need a type
+          </span>
+        )}
+        <ChevronDown
+          className={cn(
+            'ml-auto h-4 w-4 text-slate-400 transition-transform',
+            open && 'rotate-180',
+          )}
+          aria-hidden="true"
+        />
+      </button>
+      {open && (
+        <div className="border-t border-slate-100 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800">
+          {groups.length === 0 ? (
+            <div className="px-3 py-4 text-[12px] italic text-slate-400 dark:text-slate-500">
+              No organizations detected in this file.
+            </div>
+          ) : (
+            groups.map((g) => {
+              const isExp = expanded.has(g.key);
+              const pickedCode = orgTypes[g.key] ?? '';
+              const needsPick = g.isNew && g.hasBatchKey && !pickedCode && g.personCount > 0;
+              return (
+                <div key={g.key} className="px-3 py-2">
+                  <div className="flex items-start gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => toggle(g.key)}
+                      className="inline-flex items-center justify-center h-5 w-5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 focus:outline-none focus:bg-slate-100 dark:focus:bg-slate-800 shrink-0 mt-0.5"
+                      aria-expanded={isExp}
+                      aria-label={isExp ? 'Collapse people' : 'Expand people'}
+                    >
+                      <ChevronRight
+                        className={cn(
+                          'h-3.5 w-3.5 text-slate-500 dark:text-slate-400 transition-transform',
+                          isExp && 'rotate-90',
+                        )}
+                        aria-hidden="true"
+                      />
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">
+                          {g.label}
+                        </span>
+                        <span
+                          className={cn(
+                            'inline-flex items-center rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide',
+                            g.isNew
+                              ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+                              : 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300',
+                          )}
+                        >
+                          {g.isNew ? 'new' : 'matched'}
+                        </span>
+                        {g.domain && (
+                          <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                            @{g.domain}
+                          </span>
+                        )}
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                          {g.personCount} {g.personCount === 1 ? 'person' : 'people'}
+                          {g.skippedCount > 0 && ` · ${g.skippedCount} removed`}
+                        </span>
+                      </div>
+                    </div>
+                    {/* QA4 R2b ORG-3 — role picker. Only NEW orgs need
+                        it (matched orgs keep their existing role); we
+                        still render a placeholder line for the matched
+                        orgs so the layout stays uniform. */}
+                    {g.isNew && g.hasBatchKey ? (
+                      <select
+                        value={pickedCode}
+                        onChange={(e) => onOrgTypeChange(g.key, e.target.value || null)}
+                        disabled={orgRoleTypesLoading}
+                        aria-label={`Organization type for ${g.label}`}
+                        className={cn(
+                          'shrink-0 px-2 py-1 rounded-md border text-[12px] focus:outline-none',
+                          needsPick
+                            ? 'border-amber-400 dark:border-amber-500 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-200 focus:border-amber-600 dark:focus:border-amber-400'
+                            : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:border-blue-500 dark:focus:border-blue-400',
+                        )}
+                      >
+                        <option value="">
+                          {orgRoleTypesLoading ? 'Loading…' : '— pick type —'}
+                        </option>
+                        {orgRoleTypes.map((rt) => (
+                          <option key={rt.code} value={rt.code}>
+                            {rt.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="shrink-0 text-[11px] italic text-slate-400 dark:text-slate-500 mt-0.5">
+                        {g.hasBatchKey ? 'keeps existing type' : 'ungrouped'}
+                      </span>
+                    )}
+                  </div>
+                  {isExp && (
+                    <ul className="mt-2 ml-6 space-y-1">
+                      {g.people.map(({ decision, skipped }) => (
+                        <li
+                          key={decision.sourceRowIndex}
+                          className={cn(
+                            'text-[12px] flex items-center gap-2',
+                            skipped
+                              ? 'line-through text-slate-400 dark:text-slate-500'
+                              : 'text-slate-700 dark:text-slate-200',
+                          )}
+                        >
+                          <span className="font-mono text-[11px] text-slate-400 dark:text-slate-500">
+                            Row {decision.sourceRowIndex}
+                          </span>
+                          <span className="truncate">
+                            {decision.values.contact ?? decision.values.email ?? '(unnamed)'}
+                          </span>
+                          {decision.values.role && (
+                            <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                              · {decision.values.role}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1481,6 +1919,9 @@ function PreviewTable({
                 <PreviewTh>Job Title</PreviewTh>
                 <PreviewTh>Office manager</PreviewTh>
                 <PreviewTh className="w-40">Verdict</PreviewTh>
+                {/* QA4 R2b ORG-6 — per-row trash / undo. Narrow so the
+                    icon column doesn't push the rest of the table off. */}
+                <PreviewTh className="w-10 text-center">&nbsp;</PreviewTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1490,6 +1931,7 @@ function PreviewTable({
                 const rowDec = decisions[decisionKeyFor(d.sourceRowIndex)];
                 const effectiveOrgAction = rowDec?.orgAction ?? d.org.action;
                 const isExpanded = expanded.has(d.sourceRowIndex);
+                const isSkipped = !!rowDec?.skipped;
                 // QA4 IMP-4 — extracted secondary contacts (office
                 // managers etc.) surface as their own rows immediately
                 // beneath the primary they came from, tagged
@@ -1505,7 +1947,11 @@ function PreviewTable({
                       rowDec={rowDec}
                       effectiveOrgAction={effectiveOrgAction}
                       isExpanded={isExpanded}
+                      isSkipped={isSkipped}
                       onToggleExpand={() => toggle(d.sourceRowIndex)}
+                      onToggleSkipped={() =>
+                        onDecide(d.sourceRowIndex, { skipped: !isSkipped })
+                      }
                       onDecide={(patch) => onDecide(d.sourceRowIndex, patch)}
                       onOverride={(field, value) =>
                         onOverride(d.sourceRowIndex, field, value)
@@ -1549,7 +1995,9 @@ function PreviewTableRow({
   rowDec,
   effectiveOrgAction,
   isExpanded,
+  isSkipped,
   onToggleExpand,
+  onToggleSkipped,
   onDecide,
   onOverride,
 }: {
@@ -1558,7 +2006,10 @@ function PreviewTableRow({
   rowDec: RowDecision | undefined;
   effectiveOrgAction: DedupDecision['org']['action'];
   isExpanded: boolean;
+  /** QA4 R2b ORG-6 — reviewer marked the row `skip` via the trash icon. */
+  isSkipped: boolean;
   onToggleExpand: () => void;
+  onToggleSkipped: () => void;
   onDecide: (patch: Partial<RowDecision>) => void;
   onOverride: (field: OverrideField, value: string | null | undefined) => void;
 }) {
@@ -1570,11 +2021,19 @@ function PreviewTableRow({
     row.synthesis.emailSplitFailed ||
     row.synthesis.phoneSplitFailed
   );
-  const rowTint = belowContract
-    ? 'bg-red-50/40 dark:bg-red-950/20'
-    : hasWarning
-      ? 'bg-amber-50/30 dark:bg-amber-950/10'
-      : '';
+  // ORG-6 takes the strongest visual precedence — struck-through +
+  // muted background — so a removed row is unmistakable.
+  const rowTint = isSkipped
+    ? 'bg-slate-100/70 dark:bg-slate-800/50'
+    : belowContract
+      ? 'bg-red-50/40 dark:bg-red-950/20'
+      : hasWarning
+        ? 'bg-amber-50/30 dark:bg-amber-950/10'
+        : '';
+  // Muted content class applied on every td so the strikethrough
+  // + opacity affect nested spans (line-through doesn't reliably
+  // propagate through the tr).
+  const rowMuted = isSkipped ? 'opacity-60 [&_span]:line-through [&_.font-mono]:no-underline' : '';
   // QA4 IMP-2 — per-cell effective value: an override wins over the
   // parsed value; `null` means "PM cleared the cell"; `undefined` means
   // "no override, use parsed".
@@ -1586,7 +2045,7 @@ function PreviewTableRow({
   const isEdited = (field: OverrideField) => field in overrides;
   return (
     <>
-      <tr className={cn('align-top', rowTint)}>
+      <tr className={cn('align-top', rowTint, rowMuted)}>
         <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
           <div className="pt-0.5" title="Actual sheet row number — matches the source file">
             Row {dec.sourceRowIndex}
@@ -1698,11 +2157,36 @@ function PreviewTableRow({
             onDecide={onDecide}
           />
         </td>
+        {/* QA4 R2b ORG-6 — per-row trash / undo. */}
+        <td className="px-2 py-2 text-center">
+          {isSkipped ? (
+            <button
+              type="button"
+              onClick={onToggleSkipped}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:text-slate-300 hover:border-slate-400 dark:hover:border-slate-500 focus:outline-none focus:border-blue-500 dark:focus:border-blue-400"
+              aria-label={`Restore row ${dec.sourceRowIndex}`}
+              title="Restore this row to the import"
+            >
+              <RotateCcw className="h-3 w-3" aria-hidden="true" />
+              Undo
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onToggleSkipped}
+              className="inline-flex items-center justify-center h-6 w-6 rounded-md border border-transparent text-slate-400 dark:text-slate-500 hover:border-red-300 hover:text-red-600 dark:hover:border-red-800 dark:hover:text-red-400 focus:outline-none focus:border-red-500 dark:focus:border-red-500"
+              aria-label={`Remove row ${dec.sourceRowIndex} from the import`}
+              title="Remove this row from the import"
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          )}
+        </td>
       </tr>
       {isExpanded && (
         <tr className={cn('align-top', rowTint)}>
-          {/* colSpan bumped to 10 for the IMP-6 Job Title column. */}
-          <td colSpan={10} className="px-3 pt-0 pb-2.5">
+          {/* colSpan bumped to 11 for the ORG-6 trash column. */}
+          <td colSpan={11} className="px-3 pt-0 pb-2.5">
             <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2 space-y-1">
               <div className="text-[11px] text-slate-600 dark:text-slate-300 flex items-center gap-1">
                 <span className="font-semibold">Organization:</span>{' '}
@@ -1855,6 +2339,10 @@ function SecondaryContactRow({
           </span>
         </div>
       </td>
+      {/* Empty trash column keeps the row width aligned with the
+          primary rows above (ORG-6). Secondary contacts follow the
+          primary's skip state — removing the primary drops them too. */}
+      <td className="px-2 py-2" />
     </tr>
   );
 }
