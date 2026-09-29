@@ -38,7 +38,17 @@ import {
   Trash2,
   RotateCcw,
   X,
+  GripVertical,
 } from 'lucide-react';
+import {
+  DndContext,
+  useDraggable,
+  useDroppable,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
 
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
@@ -1755,7 +1765,22 @@ function GroupedReview({
   const newCount = orgs.filter((g) => g.isNew).length;
   const linkCount = orgs.filter((g) => !g.isNew).length;
 
+  // QA4 E4 (2026-09-29) — DnD sensors. A short activation distance
+  // keeps in-cell clicks (chevrons, buttons, inline text edits) from
+  // triggering a drag by accident.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over) return;
+    const rowIndex = active.data.current?.rowIndex as number | undefined;
+    const targetKey = over.data.current?.targetKey as string | null | undefined;
+    if (typeof rowIndex !== 'number') return;
+    if (targetKey === undefined) return; // no valid target
+    onMovePerson(rowIndex, targetKey);
+  };
+
   return (
+    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
     <div className="space-y-3">
       <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
         <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
@@ -1856,6 +1881,7 @@ function GroupedReview({
         />
       )}
     </div>
+    </DndContext>
   );
 }
 
@@ -1920,6 +1946,12 @@ function OrgCard({
   const pickedCode = orgTypes[group.key] ?? '';
   const needsPick = group.isNew && group.hasBatchKey && !pickedCode && group.personCount > 0 && !isDeleted;
   const [askDelete, setAskDelete] = useState(false);
+  // QA4 E4 (2026-09-29) — droppable target for the drag/drop mover.
+  const { isOver, setNodeRef: setDroppableRef } = useDroppable({
+    id: `drop-org-${group.key}`,
+    data: { targetKey: group.key },
+    disabled: isDeleted,
+  });
   // QA4 E2 (2026-09-29) — inline org name / domain editors.
   const [editingName, setEditingName] = useState(false);
   const [editingDomain, setEditingDomain] = useState(false);
@@ -1939,11 +1971,15 @@ function OrgCard({
   };
 
   return (
-    <div className={cn(
-      'px-3 py-2.5',
-      needsPick && 'bg-amber-50/30 dark:bg-amber-950/10',
-      isDeleted && 'opacity-60 bg-slate-100/40 dark:bg-slate-800/30',
-    )}>
+    <div
+      ref={setDroppableRef}
+      className={cn(
+        'px-3 py-2.5 transition-colors',
+        needsPick && 'bg-amber-50/30 dark:bg-amber-950/10',
+        isDeleted && 'opacity-60 bg-slate-100/40 dark:bg-slate-800/30',
+        isOver && 'bg-blue-50 dark:bg-blue-950/40 ring-2 ring-blue-400 dark:ring-blue-500 ring-inset',
+      )}
+    >
       <div className="flex items-start gap-2 flex-wrap">
         <button
           type="button"
@@ -2229,8 +2265,21 @@ function IndividualsSection({
   conflictResolutions?: Record<string, Record<string, 'existing' | 'imported'>>;
   onConflictResolve?: (recordKey: string, field: string, choice: 'existing' | 'imported') => void;
 }) {
+  // QA4 E4 (2026-09-29) — droppable target for "move to individuals".
+  const { isOver, setNodeRef: setDroppableRef } = useDroppable({
+    id: 'drop-individuals',
+    data: { targetKey: null },
+  });
   return (
-    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+    <div
+      ref={setDroppableRef}
+      className={cn(
+        'rounded-[14px] border bg-white dark:bg-slate-900 overflow-hidden transition-colors',
+        isOver
+          ? 'border-blue-400 dark:border-blue-500 ring-2 ring-blue-400 dark:ring-blue-500'
+          : 'border-slate-200 dark:border-slate-700',
+      )}
+    >
       <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
         <Info className="h-4 w-4 text-slate-500 dark:text-slate-400" aria-hidden="true" />
         <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">
@@ -2791,6 +2840,14 @@ function PreviewTableRow({
   // + opacity affect nested spans (line-through doesn't reliably
   // propagate through the tr).
   const rowMuted = isSkipped ? 'opacity-60 [&_span]:line-through [&_.font-mono]:no-underline' : '';
+  // QA4 E4 (2026-09-29) — draggable handle for moving the person
+  // between org cards. `data.rowIndex` gets carried into onDragEnd
+  // so the container can call onMovePerson without another lookup.
+  const { attributes, listeners, setNodeRef: setDraggableRef, isDragging } = useDraggable({
+    id: `drag-person-${dec.sourceRowIndex}`,
+    data: { type: 'person', rowIndex: dec.sourceRowIndex },
+    disabled: !onMovePerson,
+  });
   // QA4 IMP-2 — per-cell effective value: an override wins over the
   // parsed value; `null` means "PM cleared the cell"; `undefined` means
   // "no override, use parsed".
@@ -2802,26 +2859,45 @@ function PreviewTableRow({
   const isEdited = (field: OverrideField) => field in overrides;
   return (
     <>
-      <tr className={cn('align-top', rowTint, rowMuted)}>
-        <td className="px-2 py-2 text-center">
-          {/* QA4 E1 (2026-09-29) — chevron toggles the stacked field
-              editor beneath the row (all fields inline-editable). */}
-          <button
-            type="button"
-            onClick={onToggleFields}
-            className="inline-flex items-center justify-center h-5 w-5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 focus:outline-none focus:bg-slate-100 dark:focus:bg-slate-800"
-            aria-expanded={isFieldsExpanded}
-            aria-label={isFieldsExpanded ? 'Collapse person fields' : 'Expand person fields'}
-            title={isFieldsExpanded ? 'Hide all person fields' : 'Show all person fields'}
-          >
-            <ChevronRight
-              className={cn(
-                'h-3.5 w-3.5 text-slate-500 dark:text-slate-400 transition-transform',
-                isFieldsExpanded && 'rotate-90',
-              )}
-              aria-hidden="true"
-            />
-          </button>
+      <tr className={cn('align-top', rowTint, rowMuted, isDragging && 'opacity-40')}>
+        <td className="px-1 py-2 text-center whitespace-nowrap">
+          <div className="inline-flex items-center gap-0.5">
+            {/* QA4 E4 (2026-09-29) — drag handle. Kept small + subtle
+                so it never competes with the chevron; hover reveals
+                the cursor affordance. Only rendered when onMovePerson
+                is available (individuals section + org cards). */}
+            {onMovePerson && (
+              <button
+                type="button"
+                ref={setDraggableRef}
+                {...listeners}
+                {...attributes}
+                className="inline-flex items-center justify-center h-5 w-4 rounded text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-grab active:cursor-grabbing focus:outline-none focus:text-slate-500 dark:focus:text-slate-300"
+                aria-label={`Drag row ${dec.sourceRowIndex} to another organization`}
+                title="Drag to another organization"
+              >
+                <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            )}
+            {/* QA4 E1 (2026-09-29) — chevron toggles the stacked field
+                editor beneath the row (all fields inline-editable). */}
+            <button
+              type="button"
+              onClick={onToggleFields}
+              className="inline-flex items-center justify-center h-5 w-5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 focus:outline-none focus:bg-slate-100 dark:focus:bg-slate-800"
+              aria-expanded={isFieldsExpanded}
+              aria-label={isFieldsExpanded ? 'Collapse person fields' : 'Expand person fields'}
+              title={isFieldsExpanded ? 'Hide all person fields' : 'Show all person fields'}
+            >
+              <ChevronRight
+                className={cn(
+                  'h-3.5 w-3.5 text-slate-500 dark:text-slate-400 transition-transform',
+                  isFieldsExpanded && 'rotate-90',
+                )}
+                aria-hidden="true"
+              />
+            </button>
+          </div>
         </td>
         <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
           <div className="pt-0.5" title="Actual sheet row number — matches the source file">
