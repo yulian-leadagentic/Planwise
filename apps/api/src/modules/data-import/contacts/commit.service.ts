@@ -169,13 +169,22 @@ export class ContactsCommitService {
           result.orgsLinked++;
         } else if (orgAction === 'create') {
           const orgName = eff('company');
+          // QA4 R2 IMP-7 — when the split-merge suppressed the primary's
+          // landline because it belonged to an extracted office manager,
+          // the classifier surfaced the same landline on the secondary.
+          // Promote it to the org phone so the office line still lives
+          // *somewhere* at the top level of the branch, not only on the
+          // office-manager's person BP.
+          const orgPhone = eff('phone')
+            ?? (dec.secondaryContacts ?? []).map((s) => s.phone).find(Boolean)
+            ?? null;
           const created = await this.prisma.businessPartner.create({
             data: {
               partnerType: 'organization',
               displayName: orgName ?? '(unnamed)',
               companyName: orgName,
               email: emailForCommit(),
-              phone: eff('phone'),
+              phone: orgPhone,
               address: dec.values.address ?? null,
               notes: dec.values.note ?? null,
               source: 'import',
@@ -694,7 +703,95 @@ export class ContactsCommitService {
         createdByImportId: importId,
       },
     });
+
+    // QA4 R2 IMP-7 — attach the person to the Profession that matches
+    // the classifier's title (default "Office manager"). Profession is
+    // upsert-by-name so a re-import lands on the same row; the join is
+    // upsert-by-(bp, profession) so a re-run stays idempotent. Best-
+    // effort: a failure here does NOT roll back the person write —
+    // the primary DoD is "person BP exists with the right job title",
+    // and the profession link is the display anchor for that title.
+    try {
+      const professionId = await this.resolveProfessionId(secondary.title);
+      if (professionId != null) {
+        await this.prisma.businessPartnerProfession.upsert({
+          where: {
+            businessPartnerId_professionId: {
+              businessPartnerId: created.id,
+              professionId,
+            },
+          },
+          create: {
+            businessPartnerId: created.id,
+            professionId,
+            isPrimary: true,
+          },
+          update: { isPrimary: true },
+        });
+      }
+    } catch (err: unknown) {
+      // Non-fatal — the person BP + secondary title already carry the
+      // "Office manager" information via displayName + worker_of.titleAtB.
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `contacts-import: attach office-manager profession failed for bp ${created.id}: ${message}`,
+      );
+    }
     return created.id;
+  }
+
+  /**
+   * QA4 R2 IMP-7 — resolve/seed a Profession row by its display name.
+   * Idempotent: uses upsert on Profession.name (which is @unique). When
+   * the name is "Office manager", both an English and a Hebrew
+   * synonym match so a Hebrew-configured catalog isn't duplicated.
+   * Returns null on empty input.
+   */
+  private async resolveProfessionId(title: string | null | undefined): Promise<number | null> {
+    const t = (title ?? '').trim();
+    if (!t) return null;
+
+    // Prefer an existing case-insensitive match — the catalog may
+    // already carry "Office Manager" (title-case) or "מנהלת משרד" and
+    // the classifier's default is "Office manager". A plain unique on
+    // name is case-sensitive at the DB level; walk both spellings.
+    const exact = await this.prisma.profession.findFirst({
+      where: {
+        OR: [
+          { name: { equals: t } },
+          // Hebrew synonym for the default case — keeps a Hebrew-first
+          // catalog collapsing onto one row.
+          ...(t.toLowerCase() === 'office manager'
+            ? [
+                { name: { equals: 'מנהלת משרד' } },
+                { name: { equals: 'מנהל משרד' } },
+              ]
+            : []),
+        ],
+      },
+      select: { id: true },
+    });
+    if (exact) return exact.id;
+
+    // Nothing matched — create by canonical spelling. Wrap in a
+    // try/catch so a race with another import racing on the same
+    // Profession name yields the existing row.
+    try {
+      const created = await this.prisma.profession.create({
+        data: { name: t, sortOrder: 999 },
+        select: { id: true },
+      });
+      return created.id;
+    } catch (err: unknown) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        const again = await this.prisma.profession.findFirst({
+          where: { name: { equals: t } },
+          select: { id: true },
+        });
+        return again?.id ?? null;
+      }
+      throw err;
+    }
   }
 
   /**

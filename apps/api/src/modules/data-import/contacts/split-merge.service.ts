@@ -479,6 +479,18 @@ function processPhoneCellWithClassifier(
   // was non-empty and looked like data, drop into the source slot
   // verbatim — matches the legacy "single unclassifiable piece →
   // source slot" behaviour.
+  // QA4 R2 IMP-7 — when a secondary contact is extracted from THIS
+  // cell (i.e. the classifier found a name), the LANDLINE phones in
+  // the cell belong to the office / secondary, not the primary.
+  // Mobile numbers still land on the primary because a 05x number
+  // next to a name almost always belongs to the named person.
+  // A cell with no extracted name behaves as before — every phone
+  // token routes to the primary's mobile/phone slots.
+  const secondaryName = classified.name?.trim();
+  const willEmitSecondary = !!secondaryName
+    && !(primaryContactName && normalizeForCompare(secondaryName) === normalizeForCompare(primaryContactName))
+    && (classified.phones.length > 0 || !!classified.title);
+
   if (classified.phones.length === 0) {
     // Cell had text but no phone-shaped token — legacy fallback so
     // "1234" style entries still land in the slot (Stage 6 validates).
@@ -489,8 +501,18 @@ function processPhoneCellWithClassifier(
   } else {
     if (classified.phones.length > 1) acc.anySplit = true;
     for (const p of classified.phones) {
-      if (p.kind === 'mobile') acc.mobile.push(p.raw);
-      else acc.phone.push(p.raw);
+      if (p.kind === 'mobile') {
+        // Mobiles stay on the primary even when a secondary was
+        // extracted — a mobile belongs to a person, not the office.
+        acc.mobile.push(p.raw);
+      } else if (willEmitSecondary) {
+        // Landline in a name-carrying cell → office phone, DO NOT
+        // copy it onto the primary (each engineer would otherwise
+        // inherit the shared office landline).
+        continue;
+      } else {
+        acc.phone.push(p.raw);
+      }
     }
   }
 
@@ -508,27 +530,22 @@ function processPhoneCellWithClassifier(
   // alongside a phone number in the cell or (b) sits alongside a
   // title (rare — most sheets omit the title). `Office manager` is the
   // default title, per the DoD in `docs/bm2/qa4-import-preview.md`.
-  const name = classified.name?.trim();
-  if (name) {
-    const isEchoOfPrimary = primaryContactName && normalizeForCompare(name) === normalizeForCompare(primaryContactName);
-    if (!isEchoOfPrimary && (classified.phones.length > 0 || classified.title)) {
-      const firstPhone = classified.phones[0];
-      const kind = firstPhone?.kind;
-      const secondary: SecondaryContact = {
-        name,
-        // Route the associated phone into the right slot on the
-        // secondary contact too. If the source slot was `mobile` we
-        // still let the grammar decide (a 03-x number from a mobile
-        // column is landline).
-        phone: firstPhone && kind !== 'mobile' ? firstPhone.raw : undefined,
-        mobile: firstPhone && kind === 'mobile' ? firstPhone.raw : undefined,
-        city: classified.city?.value,
-        title: classified.title ?? DEFAULT_SECONDARY_TITLE,
-        sourceField: sourceSlot,
-        confidence: averageConfidence(classified),
-      };
-      secondaries.push(secondary);
-    }
+  if (willEmitSecondary && secondaryName) {
+    // The secondary's phone/mobile: pick the FIRST LANDLINE phone
+    // for `phone` (that's the office line), and only a mobile if
+    // the classifier saw one attached to the same name.
+    const landline = classified.phones.find((p) => p.kind !== 'mobile');
+    const mobile = classified.phones.find((p) => p.kind === 'mobile');
+    const secondary: SecondaryContact = {
+      name: secondaryName,
+      phone: landline?.raw,
+      mobile: mobile?.raw,
+      city: classified.city?.value,
+      title: classified.title ?? DEFAULT_SECONDARY_TITLE,
+      sourceField: sourceSlot,
+      confidence: averageConfidence(classified),
+    };
+    secondaries.push(secondary);
   }
 }
 
