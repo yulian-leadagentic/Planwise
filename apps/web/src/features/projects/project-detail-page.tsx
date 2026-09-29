@@ -99,11 +99,14 @@ export function ProjectDetailPage() {
       {/* Header */}
       <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
         <div className="px-5 pt-5 pb-0">
-          {/* Back link + prev/next navigation between projects the user
-              can see. Client feedback 2026-08-02 — avoid returning to
-              the list to jump between two projects. */}
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-1.5">
+          {/* HDR-1 (QA4 · 2026-09-29): single-row header. The previous
+              standalone selector row (`← Projects` + prev/next +
+              presence) was collapsed into the title row's left cluster
+              (back-link + prev/next before the title) and right cluster
+              (presence indicator). `flex-wrap gap-y-2` keeps things
+              legible on narrow widths. */}
+          <div className="flex items-center justify-between gap-3 flex-wrap gap-y-2">
+            <div className="flex items-center gap-3 flex-wrap gap-y-2">
               <button
                 onClick={() => navigate('/projects')}
                 className="flex items-center gap-1 text-[13px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
@@ -112,14 +115,6 @@ export function ProjectDetailPage() {
                 Projects
               </button>
               <ProjectPrevNext currentId={projectId} />
-            </div>
-            {/* Live presence — shows other users currently on this project. */}
-            <PresenceIndicator projectId={projectId} currentUserId={currentUserId} />
-          </div>
-
-          {/* Title row */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
               <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
                 {project.name}
               </h1>
@@ -181,6 +176,8 @@ export function ProjectDetailPage() {
               >
                 Delete
               </button>
+              {/* Live presence — shows other users currently on this project. */}
+              <PresenceIndicator projectId={projectId} currentUserId={currentUserId} />
             </div>
           </div>
 

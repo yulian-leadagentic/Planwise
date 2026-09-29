@@ -69,11 +69,11 @@ export function ProjectPrevNext({ currentId }: { currentId: number }) {
             the surrounding page direction; the name still renders
             RTL if its own characters demand it. */}
         <span className="truncate text-left flex-1">{current?.name ?? 'Select project'}</span>
-        {current?.number && (
-          <span className="shrink-0 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-mono text-[10px] px-1.5 py-0.5">
-            {current.number}
-          </span>
-        )}
+        {/* HDR-2 (QA4 · 2026-09-29): the project number chip was removed
+            from the trigger pill — the header row now shows the number
+            once, next to the project title, so repeating it here just
+            crowded the switcher. The OPEN dropdown list below still
+            shows per-option numbers and remains searchable by number. */}
         <ChevronDown className={cn('h-3.5 w-3.5 text-slate-400 dark:text-slate-500 transition-transform shrink-0', open && 'rotate-180')} />
       </button>
       {open && (
