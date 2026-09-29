@@ -32,7 +32,7 @@ import { PresenceIndicator } from '@/components/shared/presence-indicator';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import client from '@/api/client';
-import { getInitials, formatShortDate, formatBudget } from './project-detail/utils';
+import { getInitials, formatShortDate } from './project-detail/utils';
 import type { Tab } from './project-detail/types';
 import { ProjectCloseControl } from './project-detail/project-close-control';
 import { ProjectPrevNext } from './project-detail/project-prev-next';
@@ -40,6 +40,7 @@ import { ProjectInfoTab } from './project-detail/project-info-tab';
 import { TeamTab } from './project-detail/team-tab';
 import { ProjectStatusEditor } from './project-detail/project-status-editor';
 import { ProjectCategoryEditor } from './project-detail/project-category-editor';
+import { ProjectBriefTiles } from './project-detail/project-brief-tiles';
 import { OpenInDriveButton } from '@/features/drive/open-in-drive-button';
 
 export function ProjectDetailPage() {
@@ -195,7 +196,7 @@ export function ProjectDetailPage() {
           )}
 
           {/* Meta row */}
-          <div className="mt-3 mb-4 flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
+          <div className="mt-3 flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
             {/* Leader */}
             {leader && leader.user && (
               <>
@@ -227,65 +228,9 @@ export function ProjectDetailPage() {
               <span className="text-slate-500 dark:text-slate-400 text-xs">{memberCount} members</span>
             </div>
 
-            {/* Budget / Cost / Utilization% — gated by finance permission.
-                Same gate used by the Cost tab and labor-cost endpoints,
-                so non-finance users don't see project value anywhere.
-                QA3 Wave-2 Commit 4 (PR-035/031): Cost + Utilization%
-                render inline next to Budget so the ratio is visible
-                without opening the Cost tab. Cost = actualCost (Σ hours ×
-                seniority rate); Utilization = Cost / Budget as an
-                integer %. Cost may be absent on cache-miss — treat 0 as
-                a valid render. */}
-            {showFinance && project.budget != null && (
-              <>
-                <span className="text-slate-300 dark:text-slate-600">|</span>
-                <div className="flex items-center gap-1" title="Project-level contract budget from the project record. Compare against Labor Cost (Σ hours × rate) via Cost Utilization.">
-                  <span className="text-slate-500 dark:text-slate-400 text-xs">Contract Budget:</span>
-                  <span className="font-mono text-xs font-semibold text-slate-900 dark:text-slate-100">
-                    &#8362;{formatBudget(project.budget)}
-                  </span>
-                </div>
-                {(() => {
-                  const actualCost = Number((project as any).actualCost ?? 0);
-                  const budget = Number(project.budget ?? 0);
-                  const utilization = budget > 0 ? Math.round((actualCost / budget) * 100) : null;
-                  return (
-                    <>
-                      <span className="text-slate-300 dark:text-slate-600">|</span>
-                      <div className="flex items-center gap-1" title="Actual labor cost = Σ logged hours × effective rate at each entry's date.">
-                        <span className="text-slate-500 dark:text-slate-400 text-xs">Labor Cost:</span>
-                        <span className="font-mono text-xs font-semibold text-slate-900 dark:text-slate-100">
-                          &#8362;{formatBudget(actualCost)}
-                        </span>
-                      </div>
-                      {utilization != null && (
-                        <>
-                          <span className="text-slate-300 dark:text-slate-600">|</span>
-                          <div className="flex items-center gap-1" title="Cost Utilization = Labor Cost ÷ Contract Budget.">
-                            <span className="text-slate-500 dark:text-slate-400 text-xs">Cost Utilization:</span>
-                            <span
-                              className={cn(
-                                'font-mono text-xs font-semibold',
-                                utilization > 100
-                                  ? 'text-red-600 dark:text-red-400'
-                                  : utilization > 85
-                                    ? 'text-amber-600 dark:text-amber-400'
-                                    : 'text-slate-900 dark:text-slate-100',
-                              )}
-                              title={`Cost ${formatBudget(actualCost)} of Budget ${formatBudget(budget)}`}
-                            >
-                              {utilization}%
-                            </span>
-                          </div>
-                        </>
-                      )}
-                    </>
-                  );
-                })()}
-              </>
-            )}
-
-            {/* Timeline */}
+            {/* Timeline — kept on the header meta row (near
+                Leader/members) per DN-2. Money/rollups moved down into
+                the tiled brief row below. */}
             {timeline && (
               <>
                 <span className="text-slate-300 dark:text-slate-600">|</span>
@@ -295,21 +240,20 @@ export function ProjectDetailPage() {
                 </div>
               </>
             )}
+          </div>
 
-            {/* Authoring Tool Version — surfaced near the project name
-                (Y2) so the BIM tool/version is visible at a glance
-                without opening Project Info. Hidden when unset. */}
-            {(project as any).authoringToolVersion && (
-              <>
-                <span className="text-slate-300 dark:text-slate-600">|</span>
-                <div className="flex items-center gap-1">
-                  <span className="text-slate-500 dark:text-slate-400 text-xs">Authoring Tool:</span>
-                  <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] font-semibold text-violet-700">
-                    {(project as any).authoringToolVersion}
-                  </span>
-                </div>
-              </>
-            )}
+          {/* Project brief tiles (DN-2) — 5-tile row: CONTRACT ·
+              EST. AMOUNT · LOGGED COST · PROGRESS · AUTHORING TOOL.
+              Finance gate applied inside the component; PROGRESS +
+              AUTHORING TOOL stay visible to everyone. */}
+          <div className="pb-4">
+            <ProjectBriefTiles
+              projectId={projectId}
+              contract={project.budget ?? null}
+              actualCost={(project as any).actualCost}
+              authoringToolVersion={(project as any).authoringToolVersion ?? null}
+              showFinance={showFinance}
+            />
           </div>
         </div>
       </div>
