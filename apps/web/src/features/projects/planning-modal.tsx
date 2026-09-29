@@ -751,6 +751,41 @@ function resolveTaskDeliverable(t: any, lookups?: ProjectDeliverableLookups): st
 }
 
 /**
+ * Resolve the SERVICE column value for a project task. Read-time fallback
+ * (2026-09-29) — many project tasks have `task.phaseId = NULL` because
+ * the applyProjectTemplate path didn't consistently propagate the source
+ * template's phase onto the created task. Since ProjectDeliverable
+ * already carries the service (with its own fallback via
+ * `sourceTemplate.phase`, added in commit 35125ea), we walk the same
+ * lookups the deliverable resolver uses:
+ *
+ *   1. task.phase                                   (direct FK, editable)
+ *   2. projectDeliverable(byId).service             (parent deliverable)
+ *   3. projectDeliverable(byTemplateId).service     (via template link)
+ *
+ * Returns `{ name, color }` or nulls when nothing resolves.
+ */
+function resolveTaskService(
+  t: any,
+  lookups?: ProjectDeliverableLookups,
+): { name: string | null; color: string | null } {
+  if (t.phase?.name) {
+    return { name: t.phase.name, color: t.phase.color ?? null };
+  }
+  if (lookups) {
+    if (t.projectDeliverableId != null) {
+      const d = lookups.byId.get(t.projectDeliverableId);
+      if (d?.service?.name) return { name: d.service.name, color: d.service.color ?? null };
+    }
+    if (t.deliverableTemplateId != null) {
+      const d = lookups.byTemplateId.get(t.deliverableTemplateId);
+      if (d?.service?.name) return { name: d.service.name, color: d.service.color ?? null };
+    }
+  }
+  return { name: null, color: null };
+}
+
+/**
  * Column header cell with an optional filter funnel. `kind` decides the
  * popover control:
  *   • 'text'   → substring input (code, name)
@@ -1200,18 +1235,25 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           taskServiceId={task.phaseId ?? null}
         />
       )}
-      {/* Service cell — click to edit. Phase is the parent Service. */}
-      {cols.isVisible('service') && (
-        <CompactPickerCell
-          projectId={projectId}
-          currentId={task.phaseId ?? null}
-          currentLabel={task.phase?.name ?? null}
-          currentColor={task.phase?.color}
-          kind="phase"
-          fieldLabel="Service"
-          onSave={(v) => saveField('phaseId', v)}
-        />
-      )}
+      {/* Service cell — click to edit. Phase is the parent Service.
+          Read-time fallback (2026-09-29): when task.phaseId is NULL
+          (historical rows where applyProjectTemplate didn't propagate
+          the service), display the parent deliverable's service via
+          resolveTaskService. Editing still writes to task.phaseId. */}
+      {cols.isVisible('service') && (() => {
+        const svc = resolveTaskService(task, deliverableLookups);
+        return (
+          <CompactPickerCell
+            projectId={projectId}
+            currentId={task.phaseId ?? null}
+            currentLabel={svc.name}
+            currentColor={svc.color ?? undefined}
+            kind="phase"
+            fieldLabel="Service"
+            onSave={(v) => saveField('phaseId', v)}
+          />
+        );
+      })()}
       {/* Estimate (budgetHours) — editable. */}
       {cols.isVisible('estHours') && (
         <InlineEditCell value={task.budgetHours} suffix="h" width="w-14" onSave={(v) => saveField('budgetHours', v)} />
