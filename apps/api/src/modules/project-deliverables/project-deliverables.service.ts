@@ -33,6 +33,20 @@ export class ProjectDeliverablesService {
     targetMonths: true,
     estimatedDurationWeeks: true,
     service: { select: { id: true, name: true, color: true } },
+    // 2026-09-29 — read-time fallback for the SERVICE column:
+    // ProjectDeliverable.serviceId is supposed to inherit from
+    // Template.phaseId at creation time (see `create()` below), but
+    // historical rows created before that inheritance was reliable, or
+    // rows where the source template's phase was set AFTER the
+    // deliverable was linked, carry `service_id = NULL`. Including the
+    // source template's phase here lets every caller display the
+    // correct service without a backfill run.
+    sourceTemplate: {
+      select: {
+        id: true,
+        phase: { select: { id: true, name: true, color: true } },
+      },
+    },
   } as const;
 
   /** Resolve a deliverable → its projectId (for authorization). */

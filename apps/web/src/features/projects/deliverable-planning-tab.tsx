@@ -232,7 +232,12 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         zoneId,
         zoneName,
         zoneType,
-        serviceName: deliverable?.service?.name ?? null,
+        // Read-time fallback (2026-09-29): when the ProjectDeliverable
+        // row's `service` is null (historical rows created before the
+        // Template.phaseId inheritance was reliable), fall back to the
+        // source template's phase name. The API now includes it on
+        // every ProjectDeliverable read (project-deliverables.service.ts).
+        serviceName: deliverable?.service?.name ?? deliverable?.sourceTemplate?.phase?.name ?? null,
         savedMonths,
         savedDate: savedDate ? String(savedDate).slice(0, 10) : null,
         savedDurationWeeks,
