@@ -119,9 +119,167 @@ export class ContactsCommitService {
       }
     }
 
+    // ─── QA4 R2b ORG-1 · intra-batch org materialisation ─────────────
+    // The Stage-5 dedup pass already tagged each decision with a
+    // `batchOrgKey`. Materialise every distinct key EXACTLY ONCE here
+    // so the per-row loop below can look up the concrete BP id from
+    // the map instead of re-creating the same org on every colleague
+    // row. Only handles rows the row loop is about to process
+    // (skipped and below-contract rows never touch this map).
+    //
+    // Row-decision overrides (skip / create-instead-of-link) are
+    // resolved in the same order as the row loop uses so the
+    // materialisation matches the effective action, not the preview
+    // default. When the leader is `skip` we drop the key entirely so
+    // the row loop falls back to the single-row path — never silently
+    // "link" a person to an org the user asked to skip.
+    const batchOrgIdByKey = new Map<string, number>();
+    // Track which distinct key already had its "orgsCreated" counter
+    // bumped so re-encounters of the same key don't double-count.
+    const orgsMaterialisedKeys = new Set<string>();
+    // Read per-row overrides once so both the materialisation pass and
+    // the row loop below see the same effective action.
+    const effectiveOrgActionFor = (dec: DedupDecision): OrgAction => {
+      const dp = decisionsByRow.get(dec.sourceRowIndex);
+      // ORG-6 — user-marked skip wins over everything else.
+      if (dp?.skipped) return 'skip';
+      // Also honour below-contract as skip here so we don't pre-create
+      // orgs for rows the loop is going to drop anyway.
+      if (!dec.meetsMinimumContract) return 'skip';
+      return dp?.orgAction
+        ?? (dec.org.action === 'conflict' ? 'skip' : (dec.org.action as OrgAction));
+    };
+
+    // Pass 1 — collect leader decisions per key. First occurrence wins
+    // so the materialisation follows the same "leader / member" split
+    // the dedup service built the batchOrgKey around.
+    const leaderByKey = new Map<string, DedupDecision>();
+    for (const dec of preview.decisions) {
+      const key = dec.batchOrgKey;
+      if (!key) continue;
+      if (effectiveOrgActionFor(dec) === 'skip') continue;
+      if (!leaderByKey.has(key)) leaderByKey.set(key, dec);
+    }
+
+    // Pass 2 — resolve/create each key. When the key encodes an
+    // existing BP (`bp:<id>`) just record the id; otherwise honour
+    // the leader's `orgAction` (link → existing matched BP; create →
+    // fresh BP with the leader's parsed values).
+    for (const [key, leader] of leaderByKey) {
+      const leaderDp = decisionsByRow.get(leader.sourceRowIndex);
+      const leaderAction = effectiveOrgActionFor(leader);
+      const eff = <T extends OverrideField>(field: T): string | null => {
+        const overrides = leaderDp?.overrides ?? {};
+        if (field in overrides) return overrides[field] ?? null;
+        if (field === 'officeManager') return null;
+        return (leader.values as Partial<Record<ContactField, string>>)[field as ContactField] ?? null;
+      };
+
+      let orgBpId: number | null = null;
+      try {
+        if (leaderAction === 'link') {
+          orgBpId = leaderDp?.orgBpId ?? leader.org.matchedBpId ?? null;
+        } else if (leaderAction === 'create') {
+          const orgName = eff('company');
+          const orgPhone = eff('phone')
+            ?? (leader.secondaryContacts ?? []).map((s) => s.phone).find(Boolean)
+            ?? null;
+          // Prefer the routed generic mailbox (office@…) over the
+          // primary email column when the row carried both — same
+          // routing as the row loop uses.
+          const routedOrgEmail = pickOrgPrimaryEmailForRow(leader, leaderDp);
+          const leaderPrimaryEmail = leaderDp?.overrides && 'email' in leaderDp.overrides
+            ? leaderDp.overrides.email ?? null
+            : (leaderDp?.chosenEmail ?? leader.values.email ?? null);
+          const created = await this.prisma.businessPartner.create({
+            data: {
+              partnerType: 'organization',
+              displayName: orgName ?? '(unnamed)',
+              companyName: orgName,
+              email: routedOrgEmail ?? leaderPrimaryEmail,
+              phone: orgPhone,
+              address: leader.values.address ?? null,
+              notes: leader.values.note ?? null,
+              source: 'import',
+              createdByImportId: importRecord.id,
+            },
+          });
+          orgBpId = created.id;
+          result.orgsCreated++;
+          orgsMaterialisedKeys.add(key);
+
+          // Claim the domain when the row carried one (mirror the
+          // existing per-row branch).
+          if (leader.domain && !leader.isPersonalDomain) {
+            try {
+              await this.prisma.businessPartnerDomain.create({
+                data: { partnerId: created.id, domain: leader.domain },
+              });
+            } catch (err: unknown) {
+              if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) {
+                throw err;
+              }
+            }
+          }
+
+          // QA4 R2b ORG-3 — write the user-picked BusinessPartnerRole
+          // on the freshly-created org so the Organizations list shows
+          // a real TYPE instead of "not set". Idempotent via
+          // `@@unique([businessPartnerId, roleTypeId])`.
+          const roleCode = input.orgTypes?.[key];
+          if (roleCode) {
+            const roleType = await this.prisma.partnerRoleType.findUnique({
+              where: { code: roleCode.toLowerCase() },
+              select: { id: true },
+            });
+            if (roleType) {
+              try {
+                await this.prisma.businessPartnerRole.create({
+                  data: {
+                    businessPartnerId: created.id,
+                    roleTypeId: roleType.id,
+                    isPrimary: true,
+                  },
+                });
+              } catch (err: unknown) {
+                if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) {
+                  throw err;
+                }
+              }
+            }
+          }
+        }
+      } catch (err: unknown) {
+        // Surface but don't fail the whole commit — the row loop below
+        // will still try (single-row fallback) and record its own error.
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `contacts-import batchOrgKey "${key}" leader row ${leader.sourceRowIndex} failed: ${message}`,
+        );
+      }
+      if (orgBpId != null) batchOrgIdByKey.set(key, orgBpId);
+    }
+
     for (let i = 0; i < preview.decisions.length; i++) {
       const dec = preview.decisions[i];
       const dp = decisionsByRow.get(dec.sourceRowIndex);
+
+      // QA4 R2b ORG-6 — per-row trash (user removed the row before
+      // commit). Honour BEFORE the min-contract check so the audit row
+      // records the explicit "user removed" reason.
+      if (dp?.skipped) {
+        result.contactsSkipped++;
+        result.perRow.push({
+          sourceRowIndex: dec.sourceRowIndex,
+          status: 'skipped',
+          orgBpId: null,
+          contactBpId: null,
+          message: 'removed from import by reviewer',
+        });
+        await this.recordRow(importRecord.id, dec.sourceRowIndex, 'skipped', null, 'removed from import by reviewer', dec.values);
+        continue;
+      }
+
       const orgAction: OrgAction = dp?.orgAction
         ?? (dec.org.action === 'conflict' ? 'skip' : (dec.org.action as OrgAction));
       const contactAction: ContactAction = dp?.contactAction ?? (dec.contact.action as ContactAction);
@@ -215,55 +373,66 @@ export class ContactsCommitService {
 
       try {
         // ─── ORG SIDE ─────────────────────────────────────────────
+        // QA4 R2b ORG-1 — when the row carries a `batchOrgKey` the
+        // materialisation pass above already resolved the org id;
+        // this branch just links every group member to that same id.
+        // Falls back to the single-row path for rows without a key
+        // (personal-domain rows / rows with only a person + email).
         let orgBpId: number | null = null;
+        const batchKey = dec.batchOrgKey ?? null;
+        const batchOrgId = batchKey ? batchOrgIdByKey.get(batchKey) ?? null : null;
         if (orgAction === 'link') {
-          orgBpId = dp?.orgBpId ?? dec.org.matchedBpId ?? null;
+          orgBpId = dp?.orgBpId ?? dec.org.matchedBpId ?? batchOrgId ?? null;
           if (!orgBpId) throw new Error('link action needs an org BP id');
-          result.orgsLinked++;
+          if (batchKey && batchOrgId === orgBpId && orgsMaterialisedKeys.has(batchKey)) {
+            // The batch pass created this org for the group — the leader
+            // row already bumped `orgsCreated`, so every subsequent row
+            // in the group counts as a "link" (fits the ORG-1 mental
+            // model in the wizard: one create + N links).
+            result.orgsLinked++;
+          } else {
+            result.orgsLinked++;
+          }
         } else if (orgAction === 'create') {
-          const orgName = eff('company');
-          // QA4 R2 IMP-7 — when the split-merge suppressed the primary's
-          // landline because it belonged to an extracted office manager,
-          // the classifier surfaced the same landline on the secondary.
-          // Promote it to the org phone so the office line still lives
-          // *somewhere* at the top level of the branch, not only on the
-          // office-manager's person BP.
-          const orgPhone = eff('phone')
-            ?? (dec.secondaryContacts ?? []).map((s) => s.phone).find(Boolean)
-            ?? null;
-          // QA4 R2 IMP-9 — prefer the routed org primary (generic
-          // mailbox like office@…) over the primary email column;
-          // that way a two-email row lands the org's mailbox on the
-          // org and the personal address on the person.
-          const orgPrimaryEmail = emailRouting.orgPrimary ?? emailForCommit();
-          const created = await this.prisma.businessPartner.create({
-            data: {
-              partnerType: 'organization',
-              displayName: orgName ?? '(unnamed)',
-              companyName: orgName,
-              email: orgPrimaryEmail,
-              phone: orgPhone,
-              address: dec.values.address ?? null,
-              notes: dec.values.note ?? null,
-              source: 'import',
-              createdByImportId: importRecord.id,
-            },
-          });
-          orgBpId = created.id;
-          result.orgsCreated++;
+          // Group leader path: the batch pass already created the org.
+          if (batchKey && batchOrgId != null) {
+            orgBpId = batchOrgId;
+            // orgsCreated was bumped in the batch pass; nothing to add.
+          } else {
+            // No batch key — genuine single-row create (e.g. row had a
+            // company name we couldn't slug, or dedup declined to
+            // materialise). Fall through to the legacy inline create so
+            // the row still lands.
+            const orgName = eff('company');
+            const orgPhone = eff('phone')
+              ?? (dec.secondaryContacts ?? []).map((s) => s.phone).find(Boolean)
+              ?? null;
+            const orgPrimaryEmail = emailRouting.orgPrimary ?? emailForCommit();
+            const created = await this.prisma.businessPartner.create({
+              data: {
+                partnerType: 'organization',
+                displayName: orgName ?? '(unnamed)',
+                companyName: orgName,
+                email: orgPrimaryEmail,
+                phone: orgPhone,
+                address: dec.values.address ?? null,
+                notes: dec.values.note ?? null,
+                source: 'import',
+                createdByImportId: importRecord.id,
+              },
+            });
+            orgBpId = created.id;
+            result.orgsCreated++;
 
-          // Claim the org's domain when the email carries a real
-          // company domain (not personal). Uniqueness is enforced at
-          // the DB; catch P2002 to survive races with concurrent
-          // imports.
-          if (dec.domain && !dec.isPersonalDomain) {
-            try {
-              await this.prisma.businessPartnerDomain.create({
-                data: { partnerId: created.id, domain: dec.domain },
-              });
-            } catch (err: unknown) {
-              if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) {
-                throw err;
+            if (dec.domain && !dec.isPersonalDomain) {
+              try {
+                await this.prisma.businessPartnerDomain.create({
+                  data: { partnerId: created.id, domain: dec.domain },
+                });
+              } catch (err: unknown) {
+                if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) {
+                  throw err;
+                }
               }
             }
           }
@@ -287,10 +456,27 @@ export class ContactsCommitService {
 
         // ─── PERSON SIDE ──────────────────────────────────────────
         let contactBpId: number | null = null;
+        // QA4 R2b ORG-5b — a row whose ONLY email is a generic
+        // mailbox (office@, info@, …) and that has no separate phone
+        // identity is really "the org's mailbox on a labelled row",
+        // not a person. IMP-9's routeEmails already parks the mailbox
+        // on the org; here we suppress the person side so the row
+        // doesn't create a shadow person with the office@ address.
+        const hasPersonalEmailSignal =
+          !!emailRouting.personPrimary && !isGenericMailbox(emailRouting.personPrimary);
+        const hasNonEmailReach = !!(eff('phone') || eff('mobile'));
+        const genericOnly =
+          !hasPersonalEmailSignal &&
+          !hasNonEmailReach &&
+          !!emailRouting.orgPrimary;
         if (contactAction === 'link') {
           contactBpId = dp?.contactBpId ?? dec.contact.matchedBpId ?? null;
           if (!contactBpId) throw new Error('link person action needs a person BP id');
           result.contactsLinked++;
+        } else if (contactAction === 'create' && genericOnly) {
+          // Skip person creation; the mailbox already went onto the org
+          // via emailRouting.orgPrimary in the batch pass above.
+          result.contactsSkipped++;
         } else if (contactAction === 'create') {
           // QA4 R2 IMP-9 — prefer the routed personal address as the
           // person's primary; that way `office@` never lands on the
@@ -1034,6 +1220,13 @@ export interface RowDecision {
    * value; `null` explicitly clears the parsed value.
    */
   overrides?: RowOverrides;
+  /**
+   * QA4 R2b ORG-6 (2026-09-29) — reviewer removed the row via the
+   * trash icon on the preview table. When true the commit skips the
+   * row entirely: no person BP, no worker_of edge, no project
+   * attach. Undo on the FE clears the flag.
+   */
+  skipped?: boolean;
 }
 
 export interface CommitInput {
@@ -1048,6 +1241,15 @@ export interface CommitInput {
   projectRoleId?: number | null;
   /** Free-text notes stored on the DataImport history row. */
   notes?: string;
+  /**
+   * QA4 R2b ORG-3 (2026-09-29) — user-picked BusinessPartnerRole per
+   * distinct batch org key. Keys are the `batchOrgKey` strings emitted
+   * by dedup.service.ts (`bp:<id>` / `domain:<host>` / `name:<slug>`);
+   * values are `PartnerRoleType.code` (customer / supplier /
+   * consultant / partner / …). Only orgs the batch pass CREATES get
+   * their role written; matched-existing orgs are never downgraded.
+   */
+  orgTypes?: Record<string, string>;
 }
 
 export interface CommitResult {
@@ -1170,6 +1372,34 @@ function deriveDisciplineCode(label: string): string {
   // Guarantee non-empty even for all-punctuation labels.
   const base = slug || 'discipline';
   return `imp-${base}`.slice(0, 50);
+}
+
+/**
+ * QA4 R2b ORG-1 — mirror of the row-loop `routeEmails()` for the
+ * batch materialisation pass. Given the leader row + its overrides,
+ * return the generic mailbox that belongs on the org (or `null` when
+ * the row only carries a personal address). Keeps `office@…` on the
+ * org rather than on the first person committed for that org.
+ */
+function pickOrgPrimaryEmailForRow(
+  dec: DedupDecision,
+  dp: RowDecision | undefined,
+): string | null {
+  const overrides = dp?.overrides ?? {};
+  const primary =
+    ('email' in overrides
+      ? overrides.email ?? null
+      : dp?.chosenEmail ?? dec.values.email ?? null) ?? null;
+  const universe: string[] = [];
+  if (primary) universe.push(primary.toLowerCase());
+  for (const e of dec.extraEmails ?? []) {
+    const t = (e ?? '').trim().toLowerCase();
+    if (t) universe.push(t);
+  }
+  const seen = new Set<string>();
+  const uniq = universe.filter((e) => (seen.has(e) ? false : (seen.add(e), true)));
+  for (const e of uniq) if (isGenericMailbox(e)) return e;
+  return null;
 }
 
 function buildRunNotes(input: CommitInput, summary: { totalRows: number; eligible: number; belowContract: number }): string {

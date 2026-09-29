@@ -139,6 +139,15 @@ export interface DedupDecision {
    * to populate the person's / org's additional-emails list.
    */
   extraEmails?: string[];
+  /**
+   * QA4 R2b ORG-1 (2026-09-29) — intra-batch group key. Rows sharing
+   * a key resolve/create the same org exactly once at commit.
+   *   `bp:<id>`       — matched existing BusinessPartner
+   *   `domain:<host>` — non-personal email domain
+   *   `name:<slug>`   — normalized company name
+   *   null            — no groupable signal
+   */
+  batchOrgKey?: string | null;
 }
 
 export interface PreviewSummary {
@@ -223,6 +232,12 @@ export interface RowDecision {
    * value.
    */
   overrides?: RowOverrides;
+  /**
+   * QA4 R2b ORG-6 (2026-09-29) — reviewer removed the row via the
+   * trash icon. Commit honors this by dropping the row entirely (no
+   * person, no worker_of, no project attach). Undoable via the UI.
+   */
+  skipped?: boolean;
 }
 
 export interface CommitSummary {
@@ -310,6 +325,13 @@ export const contactsImportApi = {
     attachToProjectId?: number | null;
     projectRoleId?: number | null;
     notes?: string;
+    /**
+     * QA4 R2b ORG-3 (2026-09-29) — user-picked BusinessPartnerRole per
+     * distinct batch org key. Value = PartnerRoleType.code (customer,
+     * supplier, consultant, partner, …). Commit gates on every NEW
+     * org having a type; existing (matched) orgs are never downgraded.
+     */
+    orgTypes?: Record<string, string>;
   }): Promise<CommitSummary> => {
     const r = await client.post<CommitSummary>('/data-import/contacts/commit', input);
     return unwrap<CommitSummary>(r);

@@ -37,13 +37,88 @@ export class ContactsDedupService {
    * `orgAction`  = link | create | skip | conflict
    * `contactAction` = link | create | skip
    * No writes here — this powers Stage 5's preview.
+   *
+   * QA4 R2b ORG-1 (2026-09-29) — intra-batch org dedupe. A single file
+   * regularly repeats the same firm across many rows (colleagues sharing
+   * a company). The per-row lookup above resolves each row against the
+   * DB in isolation, so two "new" rows that share a firm both come back
+   * as `create` and the commit path creates the same org twice.
+   *
+   * Fix: after the per-row pass, walk the decisions and compute a
+   * `batchOrgKey` per row (matched existing BP id · non-personal
+   * email domain · normalized company name). Group rows by that key.
+   * Per group: the FIRST occurrence stays as the "leader" (its
+   * `orgAction` is unchanged); subsequent rows in the same group flip
+   * from `create` → `link` and carry the batch key so the commit path
+   * can materialise the org exactly once and share its id.
+   *
+   * `batchOrgKey` is also surfaced to the wizard so the ORG-2 review
+   * panel can render "1 org · 4 people" instead of four separate rows.
    */
   async decide(rows: ResolvedRow[]): Promise<DedupDecision[]> {
     const out: DedupDecision[] = [];
     for (const row of rows) {
       out.push(await this.decideRow(row));
     }
-    return out;
+    return this.applyIntraBatchOrgDedupe(out);
+  }
+
+  /**
+   * QA4 R2b ORG-1 — assign a `batchOrgKey` per decision and collapse
+   * duplicate `create` intents across the batch. Deterministic:
+   *   1. Existing BP match → `bp:<id>`
+   *   2. Non-personal email domain → `domain:<lower-cased>`
+   *   3. Normalized company name → `name:<lower-cased-collapsed>`
+   *   4. Nothing → `null` (isolated row, no grouping possible)
+   *
+   * The first row per key keeps its native decision. Subsequent rows
+   * with `orgAction === 'create'` become `orgAction === 'link'`
+   * pointing at the future org (commit resolves the concrete BP id
+   * from the batch key). Rows that already resolved to `link` /
+   * `skip` / `conflict` stay as-is; the batch key still gets attached
+   * so the preview grouping still works.
+   */
+  private applyIntraBatchOrgDedupe(decisions: DedupDecision[]): DedupDecision[] {
+    const leaderByKey = new Map<string, DedupDecision>();
+    for (const d of decisions) {
+      const key = computeBatchOrgKey(d);
+      d.batchOrgKey = key;
+      if (!key) continue;
+
+      const leader = leaderByKey.get(key);
+      if (!leader) {
+        leaderByKey.set(key, d);
+        // Mark the leader when the group ends up with > 1 row (below).
+        continue;
+      }
+
+      // Subsequent row shares the leader's key.
+      // Preserve conflict / skip verdicts (they aren't org-create intents).
+      if (d.org.action === 'create') {
+        // Flip to link — the commit path will resolve the batch key
+        // to the leader's freshly-created org id.
+        d.org = {
+          action: 'link',
+          matchReason: leader.org.matchReason ?? undefined,
+          matchedBpId: leader.org.matchedBpId, // may be null; commit resolves via batchOrgKey
+          matchedBpName:
+            leader.org.matchedBpName ??
+            d.values.company ??
+            leader.values.company ??
+            null,
+          reason:
+            leader.org.action === 'create'
+              ? 'batch-deduped — will link to org created earlier in this file'
+              : `batch-deduped — same as row ${leader.sourceRowIndex} (${leader.org.reason})`,
+        };
+      } else if (d.org.action === 'link' && !d.org.matchedBpId && leader.org.matchedBpId) {
+        // Rare case: the row itself wouldn't resolve via DB lookup, but
+        // the batch leader already matched an existing BP. Attach the
+        // matched id so the person still gets `worker_of` the right org.
+        d.org = { ...d.org, matchedBpId: leader.org.matchedBpId };
+      }
+    }
+    return decisions;
   }
 
   private async decideRow(row: ResolvedRow): Promise<DedupDecision> {
@@ -193,6 +268,18 @@ export interface DedupDecision {
    * secondary personal email. See commit.service.
    */
   extraEmails?: string[];
+  /**
+   * QA4 R2b ORG-1 (2026-09-29) — intra-batch group key. Rows sharing
+   * a key resolve/create the same org exactly once at commit time.
+   * `null` when the row has nothing to group on (no matched BP, no
+   * non-personal email domain, no company name).
+   *
+   * Encoding (kept stable so the FE grouping can key off it directly):
+   *   `bp:<id>`         — matched an existing BusinessPartner
+   *   `domain:<host>`   — non-personal email domain (lower-cased)
+   *   `name:<slug>`     — normalized company name
+   */
+  batchOrgKey?: string | null;
 }
 
 function buildContractError(hasName: boolean, hasReach: boolean): string {
@@ -200,4 +287,29 @@ function buildContractError(hasName: boolean, hasReach: boolean): string {
   if (!hasName) missing.push('name');
   if (!hasReach) missing.push('email or phone');
   return `row missing ${missing.join(' + ')} — the minimum contract is "name AND (email OR phone)"`;
+}
+
+/**
+ * QA4 R2b ORG-1 — deterministic key that groups rows sharing an
+ * organization. Ordering mirrors `resolveOrgByDomainOrName`: matched
+ * BP wins, else the (non-personal) domain, else the normalized name.
+ * Returns `null` when the row has no groupable signal.
+ */
+export function computeBatchOrgKey(d: DedupDecision): string | null {
+  // 1. Existing BP already picked at Stage-5 dedup.
+  if (d.org.matchedBpId != null) return `bp:${d.org.matchedBpId}`;
+  // 2. Non-personal email domain — the strongest "same firm" signal
+  //    when both rows carry a corporate address.
+  if (d.domain && !d.isPersonalDomain) return `domain:${d.domain.toLowerCase()}`;
+  // 3. Normalized company name — collapse case + whitespace so
+  //    "A.B. Planners" and "a.b. planners  " land on the same key.
+  const company = (d.values.company ?? '').trim();
+  if (company) return `name:${normalizeCompanyName(company)}`;
+  return null;
+}
+
+/** Case-insensitive whitespace-collapsed name key. Kept minimal so
+ * the FE and BE can compute the exact same slug for display. */
+export function normalizeCompanyName(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, ' ').trim();
 }
