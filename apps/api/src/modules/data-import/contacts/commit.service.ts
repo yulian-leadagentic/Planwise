@@ -137,12 +137,36 @@ export class ContactsCommitService {
     // Track which distinct key already had its "orgsCreated" counter
     // bumped so re-encounters of the same key don't double-count.
     const orgsMaterialisedKeys = new Set<string>();
+    // QA4 E3 (2026-09-29) — reviewer-deleted orgs. `cascade` drops
+    // every person in the group; `keep-people` still deletes the org
+    // materialisation but leaves the people to their `personOrgOverride`
+    // (E6 on the FE guarantees each has one, else it blocks commit).
+    const deletedOrgKeys = new Set<string>(input.orgDeleted ?? []);
+    const orgDeleteModeByKey = input.orgDeleteMode ?? {};
+    // QA4 E4 (2026-09-29) — per-row org reassignment. `null` means
+    // "move to individuals" (treated as no batch key at all).
+    const personOrgOverrides = input.personOrgOverrides ?? {};
+    // Effective batch key for a row — reads the E4 override when set.
+    const effectiveBatchKeyFor = (dec: DedupDecision): string | null => {
+      const override = personOrgOverrides[dec.sourceRowIndex];
+      if (override === null) return null; // moved to individuals
+      if (typeof override === 'string' && override) return override;
+      return dec.batchOrgKey ?? null;
+    };
     // Read per-row overrides once so both the materialisation pass and
     // the row loop below see the same effective action.
     const effectiveOrgActionFor = (dec: DedupDecision): OrgAction => {
       const dp = decisionsByRow.get(dec.sourceRowIndex);
       // ORG-6 — user-marked skip wins over everything else.
       if (dp?.skipped) return 'skip';
+      // QA4 E3 — a row whose (effective) org was deleted by the
+      // reviewer: cascade drops the row entirely; keep-people leaves
+      // it to E4 to reassign, but if no reassignment we drop too
+      // (should never happen — E6 gate prevents commit).
+      const effKey = effectiveBatchKeyFor(dec);
+      if (effKey && deletedOrgKeys.has(effKey)) {
+        return 'skip';
+      }
       // Also honour below-contract as skip here so we don't pre-create
       // orgs for rows the loop is going to drop anyway.
       if (!dec.meetsMinimumContract) return 'skip';
@@ -150,13 +174,17 @@ export class ContactsCommitService {
         ?? (dec.org.action === 'conflict' ? 'skip' : (dec.org.action as OrgAction));
     };
 
-    // Pass 1 — collect leader decisions per key. First occurrence wins
-    // so the materialisation follows the same "leader / member" split
-    // the dedup service built the batchOrgKey around.
+    // Pass 1 — collect leader decisions per (effective) key. First
+    // occurrence wins so the materialisation follows the same
+    // "leader / member" split the dedup service built the batchOrgKey
+    // around. E4 reassignments recompute the key per row; a moved row
+    // can BECOME the leader of a target org whose native rows all
+    // ended up skipped.
     const leaderByKey = new Map<string, DedupDecision>();
     for (const dec of preview.decisions) {
-      const key = dec.batchOrgKey;
+      const key = effectiveBatchKeyFor(dec);
       if (!key) continue;
+      if (deletedOrgKeys.has(key)) continue;
       if (effectiveOrgActionFor(dec) === 'skip') continue;
       if (!leaderByKey.has(key)) leaderByKey.set(key, dec);
     }
@@ -181,13 +209,23 @@ export class ContactsCommitService {
           orgBpId = leaderDp?.orgBpId ?? leader.org.matchedBpId ?? null;
         } else if (leaderAction === 'create') {
           const rawOrgName = eff('company');
+          // QA4 E2 (2026-09-29) — inline name override wins over the
+          // parsed cell. Domain override replaces the leader row's
+          // extracted domain for both the org identity fallback + the
+          // domain claim.
+          const orgOverride = input.orgOverrides?.[key];
+          const overrideName = orgOverride?.name?.trim();
+          const overrideDomain = orgOverride?.domain?.trim().toLowerCase();
           // QA4 RD-3 (2026-09-29) — never let an email / dash /
           // single-character cell become the org identity. The batch
           // key already collapsed the group under its domain, so the
           // best fallback for a nameless group is the domain itself
           // (e.g. "@mra.co.il") — a human-readable label the PM can
           // rename post-commit.
-          const safeOrgName = deriveSafeOrgName(rawOrgName, leader.domain);
+          const safeOrgName = overrideName
+            ? { displayName: overrideName, companyName: overrideName }
+            : deriveSafeOrgName(rawOrgName, overrideDomain ?? leader.domain);
+          const domainToClaim = overrideDomain ?? leader.domain ?? null;
           const orgPhone = eff('phone')
             ?? (leader.secondaryContacts ?? []).map((s) => s.phone).find(Boolean)
             ?? null;
@@ -220,10 +258,11 @@ export class ContactsCommitService {
           // QA4 RD-3 — only claim the sanitised (shape-checked) domain.
           // A mangled `<foo@bar.com>` copy-paste that once stored
           // `bar.com>` as a claimed domain no longer happens here.
-          if (leader.domain && !leader.isPersonalDomain && isDomainShaped(leader.domain)) {
+          // QA4 E2 — a user-typed domain wins if it's shape-valid.
+          if (domainToClaim && !leader.isPersonalDomain && isDomainShaped(domainToClaim)) {
             try {
               await this.prisma.businessPartnerDomain.create({
-                data: { partnerId: created.id, domain: leader.domain },
+                data: { partnerId: created.id, domain: domainToClaim },
               });
             } catch (err: unknown) {
               if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) {
@@ -287,6 +326,53 @@ export class ContactsCommitService {
           message: 'removed from import by reviewer',
         });
         await this.recordRow(importRecord.id, dec.sourceRowIndex, 'skipped', null, 'removed from import by reviewer', dec.values);
+        continue;
+      }
+
+      // QA4 E3 (2026-09-29) — row's effective org was cascade-deleted.
+      // `keep-people` never lands here because the FE reassigns each
+      // kept row's `personOrgOverrides` before allowing commit (E6).
+      const effKey = effectiveBatchKeyFor(dec);
+      if (effKey && deletedOrgKeys.has(effKey)) {
+        const mode = orgDeleteModeByKey[effKey] ?? 'cascade';
+        if (mode === 'cascade') {
+          result.contactsSkipped++;
+          result.perRow.push({
+            sourceRowIndex: dec.sourceRowIndex,
+            status: 'skipped',
+            orgBpId: null,
+            contactBpId: null,
+            message: `org "${effKey}" deleted by reviewer (cascade)`,
+          });
+          await this.recordRow(
+            importRecord.id,
+            dec.sourceRowIndex,
+            'skipped',
+            null,
+            `org "${effKey}" deleted by reviewer (cascade)`,
+            dec.values,
+          );
+          continue;
+        }
+        // keep-people without a personOrgOverride means the FE let this
+        // slip through. Skip defensively — better a missed row than a
+        // silently-orphaned person BP.
+        result.contactsSkipped++;
+        result.perRow.push({
+          sourceRowIndex: dec.sourceRowIndex,
+          status: 'skipped',
+          orgBpId: null,
+          contactBpId: null,
+          message: `org "${effKey}" deleted; row not reassigned (keep-people fallback)`,
+        });
+        await this.recordRow(
+          importRecord.id,
+          dec.sourceRowIndex,
+          'skipped',
+          null,
+          `org "${effKey}" deleted; row not reassigned`,
+          dec.values,
+        );
         continue;
       }
 
@@ -389,7 +475,8 @@ export class ContactsCommitService {
         // Falls back to the single-row path for rows without a key
         // (personal-domain rows / rows with only a person + email).
         let orgBpId: number | null = null;
-        const batchKey = dec.batchOrgKey ?? null;
+        // QA4 E4 — a reviewer-moved row picks up its target's key.
+        const batchKey = effectiveBatchKeyFor(dec);
         const batchOrgId = batchKey ? batchOrgIdByKey.get(batchKey) ?? null : null;
         if (orgAction === 'link') {
           orgBpId = dp?.orgBpId ?? dec.org.matchedBpId ?? batchOrgId ?? null;
@@ -1262,6 +1349,39 @@ export interface CommitInput {
    * their role written; matched-existing orgs are never downgraded.
    */
   orgTypes?: Record<string, string>;
+  /**
+   * QA4 E2 (2026-09-29) — inline overrides of a NEW org's identity
+   * per batchOrgKey. `name` overrides both displayName + companyName;
+   * `domain` (optional) replaces the domain claimed on commit.
+   * Matched-existing orgs use E5 conflictResolutions instead.
+   */
+  orgOverrides?: Record<string, { name?: string; domain?: string }>;
+  /**
+   * QA4 E3 (2026-09-29) — orgs the reviewer deleted before commit.
+   * List of batchOrgKeys; `orgDeleteMode` picks whether the org's
+   * people cascade to skip or become individuals. When
+   * `keep-people`, the wizard is expected to have supplied a
+   * `personOrgOverrides` for every kept row (E6 gate).
+   */
+  orgDeleted?: string[];
+  orgDeleteMode?: Record<string, 'cascade' | 'keep-people'>;
+  /**
+   * QA4 E4 (2026-09-29) — per-row org reassignment (drag/move + Move
+   * to…). Keyed by sourceRowIndex; value is the target batchOrgKey.
+   * `null` moves the row to "no org" (which the commit treats as an
+   * orphan — E6 blocks commit on the FE unless every kept row has an
+   * org). At commit we honour the override and re-key the person's
+   * batchOrgKey lookup.
+   */
+  personOrgOverrides?: Record<number, string | null>;
+  /**
+   * QA4 E5 (2026-09-29) — per-record per-field conflict picks. Keyed
+   * by a stable id (`org:<batchOrgKey>` or `person:<sourceRowIndex>`);
+   * inner map value is `existing` (leave the DB value untouched) or
+   * `imported` (overwrite with the row's value). Fields absent
+   * default to `existing`.
+   */
+  conflictResolutions?: Record<string, Record<string, 'existing' | 'imported'>>;
 }
 
 export interface CommitResult {

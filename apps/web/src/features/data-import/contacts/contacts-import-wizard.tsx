@@ -190,6 +190,37 @@ export function ContactsImportWizard({
   // every NEW org must have an entry (matched-existing orgs are
   // exempt — we never downgrade the role they already hold).
   const [orgTypes, setOrgTypes] = useState<Record<string, string>>({});
+  // QA4 E2 (2026-09-29) — per-batchOrgKey inline overrides of the
+  // org identity (name and/or domain). Applied at commit time via the
+  // `orgOverrides` payload; the wizard's grouped review reads them so
+  // an edit is visible immediately.
+  const [orgOverrides, setOrgOverrides] = useState<
+    Record<string, { name?: string; domain?: string }>
+  >({});
+  // QA4 E3 (2026-09-29) — orgs the reviewer removed. `orgDeleted` is
+  // the set of batchOrgKeys marked deleted; `orgDeleteMode[key]`
+  // records whether the reviewer chose to skip the org's people too
+  // (`cascade`) or move them to the individuals bucket (`keep-people`).
+  // Reversible — clicking Undo drops the key from both.
+  const [orgDeleted, setOrgDeleted] = useState<Set<string>>(() => new Set());
+  const [orgDeleteMode, setOrgDeleteMode] = useState<
+    Record<string, 'cascade' | 'keep-people'>
+  >({});
+  // QA4 E4 (2026-09-29) — per-row org reassignment. Keyed by
+  // sourceRowIndex; value is the target batchOrgKey (or `null` for
+  // Individuals). Overrides the row's dedup-time batchOrgKey both in
+  // the FE grouping and at commit.
+  const [personOrgOverrides, setPersonOrgOverrides] = useState<
+    Record<number, string | null>
+  >({});
+  // QA4 E5 (2026-09-29) — per-field conflict decisions for matched-
+  // existing orgs/people. Keyed by a stable id (`org:<batchOrgKey>` or
+  // `person:<sourceRowIndex>`); inner map is `field -> 'existing' |
+  // 'imported'`. Only differing fields sit here; `existing` is the
+  // default so an unresolved diff leaves the DB value untouched.
+  const [conflictResolutions, setConflictResolutions] = useState<
+    Record<string, Record<string, 'existing' | 'imported'>>
+  >({});
   const [commitResult, setCommitResult] = useState<
     | (Awaited<ReturnType<typeof contactsImportApi.commit>>)
     | null
@@ -302,6 +333,19 @@ export function ContactsImportWizard({
         // QA4 R2b ORG-3 — per-key role picks (only NEW orgs are here;
         // matched-existing orgs never appear because their role stays).
         orgTypes: Object.keys(orgTypes).length > 0 ? orgTypes : undefined,
+        // QA4 E2 — inline overrides of org identity (name / domain).
+        orgOverrides: Object.keys(orgOverrides).length > 0 ? orgOverrides : undefined,
+        // QA4 E3 — reviewer-deleted orgs + their cascade choice.
+        orgDeleted: orgDeleted.size > 0 ? [...orgDeleted] : undefined,
+        orgDeleteMode: Object.keys(orgDeleteMode).length > 0 ? orgDeleteMode : undefined,
+        // QA4 E4 — per-row reassignment (drag/move between org cards).
+        personOrgOverrides: Object.keys(personOrgOverrides).length > 0
+          ? Object.fromEntries(
+              Object.entries(personOrgOverrides).map(([k, v]) => [Number(k), v]),
+            )
+          : undefined,
+        // QA4 E5 — per-field conflict picks (keep existing vs use imported).
+        conflictResolutions: Object.keys(conflictResolutions).length > 0 ? conflictResolutions : undefined,
       });
     },
     onSuccess: (data) => {
@@ -339,6 +383,11 @@ export function ContactsImportWizard({
     setDecisions({});
     setDecidedMapping(null);
     setOrgTypes({});
+    setOrgOverrides({});
+    setOrgDeleted(new Set());
+    setOrgDeleteMode({});
+    setPersonOrgOverrides({});
+    setConflictResolutions({});
     setCommitResult(null);
     // Re-apply prefill for "Import another file" — if the wizard was
     // deep-linked from a project, that context still holds. The role
@@ -526,12 +575,65 @@ export function ContactsImportWizard({
           sheetName={selectedSheet.name}
           decisions={decisions}
           orgTypes={orgTypes}
+          orgOverrides={orgOverrides}
+          orgDeleted={orgDeleted}
+          orgDeleteMode={orgDeleteMode}
+          personOrgOverrides={personOrgOverrides}
+          conflictResolutions={conflictResolutions}
           onOrgTypeChange={(key, code) =>
             setOrgTypes((prev) => {
               const next = { ...prev };
               if (!code) delete next[key];
               else next[key] = code;
               return next;
+            })
+          }
+          onOrgOverride={(key, patch) =>
+            setOrgOverrides((prev) => {
+              const merged = { ...(prev[key] ?? {}), ...patch };
+              // Strip empty strings + undefined so a cleared field
+              // falls back to the parsed value.
+              const cleaned: { name?: string; domain?: string } = {};
+              if (merged.name && merged.name.trim()) cleaned.name = merged.name.trim();
+              if (merged.domain && merged.domain.trim()) cleaned.domain = merged.domain.trim().toLowerCase();
+              const next = { ...prev };
+              if (Object.keys(cleaned).length === 0) delete next[key];
+              else next[key] = cleaned;
+              return next;
+            })
+          }
+          onOrgDelete={(key, mode) => {
+            setOrgDeleted((prev) => {
+              const next = new Set(prev);
+              next.add(key);
+              return next;
+            });
+            setOrgDeleteMode((prev) => ({ ...prev, [key]: mode }));
+          }}
+          onOrgDeleteUndo={(key) => {
+            setOrgDeleted((prev) => {
+              const next = new Set(prev);
+              next.delete(key);
+              return next;
+            });
+            setOrgDeleteMode((prev) => {
+              const next = { ...prev };
+              delete next[key];
+              return next;
+            });
+          }}
+          onMovePerson={(rowIndex, targetKey) =>
+            setPersonOrgOverrides((prev) => {
+              const next = { ...prev };
+              next[rowIndex] = targetKey;
+              return next;
+            })
+          }
+          onConflictResolve={(recordKey, field, choice) =>
+            setConflictResolutions((prev) => {
+              const inner = { ...(prev[recordKey] ?? {}) };
+              inner[field] = choice;
+              return { ...prev, [recordKey]: inner };
             })
           }
           onDecide={(rowIndex, patch) => {
@@ -1126,7 +1228,17 @@ function PreviewStep({
   sheetName,
   decisions,
   orgTypes,
+  orgOverrides,
+  orgDeleted,
+  orgDeleteMode,
+  personOrgOverrides,
+  conflictResolutions,
   onOrgTypeChange,
+  onOrgOverride,
+  onOrgDelete,
+  onOrgDeleteUndo,
+  onMovePerson,
+  onConflictResolve,
   onDecide,
   onOverride,
   attachToProjectId,
@@ -1144,7 +1256,21 @@ function PreviewStep({
   decisions: Record<string, RowDecision>;
   /** QA4 R2b ORG-3 — per-batchOrgKey role code chosen by the reviewer. */
   orgTypes: Record<string, string>;
+  /** QA4 E2 — inline name / domain overrides per batchOrgKey. */
+  orgOverrides: Record<string, { name?: string; domain?: string }>;
+  /** QA4 E3 — reviewer-deleted orgs + their cascade mode. */
+  orgDeleted: Set<string>;
+  orgDeleteMode: Record<string, 'cascade' | 'keep-people'>;
+  /** QA4 E4 — per-row target org key (null → individuals). */
+  personOrgOverrides: Record<number, string | null>;
+  /** QA4 E5 — per-record per-field conflict choice. */
+  conflictResolutions: Record<string, Record<string, 'existing' | 'imported'>>;
   onOrgTypeChange: (batchOrgKey: string, code: string | null) => void;
+  onOrgOverride: (batchOrgKey: string, patch: { name?: string; domain?: string }) => void;
+  onOrgDelete: (batchOrgKey: string, mode: 'cascade' | 'keep-people') => void;
+  onOrgDeleteUndo: (batchOrgKey: string) => void;
+  onMovePerson: (rowIndex: number, targetKey: string | null) => void;
+  onConflictResolve: (recordKey: string, field: string, choice: 'existing' | 'imported') => void;
   onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
   onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
   attachToProjectId: number | null;
@@ -1205,12 +1331,28 @@ function PreviewStep({
   // matched BP name when the raw string fails plausibility.
   const orgGroups = useMemo<OrgGroup[]>(() => {
     const map = new Map<string, OrgGroup>();
+    // Small helper — apply an override once so a group's label/domain
+    // reflects the reviewer's inline edit immediately.
+    const applyOverride = (g: OrgGroup) => {
+      const o = orgOverrides[g.key];
+      if (!o) return;
+      if (o.name && o.name.trim()) g.label = o.name.trim();
+      if (o.domain && o.domain.trim()) g.domain = o.domain.trim().toLowerCase();
+    };
     for (const d of preview.decisions) {
       // Respect user-skipped rows for the person count so the panel
       // matches what the commit will actually write.
       const dec = decisions[decisionKeyFor(d.sourceRowIndex)];
       const isSkipped = !!dec?.skipped;
-      const key = d.batchOrgKey ?? `__row:${d.sourceRowIndex}`;
+      // QA4 E4 — a user-driven move overrides the dedup batch key.
+      // `null` moves the row to Individuals (its own single-row key).
+      const rawKey = d.batchOrgKey ?? `__row:${d.sourceRowIndex}`;
+      const override = personOrgOverrides[d.sourceRowIndex];
+      const key = override === undefined
+        ? rawKey
+        : override === null
+          ? `__row:${d.sourceRowIndex}`
+          : override;
       const existing = map.get(key);
       const isMatchedExisting =
         d.org.action === 'link' ||
@@ -1227,11 +1369,7 @@ function PreviewStep({
         // firm identity). Domain-keyed rows are always org groups
         // even when no company text landed (the fallback `@<domain>`
         // label carries the identity forward).
-        const isOrgKey = !!d.batchOrgKey && (
-          d.batchOrgKey.startsWith('bp:')
-          || d.batchOrgKey.startsWith('domain:')
-          || d.batchOrgKey.startsWith('name:')
-        );
+        const isOrgKey = key.startsWith('bp:') || key.startsWith('domain:') || key.startsWith('name:');
         map.set(key, {
           key,
           label: initialLabel,
@@ -1241,7 +1379,7 @@ function PreviewStep({
           people: [],
           personCount: 0,
           skippedCount: 0,
-          hasBatchKey: !!d.batchOrgKey,
+          hasBatchKey: !key.startsWith('__row:'),
           isIndividual: !isOrgKey,
         });
       }
@@ -1257,6 +1395,8 @@ function PreviewStep({
       if (isSkipped) g.skippedCount++;
       else g.personCount++;
     }
+    // Apply E2 overrides (inline org name / domain).
+    for (const g of map.values()) applyOverride(g);
     return [...map.values()].sort((a, b) => {
       // Individuals bucket sinks to the bottom; among orgs, larger
       // groups float to the top so the reviewer sees "1 org · 4
@@ -1264,19 +1404,52 @@ function PreviewStep({
       if (a.isIndividual !== b.isIndividual) return a.isIndividual ? 1 : -1;
       return b.personCount - a.personCount;
     });
-  }, [preview.decisions, decisions, sheetName]);
+  }, [preview.decisions, decisions, sheetName, personOrgOverrides, orgOverrides]);
 
   // QA4 R2b ORG-3 gate — every NEW org must have a role code picked
   // (matched-existing orgs never appear in this list). Commit stays
-  // disabled until the reviewer has typed every one.
-  // QA4 RD-2 (2026-09-29) — the LINK vs NEW split makes this cheap:
-  // `g.isNew` already excludes matched-existing groups, and we now
-  // additionally skip the individuals bucket (those rows never sit
-  // under an org card, so there is nothing to classify).
+  // disabled until the reviewer has typed every one. E3 excludes
+  // orgs the reviewer deleted — no type needed for a card that will
+  // be dropped at commit.
   const newOrgGroups = orgGroups.filter(
-    (g) => g.isNew && g.hasBatchKey && g.personCount > 0 && !g.isIndividual,
+    (g) => g.isNew && g.hasBatchKey && g.personCount > 0 && !g.isIndividual && !orgDeleted.has(g.key),
   );
   const untypedNewOrgs = newOrgGroups.filter((g) => !orgTypes[g.key]).length;
+  // QA4 E6 (2026-09-29) — every person must belong to an org before
+  // commit. Count kept-people rows currently sitting in the
+  // Individuals bucket AND still live (not skipped, not on a deleted
+  // org). "Kept" means: no `skipped` decision AND not on a deleted
+  // org (cascade would drop them; keep-people moves them here, which
+  // means the reviewer has to reassign each one before commit).
+  const orphanCount = useMemo(() => {
+    let n = 0;
+    for (const g of orgGroups) {
+      if (!g.isIndividual) continue;
+      for (const p of g.people) {
+        if (p.skipped) continue;
+        // Below-contract rows are skipped at commit anyway — they
+        // don't need an org assignment.
+        if (!p.decision.meetsMinimumContract) continue;
+        n++;
+      }
+    }
+    return n;
+  }, [orgGroups]);
+  // QA4 E4 — targets available to the "Move to…" dropdown + the
+  // drag/drop targets. Include every non-deleted org card + a
+  // dedicated "Individuals" sink. Kept as `null` for individuals so
+  // the reducer can distinguish an unset override from "move to
+  // individuals".
+  const moveTargets = useMemo<Array<{ key: string | null; label: string; domain?: string | null }>>(() => {
+    const list: Array<{ key: string | null; label: string; domain?: string | null }> = [];
+    for (const g of orgGroups) {
+      if (g.isIndividual) continue;
+      if (orgDeleted.has(g.key)) continue;
+      list.push({ key: g.key, label: g.label, domain: g.domain });
+    }
+    list.push({ key: null, label: '— Individuals (no organization) —' });
+    return list;
+  }, [orgGroups, orgDeleted]);
 
   // Load org role types (customer / supplier / consultant / partner /
   // …) once; shared with the ORG-3 selector on each row of the panel.
@@ -1403,10 +1576,21 @@ function PreviewStep({
         decisionKeyFor={decisionKeyFor}
         conflictsOnly={conflictsOnly}
         orgTypes={orgTypes}
+        orgOverrides={orgOverrides}
+        orgDeleted={orgDeleted}
+        orgDeleteMode={orgDeleteMode}
+        conflictResolutions={conflictResolutions}
         onOrgTypeChange={onOrgTypeChange}
+        onOrgOverride={onOrgOverride}
+        onOrgDelete={onOrgDelete}
+        onOrgDeleteUndo={onOrgDeleteUndo}
+        onMovePerson={onMovePerson}
+        onConflictResolve={onConflictResolve}
+        moveTargets={moveTargets}
         orgRoleTypes={orgRoleTypes}
         orgRoleTypesLoading={orgRoleTypesQuery.isLoading}
         untypedNewOrgs={untypedNewOrgs}
+        orphanCount={orphanCount}
         onDecide={onDecide}
         onOverride={onOverride}
       />
@@ -1436,6 +1620,7 @@ function PreviewStep({
             || effectiveEligible === 0
             || unresolvedConflicts > 0
             || untypedNewOrgs > 0
+            || orphanCount > 0
           }
           className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50 focus:outline-none focus:border-blue-400"
         >
@@ -1445,8 +1630,10 @@ function PreviewStep({
               ? `Resolve ${unresolvedConflicts} conflict${unresolvedConflicts === 1 ? '' : 's'} to continue`
               : untypedNewOrgs > 0
                 ? `Classify ${untypedNewOrgs} organization${untypedNewOrgs === 1 ? '' : 's'} to continue`
-                : `Commit ${effectiveEligible} rows`}{' '}
-          {unresolvedConflicts === 0 && untypedNewOrgs === 0 && <ArrowRight className="h-3.5 w-3.5" />}
+                : orphanCount > 0
+                  ? `Assign ${orphanCount} ${orphanCount === 1 ? 'person' : 'people'} to an organization to continue`
+                  : `Commit ${effectiveEligible} rows`}{' '}
+          {unresolvedConflicts === 0 && untypedNewOrgs === 0 && orphanCount === 0 && <ArrowRight className="h-3.5 w-3.5" />}
         </button>
       </div>
     </div>
@@ -1481,10 +1668,21 @@ function GroupedReview({
   decisionKeyFor,
   conflictsOnly,
   orgTypes,
+  orgOverrides,
+  orgDeleted,
+  orgDeleteMode,
+  conflictResolutions,
   onOrgTypeChange,
+  onOrgOverride,
+  onOrgDelete,
+  onOrgDeleteUndo,
+  onMovePerson,
+  onConflictResolve,
+  moveTargets,
   orgRoleTypes,
   orgRoleTypesLoading,
   untypedNewOrgs,
+  orphanCount,
   onDecide,
   onOverride,
 }: {
@@ -1494,10 +1692,21 @@ function GroupedReview({
   decisionKeyFor: (rowIndex: number) => string;
   conflictsOnly: boolean;
   orgTypes: Record<string, string>;
+  orgOverrides: Record<string, { name?: string; domain?: string }>;
+  orgDeleted: Set<string>;
+  orgDeleteMode: Record<string, 'cascade' | 'keep-people'>;
+  conflictResolutions: Record<string, Record<string, 'existing' | 'imported'>>;
   onOrgTypeChange: (batchOrgKey: string, code: string | null) => void;
+  onOrgOverride: (batchOrgKey: string, patch: { name?: string; domain?: string }) => void;
+  onOrgDelete: (batchOrgKey: string, mode: 'cascade' | 'keep-people') => void;
+  onOrgDeleteUndo: (batchOrgKey: string) => void;
+  onMovePerson: (rowIndex: number, targetKey: string | null) => void;
+  onConflictResolve: (recordKey: string, field: string, choice: 'existing' | 'imported') => void;
+  moveTargets: Array<{ key: string | null; label: string; domain?: string | null }>;
   orgRoleTypes: PartnerRoleTypeLite[];
   orgRoleTypesLoading: boolean;
   untypedNewOrgs: number;
+  orphanCount: number;
   onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
   onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
 }) {
@@ -1580,6 +1789,7 @@ function GroupedReview({
             {orgs.map((g) => {
               const visiblePeople = filterPeople(g.people);
               const isExp = expanded.has(g.key);
+              const isDeleted = orgDeleted.has(g.key);
               return (
                 <OrgCard
                   key={g.key}
@@ -1593,6 +1803,16 @@ function GroupedReview({
                   decisionKeyFor={decisionKeyFor}
                   orgTypes={orgTypes}
                   onOrgTypeChange={onOrgTypeChange}
+                  orgOverride={orgOverrides[g.key]}
+                  onOrgOverride={onOrgOverride}
+                  isDeleted={isDeleted}
+                  deleteMode={orgDeleteMode[g.key]}
+                  onOrgDelete={onOrgDelete}
+                  onOrgDeleteUndo={onOrgDeleteUndo}
+                  onMovePerson={onMovePerson}
+                  onConflictResolve={onConflictResolve}
+                  conflictResolutions={conflictResolutions}
+                  moveTargets={moveTargets}
                   orgRoleTypes={orgRoleTypes}
                   orgRoleTypesLoading={orgRoleTypesLoading}
                   onDecide={onDecide}
@@ -1604,6 +1824,21 @@ function GroupedReview({
         )}
       </div>
 
+      {/* QA4 E6 (2026-09-29) — orphan gate banner. Every kept person
+          must have an org before commit; the banner names the count
+          and points at the Individuals section below. */}
+      {orphanCount > 0 && (
+        <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-3 flex items-start gap-2 text-[12px] text-amber-800 dark:text-amber-200">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            <strong>
+              {orphanCount} {orphanCount === 1 ? 'person is' : 'people are'} still without an organization.
+            </strong>{' '}
+            Assign each one to an existing org or create a new one below — the commit is blocked until every person belongs to a firm.
+          </div>
+        </div>
+      )}
+
       {/* Individuals section — same table shape but WITH Company. */}
       {individualPeople.length > 0 && (
         <IndividualsSection
@@ -1614,6 +1849,8 @@ function GroupedReview({
           decisionKeyFor={decisionKeyFor}
           onDecide={onDecide}
           onOverride={onOverride}
+          onMovePerson={onMovePerson}
+          moveTargets={moveTargets}
         />
       )}
     </div>
@@ -1638,6 +1875,16 @@ function OrgCard({
   decisionKeyFor,
   orgTypes,
   onOrgTypeChange,
+  orgOverride,
+  onOrgOverride,
+  isDeleted,
+  deleteMode,
+  onOrgDelete,
+  onOrgDeleteUndo,
+  onMovePerson,
+  onConflictResolve,
+  conflictResolutions,
+  moveTargets,
   orgRoleTypes,
   orgRoleTypesLoading,
   onDecide,
@@ -1653,16 +1900,48 @@ function OrgCard({
   decisionKeyFor: (rowIndex: number) => string;
   orgTypes: Record<string, string>;
   onOrgTypeChange: (batchOrgKey: string, code: string | null) => void;
+  orgOverride: { name?: string; domain?: string } | undefined;
+  onOrgOverride: (batchOrgKey: string, patch: { name?: string; domain?: string }) => void;
+  isDeleted: boolean;
+  deleteMode: 'cascade' | 'keep-people' | undefined;
+  onOrgDelete: (batchOrgKey: string, mode: 'cascade' | 'keep-people') => void;
+  onOrgDeleteUndo: (batchOrgKey: string) => void;
+  onMovePerson: (rowIndex: number, targetKey: string | null) => void;
+  onConflictResolve: (recordKey: string, field: string, choice: 'existing' | 'imported') => void;
+  conflictResolutions: Record<string, Record<string, 'existing' | 'imported'>>;
+  moveTargets: Array<{ key: string | null; label: string; domain?: string | null }>;
   orgRoleTypes: PartnerRoleTypeLite[];
   orgRoleTypesLoading: boolean;
   onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
   onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
 }) {
   const pickedCode = orgTypes[group.key] ?? '';
-  const needsPick = group.isNew && group.hasBatchKey && !pickedCode && group.personCount > 0;
+  const needsPick = group.isNew && group.hasBatchKey && !pickedCode && group.personCount > 0 && !isDeleted;
+  const [askDelete, setAskDelete] = useState(false);
+  // QA4 E2 (2026-09-29) — inline org name / domain editors.
+  const [editingName, setEditingName] = useState(false);
+  const [editingDomain, setEditingDomain] = useState(false);
+  const [nameDraft, setNameDraft] = useState(group.label);
+  const [domainDraft, setDomainDraft] = useState(group.domain ?? '');
+  useEffect(() => setNameDraft(group.label), [group.label]);
+  useEffect(() => setDomainDraft(group.domain ?? ''), [group.domain]);
+  const commitName = () => {
+    const t = nameDraft.trim();
+    setEditingName(false);
+    if (t && t !== group.label) onOrgOverride(group.key, { name: t });
+  };
+  const commitDomain = () => {
+    const t = domainDraft.trim().toLowerCase();
+    setEditingDomain(false);
+    if (t !== (group.domain ?? '')) onOrgOverride(group.key, { domain: t || undefined });
+  };
 
   return (
-    <div className={cn('px-3 py-2.5', needsPick && 'bg-amber-50/30 dark:bg-amber-950/10')}>
+    <div className={cn(
+      'px-3 py-2.5',
+      needsPick && 'bg-amber-50/30 dark:bg-amber-950/10',
+      isDeleted && 'opacity-60 bg-slate-100/40 dark:bg-slate-800/30',
+    )}>
       <div className="flex items-start gap-2 flex-wrap">
         <button
           type="button"
@@ -1685,21 +1964,102 @@ function OrgCard({
               kind={group.isNew ? 'new' : 'link'}
               matchedName={group.matchedBpId ? group.label : null}
             />
-            <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">
-              {group.label}
-            </span>
-            {group.domain && (
-              <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
-                @{group.domain}
-              </span>
+            {/* QA4 E2 — inline editable name. Click to enter edit
+                mode; Enter or blur commits, ESC cancels. Never lets an
+                empty string overwrite the group's derived label — a
+                clear falls back to the parsed value. */}
+            {editingName ? (
+              <input
+                type="text"
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onBlur={commitName}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commitName();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setNameDraft(group.label);
+                    setEditingName(false);
+                  }
+                }}
+                autoFocus
+                className="text-[13px] font-semibold px-1.5 py-0.5 rounded-md border border-blue-400 dark:border-blue-500 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-blue-500 dark:focus:border-blue-400 min-w-[10rem]"
+                aria-label="Edit organization name"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => !isDeleted && setEditingName(true)}
+                disabled={isDeleted}
+                className={cn(
+                  'text-[13px] font-semibold truncate text-left rounded px-1 py-0.5 -mx-1 -my-0.5',
+                  orgOverride?.name
+                    ? 'text-emerald-800 dark:text-emerald-200'
+                    : 'text-slate-800 dark:text-slate-100',
+                  !isDeleted && 'hover:bg-slate-100 dark:hover:bg-slate-800 focus:outline-none focus:bg-slate-100 dark:focus:bg-slate-800',
+                )}
+                title={isDeleted ? undefined : 'Click to edit organization name'}
+              >
+                {group.label}
+                {orgOverride?.name && (
+                  <span className="ml-1 inline-block align-middle">
+                    <CellTag tone="edited">edited</CellTag>
+                  </span>
+                )}
+              </button>
+            )}
+            {editingDomain ? (
+              <input
+                type="text"
+                value={domainDraft}
+                onChange={(e) => setDomainDraft(e.target.value)}
+                onBlur={commitDomain}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commitDomain();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setDomainDraft(group.domain ?? '');
+                    setEditingDomain(false);
+                  }
+                }}
+                autoFocus
+                placeholder="e.g. mra.co.il"
+                className="text-[11px] font-mono px-1.5 py-0.5 rounded-md border border-blue-400 dark:border-blue-500 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:border-blue-500 dark:focus:border-blue-400 min-w-[10rem]"
+                aria-label="Edit organization domain"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => !isDeleted && setEditingDomain(true)}
+                disabled={isDeleted}
+                className={cn(
+                  'text-[11px] font-mono rounded px-1 py-0.5 -mx-1 -my-0.5',
+                  orgOverride?.domain
+                    ? 'text-emerald-700 dark:text-emerald-300'
+                    : 'text-slate-500 dark:text-slate-400',
+                  !isDeleted && 'hover:bg-slate-100 dark:hover:bg-slate-800 focus:outline-none focus:bg-slate-100 dark:focus:bg-slate-800',
+                )}
+                title={isDeleted ? undefined : 'Click to edit domain'}
+              >
+                {group.domain ? `@${group.domain}` : '+ add domain'}
+              </button>
             )}
             <span className="text-[11px] text-slate-500 dark:text-slate-400">
               {group.personCount} {group.personCount === 1 ? 'person' : 'people'}
               {group.skippedCount > 0 && ` · ${group.skippedCount} removed`}
             </span>
+            {isDeleted && (
+              <span className="text-[10px] font-bold uppercase tracking-wide text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/40 rounded px-1.5 py-0.5">
+                deleted · {deleteMode === 'cascade' ? 'people dropped' : 'people moved to individuals'}
+              </span>
+            )}
           </div>
         </div>
-        {group.isNew && group.hasBatchKey ? (
+        {group.isNew && group.hasBatchKey && !isDeleted ? (
           <select
             value={pickedCode}
             onChange={(e) => onOrgTypeChange(group.key, e.target.value || null)}
@@ -1721,13 +2081,70 @@ function OrgCard({
               </option>
             ))}
           </select>
-        ) : (
+        ) : !isDeleted ? (
           <span className="shrink-0 text-[11px] italic text-slate-400 dark:text-slate-500 mt-1.5">
             {group.hasBatchKey ? 'keeps existing type' : ''}
           </span>
+        ) : null}
+        {/* QA4 E3 — delete org. Reversible until commit. */}
+        {isDeleted ? (
+          <button
+            type="button"
+            onClick={() => onOrgDeleteUndo(group.key)}
+            className="shrink-0 inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:border-slate-400 dark:hover:border-slate-500 focus:outline-none focus:border-blue-500 dark:focus:border-blue-400"
+            title="Undo delete"
+            aria-label="Undo delete organization"
+          >
+            <RotateCcw className="h-3 w-3" aria-hidden="true" /> Undo
+          </button>
+        ) : askDelete ? (
+          <div className="shrink-0 rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-2 space-y-1">
+            <div className="text-[11px] font-semibold text-red-800 dark:text-red-200">
+              Delete this organization?
+            </div>
+            <div className="flex flex-col gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  onOrgDelete(group.key, 'cascade');
+                  setAskDelete(false);
+                }}
+                className="text-left text-[11px] px-1.5 py-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/40 text-red-800 dark:text-red-200 focus:outline-none focus:bg-red-100 dark:focus:bg-red-900/40"
+              >
+                Delete org <strong>and its people</strong>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onOrgDelete(group.key, 'keep-people');
+                  setAskDelete(false);
+                }}
+                className="text-left text-[11px] px-1.5 py-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/40 text-red-800 dark:text-red-200 focus:outline-none focus:bg-red-100 dark:focus:bg-red-900/40"
+              >
+                Delete org, <strong>keep people</strong> as individuals
+              </button>
+              <button
+                type="button"
+                onClick={() => setAskDelete(false)}
+                className="text-left text-[11px] px-1.5 py-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 focus:outline-none focus:bg-slate-100 dark:focus:bg-slate-800"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setAskDelete(true)}
+            className="shrink-0 inline-flex items-center justify-center h-6 w-6 rounded-md border border-transparent text-slate-400 dark:text-slate-500 hover:border-red-300 hover:text-red-600 dark:hover:border-red-800 dark:hover:text-red-400 focus:outline-none focus:border-red-500 dark:focus:border-red-500"
+            aria-label={`Delete organization ${group.label}`}
+            title="Delete organization"
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
         )}
       </div>
-      {isExpanded && (
+      {isExpanded && !isDeleted && (
         <div className="mt-2 ml-6 rounded-md border border-slate-200 dark:border-slate-700 overflow-hidden">
           {visiblePeople.length === 0 ? (
             <div className="px-3 py-4 text-center text-[12px] text-slate-400 dark:text-slate-500 italic">
@@ -1744,6 +2161,9 @@ function OrgCard({
               onDecide={onDecide}
               onOverride={onOverride}
               showCompany={false}
+              onMovePerson={onMovePerson}
+              moveTargets={moveTargets}
+              currentGroupKey={group.key}
             />
           )}
         </div>
@@ -1766,6 +2186,8 @@ function IndividualsSection({
   decisionKeyFor,
   onDecide,
   onOverride,
+  onMovePerson,
+  moveTargets,
 }: {
   people: Array<{ decision: DedupDecision; skipped: boolean }>;
   totalPeople: number;
@@ -1774,6 +2196,9 @@ function IndividualsSection({
   decisionKeyFor: (rowIndex: number) => string;
   onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
   onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
+  /** QA4 E4 / E6 — assign an individual to an existing org card. */
+  onMovePerson?: (rowIndex: number, targetKey: string | null) => void;
+  moveTargets?: Array<{ key: string | null; label: string; domain?: string | null }>;
 }) {
   return (
     <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
@@ -1783,7 +2208,7 @@ function IndividualsSection({
           Individuals (no organization) ({totalPeople})
         </span>
         <span className="text-[11px] text-slate-500 dark:text-slate-400">
-          rows with no groupable firm identity (personal domain or missing company)
+          rows with no groupable firm identity (personal domain or missing company) — expand a row to assign one
         </span>
       </div>
       {people.length === 0 ? (
@@ -1801,6 +2226,9 @@ function IndividualsSection({
           onDecide={onDecide}
           onOverride={onOverride}
           showCompany={true}
+          onMovePerson={onMovePerson}
+          moveTargets={moveTargets}
+          currentGroupKey={null}
         />
       )}
     </div>

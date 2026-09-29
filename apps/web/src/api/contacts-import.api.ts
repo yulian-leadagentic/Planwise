@@ -119,6 +119,19 @@ export interface DedupSide {
   matchedBpId?: number;
   matchedBpName?: string | null;
   matchReason?: 'domain' | 'name';
+  /**
+   * QA4 E5 (2026-09-29) — when the resolver matched to an existing BP,
+   * this is the current field state of that BP so the FE can compute
+   * per-field diffs against the imported row and show a "keep existing /
+   * use imported" chooser. Only populated on `link` decisions (or a
+   * matched `create` that will short-circuit to link at commit).
+   *
+   * Keys mirror `OverrideField`/`ContactField` — `contact`, `company`,
+   * `email`, `phone`, `mobile`, `discipline`, `role`, `address`, `note`.
+   * Missing keys mean "not fetched"; a `null` value means "empty on the
+   * existing record".
+   */
+  existingFields?: Partial<Record<string, string | null>>;
 }
 
 export interface DedupDecision {
@@ -341,6 +354,38 @@ export const contactsImportApi = {
      * org having a type; existing (matched) orgs are never downgraded.
      */
     orgTypes?: Record<string, string>;
+    /**
+     * QA4 E2 (2026-09-29) — inline overrides of an org's identity per
+     * batch key. `name` becomes the new org's `displayName` /
+     * `companyName`; `domain` (optional) is the domain claimed on
+     * commit. NEW orgs only — matched-existing orgs use E5 conflict
+     * resolution instead.
+     */
+    orgOverrides?: Record<string, { name?: string; domain?: string }>;
+    /**
+     * QA4 E3 (2026-09-29) — list of batchOrgKeys the reviewer removed.
+     * With `orgDeleteMode` per key: `cascade` skips all their people,
+     * `keep-people` demotes each person to the individuals bucket
+     * (they then need reassignment via `personOrgOverrides` before E6
+     * allows commit).
+     */
+    orgDeleted?: string[];
+    orgDeleteMode?: Record<string, 'cascade' | 'keep-people'>;
+    /**
+     * QA4 E4 (2026-09-29) — per-row org reassignment. Keyed by the
+     * source row index, value is the target batchOrgKey. `null` moves
+     * the row to the Individuals bucket (E6 will block commit unless
+     * every kept row lands on a real org first).
+     */
+    personOrgOverrides?: Record<number, string | null>;
+    /**
+     * QA4 E5 (2026-09-29) — per-record per-field conflict picks. Keyed
+     * by a stable record id (`org:<batchOrgKey>` or
+     * `person:<sourceRowIndex>`); inner map value is `existing` (leave
+     * the DB value untouched) or `imported` (overwrite with the row's
+     * value). Fields absent from the map default to `existing`.
+     */
+    conflictResolutions?: Record<string, Record<string, 'existing' | 'imported'>>;
   }): Promise<CommitSummary> => {
     const r = await client.post<CommitSummary>('/data-import/contacts/commit', input);
     return unwrap<CommitSummary>(r);
