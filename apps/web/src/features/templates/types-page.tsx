@@ -31,16 +31,22 @@ import { useConfirm } from '@/components/shared/confirm-dialog';
 // New-Project. Fix: rename the ServiceType tab to "Services" (which is
 // what it actually manages) and add a new "Project Categories" tab wired
 // to the ProjectType table that New-Project actually reads.
-type TabKey = 'zone' | 'projectCategory' | 'service' | 'department' | 'profession';
+type TabKey = 'zone' | 'projectCategory' | 'service' | 'department' | 'profession' | 'position';
 
-const TAB_VALUES = ['zone', 'projectCategory', 'service', 'department', 'profession'] as const satisfies readonly TabKey[];
+const TAB_VALUES = ['zone', 'projectCategory', 'service', 'department', 'profession', 'position'] as const satisfies readonly TabKey[];
 
+// QA4 JT-3 (2026-09-29) — the old "Job Titles" tab renamed to
+// "Qualifications" (matches the partner-drawer rename and the JT-1 split
+// semantics: `professions` is the eligibility-gate axis). A new
+// "Positions" tab manages the descriptive-title catalog (`positions`
+// table) that feeds the drawer + People page Position pickers.
 const TABS: { value: TabKey; label: string }[] = [
   { value: 'zone', label: 'Zone Types' },
   { value: 'projectCategory', label: 'Project Categories' },
   { value: 'service', label: 'Services' },
   { value: 'department', label: 'Departments' },
-  { value: 'profession', label: 'Job Titles' },
+  { value: 'position', label: 'Positions' },
+  { value: 'profession', label: 'Qualifications' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -280,8 +286,57 @@ export function TypesPage() {
 
   const deleteProfession = useMutation({
     mutationFn: (id: number) => client.delete(`/admin/config/professions/${id}`).then((r) => r.data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'professions'] }); notify.success('Job title deleted'); },
-    onError: (err: any) => notify.apiError(err, 'Failed to delete profession'),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin', 'professions'] }); notify.success('Qualification deleted'); },
+    onError: (err: any) => notify.apiError(err, 'Failed to delete qualification'),
+  });
+
+  // -----------------------------------------------------------------------
+  // Positions (JT-3) — descriptive-title catalog. Backed by
+  // `/admin/config/positions` (Position model, seeded by migration
+  // 20260929210000_seed_positions with CEO / VP / HR manager / Finance).
+  // Same shared cache key as the drawer + People edit modal so writes
+  // here immediately reflect in those pickers.
+  // -----------------------------------------------------------------------
+  const positionsQuery = useQuery({
+    queryKey: ['admin', 'config', 'positions'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/config/positions').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+    enabled: activeTab === 'position',
+  });
+
+  const createPosition = useMutation({
+    mutationFn: (payload: { name: string; code?: string }) =>
+      client.post('/admin/config/positions', payload).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'config', 'positions'] });
+      notify.success('Position created');
+      resetForm();
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to create position'),
+  });
+
+  const updatePosition = useMutation({
+    mutationFn: ({ id, ...payload }: { id: number; name?: string; code?: string }) =>
+      client.patch(`/admin/config/positions/${id}`, payload).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'config', 'positions'] });
+      notify.success('Position updated');
+      setEditing(null);
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update position'),
+  });
+
+  const deletePosition = useMutation({
+    mutationFn: (id: number) => client.delete(`/admin/config/positions/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'config', 'positions'] });
+      notify.success('Position deleted');
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to delete position'),
   });
 
   // (Project roles block was here; removed for the same reason as
@@ -302,19 +357,23 @@ export function TypesPage() {
     (activeTab === 'projectCategory' && projectCategoriesQuery.isLoading) ||
     (activeTab === 'service' && serviceTypesQuery.isLoading) ||
     (activeTab === 'department' && departmentsQuery.isLoading) ||
-    (activeTab === 'profession' && professionsQuery.isLoading);
+    (activeTab === 'profession' && professionsQuery.isLoading) ||
+    (activeTab === 'position' && positionsQuery.isLoading);
 
   const isCreating =
     (activeTab === 'projectCategory' && createProjectCategory.isPending) ||
     (activeTab === 'service' && createServiceType.isPending) ||
     (activeTab === 'department' && createDepartment.isPending) ||
-    (activeTab === 'profession' && createProfession.isPending);
+    (activeTab === 'profession' && createProfession.isPending) ||
+    (activeTab === 'position' && createPosition.isPending);
 
   const isSaving =
     updateZoneType.isPending ||
     updateProjectCategory.isPending ||
     updateServiceType.isPending ||
-    updateDepartment.isPending || updateProfession.isPending;
+    updateDepartment.isPending ||
+    updateProfession.isPending ||
+    updatePosition.isPending;
 
   // Build the rows for the active tab
   const rows: { id: string | number; code: string; name: string; color?: string; static?: boolean; sortOrder?: number }[] =
@@ -346,6 +405,12 @@ export function TypesPage() {
         items = (professionsQuery.data ?? []).map((p: any) => ({
           id: p.id, code: '', name: p.name,
         }));
+      } else if (activeTab === 'position') {
+        items = (positionsQuery.data ?? []).map((p: any) => ({
+          id: p.id,
+          code: (p.code ?? '').toString(),
+          name: p.nameHe ? `${p.name} · ${p.nameHe}` : p.name,
+        }));
       }
 
       if (!q) return items;
@@ -354,10 +419,10 @@ export function TypesPage() {
           r.name.toLowerCase().includes(q) ||
           r.code.toLowerCase().includes(q),
       );
-    }, [activeTab, search, zoneTypesQuery.data, projectCategoriesQuery.data, serviceTypesQuery.data, departmentsQuery.data, professionsQuery.data]);
+    }, [activeTab, search, zoneTypesQuery.data, projectCategoriesQuery.data, serviceTypesQuery.data, departmentsQuery.data, professionsQuery.data, positionsQuery.data]);
 
   const hasColor = activeTab === 'zone' || activeTab === 'projectCategory' || activeTab === 'service';
-  const hasCode = activeTab === 'zone' || activeTab === 'projectCategory' || activeTab === 'service' || activeTab === 'department';
+  const hasCode = activeTab === 'zone' || activeTab === 'projectCategory' || activeTab === 'service' || activeTab === 'department' || activeTab === 'position';
   const hasNumbering = activeTab === 'department';
 
   // -----------------------------------------------------------------------
@@ -440,13 +505,23 @@ export function TypesPage() {
           if (!ok) return;
         }
       }
+      // NOTE: `kind` here is 'department' | 'profession' — the position
+      // branch is handled below because Positions use the `positions`
+      // catalog (not `professions`) and don't need the E-08 warning
+      // (User.position → BP.positionId sync is idempotent).
       if (kind === 'department') {
         updateDepartment.mutate({ id: editing.id as number, name: trimmedName, code: editing.code.trim() || undefined });
       } else {
         updateProfession.mutate({ id: editing.id as number, name: trimmedName });
       }
+    } else if (activeTab === 'position') {
+      updatePosition.mutate({
+        id: editing.id as number,
+        name: trimmedName,
+        code: editing.code.trim() || undefined,
+      });
     }
-  }, [editing, activeTab, updateZoneType, updateProjectCategory, updateServiceType, updateDepartment, updateProfession, confirm, rows]);
+  }, [editing, activeTab, updateZoneType, updateProjectCategory, updateServiceType, updateDepartment, updateProfession, updatePosition, confirm, rows]);
 
   // Escape key handler for inline edit
   useEffect(() => {
@@ -476,6 +551,16 @@ export function TypesPage() {
       createDepartment.mutate({ name: trimmedName, code: formCode.trim() || undefined });
     } else if (activeTab === 'profession') {
       createProfession.mutate({ name: trimmedName });
+    } else if (activeTab === 'position') {
+      // Auto-slug the code from the name when the admin didn't supply
+      // one — matches how the backend seed rows are keyed (ceo /
+      // hr-manager / …). Non-Latin characters fall through and the
+      // backend enforces uniqueness.
+      const slug = formCode.trim() || trimmedName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+      createPosition.mutate({ name: trimmedName, code: slug || undefined });
     }
   }
 
@@ -486,7 +571,8 @@ export function TypesPage() {
     // records still referencing this catalog row.
     const kind =
       activeTab === 'department' ? 'department'
-      : activeTab === 'profession' ? 'job title'
+      : activeTab === 'profession' ? 'qualification'
+      : activeTab === 'position' ? 'position'
       : activeTab === 'zone' ? 'zone type'
       : activeTab === 'projectCategory' ? 'project category'
       : activeTab === 'service' ? 'service type'
@@ -518,6 +604,7 @@ export function TypesPage() {
     else if (activeTab === 'service') deleteServiceType.mutate(row.id as number);
     else if (activeTab === 'department') deleteDepartment.mutate(row.id as number);
     else if (activeTab === 'profession') deleteProfession.mutate(row.id as number);
+    else if (activeTab === 'position') deletePosition.mutate(row.id as number);
   }
 
   // -----------------------------------------------------------------------

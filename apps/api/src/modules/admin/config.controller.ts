@@ -724,20 +724,80 @@ export class ConfigController {
   }
 
   /**
-   * QA4 JT-3 (2026-09-29) — read-only catalog for the person drawer's
-   * Position picker. Positions are the descriptive org-title half of
-   * the JT-1 split (see docs/bm2/qa4-jobtitle-position-qualification-
-   * split.md). Full CRUD comes with JT-4's admin pages / backfill; the
-   * drawer only needs the list to render its dropdown for now.
+   * QA4 JT-3 (2026-09-29) — Positions CRUD. Positions are the
+   * descriptive org-title half of the JT-1 split (see docs/bm2/
+   * qa4-jobtitle-position-qualification-split.md). Mirrors the
+   * Disciplines pattern exactly. Reads return active rows only so the
+   * pickers never advertise a soft-disabled title.
    */
   @Get('positions')
   @RequirePermissions({ module: 'admin', action: 'read' })
-  @ApiOperation({ summary: 'List positions (JT-3 read-only catalog)' })
+  @ApiOperation({ summary: 'List positions (active rows)' })
   async getPositions() {
     return this.prisma.position.findMany({
       where: { isActive: true },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
+  }
+
+  @Post('positions')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Create position' })
+  async createPosition(
+    @Body() body: { code?: string; name: string; nameHe?: string | null; sortOrder?: number },
+  ) {
+    const count = await this.prisma.position.count();
+    const name = body.name.trim();
+    // Auto-slug the code if the client didn't supply one — matches how
+    // the seed migration keys its rows (ceo / hr-manager / …).
+    const slug =
+      body.code?.trim() ||
+      name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') ||
+      `pos-${count + 1}`;
+    return this.prisma.position.create({
+      data: {
+        code: slug,
+        name,
+        nameHe: body.nameHe?.trim() || null,
+        sortOrder: body.sortOrder ?? (count + 1) * 10,
+      },
+    });
+  }
+
+  @Patch('positions/:id')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Update position' })
+  async updatePosition(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: {
+      code?: string;
+      name?: string;
+      nameHe?: string | null;
+      sortOrder?: number;
+      isActive?: boolean;
+    },
+  ) {
+    return this.prisma.position.update({
+      where: { id },
+      data: {
+        code: body.code?.trim(),
+        name: body.name?.trim(),
+        // Explicit-null clears the Hebrew name; omitting keeps it.
+        nameHe: body.nameHe === undefined ? undefined : (body.nameHe?.trim() || null),
+        sortOrder: body.sortOrder,
+        isActive: body.isActive,
+      },
+    });
+  }
+
+  @Delete('positions/:id')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({ summary: 'Delete position (SET NULL on business_partners.position_id)' })
+  async deletePosition(@Param('id', ParseIntPipe) id: number) {
+    // FK is ON DELETE SET NULL so referencing BPs safely detach — no
+    // pre-check needed; matches the disciplines behaviour.
+    await this.prisma.position.delete({ where: { id } });
+    return { ok: true };
   }
 
   @Post('disciplines')
