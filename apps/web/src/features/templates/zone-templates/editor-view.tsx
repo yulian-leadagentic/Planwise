@@ -128,13 +128,16 @@ export function EditorView({
   const zones: any[] = template.templateZones ?? [];
   const rootTasks: any[] = template.templateTasks ?? [];
 
-  // Group root tasks by service tag
+  // Group root tasks by service tag. QA4 B1 follow-up (2026-09-29) — prefer
+  // the live `deliverableTemplate.name` from the FK relation the API now
+  // includes; fall back to the legacy `[SERVICE:<name>]` marker only when
+  // the FK is missing (backfill couldn't resolve, deliverable deleted).
   const rootServiceGroups = new Map<string, any[]>();
   const rootUngroupedTasks: any[] = [];
   for (const task of rootTasks) {
-    const match = task.description?.match(/^\[SERVICE:(.+)\]$/);
-    if (match) {
-      const svcName = match[1];
+    const svcName = task.deliverableTemplate?.name
+      ?? task.description?.match(/^\[SERVICE:(.+)\]$/)?.[1];
+    if (svcName) {
       if (!rootServiceGroups.has(svcName)) rootServiceGroups.set(svcName, []);
       rootServiceGroups.get(svcName)!.push(task);
     } else {

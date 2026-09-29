@@ -24,13 +24,19 @@ export function ReadOnlyZoneNode({ zone, depth, servicePhaseMap }: { zone: any; 
   const refZones: any[] = refDetail?.templateZones ?? [];
   const children: any[] = zone.children ?? [];
 
-  // Group tasks by service tag
+  // Group tasks by service tag.
+  //
+  // QA4 B1 follow-up (2026-09-29) — prefer the LIVE deliverable name via
+  // the `deliverableTemplate` FK relation (included by the API) so a
+  // renamed deliverable's tasks still group correctly. Fall back to the
+  // legacy `[SERVICE:<name>]` marker in `description` for rows the B1
+  // backfill couldn't resolve (deliverable already deleted, etc.).
   const serviceGroups = new Map<string, any[]>();
   const ungroupedTasks: any[] = [];
   for (const task of refTasks) {
-    const match = task.description?.match(/^\[SERVICE:(.+)\]$/);
-    if (match) {
-      const svcName = match[1];
+    const svcName = task.deliverableTemplate?.name
+      ?? task.description?.match(/^\[SERVICE:(.+)\]$/)?.[1];
+    if (svcName) {
       if (!serviceGroups.has(svcName)) serviceGroups.set(svcName, []);
       serviceGroups.get(svcName)!.push(task);
     } else {

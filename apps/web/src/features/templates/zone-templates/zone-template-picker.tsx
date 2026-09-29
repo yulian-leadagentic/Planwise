@@ -150,7 +150,7 @@ export function ZoneTemplatePicker({
                     </td>
                     <td className="px-3 py-2 text-muted-foreground">{tpl.code || '-'}</td>
                     <td className="px-3 py-2 text-right">{tpl._count?.templateZones ?? 0}</td>
-                    <td className="px-3 py-2 text-right">{new Set((tpl.templateTasks ?? []).map((tk: any) => tk.description?.match(/^\[SERVICE:(.+)\]$/)?.[1]).filter(Boolean)).size}</td>
+                    <td className="px-3 py-2 text-right">{new Set((tpl.templateTasks ?? []).map((tk: any) => tk.deliverableTemplate?.name ?? tk.description?.match(/^\[SERVICE:(.+)\]$/)?.[1]).filter(Boolean)).size}</td>
                     <td className="px-3 py-2 text-right">{tpl._count?.templateTasks ?? tpl.templateTasks?.length ?? 0}</td>
                   </tr>
                 );

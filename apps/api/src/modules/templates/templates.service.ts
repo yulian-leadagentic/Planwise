@@ -162,13 +162,27 @@ export class TemplatesService {
   }
 
   async findOne(id: number) {
+    // QA4 B1 follow-up (2026-09-29) — every `templateTasks`/`templateZoneTasks`
+    // include now surfaces the `deliverableTemplate` relation so the FE
+    // can display the deliverable's CURRENT name (post-rename), instead
+    // of the frozen `[SERVICE:<name>]` marker baked into `description`.
+    // Without this include, a renamed deliverable causes the SERVICE
+    // column in the zone editor to render blank (the marker holds a stale
+    // name; the marker-only display path had no way to look up the FK
+    // target). B1's write + apply paths already prefer the FK; this
+    // completes the read side.
+    const deliverableSelect = { id: true, name: true, code: true } as const;
     const template = await this.prisma.template.findFirst({
       where: { id, deletedAt: null },
       include: {
         creator: { select: { id: true, firstName: true, lastName: true } },
         phase: true,
         templateTasks: {
-          include: { serviceType: true, phase: true },
+          include: {
+            serviceType: true,
+            phase: true,
+            deliverableTemplate: { select: deliverableSelect },
+          },
           orderBy: { sortOrder: 'asc' },
         },
         templateZones: {
@@ -177,19 +191,37 @@ export class TemplatesService {
               include: {
                 linkedTaskTemplate: { select: { id: true, name: true, code: true } },
                 referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
-                templateZoneTasks: { include: { serviceType: true, phase: true } },
+                templateZoneTasks: {
+                  include: {
+                    serviceType: true,
+                    phase: true,
+                    deliverableTemplate: { select: deliverableSelect },
+                  },
+                },
                 children: {
                   include: {
                     linkedTaskTemplate: { select: { id: true, name: true, code: true } },
                     referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
-                    templateZoneTasks: { include: { serviceType: true, phase: true } },
+                    templateZoneTasks: {
+                      include: {
+                        serviceType: true,
+                        phase: true,
+                        deliverableTemplate: { select: deliverableSelect },
+                      },
+                    },
                   },
                 },
               },
             },
             linkedTaskTemplate: { select: { id: true, name: true, code: true } },
             referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
-            templateZoneTasks: { include: { serviceType: true, phase: true } },
+            templateZoneTasks: {
+              include: {
+                serviceType: true,
+                phase: true,
+                deliverableTemplate: { select: deliverableSelect },
+              },
+            },
           },
           where: { parentId: null },
           orderBy: { sortOrder: 'asc' },

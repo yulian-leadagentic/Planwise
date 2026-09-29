@@ -59,13 +59,16 @@ export function ZoneTreeNode({
   const refTasks: any[] = refTemplateDetail?.templateTasks ?? [];
   const refZones: any[] = refTemplateDetail?.templateZones ?? [];
 
-  // Group referenced tasks by service tag
+  // Group referenced tasks by service tag. QA4 B1 follow-up (2026-09-29) —
+  // prefer the live `deliverableTemplate.name` from the FK relation the
+  // API now includes; fall back to the legacy `[SERVICE:<name>]` marker
+  // only when the FK is missing.
   const refServiceGroups = new Map<string, any[]>();
   const refUngroupedTasks: any[] = [];
   for (const task of refTasks) {
-    const match = task.description?.match(/^\[SERVICE:(.+)\]$/);
-    if (match) {
-      const svcName = match[1];
+    const svcName = task.deliverableTemplate?.name
+      ?? task.description?.match(/^\[SERVICE:(.+)\]$/)?.[1];
+    if (svcName) {
       if (!refServiceGroups.has(svcName)) refServiceGroups.set(svcName, []);
       refServiceGroups.get(svcName)!.push(task);
     } else {
