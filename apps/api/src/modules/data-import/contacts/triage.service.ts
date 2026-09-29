@@ -1,12 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as XLSX from 'xlsx';
 import mammoth from 'mammoth';
-// pdf-parse ships CommonJS; require-style import avoids the ESM interop
-// pothole where `import pdf from 'pdf-parse'` resolves to undefined at
-// runtime under swc's transpiler.
+// pdf-parse v2 exports a PDFParse class rather than the v1 callable
+// default. The old wrapper (`require('pdf-parse')` as a function) was
+// silently broken on this version; QA4 R2 IMP-11 (2026-09-29) moves
+// to the v2 API so the PDF path actually returns text.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const pdfParse: (buf: Buffer) => Promise<{ text: string; numpages: number }> =
-  require('pdf-parse');
+const pdfParseModule = require('pdf-parse');
+type PdfParseCtor = new (opts: { data: Buffer | Uint8Array }) => {
+  getText: () => Promise<{ text: string; total: number; pages?: unknown }>;
+};
+const PDFParse: PdfParseCtor = pdfParseModule.PDFParse ?? pdfParseModule.default ?? pdfParseModule;
 
 /**
  * BM2 · Contacts import · Stage 1 — Triage + tolerant readers.
@@ -198,30 +202,88 @@ export class ContactsTriageService {
    * lane rather than the auto-map path.
    */
   private async readPdf(buffer: Buffer, filename?: string): Promise<TriageResult> {
-    const parsed = await pdfParse(buffer);
-    const rawLines = (parsed.text || '').split(/\r?\n/);
-    // Reverse Hebrew RTL characters per line so email tokens are
-    // recognizable to Stage 4's validators. Non-Hebrew lines are left
-    // as-is.
-    const fixedLines = rawLines.map(reverseHebrewInLine);
+    const parser = new PDFParse({ data: buffer });
+    const parsed = await parser.getText();
+    const rawText = parsed.text ?? '';
+    const pages = parsed.total ?? 0;
 
-    // Confidence proxy — number of email-shaped tokens + number of
-    // multi-word lines. Anything below 5 emails ends up manual.
-    const emailHits = fixedLines
-      .join('\n')
-      .match(/[\w.+-]+@[\w-]+\.[a-z]{2,}/gi);
-    const confidence = Math.min(1, (emailHits?.length ?? 0) / 20);
+    // QA4 R2 IMP-11 — reject a truly non-contact PDF (a scan or a
+    // pure diagram) before we hand back a useless empty sheet. A
+    // "no text layer" PDF returns either an empty string or a few
+    // stray glyphs.
+    const printable = rawText.replace(/\s/g, '');
+    if (printable.length < 8) {
+      return reject(
+        'this PDF has no extractable text (looks scanned) — export the source data as .xlsx or .csv, or OCR the PDF first',
+      );
+    }
 
+    // Note: pdf-parse v2 already emits text in LOGICAL order (RTL
+    // scripts are unreversed), so we do NOT run the v1-era
+    // reverseHebrewInLine pass — that would flip the string back to
+    // visual order and break the email + name recognizers.
+    const lines = rawText.split(/\r?\n/);
+
+    // QA4 R2 IMP-11 — detect an email-printout PDF (Gmail thread etc.)
+    // and pull out the To:/Cc: recipient list as one contact per row.
+    // Gmail's export splits long recipient lists across several lines
+    // (address + newline + rest of local-part), so we glue the header
+    // continuations first.
+    const stitched = stitchHeaderContinuations(lines);
+    const gmailRows = extractGmailRecipientRows(stitched);
+    if (gmailRows.length > 0) {
+      return {
+        kind: 'pdf',
+        filename,
+        reader: 'pdf',
+        confidence: Math.min(1, 0.5 + gmailRows.length / 40),
+        pages,
+        sheets: [
+          {
+            name: 'Recipients',
+            rows: [
+              ['Name', 'Email'],
+              ...gmailRows,
+            ],
+          },
+        ],
+      };
+    }
+
+    // QA4 R2 IMP-11 — tabular PDF path. pdf-parse v2 emits table rows
+    // as TAB-separated text lines when the source PDF carries a real
+    // table (matches `210007-Contacts.pdf`). Split every line on `\t`,
+    // drop rows that are purely blank, and hand the resulting 2D grid
+    // to Stage 2's header-detection like any spreadsheet source.
+    // When no tab-separated shape is present, fall back to the
+    // single-column extract so the classifier can still mine tokens
+    // per line and the PM can inline-edit low-confidence rows.
+    const tabularRows = extractTabularRows(lines);
+    const emailCount = (rawText.match(/[\w.+-]+@[\w-]+\.[a-z]{2,}/gi) ?? []).length;
+    if (tabularRows.length > 1 && tabularRows.some((r) => r.length >= 3)) {
+      const confidence = Math.min(1, 0.4 + emailCount / 30);
+      return {
+        kind: 'pdf',
+        filename,
+        reader: 'pdf',
+        confidence,
+        pages,
+        sheets: [{ name: 'PDF Table', rows: tabularRows }],
+      };
+    }
+
+    // Single-column fallback. Confidence stays low so Stage 5 forces
+    // manual review; the classifier still runs against each line and
+    // Preview lets the PM inline-edit low-confidence rows (QA4 R2
+    // IMP-11 known limitation for structure-less PDFs).
+    const confidence = Math.min(1, emailCount / 20);
     return {
       kind: 'pdf',
       filename,
       reader: 'pdf',
       confidence,
-      pages: parsed.numpages ?? 0,
-      // Expose the extracted lines as a single-sheet, single-column
-      // grid so Stage 2's per-sheet loop can still run. Real column
-      // splitting for PDFs is a v2 problem.
-      sheets: [{ name: 'PDF Extract', rows: fixedLines.map((l) => [l]) }],
+      pages,
+      sheets: [{ name: 'PDF Extract', rows: lines.map((l) => [l]) }],
     };
   }
 }
@@ -480,27 +542,158 @@ function decodeHtmlEntities(s: string): string {
 
 // ─── PDF helpers ───────────────────────────────────────────────────────
 
-const HEBREW_LETTER = /[֐-׿]/;
+/**
+ * QA4 R2 IMP-11 — Gmail's PDF export wraps long To:/Cc: recipient
+ * lists across several lines. A continuation line looks like the
+ * tail of a URL / email local part on its own, e.g. line N ends
+ * `<shimon@peer-` and line N+1 begins `eng.com>, יאיר...`. Stitch
+ * continuations so the recipient regex sees each `Name <email>` pair
+ * whole. A line is a continuation when it does NOT start with a
+ * new header token (To:/Cc:/…) AND the prior line ended mid-token
+ * (no closing `>` on the last address seen, or a trailing `-`
+ * inside an address).
+ */
+function stitchHeaderContinuations(lines: string[]): string[] {
+  const HEADER_START = /^\s*(to|cc|bcc|from|reply-to|אל|עותק|עותק נסתר|מאת)\s*:/i;
+  const out: string[] = [];
+  let carry: string | null = null;
+  let carryIsHeader = false;
+  const flush = () => {
+    if (carry != null) out.push(carry);
+    carry = null;
+    carryIsHeader = false;
+  };
+  for (const line of lines) {
+    const isHeader = HEADER_START.test(line);
+    if (isHeader) {
+      flush();
+      carry = line;
+      carryIsHeader = true;
+      continue;
+    }
+    if (carryIsHeader && carry != null) {
+      // Continuation heuristic: previous carry ends with a hyphen
+      // inside what looks like an email (`<foo@peer-`) or with `,`
+      // (mid-list). Otherwise treat this line as an unrelated
+      // paragraph and flush.
+      const trimmed = carry.trimEnd();
+      const looksContinuing =
+        /[<,]\s*$/.test(trimmed) || /-\s*$/.test(trimmed) || !/>/.test(trimmed.slice(-40));
+      if (looksContinuing) {
+        carry = trimmed + line.trim();
+        continue;
+      }
+      flush();
+    }
+    out.push(line);
+  }
+  flush();
+  return out;
+}
 
 /**
- * pdf-parse returns text in visual (drawn) order. Hebrew lines are
- * drawn right-to-left, so a line like "יונתן כהן" arrives as "ןהכ ןתנוי"
- * — reversed both characters AND word order. Detect Hebrew presence
- * and reverse the line's tokens; ASCII-only lines are left alone.
- *
- * This is deliberately a best-effort pass. PDFs are hostile enough that
- * Stage 5 keeps a low `confidence` score and forces manual review; this
- * just makes the extracted text HUMAN-readable so the user can decide.
+ * QA4 R2 IMP-11 — split tab-separated PDF text into a 2D grid.
+ * pdf-parse v2 emits `\t` between the cells of a recognised PDF
+ * table (matches the shape produced by `210007-Contacts.pdf`).
+ * Skip fully blank lines and trim each cell; drop leading/trailing
+ * blank columns per row.
  */
-function reverseHebrewInLine(line: string): string {
-  if (!HEBREW_LETTER.test(line)) return line;
-  // Split by whitespace, reverse each token, then reverse the token list.
-  // This handles the common case of mixed Hebrew-Latin words in one line.
-  const tokens = line.split(/(\s+)/); // keep separators
-  const flipped = tokens.map((t) => {
-    if (/^\s+$/.test(t)) return t;
-    if (HEBREW_LETTER.test(t)) return t.split('').reverse().join('');
-    return t;
-  });
-  return flipped.reverse().join('');
+function extractTabularRows(lines: string[]): string[][] {
+  const rows: string[][] = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    if (!line.includes('\t')) {
+      // A non-tabular line (page header, url, footer) sits inline
+      // in the PDF text output. Preserve as a 1-cell row so the
+      // caller can still see it if the shape is only partly tabular;
+      // Stage 2's header detection filters it out.
+      rows.push([line.trim()]);
+      continue;
+    }
+    const cells = line.split('\t').map((c) => c.trim());
+    // Drop the trailing empty cell that a hard tab at line end leaves.
+    while (cells.length > 0 && cells[cells.length - 1] === '') cells.pop();
+    if (cells.length === 0) continue;
+    rows.push(cells);
+  }
+  return rows;
 }
+
+/**
+ * QA4 R2 IMP-11 — pull recipient contacts out of an email-printout
+ * PDF (Gmail thread, `180051-Contacts.pdf` shape). Handles the common
+ * layouts:
+ *   • header line prefixed `To:` / `Cc:` / `Bcc:` (or `אל:` / `עותק:`
+ *     for Hebrew mail clients) followed by a comma-separated list of
+ *     `Name <email>` pairs;
+ *   • body text where the same `Name <email>` pattern appears inline;
+ *   • bare `<email>` addresses (no name) — pass through as email-only
+ *     rows for the classifier / Preview to fill in.
+ *
+ * Returns `[[name, email], ...]` with duplicates collapsed on
+ * lower-cased email. When the pattern doesn't fire at all, returns
+ * an empty array so the caller falls through to the single-column
+ * fallback. Never throws.
+ */
+function extractGmailRecipientRows(lines: string[]): string[][] {
+  // Email domain allows dots inside so multi-part TLDs like co.il /
+  // ac.uk / com.au parse correctly (regressed on the earlier
+  // `[\w-]+\.[a-z]{2,}` shape which only matched single-part TLDs).
+  const NAME_EMAIL_RE = /(?:"([^"]+)"|([^,<;]+?))\s*<([\w.+-]+@[\w.-]+\.[a-z]{2,})>/gi;
+  const BARE_EMAIL_RE = /(^|[\s,;])([\w.+-]+@[\w.-]+\.[a-z]{2,})(?=$|[\s,;])/gi;
+  const HEADER_LINE_RE = /^\s*(to|cc|bcc|from|reply-to|אל|עותק|עותק נסתר|מאת)\s*:/i;
+  // Strip the header prefix ("To: ", "Cc: ", "אל: " …) from the
+  // first name we capture on a header line so it doesn't stick to
+  // the recipient's display name.
+  const HEADER_PREFIX_RE = /^\s*(to|cc|bcc|from|reply-to|אל|עותק|עותק נסתר|מאת)\s*:\s*/i;
+
+  const seen = new Set<string>();
+  const rows: string[][] = [];
+  const pushPair = (name: string, email: string) => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) return;
+    if (seen.has(cleanEmail)) return;
+    seen.add(cleanEmail);
+    const cleanName = name
+      .trim()
+      .replace(HEADER_PREFIX_RE, '')
+      .replace(/^["']|["']$/g, '')
+      .trim();
+    rows.push([cleanName, cleanEmail]);
+  };
+
+  let sawHeader = false;
+  for (const line of lines) {
+    const isHeader = HEADER_LINE_RE.test(line);
+    if (isHeader) sawHeader = true;
+    NAME_EMAIL_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    let hitInLine = false;
+    while ((m = NAME_EMAIL_RE.exec(line)) !== null) {
+      hitInLine = true;
+      const name = (m[1] ?? m[2] ?? '').trim();
+      pushPair(name, m[3]);
+    }
+    // Only mine bare emails from HEADER lines — the body can carry
+    // stray addresses (footers, disclaimers) that aren't contacts.
+    if (isHeader && !hitInLine) {
+      BARE_EMAIL_RE.lastIndex = 0;
+      let e: RegExpExecArray | null;
+      while ((e = BARE_EMAIL_RE.exec(line)) !== null) {
+        pushPair('', e[2]);
+      }
+    }
+  }
+
+  // Guard: if we NEVER saw a To:/Cc: header AND fewer than two
+  // name<email> pairs, this probably isn't a Gmail thread. Fall
+  // through to the per-line grid so the classifier gets a chance.
+  if (!sawHeader && rows.length < 2) return [];
+  return rows;
+}
+
+// QA4 R2 IMP-11 (2026-09-29) — the earlier `reverseHebrewInLine`
+// helper (pdf-parse v1 visual-order compensation) was removed. v2's
+// `getText()` emits Hebrew in logical order already; running the flip
+// on top would turn every Hebrew string BACK to visual (RTL) order
+// and break email + name recognition.
