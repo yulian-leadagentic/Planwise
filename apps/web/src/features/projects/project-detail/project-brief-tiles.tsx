@@ -80,20 +80,24 @@ function formatHours(hours: number): string {
   return `${hours.toLocaleString('en-US', { maximumFractionDigits: 1 })}h`;
 }
 
-// Shared token classes — DN-2 round 2 compact strip. Each slot lives in
-// a flex column with vertical dividers between; the strip reads as one
-// thin bar the same visual density as the old chip strip.
+// Shared token classes — DN-2 round 3 (2026-09-29). Round 2 was too
+// cramped (10px labels, 14px values, no min-width) and looked out of
+// place next to the rest of the app. This pass matches the
+// planwise-design tokens actually used elsewhere: 11px semibold uppercase
+// labels, 15px bold primary values (like the "Card title" and "Row item
+// name" tokens), 11px muted subtext. Each tile has `min-w-[140px]` and
+// consistent `min-h` so heights stay aligned across the row.
 const itemCls =
-  'flex flex-col justify-center px-4 first:pl-0 last:pr-0';
+  'flex flex-col justify-center gap-0.5 min-w-[140px] px-5 py-1 first:pl-0 last:pr-0';
 const labelCls =
-  'text-[10px] font-semibold tracking-wide uppercase text-slate-500 dark:text-slate-400';
+  'text-[11px] font-semibold tracking-wide uppercase text-slate-400 dark:text-slate-500';
 const moneyValueCls =
-  'font-mono text-sm font-semibold text-slate-900 dark:text-slate-100 tabular-nums';
+  'font-mono text-[15px] font-bold text-slate-900 dark:text-slate-100 tabular-nums';
 const nonMoneyValueCls =
-  'text-sm font-semibold text-slate-900 dark:text-slate-100';
-const subtextCls = 'text-[10px] text-slate-500 dark:text-slate-400';
+  'text-[15px] font-bold text-slate-900 dark:text-slate-100';
+const subtextCls = 'text-[11px] font-medium text-slate-500 dark:text-slate-400 tabular-nums';
 const gatedPlaceholderCls =
-  'font-mono text-sm font-semibold text-slate-300 dark:text-slate-600 tabular-nums';
+  'font-mono text-[15px] font-bold text-slate-300 dark:text-slate-600 tabular-nums';
 
 export function ProjectBriefTiles({
   projectId,
@@ -130,7 +134,7 @@ export function ProjectBriefTiles({
   const progressBarPct = Math.min(100, Math.max(0, progressPctRaw));
 
   return (
-    <div className="mt-3 flex flex-wrap items-center rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-2 divide-x divide-slate-200 dark:divide-slate-700">
+    <div className="mt-3 flex flex-wrap items-stretch rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-5 py-3 divide-x divide-slate-200 dark:divide-slate-700">
       {/* CONTRACT */}
       <div
         className={itemCls}
@@ -191,12 +195,14 @@ export function ProjectBriefTiles({
           compact strip; sits under the % on a second line. */}
       <div className={itemCls} title="Progress = logged hours ÷ budget hours.">
         <div className={labelCls}>PROGRESS</div>
-        <div className={nonMoneyValueCls}>{progressPctRaw}%</div>
-        <div className="mt-1 h-1 w-24 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-          <div
-            className="h-full rounded-full bg-blue-600 dark:bg-blue-500"
-            style={{ width: `${progressBarPct}%` }}
-          />
+        <div className="flex items-center gap-2">
+          <span className={nonMoneyValueCls}>{progressPctRaw}%</span>
+          <span className="h-1.5 flex-1 max-w-[80px] rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+            <span
+              className="block h-full rounded-full bg-blue-600 dark:bg-blue-500 transition-all"
+              style={{ width: `${progressBarPct}%` }}
+            />
+          </span>
         </div>
       </div>
 
@@ -206,7 +212,7 @@ export function ProjectBriefTiles({
         {authoringToolVersion ? (
           <div className={nonMoneyValueCls}>{authoringToolVersion}</div>
         ) : (
-          <div className="text-sm font-semibold text-slate-300 dark:text-slate-600">—</div>
+          <div className="text-[15px] font-bold text-slate-300 dark:text-slate-600">—</div>
         )}
       </div>
     </div>
