@@ -91,10 +91,17 @@ interface PartnerRoleTypeLite {
 }
 
 /**
- * QA4 R2b ORG-2 — one grouped organization in the review panel. Every
- * DedupDecision folds into exactly one group (keyed by batchOrgKey, or
- * `__row:<idx>` for the fallback ungrouped case). The people list
- * carries every source row that would attach `worker_of` this org.
+ * QA4 RD-1 (2026-09-29) — one grouped organization in the unified
+ * review. Every DedupDecision folds into exactly ONE bucket:
+ *   • an org group — real org identity (batchOrgKey starts with
+ *     `bp:` / `domain:` / `name:`), the group's people are shown
+ *     nested under the org card
+ *   • the individuals bucket — rows the batch key couldn't attach to
+ *     a firm (no company, personal/no domain, or a name-only key
+ *     that only ever carried one row); rendered in a separate
+ *     "Individuals (no organization)" section
+ * Supersedes the ORG-2 two-screen split (Organizations panel + flat
+ * per-row Preview table).
  */
 interface OrgGroup {
   key: string;
@@ -106,9 +113,16 @@ interface OrgGroup {
   people: Array<{ decision: DedupDecision; skipped: boolean }>;
   personCount: number;
   skippedCount: number;
-  /** false when the row had no groupable signal — the panel labels
-   *  these as ungrouped so the reviewer notices. */
+  /** false when the row had no groupable signal. Ungrouped groups
+   *  bubble up to the "Individuals" section instead of getting their
+   *  own org card. */
   hasBatchKey: boolean;
+  /**
+   * QA4 RD-1 — true when this group has no real org identity: no
+   * matched BP, no domain group, no plausible company name. Renders
+   * under "Individuals (no organization)" instead of as an org card.
+   */
+  isIndividual: boolean;
 }
 
 /**
@@ -1179,9 +1193,16 @@ function PreviewStep({
   );
   const effectiveEligible = Math.max(0, s.eligible - skippedCount);
 
-  // QA4 R2b ORG-2 — group the batch by batchOrgKey. The commit path
-  // creates the org once per key; the panel below shows that same
-  // grouping (matched-existing vs new, count of people, per-org role).
+  // QA4 RD-1 (2026-09-29) — group the batch by batchOrgKey. Commit
+  // creates the org once per key; this list drives the unified
+  // grouped review below (one card per org, people nested under it,
+  // plus an "Individuals (no organization)" bucket for the rest).
+  //
+  // Label sanitisation (RD-3): a group's label is NEVER an email, a
+  // dash, or a bare single character — the raw `values.company` may
+  // hold any of those (a real xlsx sometimes drops `-` into the
+  // company cell). We fall through to `@domain` and finally to the
+  // matched BP name when the raw string fails plausibility.
   const orgGroups = useMemo<OrgGroup[]>(() => {
     const map = new Map<string, OrgGroup>();
     for (const d of preview.decisions) {
@@ -1195,14 +1216,25 @@ function PreviewStep({
         d.org.action === 'link' ||
         (d.org.action === 'create' && !!d.org.matchedBpId) ||
         (key.startsWith('bp:') || d.org.matchReason === 'domain' || d.org.matchReason === 'name');
-      const label =
+      const cleanCompany = isPlausibleCompanyDisplay(d.values.company) ? d.values.company! : null;
+      const initialLabel =
         d.org.matchedBpName ??
-        d.values.company ??
+        cleanCompany ??
         (d.domain ? `@${d.domain}` : `Row ${d.sourceRowIndex}`);
       if (!existing) {
+        // A row without a batchOrgKey OR that resolves to a name key
+        // that starts with `__row:` is an individual (no groupable
+        // firm identity). Domain-keyed rows are always org groups
+        // even when no company text landed (the fallback `@<domain>`
+        // label carries the identity forward).
+        const isOrgKey = !!d.batchOrgKey && (
+          d.batchOrgKey.startsWith('bp:')
+          || d.batchOrgKey.startsWith('domain:')
+          || d.batchOrgKey.startsWith('name:')
+        );
         map.set(key, {
           key,
-          label,
+          label: initialLabel,
           domain: d.domain ?? null,
           matchedBpId: d.org.matchedBpId ?? null,
           isNew: !isMatchedExisting && !d.org.matchedBpId,
@@ -1210,22 +1242,40 @@ function PreviewStep({
           personCount: 0,
           skippedCount: 0,
           hasBatchKey: !!d.batchOrgKey,
+          isIndividual: !isOrgKey,
         });
       }
       const g = map.get(key)!;
-      // Prefer a real name over "@domain" once we see a row that has one.
-      if (!g.label.includes(' ') && d.values.company) g.label = d.values.company;
+      // Promote the label whenever we see a "better" candidate: a
+      // real company name beats an `@domain` fallback (which itself
+      // beats the placeholder Row label). Never regress to an
+      // implausible cell value.
+      if (cleanCompany && (!g.label.includes(' ') || g.label.startsWith('@') || g.label.startsWith('Row '))) {
+        g.label = cleanCompany;
+      }
       g.people.push({ decision: d, skipped: isSkipped });
       if (isSkipped) g.skippedCount++;
       else g.personCount++;
     }
-    return [...map.values()].sort((a, b) => b.personCount - a.personCount);
+    return [...map.values()].sort((a, b) => {
+      // Individuals bucket sinks to the bottom; among orgs, larger
+      // groups float to the top so the reviewer sees "1 org · 4
+      // people" before "1 org · 1 person".
+      if (a.isIndividual !== b.isIndividual) return a.isIndividual ? 1 : -1;
+      return b.personCount - a.personCount;
+    });
   }, [preview.decisions, decisions, sheetName]);
 
   // QA4 R2b ORG-3 gate — every NEW org must have a role code picked
   // (matched-existing orgs never appear in this list). Commit stays
   // disabled until the reviewer has typed every one.
-  const newOrgGroups = orgGroups.filter((g) => g.isNew && g.hasBatchKey && g.personCount > 0);
+  // QA4 RD-2 (2026-09-29) — the LINK vs NEW split makes this cheap:
+  // `g.isNew` already excludes matched-existing groups, and we now
+  // additionally skip the individuals bucket (those rows never sit
+  // under an org card, so there is nothing to classify).
+  const newOrgGroups = orgGroups.filter(
+    (g) => g.isNew && g.hasBatchKey && g.personCount > 0 && !g.isIndividual,
+  );
   const untypedNewOrgs = newOrgGroups.filter((g) => !orgTypes[g.key]).length;
 
   // Load org role types (customer / supplier / consultant / partner /
@@ -1341,25 +1391,22 @@ function PreviewStep({
         </div>
       )}
 
-      {/* QA4 R2b ORG-2 · Organizations review panel (collapsible).
-          Sits between the summary tiles and the row-by-row table so
-          the reviewer sees the deduped org list first — matches the
-          intra-batch grouping the commit path will apply. */}
-      <OrganizationsPanel
+      {/* QA4 RD-1 (2026-09-29) · Unified grouped review — one screen
+          replaces the ORG-2 two-screen split (Organizations panel +
+          flat Preview table). Each org is a card with its people
+          nested underneath; rows with no groupable firm identity
+          collect under "Individuals (no organization)". */}
+      <GroupedReview
         groups={orgGroups}
+        rowByIndex={rowByIndex}
+        decisions={decisions}
+        decisionKeyFor={decisionKeyFor}
+        conflictsOnly={conflictsOnly}
         orgTypes={orgTypes}
         onOrgTypeChange={onOrgTypeChange}
         orgRoleTypes={orgRoleTypes}
         orgRoleTypesLoading={orgRoleTypesQuery.isLoading}
         untypedNewOrgs={untypedNewOrgs}
-      />
-
-      <PreviewTable
-        visibleDecisions={visibleDecisions}
-        rowByIndex={rowByIndex}
-        decisions={decisions}
-        decisionKeyFor={decisionKeyFor}
-        conflictsOnly={conflictsOnly}
         onDecide={onDecide}
         onOverride={onOverride}
       />
@@ -1406,43 +1453,79 @@ function PreviewStep({
   );
 }
 
-// ─── QA4 R2b ORG-2/ORG-3 · Organizations review panel ────────────────
+// ─── QA4 RD-1 (2026-09-29) · Unified grouped review ──────────────────
 /**
- * A collapsible section at the top of the Preview step that shows the
- * intra-batch-deduped organization list (ORG-2). Every distinct org
- * (matched-existing OR to-be-created) carries a role-type picker
- * (ORG-3); NEW orgs must have a role picked before the reviewer can
- * commit. Expanding an org row lists the people it will attach.
+ * Replaces the ORG-2 two-screen split (a separate Organizations panel
+ * PLUS a flat Row-by-row Preview table). One hierarchical view:
  *
- * Grouping input is the caller's `groups` array — computed in
- * `PreviewStep` from the `batchOrgKey` on each DedupDecision, so this
- * component is entirely presentational.
+ *   • one card per organization — org header carries LINK/NEW badge
+ *     (RD-2), domain, person-count, and (for NEW orgs) the role-type
+ *     picker (ORG-3). Expanding the card reveals the org's people as
+ *     rows in a nested table (no Company column — that identity is the
+ *     card).
+ *   • "Individuals (no organization)" — one final section for rows
+ *     with no groupable firm identity (personal domain + no company,
+ *     name-only key with a single row). Rendered as the classic per-
+ *     row table WITH the Company column so the reviewer can still spot
+ *     a stray company name they may want to edit.
+ *
+ * Person rows carry LINK/NEW badges of their own (RD-2, matched by
+ * email). The commit gate ("N need a type") counts only NEW org cards
+ * that have not been classified yet — an existing (LINK) org keeps
+ * its role, so it never appears in the gate.
  */
-function OrganizationsPanel({
+function GroupedReview({
   groups,
+  rowByIndex,
+  decisions,
+  decisionKeyFor,
+  conflictsOnly,
   orgTypes,
   onOrgTypeChange,
   orgRoleTypes,
   orgRoleTypesLoading,
   untypedNewOrgs,
+  onDecide,
+  onOverride,
 }: {
   groups: OrgGroup[];
+  rowByIndex: Map<number, ResolvedRow>;
+  decisions: Record<string, RowDecision>;
+  decisionKeyFor: (rowIndex: number) => string;
+  conflictsOnly: boolean;
   orgTypes: Record<string, string>;
   onOrgTypeChange: (batchOrgKey: string, code: string | null) => void;
   orgRoleTypes: PartnerRoleTypeLite[];
   orgRoleTypesLoading: boolean;
   untypedNewOrgs: number;
+  onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
+  onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
 }) {
-  // Default open when the reviewer still has NEW-org type picks to
-  // make — nudges them at the classification gate. Otherwise start
-  // collapsed so the row-by-row table stays the focal point.
-  const [open, setOpen] = useState<boolean>(untypedNewOrgs > 0);
-  useEffect(() => {
-    // Re-open automatically if a new NEW-org classification blocker
-    // surfaces after the reviewer collapsed the panel.
-    if (untypedNewOrgs > 0) setOpen(true);
-  }, [untypedNewOrgs]);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const orgs = groups.filter((g) => !g.isIndividual);
+  const individuals = groups.filter((g) => g.isIndividual);
+  // Flatten the individuals bucket into a single list of decisions so
+  // the section can render as one continuous table.
+  const individualPeople = useMemo(
+    () =>
+      individuals.flatMap((g) =>
+        g.people.map((p) => ({ decision: p.decision, skipped: p.skipped })),
+      ),
+    [individuals],
+  );
+  // Apply the "conflicts only" filter to BOTH the org cards' people
+  // lists and the individuals section — it lives outside this
+  // component but the parent passes it in so we can filter once here.
+  const filterPeople = (
+    people: Array<{ decision: DedupDecision; skipped: boolean }>,
+  ) =>
+    conflictsOnly ? people.filter((p) => p.decision.org.action === 'conflict') : people;
+
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    // Default: expand every group so the reviewer sees the people
+    // right away. Collapsing is a per-org affordance for very large
+    // files (a workbook with 40+ orgs).
+    return new Set(orgs.map((g) => g.key));
+  });
   const toggle = (k: string) =>
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -1450,161 +1533,413 @@ function OrganizationsPanel({
       else next.add(k);
       return next;
     });
+  useEffect(() => {
+    // Re-expand the individuals bucket + auto-expand any newly-
+    // introduced org (adding rows via Back → Map → Preview).
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      for (const g of orgs) if (!next.has(g.key)) next.add(g.key);
+      return next;
+    });
+  }, [orgs.length]);
 
-  const newCount = groups.filter((g) => g.isNew).length;
-  const linkCount = groups.filter((g) => !g.isNew).length;
+  const newCount = orgs.filter((g) => g.isNew).length;
+  const linkCount = orgs.filter((g) => !g.isNew).length;
 
   return (
-    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="w-full flex items-center gap-2 px-3 py-2.5 text-left focus:outline-none focus:bg-slate-50 dark:focus:bg-slate-800"
-      >
-        <Building2 className="h-4 w-4 text-indigo-500 dark:text-indigo-400" aria-hidden="true" />
-        <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">
-          Organizations ({groups.length})
-        </span>
-        <span className="text-[11px] text-slate-500 dark:text-slate-400">
-          {newCount > 0 && `${newCount} new`}{newCount > 0 && linkCount > 0 && ' · '}
-          {linkCount > 0 && `${linkCount} link${linkCount === 1 ? '' : 's'}`}
-        </span>
-        {untypedNewOrgs > 0 && (
-          <span className="ml-1 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
-            <AlertTriangle className="h-3.5 w-3.5" />
-            {untypedNewOrgs} need a type
+    <div className="space-y-3">
+      <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+        <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
+          <Building2 className="h-4 w-4 text-indigo-500 dark:text-indigo-400" aria-hidden="true" />
+          <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">
+            Organizations ({orgs.length})
+          </span>
+          <span className="text-[11px] text-slate-500 dark:text-slate-400">
+            {newCount > 0 && `${newCount} new`}
+            {newCount > 0 && linkCount > 0 && ' · '}
+            {linkCount > 0 && `${linkCount} link${linkCount === 1 ? '' : 's'}`}
+          </span>
+          {untypedNewOrgs > 0 && (
+            <span className="ml-1 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {untypedNewOrgs} need a type
+            </span>
+          )}
+          {conflictsOnly && (
+            <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+              <AlertTriangle className="h-3.5 w-3.5" /> Conflicts only
+            </span>
+          )}
+        </div>
+        {orgs.length === 0 ? (
+          <div className="px-3 py-6 text-[12px] italic text-slate-400 dark:text-slate-500 text-center">
+            No organizations detected in this file.
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {orgs.map((g) => {
+              const visiblePeople = filterPeople(g.people);
+              const isExp = expanded.has(g.key);
+              return (
+                <OrgCard
+                  key={g.key}
+                  group={g}
+                  isExpanded={isExp}
+                  onToggle={() => toggle(g.key)}
+                  visiblePeople={visiblePeople}
+                  totalPeople={g.people.length}
+                  rowByIndex={rowByIndex}
+                  decisions={decisions}
+                  decisionKeyFor={decisionKeyFor}
+                  orgTypes={orgTypes}
+                  onOrgTypeChange={onOrgTypeChange}
+                  orgRoleTypes={orgRoleTypes}
+                  orgRoleTypesLoading={orgRoleTypesLoading}
+                  onDecide={onDecide}
+                  onOverride={onOverride}
+                />
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Individuals section — same table shape but WITH Company. */}
+      {individualPeople.length > 0 && (
+        <IndividualsSection
+          people={filterPeople(individualPeople)}
+          totalPeople={individualPeople.length}
+          rowByIndex={rowByIndex}
+          decisions={decisions}
+          decisionKeyFor={decisionKeyFor}
+          onDecide={onDecide}
+          onOverride={onOverride}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * QA4 RD-1 · one org card. Header carries the LINK/NEW badge (RD-2),
+ * the org label (sanitised — never an email/dash), the domain, and
+ * the type picker for new orgs. When expanded, the card body is a
+ * compact table listing every person the row loop would attach
+ * `worker_of` this org.
+ */
+function OrgCard({
+  group,
+  isExpanded,
+  onToggle,
+  visiblePeople,
+  totalPeople,
+  rowByIndex,
+  decisions,
+  decisionKeyFor,
+  orgTypes,
+  onOrgTypeChange,
+  orgRoleTypes,
+  orgRoleTypesLoading,
+  onDecide,
+  onOverride,
+}: {
+  group: OrgGroup;
+  isExpanded: boolean;
+  onToggle: () => void;
+  visiblePeople: Array<{ decision: DedupDecision; skipped: boolean }>;
+  totalPeople: number;
+  rowByIndex: Map<number, ResolvedRow>;
+  decisions: Record<string, RowDecision>;
+  decisionKeyFor: (rowIndex: number) => string;
+  orgTypes: Record<string, string>;
+  onOrgTypeChange: (batchOrgKey: string, code: string | null) => void;
+  orgRoleTypes: PartnerRoleTypeLite[];
+  orgRoleTypesLoading: boolean;
+  onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
+  onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
+}) {
+  const pickedCode = orgTypes[group.key] ?? '';
+  const needsPick = group.isNew && group.hasBatchKey && !pickedCode && group.personCount > 0;
+
+  return (
+    <div className={cn('px-3 py-2.5', needsPick && 'bg-amber-50/30 dark:bg-amber-950/10')}>
+      <div className="flex items-start gap-2 flex-wrap">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="inline-flex items-center justify-center h-6 w-6 rounded hover:bg-slate-100 dark:hover:bg-slate-800 focus:outline-none focus:bg-slate-100 dark:focus:bg-slate-800 shrink-0 mt-0.5"
+          aria-expanded={isExpanded}
+          aria-label={isExpanded ? 'Collapse people' : 'Expand people'}
+        >
+          <ChevronRight
+            className={cn(
+              'h-4 w-4 text-slate-500 dark:text-slate-400 transition-transform',
+              isExpanded && 'rotate-90',
+            )}
+            aria-hidden="true"
+          />
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <EntityBadge
+              kind={group.isNew ? 'new' : 'link'}
+              matchedName={group.matchedBpId ? group.label : null}
+            />
+            <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">
+              {group.label}
+            </span>
+            {group.domain && (
+              <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                @{group.domain}
+              </span>
+            )}
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
+              {group.personCount} {group.personCount === 1 ? 'person' : 'people'}
+              {group.skippedCount > 0 && ` · ${group.skippedCount} removed`}
+            </span>
+          </div>
+        </div>
+        {group.isNew && group.hasBatchKey ? (
+          <select
+            value={pickedCode}
+            onChange={(e) => onOrgTypeChange(group.key, e.target.value || null)}
+            disabled={orgRoleTypesLoading}
+            aria-label={`Organization type for ${group.label}`}
+            className={cn(
+              'shrink-0 px-2 py-1 rounded-md border text-[12px] focus:outline-none',
+              needsPick
+                ? 'border-amber-400 dark:border-amber-500 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-200 focus:border-amber-600 dark:focus:border-amber-400'
+                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:border-blue-500 dark:focus:border-blue-400',
+            )}
+          >
+            <option value="">
+              {orgRoleTypesLoading ? 'Loading…' : '— pick type —'}
+            </option>
+            {orgRoleTypes.map((rt) => (
+              <option key={rt.code} value={rt.code}>
+                {rt.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="shrink-0 text-[11px] italic text-slate-400 dark:text-slate-500 mt-1.5">
+            {group.hasBatchKey ? 'keeps existing type' : ''}
           </span>
         )}
-        <ChevronDown
-          className={cn(
-            'ml-auto h-4 w-4 text-slate-400 transition-transform',
-            open && 'rotate-180',
-          )}
-          aria-hidden="true"
-        />
-      </button>
-      {open && (
-        <div className="border-t border-slate-100 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800">
-          {groups.length === 0 ? (
-            <div className="px-3 py-4 text-[12px] italic text-slate-400 dark:text-slate-500">
-              No organizations detected in this file.
+      </div>
+      {isExpanded && (
+        <div className="mt-2 ml-6 rounded-md border border-slate-200 dark:border-slate-700 overflow-hidden">
+          {visiblePeople.length === 0 ? (
+            <div className="px-3 py-4 text-center text-[12px] text-slate-400 dark:text-slate-500 italic">
+              {totalPeople === 0
+                ? 'No people attached to this organization.'
+                : 'No people match the current filter.'}
             </div>
           ) : (
-            groups.map((g) => {
-              const isExp = expanded.has(g.key);
-              const pickedCode = orgTypes[g.key] ?? '';
-              const needsPick = g.isNew && g.hasBatchKey && !pickedCode && g.personCount > 0;
-              return (
-                <div key={g.key} className="px-3 py-2">
-                  <div className="flex items-start gap-2 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={() => toggle(g.key)}
-                      className="inline-flex items-center justify-center h-5 w-5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 focus:outline-none focus:bg-slate-100 dark:focus:bg-slate-800 shrink-0 mt-0.5"
-                      aria-expanded={isExp}
-                      aria-label={isExp ? 'Collapse people' : 'Expand people'}
-                    >
-                      <ChevronRight
-                        className={cn(
-                          'h-3.5 w-3.5 text-slate-500 dark:text-slate-400 transition-transform',
-                          isExp && 'rotate-90',
-                        )}
-                        aria-hidden="true"
-                      />
-                    </button>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">
-                          {g.label}
-                        </span>
-                        <span
-                          className={cn(
-                            'inline-flex items-center rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide',
-                            g.isNew
-                              ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
-                              : 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300',
-                          )}
-                        >
-                          {g.isNew ? 'new' : 'matched'}
-                        </span>
-                        {g.domain && (
-                          <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
-                            @{g.domain}
-                          </span>
-                        )}
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                          {g.personCount} {g.personCount === 1 ? 'person' : 'people'}
-                          {g.skippedCount > 0 && ` · ${g.skippedCount} removed`}
-                        </span>
-                      </div>
-                    </div>
-                    {/* QA4 R2b ORG-3 — role picker. Only NEW orgs need
-                        it (matched orgs keep their existing role); we
-                        still render a placeholder line for the matched
-                        orgs so the layout stays uniform. */}
-                    {g.isNew && g.hasBatchKey ? (
-                      <select
-                        value={pickedCode}
-                        onChange={(e) => onOrgTypeChange(g.key, e.target.value || null)}
-                        disabled={orgRoleTypesLoading}
-                        aria-label={`Organization type for ${g.label}`}
-                        className={cn(
-                          'shrink-0 px-2 py-1 rounded-md border text-[12px] focus:outline-none',
-                          needsPick
-                            ? 'border-amber-400 dark:border-amber-500 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-200 focus:border-amber-600 dark:focus:border-amber-400'
-                            : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:border-blue-500 dark:focus:border-blue-400',
-                        )}
-                      >
-                        <option value="">
-                          {orgRoleTypesLoading ? 'Loading…' : '— pick type —'}
-                        </option>
-                        {orgRoleTypes.map((rt) => (
-                          <option key={rt.code} value={rt.code}>
-                            {rt.name}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className="shrink-0 text-[11px] italic text-slate-400 dark:text-slate-500 mt-0.5">
-                        {g.hasBatchKey ? 'keeps existing type' : 'ungrouped'}
-                      </span>
-                    )}
-                  </div>
-                  {isExp && (
-                    <ul className="mt-2 ml-6 space-y-1">
-                      {g.people.map(({ decision, skipped }) => (
-                        <li
-                          key={decision.sourceRowIndex}
-                          className={cn(
-                            'text-[12px] flex items-center gap-2',
-                            skipped
-                              ? 'line-through text-slate-400 dark:text-slate-500'
-                              : 'text-slate-700 dark:text-slate-200',
-                          )}
-                        >
-                          <span className="font-mono text-[11px] text-slate-400 dark:text-slate-500">
-                            Row {decision.sourceRowIndex}
-                          </span>
-                          <span className="truncate">
-                            {decision.values.contact ?? decision.values.email ?? '(unnamed)'}
-                          </span>
-                          {decision.values.role && (
-                            <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                              · {decision.values.role}
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              );
-            })
+            <PeopleTable
+              people={visiblePeople}
+              rowByIndex={rowByIndex}
+              decisions={decisions}
+              decisionKeyFor={decisionKeyFor}
+              onDecide={onDecide}
+              onOverride={onOverride}
+              showCompany={false}
+            />
           )}
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * QA4 RD-1 · Individuals (no organization) section. Same PeopleTable
+ * inside but WITH the Company column, since these rows have no parent
+ * org context — the reviewer may want to spot a stray company text
+ * that missed the classifier.
+ */
+function IndividualsSection({
+  people,
+  totalPeople,
+  rowByIndex,
+  decisions,
+  decisionKeyFor,
+  onDecide,
+  onOverride,
+}: {
+  people: Array<{ decision: DedupDecision; skipped: boolean }>;
+  totalPeople: number;
+  rowByIndex: Map<number, ResolvedRow>;
+  decisions: Record<string, RowDecision>;
+  decisionKeyFor: (rowIndex: number) => string;
+  onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
+  onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
+}) {
+  return (
+    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
+        <Info className="h-4 w-4 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+        <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">
+          Individuals (no organization) ({totalPeople})
+        </span>
+        <span className="text-[11px] text-slate-500 dark:text-slate-400">
+          rows with no groupable firm identity (personal domain or missing company)
+        </span>
+      </div>
+      {people.length === 0 ? (
+        <div className="px-3 py-6 text-center text-[12px] text-slate-400 dark:text-slate-500 italic">
+          {totalPeople === 0
+            ? 'No individual rows in this file.'
+            : 'No individuals match the current filter.'}
+        </div>
+      ) : (
+        <PeopleTable
+          people={people}
+          rowByIndex={rowByIndex}
+          decisions={decisions}
+          decisionKeyFor={decisionKeyFor}
+          onDecide={onDecide}
+          onOverride={onOverride}
+          showCompany={true}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * QA4 RD-1 · shared person table used inside org cards + the
+ * individuals section. Columns are the same set of parsed fields as
+ * the retired flat PreviewTable, minus Company when rendered under an
+ * org card (the card is the parent). Adds a person-side LINK/NEW
+ * badge (RD-2) between Email and Job Title.
+ */
+function PeopleTable({
+  people,
+  rowByIndex,
+  decisions,
+  decisionKeyFor,
+  onDecide,
+  onOverride,
+  showCompany,
+}: {
+  people: Array<{ decision: DedupDecision; skipped: boolean }>;
+  rowByIndex: Map<number, ResolvedRow>;
+  decisions: Record<string, RowDecision>;
+  decisionKeyFor: (rowIndex: number) => string;
+  onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
+  onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
+  showCompany: boolean;
+}) {
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+  const toggle = (i: number) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+
+  return (
+    <div className="max-h-[420px] overflow-auto">
+      <table className="w-full text-[12px] border-collapse">
+        <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-800/70 text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+          <tr>
+            <PreviewTh className="w-16">Sheet row</PreviewTh>
+            <PreviewTh>Discipline</PreviewTh>
+            <PreviewTh>Contact</PreviewTh>
+            {showCompany && <PreviewTh>Company</PreviewTh>}
+            <PreviewTh>Phone</PreviewTh>
+            <PreviewTh>Mobile</PreviewTh>
+            <PreviewTh>Email</PreviewTh>
+            <PreviewTh className="w-24">Person</PreviewTh>
+            <PreviewTh>Job Title</PreviewTh>
+            <PreviewTh>Office manager</PreviewTh>
+            <PreviewTh className="w-40">Verdict</PreviewTh>
+            <PreviewTh className="w-10 text-center">&nbsp;</PreviewTh>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          {people.map(({ decision: d }) => {
+            const row = rowByIndex.get(d.sourceRowIndex);
+            if (!row) return null;
+            const rowDec = decisions[decisionKeyFor(d.sourceRowIndex)];
+            const effectiveOrgAction = rowDec?.orgAction ?? d.org.action;
+            const isExpanded = expanded.has(d.sourceRowIndex);
+            const isSkipped = !!rowDec?.skipped;
+            const secondaries = d.secondaryContacts ?? [];
+            return (
+              <React.Fragment key={d.sourceRowIndex}>
+                <PreviewTableRow
+                  dec={d}
+                  row={row}
+                  rowDec={rowDec}
+                  effectiveOrgAction={effectiveOrgAction}
+                  isExpanded={isExpanded}
+                  isSkipped={isSkipped}
+                  showCompany={showCompany}
+                  onToggleExpand={() => toggle(d.sourceRowIndex)}
+                  onToggleSkipped={() =>
+                    onDecide(d.sourceRowIndex, { skipped: !isSkipped })
+                  }
+                  onDecide={(patch) => onDecide(d.sourceRowIndex, patch)}
+                  onOverride={(field, value) =>
+                    onOverride(d.sourceRowIndex, field, value)
+                  }
+                />
+                {secondaries.map((s, i) => (
+                  <SecondaryContactRow
+                    key={`${d.sourceRowIndex}-secondary-${i}`}
+                    primary={d}
+                    secondary={s}
+                    showCompany={showCompany}
+                  />
+                ))}
+              </React.Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * QA4 RD-2 (2026-09-29) — LINK / NEW chip used on both the org card
+ * header and each person row. Green LINK when the commit would attach
+ * to an existing BP (an emoji-free, colour-blind-safe pair); blue NEW
+ * otherwise. `matchedName` shows next to LINK when there's a specific
+ * record to name (e.g. `LINK · Yulian Abramovich`).
+ */
+function EntityBadge({
+  kind,
+  matchedName,
+}: {
+  kind: 'link' | 'new';
+  matchedName?: string | null;
+}) {
+  if (kind === 'link') {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300"
+        title={matchedName ? `Will LINK to existing "${matchedName}"` : 'Will LINK to an existing record'}
+      >
+        link
+        {matchedName ? (
+          <span className="font-normal normal-case tracking-normal text-blue-700/80 dark:text-blue-300/80 truncate max-w-[12rem]">
+            {matchedName}
+          </span>
+        ) : null}
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"
+      title="Will CREATE a new record"
+    >
+      new
+    </span>
   );
 }
 
@@ -1869,127 +2204,11 @@ function SummaryTile({
   );
 }
 
-// ─── Preview table (QA4 IMP-1) ───────────────────────────────────────
-/**
- * Tabular replacement for the old row-by-row card list. One column per
- * parsed field so every value is scannable at a glance; inherited /
- * split / extracted markers render inline on the cell that carries them
- * (matching the Design Principle in `docs/bm2/qa4-import-preview.md`).
- *
- * Warnings / contract errors collapse into an expandable detail row
- * revealed by the "!" icon in the Verdict column. Reuses the shared
- * design-system tokens; hand-rolled `<table>` (not DataTable) because
- * the cells have custom behaviour: inline overrides (IMP-2 wires in),
- * bespoke verdict chips, secondary-contact rows (IMP-4).
- */
-function PreviewTable({
-  visibleDecisions,
-  rowByIndex,
-  decisions,
-  decisionKeyFor,
-  conflictsOnly,
-  onDecide,
-  onOverride,
-}: {
-  visibleDecisions: DedupDecision[];
-  rowByIndex: Map<number, ResolvedRow>;
-  decisions: Record<string, RowDecision>;
-  decisionKeyFor: (rowIndex: number) => string;
-  conflictsOnly: boolean;
-  onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
-  onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
-}) {
-  const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
-  const toggle = (i: number) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(i)) next.delete(i);
-      else next.add(i);
-      return next;
-    });
-
-  return (
-    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
-      <div className="bg-[#FAFBFC] dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800 px-3 py-1.5 text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em]">
-        Row-by-row preview{conflictsOnly && ' — conflicts only'}
-      </div>
-      <div className="max-h-[520px] overflow-auto">
-        {visibleDecisions.length === 0 ? (
-          <div className="px-3 py-10 text-center text-[12px] text-slate-400 dark:text-slate-500">
-            No rows match this filter.
-          </div>
-        ) : (
-          <table className="w-full text-[12px] border-collapse">
-            <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-800/70 text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              <tr>
-                <PreviewTh className="w-16">Sheet row</PreviewTh>
-                <PreviewTh>Discipline</PreviewTh>
-                <PreviewTh>Contact</PreviewTh>
-                <PreviewTh>Company</PreviewTh>
-                <PreviewTh>Phone</PreviewTh>
-                <PreviewTh>Mobile</PreviewTh>
-                <PreviewTh>Email</PreviewTh>
-                {/* IMP-6 (QA4 Round-2 · 2026-09-29): Job Title / Role
-                    column so the PM can add or fix it inline. Editable
-                    even when the mapping didn't auto-fill it. */}
-                <PreviewTh>Job Title</PreviewTh>
-                <PreviewTh>Office manager</PreviewTh>
-                <PreviewTh className="w-40">Verdict</PreviewTh>
-                {/* QA4 R2b ORG-6 — per-row trash / undo. Narrow so the
-                    icon column doesn't push the rest of the table off. */}
-                <PreviewTh className="w-10 text-center">&nbsp;</PreviewTh>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {visibleDecisions.map((d) => {
-                const row = rowByIndex.get(d.sourceRowIndex);
-                if (!row) return null;
-                const rowDec = decisions[decisionKeyFor(d.sourceRowIndex)];
-                const effectiveOrgAction = rowDec?.orgAction ?? d.org.action;
-                const isExpanded = expanded.has(d.sourceRowIndex);
-                const isSkipped = !!rowDec?.skipped;
-                // QA4 IMP-4 — extracted secondary contacts (office
-                // managers etc.) surface as their own rows immediately
-                // beneath the primary they came from, tagged
-                // "extracted". Not editable via the decisions model
-                // yet — a follow-up ticket can wire per-secondary
-                // overrides once the shape is proven in production.
-                const secondaries = d.secondaryContacts ?? [];
-                return (
-                  <React.Fragment key={d.sourceRowIndex}>
-                    <PreviewTableRow
-                      dec={d}
-                      row={row}
-                      rowDec={rowDec}
-                      effectiveOrgAction={effectiveOrgAction}
-                      isExpanded={isExpanded}
-                      isSkipped={isSkipped}
-                      onToggleExpand={() => toggle(d.sourceRowIndex)}
-                      onToggleSkipped={() =>
-                        onDecide(d.sourceRowIndex, { skipped: !isSkipped })
-                      }
-                      onDecide={(patch) => onDecide(d.sourceRowIndex, patch)}
-                      onOverride={(field, value) =>
-                        onOverride(d.sourceRowIndex, field, value)
-                      }
-                    />
-                    {secondaries.map((s, i) => (
-                      <SecondaryContactRow
-                        key={`${d.sourceRowIndex}-secondary-${i}`}
-                        primary={d}
-                        secondary={s}
-                      />
-                    ))}
-                  </React.Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
-  );
-}
+// ─── Preview row primitives (retained; used by PeopleTable) ──────────
+// QA4 RD-1 superseded the standalone `PreviewTable` wrapper with
+// `PeopleTable` (rendered inside each org card + the Individuals
+// section). The row-level `PreviewTableRow` / `SecondaryContactRow`
+// helpers stay — they still own the inline overrides + verdict UI.
 
 function PreviewTh({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
@@ -2012,6 +2231,7 @@ function PreviewTableRow({
   effectiveOrgAction,
   isExpanded,
   isSkipped,
+  showCompany,
   onToggleExpand,
   onToggleSkipped,
   onDecide,
@@ -2024,6 +2244,12 @@ function PreviewTableRow({
   isExpanded: boolean;
   /** QA4 R2b ORG-6 — reviewer marked the row `skip` via the trash icon. */
   isSkipped: boolean;
+  /**
+   * QA4 RD-1 — nested people rows under an org card hide the Company
+   * column (the card IS the parent identity); the Individuals section
+   * keeps it so a stray company text is still visible.
+   */
+  showCompany: boolean;
   onToggleExpand: () => void;
   onToggleSkipped: () => void;
   onDecide: (patch: Partial<RowDecision>) => void;
@@ -2086,16 +2312,18 @@ function PreviewTableRow({
             onCommit={(v) => onOverride('contact', v)}
           />
         </td>
-        <td className="px-2 py-2">
-          <EditableCell
-            field="company"
-            value={effective('company', dec.values.company)}
-            edited={isEdited('company')}
-            inherited={!isEdited('company') && row.synthesis.companyFilled}
-            placeholder="no company"
-            onCommit={(v) => onOverride('company', v)}
-          />
-        </td>
+        {showCompany && (
+          <td className="px-2 py-2">
+            <EditableCell
+              field="company"
+              value={effective('company', dec.values.company)}
+              edited={isEdited('company')}
+              inherited={!isEdited('company') && row.synthesis.companyFilled}
+              placeholder="no company"
+              onCommit={(v) => onOverride('company', v)}
+            />
+          </td>
+        )}
         <td className="px-2 py-2">
           <EditableCell
             field="phone"
@@ -2124,6 +2352,21 @@ function PreviewTableRow({
             failed={!isEdited('email') && row.synthesis.emailSplitFailed}
             onCommit={(v) => onOverride('email', v)}
           />
+        </td>
+        <td className="px-2 py-2">
+          {/* QA4 RD-2 (2026-09-29) — per-person LINK / NEW badge. LINK
+              when the commit would attach to an existing person BP
+              (matched by email); NEW otherwise. `contact.matchedBpName`
+              names the target row when known. */}
+          {dec.contact.action === 'link' ? (
+            <EntityBadge kind="link" matchedName={dec.contact.matchedBpName ?? null} />
+          ) : dec.contact.action === 'create' ? (
+            <EntityBadge kind="new" />
+          ) : (
+            <span className="text-[10px] italic text-slate-400 dark:text-slate-500">
+              skip
+            </span>
+          )}
         </td>
         <td className="px-2 py-2">
           {/* IMP-6 (QA4 Round-2 · 2026-09-29): Job Title / Role cell.
@@ -2201,8 +2444,12 @@ function PreviewTableRow({
       </tr>
       {isExpanded && (
         <tr className={cn('align-top', rowTint)}>
-          {/* colSpan bumped to 11 for the ORG-6 trash column. */}
-          <td colSpan={11} className="px-3 pt-0 pb-2.5">
+          {/* colSpan tracks the visible cells: base 11 (Sheet row +
+              Discipline + Contact + Phone + Mobile + Email + Person
+              badge + Job Title + Office mgr + Verdict + trash), plus
+              1 for the optional Company column (RD-1: hidden under
+              org cards, shown under Individuals). */}
+          <td colSpan={showCompany ? 12 : 11} className="px-3 pt-0 pb-2.5">
             <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2 space-y-1">
               <div className="text-[11px] text-slate-600 dark:text-slate-300 flex items-center gap-1">
                 <span className="font-semibold">Organization:</span>{' '}
@@ -2292,9 +2539,12 @@ function PreviewTableRow({
 function SecondaryContactRow({
   primary,
   secondary,
+  showCompany,
 }: {
   primary: DedupDecision;
   secondary: SecondaryContact;
+  /** QA4 RD-1 — match the primary row's column layout under org cards. */
+  showCompany: boolean;
 }) {
   return (
     <tr className="align-top bg-indigo-50/30 dark:bg-indigo-950/10">
@@ -2310,9 +2560,11 @@ function SecondaryContactRow({
       <td className="px-2 py-2">
         <PreviewCell value={secondary.name} extracted strong />
       </td>
-      <td className="px-2 py-2">
-        <PreviewCell value={primary.values.company || null} inherited />
-      </td>
+      {showCompany && (
+        <td className="px-2 py-2">
+          <PreviewCell value={primary.values.company || null} inherited />
+        </td>
+      )}
       <td className="px-2 py-2">
         <PreviewCell value={secondary.phone ?? null} extracted={!!secondary.phone} />
       </td>
@@ -2321,6 +2573,11 @@ function SecondaryContactRow({
       </td>
       <td className="px-2 py-2">
         <PreviewCell value={secondary.email ?? null} extracted={!!secondary.email} />
+      </td>
+      <td className="px-2 py-2">
+        {/* QA4 RD-2 — secondary contacts always create; keep them
+            visually aligned with the primary row's Person column. */}
+        <EntityBadge kind="new" />
       </td>
       <td className="px-2 py-2">
         <div className="flex flex-col gap-0.5">
@@ -2885,4 +3142,20 @@ function normaliseMappingList(list: string[]): string | string[] | undefined {
   if (cleaned.length === 0) return undefined;
   if (cleaned.length === 1) return cleaned[0];
   return cleaned;
+}
+
+/**
+ * QA4 RD-3 (2026-09-29) — mirror of the backend's `isPlausibleCompanyName`.
+ * A raw company cell is displayed as an org label only when it looks
+ * like a real firm identity: not empty, not a bare `-` / `—`, not a
+ * single character, and not an email. Kept in sync with the BE version
+ * so the wizard preview + the commit path agree on what "unnamed org"
+ * looks like.
+ */
+function isPlausibleCompanyDisplay(raw: string | null | undefined): boolean {
+  const s = (raw ?? '').trim();
+  if (!s || s.length < 2) return false;
+  if (s.includes('@')) return false;
+  if (/^[-‐-―–—]+$/.test(s)) return false;
+  return true;
 }
