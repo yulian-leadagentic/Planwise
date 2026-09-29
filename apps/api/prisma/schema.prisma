@@ -1842,6 +1842,13 @@ model BusinessPartner {
   // organization) may own several domains (office + secondary).
   domains                       BusinessPartnerDomain[]
   professions                   BusinessPartnerProfession[]
+  /// QA4 R2 IMP-9 (2026-09-29) — additional email addresses beyond the
+  /// primary `email` column. Persons and orgs both use this: a person's
+  /// second personal email + generic office mailboxes on the org (see
+  /// contacts-import commit path). Primary email stays on this row for
+  /// backward compatibility; the additional list is the append-only
+  /// tail. Deleting the BP cascades the tail.
+  emails                        BusinessPartnerEmail[]
   /// Phase 4 · Stage 3 (2026-09-28) — reverse side of Contract.partyId.
   /// A contract can name an ORG (with no login user) as its party.
   contractsAsParty              Contract[]                  @relation("ContractParty")
@@ -1908,6 +1915,44 @@ model BusinessPartnerDomain {
   @@unique([partnerId, domain], map: "ux_bp_domain_partner_domain")
   @@index([partnerId])
   @@map("business_partner_domains")
+}
+
+/// QA4 R2 IMP-9 (2026-09-29) — additional email addresses per BP.
+///
+/// Motivating case: an imported contact row carries two emails
+/// (`igal@studio.co.il office@studio.co.il`). The personal address
+/// stays as the person's primary `BusinessPartner.email`; the generic
+/// mailbox routes to the org's additional-email list; a second
+/// personal address on the same person also lands here.
+///
+/// Design:
+///   • `isPrimary` mirrors the primary column so a reader can look
+///     ONLY at this table when convenient — but the primary email
+///     lives on `BusinessPartner.email` for backward compat with every
+///     dedup + notification path already written. Keeping both in sync
+///     is a service-layer responsibility (see contacts commit).
+///   • The additional list is NOT globally unique — a shared office
+///     mailbox can appear on multiple orgs (e.g. franchisees) and
+///     `office@` can appear on one org's additional list AND a
+///     person's personal address, without collision.
+///   • Unique per (BP, email) so we don't stack duplicate rows for
+///     one partner. Case-insensitive normalisation is the service's
+///     job — Prisma / MySQL default collation is case-insensitive.
+///
+/// See `docs/bm2/qa4-import-preview.md` Round-2 IMP-9.
+model BusinessPartnerEmail {
+  id                Int      @id @default(autoincrement())
+  businessPartnerId Int      @map("business_partner_id")
+  email             String   @db.VarChar(255)
+  isPrimary         Boolean  @default(false) @map("is_primary")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  businessPartner BusinessPartner @relation(fields: [businessPartnerId], references: [id], onDelete: Cascade)
+
+  @@unique([businessPartnerId, email], map: "ux_bp_email_bp_email")
+  @@index([businessPartnerId])
+  @@index([email])
+  @@map("business_partner_emails")
 }
 
 // BM2 Phase 4 (2026-08-13) — personal / free-email domains.

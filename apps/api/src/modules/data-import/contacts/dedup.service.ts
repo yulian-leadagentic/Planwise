@@ -144,6 +144,10 @@ export class ContactsDedupService {
       // the Preview table can render each as its own row (tagged
       // "extracted"). Commit reads them off ResolvedRow directly.
       secondaryContacts: row.secondaryContacts,
+      // QA4 R2 IMP-9 — additional emails picked out of a multi-email
+      // cell. Commit classifies each into person primary / org primary /
+      // additional-emails list per the routing spec.
+      extraEmails: row.extraEmails,
     };
   }
 
@@ -180,6 +184,15 @@ export interface DedupDecision {
   contact: DedupSide;
   /** QA4 IMP-4 — extracted office managers etc. (see split-merge). */
   secondaryContacts?: SecondaryContact[];
+  /**
+   * QA4 R2 IMP-9 — additional emails beyond the primary. Emitted when
+   * the split-merge classifier saw more than one valid email on the
+   * row (SPLIT status). Routed at commit time: personal → person's
+   * additional list; generic (`office@`, `info@`, `studio@`, `mail@`)
+   * → the org's additional list; whatever is left over as the person's
+   * secondary personal email. See commit.service.
+   */
+  extraEmails?: string[];
 }
 
 function buildContractError(hasName: boolean, hasReach: boolean): string {

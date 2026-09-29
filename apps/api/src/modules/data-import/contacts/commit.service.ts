@@ -160,6 +160,59 @@ export class ContactsCommitService {
         return dp?.chosenEmail ?? dec.values.email ?? null;
       };
 
+      // QA4 R2 IMP-9 — sort the row's emails into (personEmail,
+      // orgEmail, additionalEmails). Kept local to the row so re-runs
+      // are deterministic. Called below AFTER `emailForCommit` picks
+      // the person's primary; the routing then decides where the
+      // remaining addresses go.
+      const routeEmails = (): {
+        personPrimary: string | null;
+        personAdditional: string[];
+        orgPrimary: string | null;
+        orgAdditional: string[];
+      } => {
+        // Universe of every valid email the row surfaced.
+        const universe: string[] = [];
+        const primary = emailForCommit();
+        if (primary) universe.push(primary.toLowerCase());
+        for (const e of dec.extraEmails ?? []) {
+          const t = (e ?? '').trim().toLowerCase();
+          if (t) universe.push(t);
+        }
+        const seen = new Set<string>();
+        const uniq = universe.filter((e) => {
+          if (seen.has(e)) return false;
+          seen.add(e);
+          return true;
+        });
+
+        const generic: string[] = [];
+        const personal: string[] = [];
+        for (const e of uniq) {
+          if (isGenericMailbox(e)) generic.push(e);
+          else personal.push(e);
+        }
+
+        // Person gets a personal address; else falls back to the
+        // caller-supplied primary (which the override may pin), even
+        // when that primary is generic — we never drop a value the PM
+        // typed themselves.
+        const personPrimary = personal[0] ?? primary ?? null;
+        const personAdditional = personal.slice(personPrimary === personal[0] ? 1 : 0);
+
+        // Org takes the first generic mailbox as primary; the rest
+        // become the org's additional-emails list.
+        const orgPrimary = generic[0] ?? null;
+        const orgAdditional = generic.slice(orgPrimary === generic[0] ? 1 : 0);
+
+        return { personPrimary, personAdditional, orgPrimary, orgAdditional };
+      };
+
+      // QA4 R2 IMP-9 — compute the email routing once per row so both
+      // the org-side and person-side code below stay consistent, and
+      // the additional-emails writes happen after both BPs materialise.
+      const emailRouting = routeEmails();
+
       try {
         // ─── ORG SIDE ─────────────────────────────────────────────
         let orgBpId: number | null = null;
@@ -178,12 +231,17 @@ export class ContactsCommitService {
           const orgPhone = eff('phone')
             ?? (dec.secondaryContacts ?? []).map((s) => s.phone).find(Boolean)
             ?? null;
+          // QA4 R2 IMP-9 — prefer the routed org primary (generic
+          // mailbox like office@…) over the primary email column;
+          // that way a two-email row lands the org's mailbox on the
+          // org and the personal address on the person.
+          const orgPrimaryEmail = emailRouting.orgPrimary ?? emailForCommit();
           const created = await this.prisma.businessPartner.create({
             data: {
               partnerType: 'organization',
               displayName: orgName ?? '(unnamed)',
               companyName: orgName,
-              email: emailForCommit(),
+              email: orgPrimaryEmail,
               phone: orgPhone,
               address: dec.values.address ?? null,
               notes: dec.values.note ?? null,
@@ -213,6 +271,20 @@ export class ContactsCommitService {
           result.orgsSkipped++;
         }
 
+        // QA4 R2 IMP-9 — write out the org's additional emails once
+        // orgBpId is known. Idempotent: upsert on (BP, email) so a
+        // re-import doesn't stack duplicates. Also seeds the primary
+        // as a row of its own so the drawer can show one clean list.
+        if (orgBpId != null) {
+          const orgPrimaryEmail = emailRouting.orgPrimary
+            ?? (orgAction === 'create' ? (emailForCommit() ?? null) : null);
+          await this.upsertPartnerEmails(
+            orgBpId,
+            orgPrimaryEmail,
+            emailRouting.orgAdditional,
+          );
+        }
+
         // ─── PERSON SIDE ──────────────────────────────────────────
         let contactBpId: number | null = null;
         if (contactAction === 'link') {
@@ -220,7 +292,10 @@ export class ContactsCommitService {
           if (!contactBpId) throw new Error('link person action needs a person BP id');
           result.contactsLinked++;
         } else if (contactAction === 'create') {
-          const email = emailForCommit();
+          // QA4 R2 IMP-9 — prefer the routed personal address as the
+          // person's primary; that way `office@` never lands on the
+          // person BP as their primary email.
+          const email = emailRouting.personPrimary ?? emailForCommit();
           // Idempotency re-check — a preview computed 30 seconds ago
           // may be stale if another import committed the same person
           // in the meantime.
@@ -265,6 +340,18 @@ export class ContactsCommitService {
           }
         } else {
           result.contactsSkipped++;
+        }
+
+        // QA4 R2 IMP-9 — persist the person's additional emails. When
+        // the person was LINKED (not created) we still record the row's
+        // additional addresses on the existing BP so a later import
+        // that finds new alt addresses doesn't drop them silently.
+        if (contactBpId != null) {
+          await this.upsertPartnerEmails(
+            contactBpId,
+            emailRouting.personPrimary ?? emailForCommit(),
+            emailRouting.personAdditional,
+          );
         }
 
         // ─── worker_of edge ──────────────────────────────────────
@@ -741,6 +828,62 @@ export class ContactsCommitService {
   }
 
   /**
+   * QA4 R2 IMP-9 — persist a BP's primary + additional emails on the
+   * new `business_partner_emails` table. Idempotent: an upsert on the
+   * (bp, email) unique so a re-import lands on the same rows. Empty
+   * emails are skipped. Passing `primaryEmail: null` still writes the
+   * additional list — used when the org side already had a primary
+   * from a prior run and we're only adding new alternates.
+   */
+  private async upsertPartnerEmails(
+    partnerId: number,
+    primaryEmail: string | null,
+    additional: string[],
+  ): Promise<void> {
+    const rows: Array<{ email: string; isPrimary: boolean }> = [];
+    const seen = new Set<string>();
+    if (primaryEmail) {
+      const p = primaryEmail.trim().toLowerCase();
+      if (p) {
+        rows.push({ email: p, isPrimary: true });
+        seen.add(p);
+      }
+    }
+    for (const a of additional) {
+      const t = (a ?? '').trim().toLowerCase();
+      if (!t || seen.has(t)) continue;
+      seen.add(t);
+      rows.push({ email: t, isPrimary: false });
+    }
+    if (rows.length === 0) return;
+    for (const row of rows) {
+      try {
+        await this.prisma.businessPartnerEmail.upsert({
+          where: {
+            businessPartnerId_email: {
+              businessPartnerId: partnerId,
+              email: row.email,
+            },
+          },
+          create: {
+            businessPartnerId: partnerId,
+            email: row.email,
+            isPrimary: row.isPrimary,
+          },
+          // On re-import, promote to primary if a newer routing decided
+          // so; never demote a primary that was already set (avoids the
+          // "second import silently un-flags the row's primary" case).
+          update: row.isPrimary ? { isPrimary: true } : {},
+        });
+      } catch (err: unknown) {
+        if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) {
+          throw err;
+        }
+      }
+    }
+  }
+
+  /**
    * QA4 R2 IMP-7 — resolve/seed a Profession row by its display name.
    * Idempotent: uses upsert on Profession.name (which is @unique). When
    * the name is "Office manager", both an English and a Hebrew
@@ -975,6 +1118,38 @@ function buildSecondaryNotes(s: SecondaryContact): string {
   if (s.confidence < 1) parts.push(`confidence: ${s.confidence}`);
   const joined = parts.join(' · ');
   return joined.length > 200 ? joined.slice(0, 200) : joined;
+}
+
+/**
+ * QA4 R2 IMP-9 — classify an email address as a generic office
+ * mailbox (routes to the ORG's email store) vs a personal address
+ * (routes to the PERSON). Matches on the local part before `@`; the
+ * generic prefixes are the ones the spec locks in — `office@`,
+ * `info@`, `studio@`, `mail@` — plus the customary `contact@` /
+ * `hello@` / `admin@` neighbours that show up on the same sheets.
+ * Case-insensitive.
+ */
+function isGenericMailbox(email: string): boolean {
+  const at = email.indexOf('@');
+  if (at <= 0) return false;
+  const local = email.slice(0, at).toLowerCase();
+  const GENERIC_LOCAL_PARTS = new Set([
+    'office',
+    'info',
+    'studio',
+    'mail',
+    'contact',
+    'contacts',
+    'hello',
+    'admin',
+    'reception',
+    'sales',
+    'support',
+  ]);
+  if (GENERIC_LOCAL_PARTS.has(local)) return true;
+  // Handle "office.tel-aviv" / "office+jobs" style variants.
+  const head = local.split(/[.+_-]/, 1)[0] ?? '';
+  return GENERIC_LOCAL_PARTS.has(head);
 }
 
 /**

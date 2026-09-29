@@ -140,6 +140,13 @@ interface BusinessPartnerFull {
   companyName: string | null;
   taxId: string | null;
   email: string | null;
+  /**
+   * QA4 R2 IMP-9 (2026-09-29) — additional emails beyond the primary
+   * (populated by contacts-import: generic mailboxes on orgs, alt
+   * personal addresses on persons). Drawer shows one merged list;
+   * the primary column above is kept as the dedup + notification key.
+   */
+  emails?: Array<{ id: number; email: string; isPrimary: boolean; createdAt: string }>;
   phone: string | null;
   mobile: string | null;
   address: string | null;
@@ -800,6 +807,39 @@ function DetailsTab({
           )}
           {bp.partnerType === 'organization' && <Field label="Tax ID" value={bp.taxId} />}
           <Field label="Email" value={bp.email} />
+          {/*
+           * QA4 R2 IMP-9 — additional emails (generic office mailboxes
+           * on orgs; secondary personal addresses on persons). Shown as
+           * a compact stacked list under the primary; only rendered
+           * when at least one additional row exists.
+           */}
+          {(() => {
+            const additional = (bp.emails ?? []).filter(
+              (e) => !e.isPrimary
+                && e.email
+                && e.email.toLowerCase() !== (bp.email ?? '').toLowerCase(),
+            );
+            if (additional.length === 0) return null;
+            return (
+              <Field
+                label={`Additional emails · ${additional.length}`}
+                value={additional.map((e) => e.email).join(' ')}
+                render={() => (
+                  <div className="flex flex-col gap-1">
+                    {additional.map((e) => (
+                      <a
+                        key={e.id}
+                        href={`mailto:${e.email}`}
+                        className="text-blue-600 hover:underline text-[13px] break-all"
+                      >
+                        {e.email}
+                      </a>
+                    ))}
+                  </div>
+                )}
+              />
+            );
+          })()}
           <Field label="Phone" value={bp.phone} />
           <Field label="Mobile" value={bp.mobile} />
           <Field label="Website" value={bp.website} render={() => bp.website ? (

@@ -54,6 +54,21 @@ const partnerInclude = {
   // employee and the backend later 400'd on "must hold one of these
   // job titles".
   professions: { select: { professionId: true } },
+  // QA4 R2 IMP-9 (2026-09-29) — additional emails beyond the primary
+  // `email` column (contacts-import writes generic mailboxes on the
+  // org's list and alt-personal addresses on the person's list). The
+  // drawer surfaces primary + additional as one clean panel.
+  // The whole partnerInclude is `as const` so Prisma keeps the exact
+  // return-type narrowing; that recursively marks nested arrays as
+  // readonly, which Prisma's orderBy input rejects. `satisfies` here
+  // proves the shape without freezing the array.
+  emails: {
+    select: { id: true, email: true, isPrimary: true, createdAt: true },
+    orderBy: [
+      { isPrimary: 'desc' },
+      { createdAt: 'asc' },
+    ] as Prisma.BusinessPartnerEmailOrderByWithRelationInput[],
+  },
 } as const;
 
 /**

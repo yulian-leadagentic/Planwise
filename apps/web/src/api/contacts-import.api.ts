@@ -133,6 +133,12 @@ export interface DedupDecision {
   /** QA4 IMP-4 — mirrored from ResolvedRow so the preview table can
    * insert extracted contacts as their own rows. */
   secondaryContacts?: SecondaryContact[];
+  /**
+   * QA4 R2 IMP-9 — additional emails classified out of a multi-email
+   * cell. Not shown as separate rows on the preview; used at commit
+   * to populate the person's / org's additional-emails list.
+   */
+  extraEmails?: string[];
 }
 
 export interface PreviewSummary {
