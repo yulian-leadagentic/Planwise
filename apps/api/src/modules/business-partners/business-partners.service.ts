@@ -78,12 +78,33 @@ const partnerInclude = {
 /**
  * BM2 Phase 3 helper — extract the lower-cased domain from an email.
  * Returns null when the email is empty or malformed.
+ *
+ * QA4 RD-3 (2026-09-29) — real xlsx sheets carry emails in messy forms
+ * (`Ofer Cohen <ofer@yad.co.il>` from an Outlook copy-paste,
+ * `office@example.com,other@example.com` with no whitespace between
+ * addresses, `alice@example.com\nbob@example.com` from a wrapped cell).
+ * Take the LAST `@` (any name+display-name prefix drops off), then
+ * strip everything after the first character that can't legally be
+ * part of a domain — brackets, whitespace, commas, semicolons —
+ * so a mangled cell stops writing `yad.co.il>` into
+ * `business_partner_domains`. Return null when the result no longer
+ * looks like a domain (must be `<label>.<tld≥2>`), so downstream
+ * matches never fire on a partial slug.
  */
+const VALID_DOMAIN_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i;
 export function extractEmailDomain(email: string | null | undefined): string | null {
   if (!email) return null;
-  const at = email.indexOf('@');
+  const at = email.lastIndexOf('@');
   if (at < 0 || at === email.length - 1) return null;
-  return email.slice(at + 1).trim().toLowerCase();
+  // Cut at the first non-domain-shape char — angle bracket, whitespace,
+  // list delimiter, or quote. Handles `<foo@bar.com>` → `bar.com` and
+  // `a@x.com, b@x.com` when the tail has already flowed here.
+  let tail = email.slice(at + 1);
+  const stop = tail.search(/[\s<>,;"'()\[\]\\]/);
+  if (stop >= 0) tail = tail.slice(0, stop);
+  tail = tail.trim().toLowerCase().replace(/[.-]+$/, '');
+  if (!tail) return null;
+  return VALID_DOMAIN_RE.test(tail) ? tail : null;
 }
 
 /**

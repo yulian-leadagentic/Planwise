@@ -126,6 +126,14 @@ export class ContactsDedupService {
     const email = values.email?.toLowerCase();
     const domain = extractEmailDomain(email);
     const isPersonalDomain = !!domain && (await this.isPersonalDomain(domain));
+    // QA4 RD-3 (2026-09-29) — the raw company cell may hold a stray
+    // email or a dash (real sheets do). Never let those flow into the
+    // org identity: `plausibleCompanyName` is the value we key dedup
+    // and commit off; the raw company text stays on the values map so
+    // the preview still shows what the cell said.
+    const plausibleCompanyName = values.company && isPlausibleCompanyName(values.company)
+      ? values.company
+      : undefined;
 
     // ─── Minimum contract (§7) — name AND (email OR phone) ─────────
     // A row that fails the floor gets a skip decision + a clear reason.
@@ -140,7 +148,7 @@ export class ContactsDedupService {
 
     // ─── Org resolution ────────────────────────────────────────────
     let org: DedupSide;
-    if (!values.company && !email) {
+    if (!plausibleCompanyName && !email) {
       org = {
         action: 'skip',
         reason: 'no company name or email — nothing to bind an org from',
@@ -148,7 +156,7 @@ export class ContactsDedupService {
     } else {
       const match = await this.bpService.resolveOrgByDomainOrName({
         email: email ?? undefined,
-        companyName: values.company ?? undefined,
+        companyName: plausibleCompanyName ?? undefined,
       });
       if (match) {
         const bp = await this.prisma.businessPartner.findUnique({
@@ -162,7 +170,7 @@ export class ContactsDedupService {
           matchReason: match.reason,
           reason: `matched existing BP by ${match.reason}`,
         };
-      } else if (email && isPersonalDomain && !values.company) {
+      } else if (email && isPersonalDomain && !plausibleCompanyName) {
         // §3 dedup rule 2: personal email + no company text → conflict.
         // Domain never defines a company; without a company name we
         // have no safe way to bind an org.
@@ -170,11 +178,18 @@ export class ContactsDedupService {
           action: 'conflict',
           reason: `personal email domain "${domain}" and no company name — needs a decision`,
         };
-      } else if (!values.company) {
+      } else if (!plausibleCompanyName) {
+        // QA4 RD-3 — no plausible company AND a non-personal domain →
+        // we still key dedupe on the domain (colleagues collapse into
+        // one org) via batchOrgKey. The leader's `values.company` will
+        // be undefined; commit uses a domain-derived fallback name.
         org = {
-          action: 'skip',
-          reason: `no company name; email domain "${domain ?? ''}" is personal — cannot bind an org`,
+          action: 'create',
+          reason: domain
+            ? `no company name — will group under domain "${domain}"`
+            : 'no company name; no domain — cannot bind an org',
         };
+        if (!domain) org.action = 'skip';
       } else {
         org = {
           action: 'create',
@@ -300,11 +315,22 @@ export function computeBatchOrgKey(d: DedupDecision): string | null {
   if (d.org.matchedBpId != null) return `bp:${d.org.matchedBpId}`;
   // 2. Non-personal email domain — the strongest "same firm" signal
   //    when both rows carry a corporate address.
-  if (d.domain && !d.isPersonalDomain) return `domain:${d.domain.toLowerCase()}`;
+  // QA4 RD-3 (2026-09-29): only key on a domain that PASSES the shape
+  // check. `extractEmailDomain` now sanitises trailing junk (`yad.co.il>`
+  // from an Outlook copy-paste, whitespace, list delimiters) and returns
+  // null on a mangled result — but a stale in-memory decision built
+  // before the sanitiser could still carry a bad string, so we re-guard
+  // here. A bad-shape domain falls through to name-based grouping.
+  if (d.domain && !d.isPersonalDomain && isLikelyDomain(d.domain)) {
+    return `domain:${d.domain.toLowerCase()}`;
+  }
   // 3. Normalized company name — collapse case + whitespace so
   //    "A.B. Planners" and "a.b. planners  " land on the same key.
+  //    Reject names that look like an email or a bare `-` / `—` /
+  //    single-character (RD-3): those are never real org identities
+  //    and would otherwise collapse unrelated rows into one group.
   const company = (d.values.company ?? '').trim();
-  if (company) return `name:${normalizeCompanyName(company)}`;
+  if (company && isPlausibleCompanyName(company)) return `name:${normalizeCompanyName(company)}`;
   return null;
 }
 
@@ -312,4 +338,31 @@ export function computeBatchOrgKey(d: DedupDecision): string | null {
  * the FE and BE can compute the exact same slug for display. */
 export function normalizeCompanyName(s: string): string {
   return s.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * QA4 RD-3 (2026-09-29) — a raw domain string is "domain-shaped" only
+ * when it matches `<label>.<label>+` with no whitespace, brackets, or
+ * `@`. Anything else came from a mangled cell and must NOT become a
+ * batchOrgKey (otherwise `mra.co.il>` and `mra.co.il` group as two
+ * separate orgs).
+ */
+const DOMAIN_SHAPE_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i;
+function isLikelyDomain(s: string): boolean {
+  return DOMAIN_SHAPE_RE.test(s.trim());
+}
+
+/**
+ * QA4 RD-3 (2026-09-29) — reject "company names" that are actually an
+ * email, a dash, or a lone character. Sheets carry those when the row
+ * only had contact info + email; we must never use them as an org
+ * identity.
+ */
+export function isPlausibleCompanyName(raw: string): boolean {
+  const s = raw.trim();
+  if (!s) return false;
+  if (s.length < 2) return false;
+  if (s.includes('@')) return false; // an email is never an org name
+  if (/^[-‐-―–—]+$/.test(s)) return false; // dash-only cells
+  return true;
 }

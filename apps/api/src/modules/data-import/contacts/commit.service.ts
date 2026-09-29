@@ -5,7 +5,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { ActivityLogService } from '../../../common/services/activity-log.service';
 import { ContactsResolveService } from './resolve.service';
-import { DedupDecision, ContactAction, OrgAction } from './dedup.service';
+import { DedupDecision, ContactAction, OrgAction, isPlausibleCompanyName } from './dedup.service';
 import { ContactField } from './header-dictionary';
 import { ColumnMapping, SecondaryContact } from './split-merge.service';
 import { ExtractedSheet } from './triage.service';
@@ -180,7 +180,14 @@ export class ContactsCommitService {
         if (leaderAction === 'link') {
           orgBpId = leaderDp?.orgBpId ?? leader.org.matchedBpId ?? null;
         } else if (leaderAction === 'create') {
-          const orgName = eff('company');
+          const rawOrgName = eff('company');
+          // QA4 RD-3 (2026-09-29) — never let an email / dash /
+          // single-character cell become the org identity. The batch
+          // key already collapsed the group under its domain, so the
+          // best fallback for a nameless group is the domain itself
+          // (e.g. "@mra.co.il") — a human-readable label the PM can
+          // rename post-commit.
+          const safeOrgName = deriveSafeOrgName(rawOrgName, leader.domain);
           const orgPhone = eff('phone')
             ?? (leader.secondaryContacts ?? []).map((s) => s.phone).find(Boolean)
             ?? null;
@@ -194,8 +201,8 @@ export class ContactsCommitService {
           const created = await this.prisma.businessPartner.create({
             data: {
               partnerType: 'organization',
-              displayName: orgName ?? '(unnamed)',
-              companyName: orgName,
+              displayName: safeOrgName.displayName,
+              companyName: safeOrgName.companyName,
               email: routedOrgEmail ?? leaderPrimaryEmail,
               phone: orgPhone,
               address: leader.values.address ?? null,
@@ -210,7 +217,10 @@ export class ContactsCommitService {
 
           // Claim the domain when the row carried one (mirror the
           // existing per-row branch).
-          if (leader.domain && !leader.isPersonalDomain) {
+          // QA4 RD-3 — only claim the sanitised (shape-checked) domain.
+          // A mangled `<foo@bar.com>` copy-paste that once stored
+          // `bar.com>` as a claimed domain no longer happens here.
+          if (leader.domain && !leader.isPersonalDomain && isDomainShaped(leader.domain)) {
             try {
               await this.prisma.businessPartnerDomain.create({
                 data: { partnerId: created.id, domain: leader.domain },
@@ -403,7 +413,8 @@ export class ContactsCommitService {
             // company name we couldn't slug, or dedup declined to
             // materialise). Fall through to the legacy inline create so
             // the row still lands.
-            const orgName = eff('company');
+            const rawOrgName = eff('company');
+            const safeOrgName = deriveSafeOrgName(rawOrgName, dec.domain);
             const orgPhone = eff('phone')
               ?? (dec.secondaryContacts ?? []).map((s) => s.phone).find(Boolean)
               ?? null;
@@ -411,8 +422,8 @@ export class ContactsCommitService {
             const created = await this.prisma.businessPartner.create({
               data: {
                 partnerType: 'organization',
-                displayName: orgName ?? '(unnamed)',
-                companyName: orgName,
+                displayName: safeOrgName.displayName,
+                companyName: safeOrgName.companyName,
                 email: orgPrimaryEmail,
                 phone: orgPhone,
                 address: dec.values.address ?? null,
@@ -424,7 +435,8 @@ export class ContactsCommitService {
             orgBpId = created.id;
             result.orgsCreated++;
 
-            if (dec.domain && !dec.isPersonalDomain) {
+            // QA4 RD-3 — only claim domain-shaped values.
+            if (dec.domain && !dec.isPersonalDomain && isDomainShaped(dec.domain)) {
               try {
                 await this.prisma.businessPartnerDomain.create({
                   data: { partnerId: created.id, domain: dec.domain },
@@ -1400,6 +1412,38 @@ function pickOrgPrimaryEmailForRow(
   const uniq = universe.filter((e) => (seen.has(e) ? false : (seen.add(e), true)));
   for (const e of uniq) if (isGenericMailbox(e)) return e;
   return null;
+}
+
+/**
+ * QA4 RD-3 (2026-09-29) — pick a safe org identity. Never let an
+ * email address, a bare dash, or a single character become the org's
+ * displayName / companyName: those are what Yulian's screenshots
+ * showed after the pre-ORG-1 import (orgs literally titled
+ * `aryeh@mra.co.il`, `—`, etc.). When the raw cell fails the
+ * plausibility check we fall back to the group's domain (e.g.
+ * `@mra.co.il`) so the PM sees the batch-shared identity and can
+ * rename it after the import lands. `companyName` stays null in the
+ * fallback path so the ORG-panel "matched by name" lookup doesn't
+ * later reuse the fallback string for an unrelated file's rows.
+ */
+function deriveSafeOrgName(
+  rawOrgName: string | null | undefined,
+  domain: string | null | undefined,
+): { displayName: string; companyName: string | null } {
+  const trimmed = (rawOrgName ?? '').trim();
+  if (trimmed && isPlausibleCompanyName(trimmed)) {
+    return { displayName: trimmed, companyName: trimmed };
+  }
+  const cleanDomain = (domain ?? '').trim();
+  if (cleanDomain && isDomainShaped(cleanDomain)) {
+    return { displayName: `@${cleanDomain}`, companyName: null };
+  }
+  return { displayName: '(unnamed)', companyName: null };
+}
+
+const DOMAIN_SHAPE_RE_COMMIT = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i;
+function isDomainShaped(s: string): boolean {
+  return DOMAIN_SHAPE_RE_COMMIT.test(s.trim());
 }
 
 function buildRunNotes(input: CommitInput, summary: { totalRows: number; eligible: number; belowContract: number }): string {

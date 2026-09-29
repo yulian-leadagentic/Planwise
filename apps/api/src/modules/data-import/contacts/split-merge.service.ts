@@ -391,6 +391,23 @@ export function splitEmailCell(cell: string): {
 } {
   const trimmed = cell.trim();
   if (!trimmed) return { status: 'single', emails: [] };
+
+  // QA4 RD-3 (2026-09-29) — real xlsx sheets carry emails in messy forms
+  // the plain split-by-delimiter cannot handle:
+  //   `Ofer Cohen <ofer@yad.co.il>`  — Outlook copy-paste
+  //   `אירנה <office@iv-eng.co.il>`  — Hebrew display name
+  //   `office@abt.co.il,other@abt.co.il` — no whitespace between addresses
+  // Extract every `<foo@bar>` bracketed address AND every bare address
+  // via a first-pass regex; on hit we bypass the strict delimiter
+  // split so a display-name prefix does not leak the raw cell into
+  // `values.email` (which caused the `yad.co.il>` mangled domain rows
+  // observed in staging).
+  const found = extractEmailAddresses(trimmed);
+  if (found.length > 0) {
+    if (found.length === 1) return { status: 'single', emails: [found[0]] };
+    return { status: 'split', emails: found };
+  }
+
   const parts = trimmed
     .split(/[\s,;\n\r]+/)
     .map((p) => p.trim())
@@ -403,6 +420,29 @@ export function splitEmailCell(cell: string): {
   const allValid = parts.every((p) => EMAIL_RE.test(p));
   if (!allValid) return { status: 'fail', emails: parts };
   return { status: 'split', emails: parts };
+}
+
+/**
+ * QA4 RD-3 (2026-09-29) — pull every RFC-shaped email out of a cell,
+ * whether wrapped in `<…>`, comma-delimited, whitespace-separated, or
+ * jammed together. Returns lower-cased, unique addresses in first-
+ * seen order. Empty when no address is found — caller can then decide
+ * whether to fall back to the delimiter-split (for legacy strings that
+ * were valid before this pass landed).
+ */
+const EMAIL_EXTRACT_RE = /[\w.+-]+@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+/gi;
+function extractEmailAddresses(cell: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const matches = cell.match(EMAIL_EXTRACT_RE);
+  if (!matches) return out;
+  for (const raw of matches) {
+    const clean = raw.trim().toLowerCase();
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
+  }
+  return out;
 }
 
 /**
