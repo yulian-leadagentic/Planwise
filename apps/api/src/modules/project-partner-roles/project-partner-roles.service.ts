@@ -12,6 +12,69 @@ import * as Sentry from '@sentry/node';
 
 const FAR_FUTURE = new Date('9999-12-31T00:00:00Z');
 
+/**
+ * Pure eligibility check for a party against a ProjectRoleType — the
+ * shared source of truth for `create()`'s guardrails and for the
+ * `eligible-roles` endpoint that powers the FE picker (QA4 Wave-2
+ * TM-1). Extracted so the two paths cannot drift: the picker offers
+ * only roles this returns eligible, and `create()` re-runs the same
+ * three checks as defense-in-depth.
+ *
+ * The three rules mirror the existing `create()` gate exactly:
+ *   1. `allowedPartnerKind` — 'any' or matches party.partnerType.
+ *   2. `requiredPartnerRoleCode` — party must hold that partner-role.
+ *   3. `requiredProfessionIds` — party must hold ≥1 of those professions.
+ *
+ * Expects `party` to be loaded with `roles: { roleType }` and
+ * `professions: { professionId }` — i.e. the exact shape `create()`
+ * already fetches.
+ */
+export function isPartyEligibleForRole(
+  party: {
+    partnerType: string;
+    roles: Array<{ roleType: { code: string } }>;
+    professions: Array<{ professionId: number }>;
+  },
+  role: {
+    name: string;
+    allowedPartnerKind: string | null;
+    requiredPartnerRoleCode: string | null;
+    requiredProfessionIds: unknown;
+  },
+): { eligible: boolean; reason?: string } {
+  if (
+    role.allowedPartnerKind &&
+    role.allowedPartnerKind !== 'any' &&
+    role.allowedPartnerKind !== party.partnerType
+  ) {
+    return {
+      eligible: false,
+      reason: `Requires a ${role.allowedPartnerKind}, this party is a ${party.partnerType}.`,
+    };
+  }
+  if (role.requiredPartnerRoleCode) {
+    const has = party.roles.some((r) => r.roleType.code === role.requiredPartnerRoleCode);
+    if (!has) {
+      return {
+        eligible: false,
+        reason: `Party must first hold the '${role.requiredPartnerRoleCode}' partner-role.`,
+      };
+    }
+  }
+  const requiredProfIds = (role.requiredProfessionIds as number[] | null) ?? [];
+  if (requiredProfIds.length > 0) {
+    const partyProfIds = new Set(party.professions.map((p) => p.professionId));
+    const hit = requiredProfIds.some((id) => partyProfIds.has(id));
+    if (!hit) {
+      return {
+        eligible: false,
+        reason: `Party is missing a required job title.`,
+      };
+    }
+  }
+  return { eligible: true };
+}
+
 interface CreateProjectPartnerRoleDto {
   projectId: number;
   partyId: number;
@@ -113,36 +176,37 @@ export class ProjectPartnerRolesService {
     if (!party)   throw new NotFoundException(`Party ${dto.partyId} not found`);
     if (!role)    throw new NotFoundException(`Role ${dto.roleId} not found`);
 
-    // allowedPartnerKind check
-    if (role.allowedPartnerKind !== 'any' && role.allowedPartnerKind !== party.partnerType) {
-      throw new BadRequestException(
-        `Role '${role.name}' requires a ${role.allowedPartnerKind}, but party is a ${party.partnerType}`,
-      );
-    }
-    // requiredPartnerRoleCode check (party must hold that party-role)
-    if (role.requiredPartnerRoleCode) {
-      const has = party.roles.some((r) => r.roleType.code === role.requiredPartnerRoleCode);
-      if (!has) {
+    // QA4 Wave-2 TM-1: delegate the three eligibility rules to the
+    // shared helper so the picker (getEligibleRoles) and this gate
+    // never drift. Kept as defense-in-depth — the FE now filters the
+    // dropdown to only eligible roles, so this branch effectively
+    // guards direct API calls and race conditions (e.g. party's
+    // partner-role/profession changed since the picker loaded).
+    const check = isPartyEligibleForRole(party, role);
+    if (!check.eligible) {
+      // Preserve the original, more actionable messages for the two
+      // most useful cases so existing error UX / telemetry doesn't
+      // regress. Fallback to the helper's generic reason otherwise.
+      if (role.requiredPartnerRoleCode &&
+        !party.roles.some((r) => r.roleType.code === role.requiredPartnerRoleCode)) {
         throw new BadRequestException(
           `Role '${role.name}' requires the party to hold the '${role.requiredPartnerRoleCode}' partner-role first`,
         );
       }
-    }
-    // M4a.3 — required job titles (professions). Party must hold at least
-    // one of the listed profession ids.
-    const requiredProfIds = (role.requiredProfessionIds as number[] | null) ?? [];
-    if (requiredProfIds.length > 0) {
-      const partyProfIds = new Set(party.professions.map((p) => p.professionId));
-      const hit = requiredProfIds.some((id) => partyProfIds.has(id));
-      if (!hit) {
-        const profNames = await this.prisma.profession.findMany({
-          where: { id: { in: requiredProfIds } },
-          select: { name: true },
-        });
-        throw new BadRequestException(
-          `Role '${role.name}' requires the party to hold one of these job titles: ${profNames.map((p) => p.name).join(', ')}.`,
-        );
+      const requiredProfIds = (role.requiredProfessionIds as number[] | null) ?? [];
+      if (requiredProfIds.length > 0) {
+        const partyProfIds = new Set(party.professions.map((p) => p.professionId));
+        if (!requiredProfIds.some((id) => partyProfIds.has(id))) {
+          const profNames = await this.prisma.profession.findMany({
+            where: { id: { in: requiredProfIds } },
+            select: { name: true },
+          });
+          throw new BadRequestException(
+            `Role '${role.name}' requires the party to hold one of these job titles: ${profNames.map((p) => p.name).join(', ')}.`,
+          );
+        }
       }
+      throw new BadRequestException(`Role '${role.name}': ${check.reason ?? 'party not eligible.'}`);
     }
     // BM2 Phase 2 (2026-08-13) — representation checks.
     // Rules mirror the analysis: contactPartyId is only meaningful when
@@ -378,6 +442,41 @@ export class ProjectPartnerRolesService {
     } catch (e) { Sentry.captureException(e); /* swallow */ }
 
     return { message: 'Project partner role ended' };
+  }
+
+  /**
+   * QA4 Wave-2 TM-1 — feed the FE Project-Role picker so it lists only
+   * roles the party can actually hold. Reuses `isPartyEligibleForRole`
+   * so the picker and `create()`'s gate cannot disagree.
+   *
+   * Ineligible roles are returned alongside a short reason for the
+   * "N not eligible — show why" expander in team-tab.tsx.
+   */
+  async getEligibleRoles(projectId: number, partyId: number) {
+    const [project, party, roles] = await Promise.all([
+      this.prisma.project.findUnique({ where: { id: projectId }, select: { id: true } }),
+      this.prisma.businessPartner.findFirst({
+        where: { id: partyId, deletedAt: null },
+        include: {
+          roles: { include: { roleType: true } },
+          professions: true,
+        },
+      }),
+      this.prisma.projectRoleType.findMany({
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      }),
+    ]);
+    if (!project) throw new NotFoundException(`Project ${projectId} not found`);
+    if (!party)   throw new NotFoundException(`Party ${partyId} not found`);
+
+    const eligible: typeof roles = [];
+    const ineligible: Array<{ role: (typeof roles)[number]; reason: string }> = [];
+    for (const role of roles) {
+      const check = isPartyEligibleForRole(party as any, role as any);
+      if (check.eligible) eligible.push(role);
+      else ineligible.push({ role, reason: check.reason ?? 'Not eligible.' });
+    }
+    return { eligible, ineligible };
   }
 
   private async demoteExistingPrimary(projectId: number, roleId: number, exceptId?: number) {

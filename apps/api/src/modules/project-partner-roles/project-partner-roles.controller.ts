@@ -43,6 +43,23 @@ export class ProjectPartnerRolesController {
     });
   }
 
+  /**
+   * QA4 Wave-2 TM-1 — feeds the FE Project-Role picker so it lists
+   * only roles this party is eligible to hold. Returns
+   * `{ eligible, ineligible: [{role, reason}] }`. Bound to `partners:read`
+   * because it's a purely-derived view over the project + party's
+   * existing partner-roles / job titles.
+   */
+  @Get('eligible-roles')
+  @RequirePermissions({ module: 'partners', action: 'read' })
+  @ApiOperation({ summary: 'List ProjectRoleTypes split by eligibility for the given party on the given project' })
+  eligibleRoles(
+    @Query('projectId', ParseIntPipe) projectId: number,
+    @Query('partyId', ParseIntPipe) partyId: number,
+  ) {
+    return this.service.getEligibleRoles(projectId, partyId);
+  }
+
   @Get(':id')
   @RequirePermissions({ module: 'partners', action: 'read' })
   findOne(@Param('id', ParseIntPipe) id: number) {

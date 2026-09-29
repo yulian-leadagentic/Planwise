@@ -103,9 +103,19 @@ const ROUTE_LABELS: Record<string, string> = {
  */
 function resolveIdLabel(qc: ReturnType<typeof useQueryClient>, parentSegment: string, id: number): string {
   if (parentSegment === 'projects') {
-    const cached = qc.getQueryData<{ name?: string; displayName?: string }>(queryKeys.projects.detail(id));
-    const name = cached?.name ?? cached?.displayName;
-    if (name) return name;
+    // BC-1 (QA4 Wave-2 · 2026-09-29): `useProject(id)` caches under
+    // `['projects', id]` (see project-detail-page.tsx), NOT
+    // `queryKeys.projects.detail(id)` = `['projects','detail',id]`.
+    // The old lookup missed and the breadcrumb rendered `#id`. Prefer
+    // the key `useProject` actually populates; keep the queryKeys
+    // form as a secondary fallback so any code that DID cache under
+    // that key still hits.
+    const cachedPrimary = qc.getQueryData<{ name?: string; displayName?: string }>(['projects', id]);
+    const namePrimary = cachedPrimary?.name ?? cachedPrimary?.displayName;
+    if (namePrimary) return namePrimary;
+    const cachedFallback = qc.getQueryData<{ name?: string; displayName?: string }>(queryKeys.projects.detail(id));
+    const nameFallback = cachedFallback?.name ?? cachedFallback?.displayName;
+    if (nameFallback) return nameFallback;
   } else if (parentSegment === 'tasks') {
     const cached = qc.getQueryData<{ name?: string; code?: string }>(queryKeys.tasks.detail(id));
     const name = cached?.name ?? cached?.code;

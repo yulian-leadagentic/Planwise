@@ -753,7 +753,14 @@ export function TeamTab({
     // Stakeholders always group by organization regardless of the
     // "Group" dropdown — spec §4 bullet 2. Everywhere else uses the
     // dropdown value.
-    const effectiveGroup: GroupBy | 'org' = population === 'stake' ? 'org' : groupBy;
+    // TM-2 (2026-09-29): Our Team never groups by Discipline (option
+    // hidden in the dropdown, but a stale value carried from a prior
+    // population switch could still land here). Fall through to
+    // 'role' to keep the grid useful.
+    let effectiveGroup: GroupBy | 'org' = population === 'stake' ? 'org' : groupBy;
+    if (population === 'team' && effectiveGroup === 'discipline') {
+      effectiveGroup = 'role';
+    }
     const bins = new Map<string, TeamRow[]>();
     const order: string[] = [];
     const addTo = (key: string, r: TeamRow) => {
@@ -981,6 +988,7 @@ export function TeamTab({
                 setLaborFilter={setLaborFilter}
                 statusFilter={statusFilter}
                 setStatusFilter={setStatusFilter}
+                showDiscipline={population !== 'team'}
               />
             )}
           </div>
@@ -998,7 +1006,13 @@ export function TeamTab({
               <option value="org">Group: Organization</option>
             ) : (
               <>
-                <option value="discipline">Group: Discipline</option>
+                {/* TM-2 (2026-09-29): Discipline group hidden for the
+                    Our-Team population since employees don't carry a
+                    Discipline. Kept for the "All" population where
+                    stakeholder rows still show it. */}
+                {population !== 'team' && (
+                  <option value="discipline">Group: Discipline</option>
+                )}
                 <option value="role">Group: Project Role</option>
                 <option value="flat">Group: Flat</option>
               </>
@@ -1375,6 +1389,7 @@ function FiltersPopover({
   setLaborFilter,
   statusFilter,
   setStatusFilter,
+  showDiscipline = true,
 }: {
   onClose: () => void;
   roleOptions: { value: number; label: string }[];
@@ -1388,6 +1403,7 @@ function FiltersPopover({
   setLaborFilter: (s: Set<number>) => void;
   statusFilter: StatusFilter;
   setStatusFilter: (s: StatusFilter) => void;
+  showDiscipline?: boolean;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -1420,15 +1436,19 @@ function FiltersPopover({
           triggerClassName="w-full"
         />
       </FilterGroup>
-      <FilterGroup label="Discipline">
-        <MultiSelectFilter
-          options={disciplineOptions}
-          selected={disciplineFilter}
-          onChange={setDisciplineFilter}
-          placeholder="Disciplines"
-          triggerClassName="w-full"
-        />
-      </FilterGroup>
+      {/* TM-2 (2026-09-29): Discipline filter hidden for the Our-Team
+          population; kept for Stakeholders + All. */}
+      {showDiscipline && (
+        <FilterGroup label="Discipline">
+          <MultiSelectFilter
+            options={disciplineOptions}
+            selected={disciplineFilter}
+            onChange={setDisciplineFilter}
+            placeholder="Disciplines"
+            triggerClassName="w-full"
+          />
+        </FilterGroup>
+      )}
       <FilterGroup label="Labor Category">
         <MultiSelectFilter
           options={laborOptions}
@@ -1681,13 +1701,18 @@ function TableBody({
 }) {
   const showType = population === 'all';
   const showRepresents = population === 'stake';
+  // QA4 Wave-2 TM-2: Discipline is meaningless for company employees
+  // (Our Team). Drop the column header, cell, group, and filter option
+  // for that population. Kept intact for Stakeholders + All so external
+  // firms' discipline still surfaces.
+  const showDiscipline = population !== 'team';
 
   const columns: { key: SortKey; label: string; className?: string }[] = showRepresents
     ? [
         { key: 'name', label: 'Contact' },
         { key: 'type', label: 'Type' },
         { key: 'role', label: 'Represents' },
-        { key: 'discipline', label: 'Discipline' },
+        ...(showDiscipline ? [{ key: 'discipline' as SortKey, label: 'Discipline' }] : []),
         { key: 'email', label: 'Email' },
         { key: 'phone', label: 'Phone' },
       ]
@@ -1695,7 +1720,7 @@ function TableBody({
         { key: 'name', label: 'Name' },
         ...(showType ? [{ key: 'type' as SortKey, label: 'Type' }] : []),
         { key: 'role', label: 'Project Role' },
-        { key: 'discipline', label: 'Discipline' },
+        ...(showDiscipline ? [{ key: 'discipline' as SortKey, label: 'Discipline' }] : []),
         { key: 'email', label: 'Email' },
         { key: 'phone', label: 'Phone' },
       ];
@@ -1858,16 +1883,22 @@ function TableBody({
                         />
                       )}
                     </td>
-                    {/* Discipline — inline-editable for person BPs. */}
-                    <td className={CELL}>
-                      <DisciplineCell
-                        row={r}
-                        catalog={disciplineCatalog}
-                        canEdit={canWrite && r.rowType !== 'related' && r.rowType !== 'org'}
-                        pending={updateBPPending}
-                        onUpdate={onUpdateBP}
-                      />
-                    </td>
+                    {/* Discipline — inline-editable for person BPs.
+                        TM-2 (2026-09-29): hidden for the Our-Team
+                        population (company employees have no
+                        Discipline concept — it applies to external
+                        firms only). */}
+                    {showDiscipline && (
+                      <td className={CELL}>
+                        <DisciplineCell
+                          row={r}
+                          catalog={disciplineCatalog}
+                          canEdit={canWrite && r.rowType !== 'related' && r.rowType !== 'org'}
+                          pending={updateBPPending}
+                          onUpdate={onUpdateBP}
+                        />
+                      </td>
+                    )}
                     {/* Email — click-to-edit inline input. */}
                     <td className={CELL}>
                       <EmailCell
@@ -1970,28 +2001,22 @@ function ProjectRoleCell({
   pending: boolean;
   onReassign: (vars: { partyId: number; sourcePprId: number | null; targetRoleId: number }) => void;
 }) {
-  const queryClient = useQueryClient();
-
   // `editingSourcePprId === undefined` → not editing.
   // `null` → editing in "add role" mode (row currently holds no PPR).
   // `number` → editing an existing PPR (reassign mode).
   const [editingSourcePprId, setEditingSourcePprId] = useState<number | null | undefined>(undefined);
 
-  // QA4 D7 follow-up — ineligibility expander state (scoped per open).
-  // `ineligibleRows === null` → not yet fetched. Populated array →
-  // fetched; empty means every addableRole is eligible for this party.
-  const [ineligibleRows, setIneligibleRows] = useState<Array<{ roleName: string; reasons: string[] }> | null>(null);
-  const [ineligibleLoading, setIneligibleLoading] = useState(false);
+  // QA4 Wave-2 TM-1 — ineligibility expander state (scoped per open).
+  // The list itself now comes from the single `eligible-roles` endpoint
+  // (see `eligibleRolesQuery` below), so this state only tracks whether
+  // the expander is unfurled in the current cell open.
   const [showIneligible, setShowIneligible] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null);
 
-  // Reset expander state whenever the editor closes so re-opening the
-  // same cell starts clean (react-query still serves the fetch from
-  // cache — this only resets the local UI toggle).
+  // Reset the expander toggle whenever the editor closes so re-opening
+  // the same cell starts clean.
   useEffect(() => {
     if (editingSourcePprId === undefined) {
-      setIneligibleRows(null);
-      setIneligibleLoading(false);
       setShowIneligible(false);
     }
   }, [editingSourcePprId]);
@@ -2005,77 +2030,57 @@ function ProjectRoleCell({
       .map((a) => ({ pprId: a.id, roleId: a.role.id, roleName: a.role.name })),
     [roleAssignments, row.bpId],
   );
-
-  // Target options: kind-match + not already held. Server enforces the
-  // rest (requiredPartnerRoleCode, requiredProfessionIds).
   const heldRoleIds = useMemo(() => new Set(heldPprs.map((h) => h.roleId)), [heldPprs]);
-  const targetOptions = useMemo(
-    () => addableRoles.filter((rt) => {
-      if (heldRoleIds.has(rt.id)) return false;
-      if (rt.allowedPartnerKind === 'any') return true;
-      return row.partyKind ? rt.allowedPartnerKind === row.partyKind : true;
-    }),
-    [addableRoles, heldRoleIds, row.partyKind],
-  );
 
-  /**
-   * Fetch eligibility for every addableRole for THIS party in one
-   * `Promise.all`. Each per-role query hits `/admin/project-role-types/
-   * :code/eligible-parties?projectId=…` (which returns the full party
-   * list), then narrows to this party's row so we can surface the
-   * plain-English `reasons[]`. react-query dedupes on the
-   * (roleCode, projectId, partyId) key, so re-opening the same cell
-   * is a warm read.
-   */
-  const loadIneligibility = async () => {
-    if (ineligibleRows) {
-      setShowIneligible((v) => !v);
-      return;
-    }
-    setIneligibleLoading(true);
-    try {
-      const results = await Promise.all(
-        addableRoles.map((rt) =>
-          queryClient
-            .fetchQuery<{ eligible: boolean; reasons: string[] }>({
-              queryKey: ['role-eligibility', rt.code, projectId, row.bpId],
-              staleTime: 60 * 1000,
-              queryFn: () =>
-                client
-                  .get(`/admin/project-role-types/${encodeURIComponent(rt.code)}/eligible-parties`, {
-                    params: { projectId },
-                  })
-                  .then((r) => {
-                    const d = r.data?.data ?? r.data;
-                    const list = (Array.isArray(d) ? d : []) as Array<{
-                      id: number;
-                      eligible: boolean;
-                      reasons: string[];
-                    }>;
-                    const hit = list.find((p) => p.id === row.bpId);
-                    return {
-                      eligible: hit?.eligible ?? false,
-                      reasons: Array.isArray(hit?.reasons) ? hit!.reasons : [],
-                    };
-                  }),
-            })
-            .then((data) => ({ roleName: rt.name, ...data })),
-        ),
-      );
-      setIneligibleRows(
-        results
-          .filter((r) => !r.eligible)
-          .map(({ roleName, reasons }) => ({ roleName, reasons })),
-      );
-      setShowIneligible(true);
-    } catch {
-      // Silent — the reassign mutation surfaces real errors on save.
-      // Reset to null so the user can retry.
-      setIneligibleRows(null);
-    } finally {
-      setIneligibleLoading(false);
-    }
-  };
+  // QA4 Wave-2 TM-1 — single-shot eligibility fetch (was N per-role
+  // calls). Backed by `GET /project-partner-roles/eligible-roles?
+  // projectId=&partyId=`, which reuses the same helper the server-side
+  // gate calls — so the picker and `create()` can't disagree. Fires
+  // once per (projectId, partyId), only after the editor opens.
+  const eligibleRolesQuery = useQuery<{
+    eligible: ProjectRoleTypeRow[];
+    ineligible: Array<{ role: ProjectRoleTypeRow; reason: string }>;
+  }>({
+    queryKey: ['project-partner-roles', 'eligible-roles', projectId, row.bpId],
+    enabled: editingSourcePprId !== undefined,
+    staleTime: 60 * 1000,
+    queryFn: () =>
+      client
+        .get('/project-partner-roles/eligible-roles', {
+          params: { projectId, partyId: row.bpId },
+        })
+        .then((r) => {
+          const d = r.data?.data ?? r.data;
+          return {
+            eligible: Array.isArray(d?.eligible) ? d.eligible : [],
+            ineligible: Array.isArray(d?.ineligible) ? d.ineligible : [],
+          };
+        }),
+  });
+
+  // Target options: ONLY roles the server said this party is eligible
+  // for, minus roles already held AND the operator-noise roles
+  // (customer / participant / customer_contact — filtered on the FE via
+  // `addableRoles` already; we intersect the two sets here). If the
+  // fetch is still in flight we return an empty list — the select shows
+  // its placeholder and no option to pick, which is the right pre-load
+  // state (better than showing options the server might reject).
+  const addableIds = useMemo(() => new Set(addableRoles.map((r) => r.id)), [addableRoles]);
+  const targetOptions = useMemo(() => {
+    const eligible = eligibleRolesQuery.data?.eligible ?? [];
+    return eligible.filter((rt) => addableIds.has(rt.id) && !heldRoleIds.has(rt.id));
+  }, [eligibleRolesQuery.data, addableIds, heldRoleIds]);
+
+  // Ineligible list for the expander — same source of truth.
+  const ineligibleRows = useMemo(() => {
+    const list = eligibleRolesQuery.data?.ineligible ?? [];
+    return list
+      .filter((row) => addableIds.has(row.role.id))
+      .map((row) => ({ roleName: row.role.name, reasons: row.reason ? [row.reason] : [] }));
+  }, [eligibleRolesQuery.data, addableIds]);
+  const ineligibleLoading = eligibleRolesQuery.isLoading;
+
+  const loadIneligibility = () => setShowIneligible((v) => !v);
 
   // Read-only render for related / contact / org rows, or when the
   // caller says we can't edit.
@@ -2107,8 +2112,8 @@ function ProjectRoleCell({
       editingSourcePprId != null
         ? heldPprs.find((h) => h.pprId === editingSourcePprId)?.roleName ?? null
         : null;
-    const showExpander = ineligibleLoading || ineligibleRows === null || ineligibleRows.length > 0;
-    const ineligibleCount = ineligibleRows?.length ?? 0;
+    const showExpander = ineligibleLoading || ineligibleRows.length > 0;
+    const ineligibleCount = ineligibleRows.length;
     return (
       <div
         ref={editorRef}
