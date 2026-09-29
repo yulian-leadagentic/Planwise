@@ -54,4 +54,48 @@ export class BackfillsController {
     );
     return { updated };
   }
+
+  /**
+   * ProjectDeliverable → Service backfill (2026-09-29).
+   *
+   * `ProjectDeliverable.serviceId` should inherit from
+   * `Template.phaseId` at creation time (see
+   * `project-deliverables.service.ts::create`), but existing rows on
+   * staging/prod that were created before that inheritance was in
+   * place, or that were created without a `sourceTemplateId`, carry
+   * `serviceId = NULL`. The result is the blank SERVICE column on the
+   * project's zone-task views.
+   *
+   * This backfill sets `service_id = template.phase_id` for every
+   * ProjectDeliverable where:
+   *   • `service_id IS NULL`
+   *   • AND `source_template_id IS NOT NULL`
+   *   • AND the referenced template has a non-null `phase_id`
+   *
+   * Idempotent — re-running against a fully-backfilled table matches
+   * zero rows and returns `{ updated: 0 }`. Safe to call after every
+   * deploy while templates are still being renamed / relinked.
+   *
+   * Yulian reported the blank SERVICE column on project 32
+   * (2026-09-29). This endpoint fixes the historical rows; new
+   * deliverables created from templates already inherit correctly.
+   */
+  @Post('project-deliverable-service')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'Backfill · ProjectDeliverable.serviceId ← Template.phaseId when null (idempotent)',
+  })
+  async runProjectDeliverableService() {
+    const updated = await this.prisma.$executeRawUnsafe(
+      `UPDATE project_deliverables pd
+         JOIN templates t ON t.id = pd.source_template_id
+          SET pd.service_id = t.phase_id
+        WHERE pd.service_id IS NULL
+          AND pd.source_template_id IS NOT NULL
+          AND t.phase_id IS NOT NULL
+          AND pd.deleted_at IS NULL`,
+    );
+    return { updated };
+  }
 }
