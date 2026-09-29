@@ -66,12 +66,32 @@ export class PlanningService {
         phase: true,
         // Source Deliverable (Template) — drives the planning grid's
         // "Group by Deliverable" labels so they match
-        // /templates/deliverables exactly. Only id+name needed for
-        // display; full template data is fetched on demand.
-        deliverableTemplate: { select: { id: true, name: true } },
+        // /templates/deliverables exactly. Includes `phase` (2026-09-29)
+        // so the FE Service-column fallback can read the source template's
+        // service when the project Task itself has `phaseId = NULL`
+        // (historical rows created before applyProjectTemplate consistently
+        // propagated the phase). Same principle as the ProjectDeliverable
+        // service fallback added in commit 35125ea.
+        deliverableTemplate: {
+          select: {
+            id: true,
+            name: true,
+            phase: { select: { id: true, name: true, color: true } },
+          },
+        },
         // First-class project-owned Deliverable — the authoritative link the
         // grid resolves its label from (overrides the catalog template name).
-        projectDeliverable: { select: { id: true, name: true, sortOrder: true, serviceId: true } },
+        // Includes `service` (2026-09-29) so the FE Service-column fallback
+        // has something to read when `task.phaseId = NULL`.
+        projectDeliverable: {
+          select: {
+            id: true,
+            name: true,
+            sortOrder: true,
+            serviceId: true,
+            service: { select: { id: true, name: true, color: true } },
+          },
+        },
         dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true } } } },
         assignees: {
           where: { deletedAt: null },

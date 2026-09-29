@@ -751,17 +751,18 @@ function resolveTaskDeliverable(t: any, lookups?: ProjectDeliverableLookups): st
 }
 
 /**
- * Resolve the SERVICE column value for a project task. Read-time fallback
- * (2026-09-29) — many project tasks have `task.phaseId = NULL` because
- * the applyProjectTemplate path didn't consistently propagate the source
- * template's phase onto the created task. Since ProjectDeliverable
- * already carries the service (with its own fallback via
- * `sourceTemplate.phase`, added in commit 35125ea), we walk the same
- * lookups the deliverable resolver uses:
+ * Resolve the SERVICE column value for a project task. Read-time
+ * fallback chain — many project tasks have `task.phaseId = NULL`
+ * because applyProjectTemplate didn't consistently propagate the source
+ * template's phase onto the created task. Walk every source of truth:
  *
- *   1. task.phase                                   (direct FK, editable)
- *   2. projectDeliverable(byId).service             (parent deliverable)
- *   3. projectDeliverable(byTemplateId).service     (via template link)
+ *   1. task.phase                                     (direct FK, editable)
+ *   2. task.projectDeliverable.service                (parent deliverable's service,
+ *                                                      NOW included on the payload)
+ *   3. task.deliverableTemplate.phase                 (source template's phase,
+ *                                                      NOW included on the payload)
+ *   4. projectDeliverable(byId).service               (via ProjectDeliverablesContext)
+ *   5. projectDeliverable(byTemplateId).service       (via ProjectDeliverablesContext)
  *
  * Returns `{ name, color }` or nulls when nothing resolves.
  */
@@ -772,6 +773,22 @@ function resolveTaskService(
   if (t.phase?.name) {
     return { name: t.phase.name, color: t.phase.color ?? null };
   }
+  // Direct on the task payload (planning-data endpoint includes these
+  // relations for exactly this fallback — see planning.service.ts).
+  if (t.projectDeliverable?.service?.name) {
+    return {
+      name: t.projectDeliverable.service.name,
+      color: t.projectDeliverable.service.color ?? null,
+    };
+  }
+  if (t.deliverableTemplate?.phase?.name) {
+    return {
+      name: t.deliverableTemplate.phase.name,
+      color: t.deliverableTemplate.phase.color ?? null,
+    };
+  }
+  // Fall through to the context lookups (used by callers that don't
+  // have the include, e.g. the group-header aggregation path).
   if (lookups) {
     if (t.projectDeliverableId != null) {
       const d = lookups.byId.get(t.projectDeliverableId);
