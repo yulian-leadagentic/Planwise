@@ -231,6 +231,15 @@ export function ContactsImportWizard({
   const [conflictResolutions, setConflictResolutions] = useState<
     Record<string, Record<string, 'existing' | 'imported'>>
   >({});
+  // QA4 E6 (2026-09-29) — user-created orgs. The reviewer adds a
+  // brand-new org (name + optional domain) that appears in the
+  // moveTargets list; orphans can then be assigned into it.
+  // Backend commit reads its name/domain via `orgOverrides` and its
+  // presence via the batch materialisation pass when a personOrg
+  // Override points at it.
+  const [userCreatedOrgs, setUserCreatedOrgs] = useState<
+    Array<{ key: string; name: string; domain?: string }>
+  >([]);
   const [commitResult, setCommitResult] = useState<
     | (Awaited<ReturnType<typeof contactsImportApi.commit>>)
     | null
@@ -398,6 +407,7 @@ export function ContactsImportWizard({
     setOrgDeleteMode({});
     setPersonOrgOverrides({});
     setConflictResolutions({});
+    setUserCreatedOrgs([]);
     setCommitResult(null);
     // Re-apply prefill for "Import another file" — if the wizard was
     // deep-linked from a project, that context still holds. The role
@@ -646,6 +656,19 @@ export function ContactsImportWizard({
               return { ...prev, [recordKey]: inner };
             })
           }
+          userCreatedOrgs={userCreatedOrgs}
+          onCreateOrg={(name, domain) => {
+            const key = `user:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            setUserCreatedOrgs((prev) => [...prev, { key, name, domain }]);
+            // Seed the orgOverrides so commit's org create writes the
+            // reviewer's typed name + domain (the batch pass reads
+            // orgOverrides[key] for any create branch).
+            setOrgOverrides((prev) => ({
+              ...prev,
+              [key]: { name, ...(domain ? { domain: domain.toLowerCase() } : {}) },
+            }));
+            return key;
+          }}
           onDecide={(rowIndex, patch) => {
             const key = decisionKey(rowIndex);
             setDecisions((prev) => ({
@@ -1249,6 +1272,8 @@ function PreviewStep({
   onOrgDeleteUndo,
   onMovePerson,
   onConflictResolve,
+  userCreatedOrgs,
+  onCreateOrg,
   onDecide,
   onOverride,
   attachToProjectId,
@@ -1281,6 +1306,9 @@ function PreviewStep({
   onOrgDeleteUndo: (batchOrgKey: string) => void;
   onMovePerson: (rowIndex: number, targetKey: string | null) => void;
   onConflictResolve: (recordKey: string, field: string, choice: 'existing' | 'imported') => void;
+  /** QA4 E6 (2026-09-29) — user-created orgs (seeded empty groups). */
+  userCreatedOrgs: Array<{ key: string; name: string; domain?: string }>;
+  onCreateOrg: (name: string, domain?: string) => string;
   onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
   onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
   attachToProjectId: number | null;
@@ -1405,6 +1433,26 @@ function PreviewStep({
       if (isSkipped) g.skippedCount++;
       else g.personCount++;
     }
+    // QA4 E6 — seed empty synthetic groups for user-created orgs so
+    // they appear in the org list + moveTargets even before any
+    // person has been assigned to them. Skipped when a real decision
+    // already registered the same key (would only happen if a person
+    // had already been moved to it in this render).
+    for (const u of userCreatedOrgs) {
+      if (map.has(u.key)) continue;
+      map.set(u.key, {
+        key: u.key,
+        label: u.name,
+        domain: u.domain ?? null,
+        matchedBpId: null,
+        isNew: true,
+        people: [],
+        personCount: 0,
+        skippedCount: 0,
+        hasBatchKey: true,
+        isIndividual: false,
+      });
+    }
     // Apply E2 overrides (inline org name / domain).
     for (const g of map.values()) applyOverride(g);
     return [...map.values()].sort((a, b) => {
@@ -1414,7 +1462,7 @@ function PreviewStep({
       if (a.isIndividual !== b.isIndividual) return a.isIndividual ? 1 : -1;
       return b.personCount - a.personCount;
     });
-  }, [preview.decisions, decisions, sheetName, personOrgOverrides, orgOverrides]);
+  }, [preview.decisions, decisions, sheetName, personOrgOverrides, orgOverrides, userCreatedOrgs]);
 
   // QA4 R2b ORG-3 gate — every NEW org must have a role code picked
   // (matched-existing orgs never appear in this list). Commit stays
@@ -1596,6 +1644,7 @@ function PreviewStep({
         onOrgDeleteUndo={onOrgDeleteUndo}
         onMovePerson={onMovePerson}
         onConflictResolve={onConflictResolve}
+        onCreateOrg={onCreateOrg}
         moveTargets={moveTargets}
         orgRoleTypes={orgRoleTypes}
         orgRoleTypesLoading={orgRoleTypesQuery.isLoading}
@@ -1688,6 +1737,7 @@ function GroupedReview({
   onOrgDeleteUndo,
   onMovePerson,
   onConflictResolve,
+  onCreateOrg,
   moveTargets,
   orgRoleTypes,
   orgRoleTypesLoading,
@@ -1712,6 +1762,7 @@ function GroupedReview({
   onOrgDeleteUndo: (batchOrgKey: string) => void;
   onMovePerson: (rowIndex: number, targetKey: string | null) => void;
   onConflictResolve: (recordKey: string, field: string, choice: 'existing' | 'imported') => void;
+  onCreateOrg: (name: string, domain?: string) => string;
   moveTargets: Array<{ key: string | null; label: string; domain?: string | null }>;
   orgRoleTypes: PartnerRoleTypeLite[];
   orgRoleTypesLoading: boolean;
@@ -1875,6 +1926,7 @@ function GroupedReview({
           onDecide={onDecide}
           onOverride={onOverride}
           onMovePerson={onMovePerson}
+          onCreateOrg={onCreateOrg}
           moveTargets={moveTargets}
           conflictResolutions={conflictResolutions}
           onConflictResolve={onConflictResolve}
@@ -2247,6 +2299,7 @@ function IndividualsSection({
   onDecide,
   onOverride,
   onMovePerson,
+  onCreateOrg,
   moveTargets,
   conflictResolutions,
   onConflictResolve,
@@ -2260,6 +2313,8 @@ function IndividualsSection({
   onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
   /** QA4 E4 / E6 — assign an individual to an existing org card. */
   onMovePerson?: (rowIndex: number, targetKey: string | null) => void;
+  /** QA4 E6 — inline "Create org" affordance for orphan assignment. */
+  onCreateOrg?: (name: string, domain?: string) => string;
   moveTargets?: Array<{ key: string | null; label: string; domain?: string | null }>;
   /** QA4 E5 — per-field conflict picks (kept/use imported). */
   conflictResolutions?: Record<string, Record<string, 'existing' | 'imported'>>;
@@ -2270,6 +2325,18 @@ function IndividualsSection({
     id: 'drop-individuals',
     data: { targetKey: null },
   });
+  // QA4 E6 (2026-09-29) — "Create new org" inline form.
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newDomain, setNewDomain] = useState('');
+  const submitCreate = () => {
+    const n = newName.trim();
+    if (!n) return;
+    onCreateOrg?.(n, newDomain.trim() || undefined);
+    setNewName('');
+    setNewDomain('');
+    setCreating(false);
+  };
   return (
     <div
       ref={setDroppableRef}
@@ -2288,7 +2355,78 @@ function IndividualsSection({
         <span className="text-[11px] text-slate-500 dark:text-slate-400">
           rows with no groupable firm identity (personal domain or missing company) — expand a row to assign one
         </span>
+        {onCreateOrg && (
+          <button
+            type="button"
+            onClick={() => setCreating((v) => !v)}
+            className="ml-auto inline-flex items-center gap-1 rounded-md border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 px-2 py-1 text-[11px] font-semibold text-blue-700 dark:text-blue-300 hover:border-blue-500 focus:outline-none focus:border-blue-500"
+          >
+            + Create org
+          </button>
+        )}
       </div>
+      {creating && (
+        <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 bg-blue-50/50 dark:bg-blue-950/20 flex flex-wrap items-end gap-2">
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 dark:text-slate-400">
+              Name
+            </label>
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  submitCreate();
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setCreating(false);
+                }
+              }}
+              placeholder="e.g. Acme Studio"
+              autoFocus
+              className="px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[12px] text-slate-800 dark:text-slate-100 focus:outline-none focus:border-blue-500 dark:focus:border-blue-400 min-w-[12rem]"
+            />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 dark:text-slate-400">
+              Domain (optional)
+            </label>
+            <input
+              type="text"
+              value={newDomain}
+              onChange={(e) => setNewDomain(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  submitCreate();
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setCreating(false);
+                }
+              }}
+              placeholder="e.g. acme.co.il"
+              className="px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[12px] font-mono text-slate-700 dark:text-slate-200 focus:outline-none focus:border-blue-500 dark:focus:border-blue-400 min-w-[10rem]"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={submitCreate}
+            disabled={!newName.trim()}
+            className="rounded-md bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold px-3 py-1 disabled:opacity-50 focus:outline-none"
+          >
+            Add
+          </button>
+          <button
+            type="button"
+            onClick={() => setCreating(false)}
+            className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[12px] font-semibold text-slate-600 dark:text-slate-300 px-3 py-1 focus:outline-none"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
       {people.length === 0 ? (
         <div className="px-3 py-6 text-center text-[12px] text-slate-400 dark:text-slate-500 italic">
           {totalPeople === 0
