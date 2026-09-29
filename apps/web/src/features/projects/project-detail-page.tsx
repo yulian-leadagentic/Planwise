@@ -145,11 +145,11 @@ export function ProjectDetailPage() {
                   }).categoryLinks ?? []
                 }
               />
-              {project.number && (
-                <span className="text-[13px] text-slate-400 dark:text-slate-500 font-mono">
-                  {project.number}
-                </span>
-              )}
+              {/* HDR-3 (QA4 · 2026-09-29): PRJxxxxx no longer shown on
+                  the header title row — the project switcher's OPEN
+                  dropdown still lists per-option numbers and remains
+                  searchable by number, so the identifier stays
+                  reachable one click away without crowding the top row. */}
             </div>
             <div className="flex items-center gap-2">
               {/* Open in Drive — ensures the project folder in the
