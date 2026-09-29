@@ -9,6 +9,7 @@ import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { PriorityBadge } from '@/components/shared/priority-badge';
+import { ColumnFilter, useColumnFilters, type ColumnFilterConfig } from '@/components/shared/column-filter';
 import { OpsAvatar, OpsErrorBanner, opsErrorMessage } from './ops-shared';
 
 /**
@@ -164,9 +165,11 @@ export function ExecutiveReviewTab({
   // (AND) with the search; the same `filtered` set drives the table
   // AND the CSV export, so what you see is what you export.
   const [dueWindow, setDueWindow] = useState<DueWindow>('all');
-  const [projectFilter, setProjectFilter] = useState('');
+  // Service isn't a visible table column — kept as a toolbar filter.
   const [serviceFilter, setServiceFilter] = useState('');
-  const [assigneeFilter, setAssigneeFilter] = useState('');
+  // QA4 Wave-2 ER-2 — "With due date only" toggle. Defaults to false so
+  // we don't change what an existing user sees until they opt in.
+  const [withDueOnly, setWithDueOnly] = useState(false);
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<ExecutiveReviewResponse>({
     queryKey: ['dashboard', 'operations', 'executive-review', { myDeptOnly }],
@@ -203,14 +206,66 @@ export function ExecutiveReviewTab({
   });
 
   const tasks = data?.tasks ?? [];
+
+  // QA4 Wave-2 ER-1: uniform per-column filter row driven by the
+  // shared `useColumnFilters` helper (same one People / admin tables
+  // use). Filters act on the loaded rows (server returns first 200),
+  // consistent with the existing search.
+  //
+  // Distinct STATUS / PRIORITY options are derived from the current
+  // page so the dropdowns never advertise a value that would produce
+  // zero rows. Both are exact-match selects; the rest are contains.
+  const statusOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of tasks) if (t.status) set.add(t.status);
+    return Array.from(set).sort().map((v) => ({ value: v, label: v }));
+  }, [tasks]);
+  const priorityOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of tasks) if (t.priority) set.add(t.priority);
+    return Array.from(set).sort().map((v) => ({ value: v, label: v }));
+  }, [tasks]);
+
+  const colConfig = useMemo<ColumnFilterConfig<ExecTask>[]>(
+    () => [
+      { colKey: 'code', match: 'contains', accessor: (t) => t.code, placeholder: 'Filter code…' },
+      { colKey: 'name', match: 'contains', accessor: (t) => t.name, placeholder: 'Filter task…' },
+      {
+        colKey: 'projectName',
+        match: 'contains',
+        accessor: (t) => `${t.project?.name ?? ''} ${t.project?.number ?? ''}`.trim(),
+        placeholder: 'Filter project…',
+      },
+      { colKey: 'status', match: 'exact', accessor: (t) => t.status, options: statusOptions },
+      { colKey: 'priority', match: 'exact', accessor: (t) => t.priority, options: priorityOptions },
+      {
+        colKey: 'assignee',
+        match: 'contains',
+        accessor: (t) =>
+          t.assignees.map((a) => `${a.firstName ?? ''} ${a.lastName ?? ''}`.trim()).join(' '),
+        placeholder: 'Filter assignee…',
+      },
+    ],
+    [statusOptions, priorityOptions],
+  );
+
+  const {
+    filters: colFilters,
+    set: setColFilter,
+    clear: clearColFilters,
+    active: colFilterActive,
+    activeCount: colFilterActiveCount,
+    filtered: colFiltered,
+  } = useColumnFilters(tasks, colConfig);
+
+  // Compose the final filtered set: column filters → global search →
+  // Due window → Service (toolbar) → With-due-only toggle. Same
+  // `filtered` still drives the table + CSV + count.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const pf = projectFilter.trim().toLowerCase();
     const sf = serviceFilter.trim().toLowerCase();
-    const af = assigneeFilter.trim().toLowerCase();
     const now = new Date();
-    return tasks.filter((t) => {
-      // Global search (unchanged shape) — combines with everything else via AND.
+    return colFiltered.filter((t) => {
       if (q) {
         const hay = [
           t.code, t.name, t.project?.name ?? '', t.project?.number ?? '',
@@ -220,26 +275,23 @@ export function ExecutiveReviewTab({
         ].join(' ').toLowerCase();
         if (!hay.includes(q)) return false;
       }
-      // Due-window (item 6a).
       if (!matchesDueWindow(t.endDate, dueWindow, now)) return false;
-      // Per-column filters (item 6b) — substring match, case-insensitive.
-      if (pf) {
-        const label = `${t.project?.name ?? ''} ${t.project?.number ?? ''}`.toLowerCase();
-        if (!label.includes(pf)) return false;
-      }
-      if (sf) {
-        if (!(t.service?.name ?? '').toLowerCase().includes(sf)) return false;
-      }
-      if (af) {
-        const label = t.assignees
-          .map((a) => `${a.firstName ?? ''} ${a.lastName ?? ''}`.trim())
-          .join(' ')
-          .toLowerCase();
-        if (!label.includes(af)) return false;
-      }
+      if (sf && !(t.service?.name ?? '').toLowerCase().includes(sf)) return false;
+      if (withDueOnly && !t.endDate) return false;
       return true;
     });
-  }, [tasks, search, dueWindow, projectFilter, serviceFilter, assigneeFilter]);
+  }, [colFiltered, search, dueWindow, serviceFilter, withDueOnly]);
+
+  // Convenience: "any filter active?" for the Clear-filters affordance.
+  const anyFilterActive =
+    colFilterActive || !!search.trim() || dueWindow !== 'all' || !!serviceFilter.trim() || withDueOnly;
+  const clearAllFilters = () => {
+    clearColFilters();
+    setSearch('');
+    setDueWindow('all');
+    setServiceFilter('');
+    setWithDueOnly(false);
+  };
 
   const grouped = useMemo(() => {
     if (groupBy === 'none') return [{ key: '', tasks: filtered }];
@@ -331,6 +383,20 @@ export function ExecutiveReviewTab({
               <option key={w} value={w}>{DUE_WINDOW_LABEL[w]}</option>
             ))}
           </select>
+          {/* QA4 Wave-2 ER-2 — "With due date only" toggle. Mirrors the
+              "My department only" checkbox in operations-dashboard.tsx.
+              ANDs with everything else and flows to CSV + count via
+              `filtered`. */}
+          <label className="flex items-center gap-1 pl-2 text-[11px] font-medium text-slate-600 dark:text-slate-300 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={withDueOnly}
+              onChange={(e) => setWithDueOnly(e.target.checked)}
+              className="h-3 w-3 accent-blue-600"
+              aria-label="Show only tasks with a due date"
+            />
+            With due date only
+          </label>
         </div>
         <div className="flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-3">
           <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400" htmlFor="exec-service">
@@ -361,6 +427,18 @@ export function ExecutiveReviewTab({
             ))}
           </select>
         </div>
+        {anyFilterActive && (
+          <button
+            type="button"
+            onClick={clearAllFilters}
+            aria-label="Clear all filters"
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[11px] font-semibold px-2 py-1 transition-colors focus-visible:outline-none focus-visible:border-blue-500"
+            title={colFilterActiveCount > 0 ? `${colFilterActiveCount} column filter${colFilterActiveCount === 1 ? '' : 's'} active` : undefined}
+          >
+            <X className="h-3 w-3" aria-hidden="true" />
+            Clear filters
+          </button>
+        )}
         <button
           type="button"
           onClick={downloadCSV}
@@ -416,37 +494,65 @@ export function ExecutiveReviewTab({
                         <th className="px-3 py-2 w-[130px]">Assignee</th>
                         <th className="px-3 py-2 w-[260px]">Comment</th>
                       </tr>
-                      {/* QA3 round-2 item 6b — per-column filter row.
-                          Project + Assignee sit under their own columns.
-                          Service isn't a visible column in this view;
-                          its filter lives in the toolbar (alongside the
-                          due-window select) so it's still one click away
-                          without inventing a column for it. */}
+                      {/* QA4 Wave-2 ER-1 — uniform per-column filter row.
+                          Backed by the shared `useColumnFilters` +
+                          `<ColumnFilter>` helper so this table's filters
+                          look and behave like People / admin tables.
+                          Service isn't a visible column here — its
+                          filter lives in the toolbar (alongside the
+                          due-window select). HOURS, DUE, and COMMENT
+                          intentionally have no per-column filter (Due
+                          uses the window select + ER-2 toggle;
+                          COMMENT is covered by the global search). */}
                       <tr className="border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900/60">
-                        <th className="px-3 py-1.5" />
-                        <th className="px-3 py-1.5" />
                         <th className="px-3 py-1.5">
-                          <input
-                            type="text"
-                            value={projectFilter}
-                            onChange={(e) => setProjectFilter(e.target.value)}
-                            placeholder="Filter project…"
-                            aria-label="Filter by project"
-                            className="w-full text-[11px] font-normal normal-case tracking-normal text-slate-700 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-md border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-0.5 focus:outline-none focus-visible:border-blue-500"
+                          <ColumnFilter
+                            config={colConfig[0]}
+                            value={colFilters.code ?? ''}
+                            onChange={(v) => setColFilter('code', v)}
+                            label="code"
+                          />
+                        </th>
+                        <th className="px-3 py-1.5">
+                          <ColumnFilter
+                            config={colConfig[1]}
+                            value={colFilters.name ?? ''}
+                            onChange={(v) => setColFilter('name', v)}
+                            label="task"
+                          />
+                        </th>
+                        <th className="px-3 py-1.5">
+                          <ColumnFilter
+                            config={colConfig[2]}
+                            value={colFilters.projectName ?? ''}
+                            onChange={(v) => setColFilter('projectName', v)}
+                            label="project"
+                          />
+                        </th>
+                        <th className="px-3 py-1.5">
+                          <ColumnFilter
+                            config={colConfig[3]}
+                            value={colFilters.status ?? ''}
+                            onChange={(v) => setColFilter('status', v)}
+                            label="status"
+                          />
+                        </th>
+                        <th className="px-3 py-1.5">
+                          <ColumnFilter
+                            config={colConfig[4]}
+                            value={colFilters.priority ?? ''}
+                            onChange={(v) => setColFilter('priority', v)}
+                            label="priority"
                           />
                         </th>
                         <th className="px-3 py-1.5" />
                         <th className="px-3 py-1.5" />
-                        <th className="px-3 py-1.5" />
-                        <th className="px-3 py-1.5" />
                         <th className="px-3 py-1.5">
-                          <input
-                            type="text"
-                            value={assigneeFilter}
-                            onChange={(e) => setAssigneeFilter(e.target.value)}
-                            placeholder="Filter assignee…"
-                            aria-label="Filter by assignee"
-                            className="w-full text-[11px] font-normal normal-case tracking-normal text-slate-700 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-md border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-0.5 focus:outline-none focus-visible:border-blue-500"
+                          <ColumnFilter
+                            config={colConfig[5]}
+                            value={colFilters.assignee ?? ''}
+                            onChange={(v) => setColFilter('assignee', v)}
+                            label="assignee"
                           />
                         </th>
                         <th className="px-3 py-1.5" />
