@@ -229,6 +229,12 @@ export class ContactsCommitService {
             const contactName = eff('contact');
             const [firstName, ...restName] = (contactName ?? '').trim().split(/\s+/);
             const lastName = restName.join(' ') || null;
+            // QA4 R2 IMP-10 — resolve the Excel discipline value to a
+            // structured `disciplineId` (upserting the lookup row when the
+            // name is new). `titleInProject` still carries the label for
+            // display continuity with IMP-6.
+            const disciplineValue = eff('discipline');
+            const disciplineId = await this.resolveDisciplineId(disciplineValue);
             const created = await this.prisma.businessPartner.create({
               data: {
                 partnerType: 'person',
@@ -242,6 +248,7 @@ export class ContactsCommitService {
                 notes: dec.values.note ?? null,
                 source: 'import',
                 createdByImportId: importRecord.id,
+                disciplineId: disciplineId ?? undefined,
               },
             });
             contactBpId = created.id;
@@ -509,20 +516,110 @@ export class ContactsCommitService {
   /**
    * Pick a ProjectRoleType id for the project attach step. Order:
    *   1. Explicit projectRoleId from the wizard call.
-   *   2. Any role type whose code === 'contact' or 'external_contact'
-   *      (seeded by BM2 Phase 6) — the "generic contact" fallback.
-   *   3. null (skip project attach for this row).
+   *   2. QA4 R2 IMP-10 — the row's `role` value matched by name/code
+   *      against ProjectRoleType (case-insensitive, trim). Lets a sheet
+   *      that carries a role column (e.g. "Structural engineer") land
+   *      on the specific project role rather than a bucket fallback.
+   *   3. Any role type whose code === 'contact' or 'external_contact'
+   *      or 'consultant' (seeded by BM2 Phase 6 / QA4 D9) — the
+   *      "generic contact" bucket.
+   *   4. `external_contact` seeded on the fly (defensive: staging
+   *      may lag the migration). NEVER returns null now — every
+   *      attach-on-import row gets a Project Role per IMP-10 DoD.
    */
   private async pickProjectRoleId(
     explicit: number | null,
-    _values: Partial<Record<ContactField, string>>,
+    values: Partial<Record<ContactField, string>>,
   ): Promise<number | null> {
     if (explicit != null) return explicit;
+
+    // (2) — try to match the row's role text against a real role type.
+    const rowRole = (values.role ?? '').trim();
+    if (rowRole) {
+      const normalized = rowRole.toLowerCase();
+      const byNameOrCode = await this.prisma.projectRoleType.findFirst({
+        where: {
+          OR: [
+            { name: { equals: rowRole } },
+            { code: { equals: normalized } },
+          ],
+        },
+      });
+      if (byNameOrCode) return byNameOrCode.id;
+    }
+
+    // (3) — canonical fallback bucket.
     const fallback = await this.prisma.projectRoleType.findFirst({
-      where: { code: { in: ['contact', 'external_contact', 'consultant'] } },
+      where: { code: { in: ['external_contact', 'contact', 'consultant'] } },
       orderBy: { sortOrder: 'asc' },
     });
-    return fallback?.id ?? null;
+    if (fallback) return fallback.id;
+
+    // (4) — defensive on-the-fly seed. Mirrors the shape in migration
+    // `20260928230000_seed_external_contact_project_role`. Idempotent
+    // via upsert on the unique `code`.
+    const seeded = await this.prisma.projectRoleType.upsert({
+      where: { code: 'external_contact' },
+      create: {
+        code: 'external_contact',
+        name: 'External Contact',
+        description:
+          'Third-party stakeholder on the project (consultant, planner, supplier contact, etc.); not employee-of-record.',
+        allowedPartnerKind: 'any',
+        isPrimaryRequired: false,
+        requiresContactPerson: false,
+        sortOrder: 25,
+        isSystem: true,
+      },
+      update: {},
+    });
+    return seeded.id;
+  }
+
+  /**
+   * QA4 R2 IMP-10 — resolve an Excel discipline label to a structured
+   * `Discipline` row id. Case-insensitive/trim lookup by name; when
+   * nothing matches, upserts a new row (code = normalized name;
+   * name = the raw label the user typed). Returns null on empty input.
+   *
+   * Idempotent via `upsert` on the unique `code`; a re-import of the
+   * same label lands on the same row.
+   */
+  private async resolveDisciplineId(raw: string | null | undefined): Promise<number | null> {
+    const label = (raw ?? '').trim();
+    if (!label) return null;
+    // Case-insensitive name match — the sheet's spelling may differ
+    // from the seeded canonical name.
+    const existing = await this.prisma.discipline.findFirst({
+      where: { name: { equals: label } },
+      select: { id: true },
+    });
+    if (existing) return existing.id;
+
+    // No match — upsert by a derived code. Keeping the code in the
+    // 'imp-<slug>' namespace signals "created by importer, review".
+    const code = deriveDisciplineCode(label);
+    try {
+      const created = await this.prisma.discipline.upsert({
+        where: { code },
+        create: { code, name: label, isActive: true, sortOrder: 999 },
+        update: { name: label },
+      });
+      return created.id;
+    } catch (err: unknown) {
+      // Extremely defensive — a race with another import trying the
+      // same code raises P2002, which the upsert already handles, but
+      // some Prisma versions surface it through the raw path. Fall
+      // back to a fresh findFirst.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        const again = await this.prisma.discipline.findFirst({
+          where: { code },
+          select: { id: true },
+        });
+        return again?.id ?? null;
+      }
+      throw err;
+    }
   }
 
   /**
@@ -781,6 +878,26 @@ function buildSecondaryNotes(s: SecondaryContact): string {
   if (s.confidence < 1) parts.push(`confidence: ${s.confidence}`);
   const joined = parts.join(' · ');
   return joined.length > 200 ? joined.slice(0, 200) : joined;
+}
+
+/**
+ * QA4 R2 IMP-10 — derive a stable `Discipline.code` from a free-text
+ * discipline label. Truncated at 50 chars (schema limit). Prefix
+ * `imp-` marks importer-created rows so ops can review + rename them
+ * from the admin catalog.
+ */
+function deriveDisciplineCode(label: string): string {
+  const slug = label
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 44);
+  // Guarantee non-empty even for all-punctuation labels.
+  const base = slug || 'discipline';
+  return `imp-${base}`.slice(0, 50);
 }
 
 function buildRunNotes(input: CommitInput, summary: { totalRows: number; eligible: number; belowContract: number }): string {
