@@ -1,18 +1,30 @@
-import { User as UserIcon, GripVertical, AlertCircle, AlertTriangle, Calendar } from 'lucide-react';
+import { User as UserIcon, GripVertical, AlertCircle, AlertTriangle, Calendar, Info } from 'lucide-react';
 import { useDraggable } from '@dnd-kit/core';
 import { cn } from '@/lib/utils';
 import { getTaskHealth } from '@/lib/task-health';
 import { ZONE_BORDER_COLORS, formatShortDate } from '@/lib/task-constants';
 import { QuickTimeLog } from './quick-time-log';
-import { KanbanStatusSelect } from './kanban-status-select';
 
-export function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task: any; onOpenDrawer: (id: number) => void; onStatusChange: (taskId: number, status: string) => void }) {
+// Priority chip palette — QA4 · MT-4 (2026-09-29). Restores the chip
+// missing vs the target mockup. Muted borders + tinted background;
+// full `dark:` variants for parity with the rest of the card.
+const PRIORITY_STYLE: Record<string, string> = {
+  critical: 'bg-red-50 border-red-200 text-red-700 dark:bg-red-500/15 dark:border-red-500/40 dark:text-red-300',
+  high:     'bg-orange-50 border-orange-200 text-orange-700 dark:bg-orange-500/15 dark:border-orange-500/40 dark:text-orange-300',
+  medium:   'bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-500/15 dark:border-amber-500/40 dark:text-amber-300',
+  low:      'bg-slate-100 border-slate-200 text-slate-600 dark:bg-slate-700/50 dark:border-slate-600 dark:text-slate-300',
+};
+
+export function DraggableTaskCard({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id: number) => void; onStatusChange?: (taskId: number, status: string) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: `task-${task.id}` });
   const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined;
   const zoneType = task.zone?.zoneType || 'zone';
   const projectName = task.project?.name || task.label?.projectName || '';
   const zoneName = task.zone?.name || task.label?.name || '';
   const health = getTaskHealth(task);
+  const priority = typeof task.priority === 'string' ? task.priority.toLowerCase() : '';
+  const priorityCls = PRIORITY_STYLE[priority];
+  const note = typeof task.description === 'string' ? task.description.trim() : '';
 
   // BIM Leader is enriched onto the task's project by /projects/:id/findOne;
   // /my-tasks doesn't include it, but we surface whatever's on the payload
@@ -60,6 +72,23 @@ export function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task
         )}
         {health.level === 'critical' && <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />}
         {health.level === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />}
+        {/* MT-2 (QA4 · 2026-09-29): task-notes affordance. When the
+            task has a description, show a small (i) icon top-right;
+            hover reveals the text via title. Click-safe — swallows
+            the event so it doesn't open the drawer or start a drag.
+            No icon when the note is empty. */}
+        {note && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); }}
+            onMouseDown={(e) => e.stopPropagation()}
+            className="shrink-0 flex items-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 cursor-help"
+            title={note}
+            aria-label="Task notes"
+          >
+            <Info className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
       {/* Body — clickable to open drawer. Fields laid out as labeled rows. */}
@@ -68,6 +97,22 @@ export function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task
         <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 leading-tight break-words mb-2.5">
           {task.name}
         </p>
+
+        {/* MT-4 (QA4 · 2026-09-29): priority chip restored — missing
+            vs the locked mockup. Only renders when task.priority is a
+            known key. `task.priority` already ships on /my-tasks. */}
+        {priorityCls && (
+          <div className="mb-2.5">
+            <span
+              className={cn(
+                'inline-block rounded-full border px-1.5 py-0.5 text-[10px] font-bold capitalize',
+                priorityCls,
+              )}
+            >
+              {priority}
+            </span>
+          </div>
+        )}
 
         {/* Labeled field grid — ZONE / SERVICE / DELIVERABLE / BIM LEADER.
             Each row: 10px uppercase slate-400 label + slate-700 value. */}
@@ -132,16 +177,10 @@ export function DraggableTaskCard({ task, onOpenDrawer, onStatusChange }: { task
           </div>
         </div>
 
-        {/* Status change — still reachable but demoted below the CTA
-            row. Full-width select so it's obvious it's actionable
-            without competing with the primary Log Time button. */}
-        <div className="pt-2" onClick={(e) => e.stopPropagation()}>
-          <KanbanStatusSelect
-            status={task.status}
-            requiresReview={task.requiresReview !== false}
-            onStatusChange={(s) => onStatusChange(task.id, s)}
-          />
-        </div>
+        {/* MT-1 (QA4 · 2026-09-29): the per-card status <select> was
+            removed — status changes by dragging the card between
+            columns, which is the primary Kanban gesture. Removing the
+            select declutters the card and matches the target mockup. */}
       </div>
     </div>
   );

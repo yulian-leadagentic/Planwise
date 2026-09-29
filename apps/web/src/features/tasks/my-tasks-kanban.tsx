@@ -480,9 +480,37 @@ export function MyTasksKanbanPage() {
             Clear filters
           </button>
         )}
-        <span className="ml-auto text-[11px] text-slate-600 dark:text-slate-300 tabular-nums">
-          {tasks.length} of {allTasks.length} tasks
-        </span>
+        {/* MT-3 (QA4 · 2026-09-29): the hidden-kanban chip lives here
+            now, right-aligned next to the tasks-count summary. Same
+            wording and behaviour as before — only the position moved. */}
+        <div className="ml-auto flex items-center gap-2">
+          {activeTab === 'kanban' && kanbanHiddenCount > 0 && !revealHiddenKanban && (
+            <button
+              type="button"
+              onClick={() => setRevealHiddenKanban(true)}
+              className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[12px] font-semibold text-amber-800 hover:bg-amber-100"
+              title="Reveal tasks the Kanban board is hiding — no due date or not-yet-ready"
+            >
+              <AlertTriangle className="h-3.5 w-3.5" />
+              <span className="tabular-nums">{kanbanHiddenCount}</span>
+              &nbsp;hidden — no due date / not started
+              <span className="text-amber-600">· reveal</span>
+            </button>
+          )}
+          {activeTab === 'kanban' && revealHiddenKanban && (
+            <button
+              type="button"
+              onClick={() => setRevealHiddenKanban(false)}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-1.5 text-[12px] font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <X className="h-3.5 w-3.5" />
+              Hide undated / future-start again
+            </button>
+          )}
+          <span className="text-[11px] text-slate-600 dark:text-slate-300 tabular-nums">
+            {tasks.length} of {allTasks.length} tasks
+          </span>
+        </div>
       </div>
 
       {isLoading ? (
@@ -507,34 +535,9 @@ export function MyTasksKanbanPage() {
         </div>
       ) : (
         <>
-          {/* Hidden-work chip — surfaces tasks the two mandatory
-              Kanban rules dropped (no due date, future-start). Before
-              this existed, an all-undated board rendered a false
-              "No tasks assigned" empty state. One click reveals them
-              inline; click again ("Hide") to restore the default view. */}
-          {activeTab === 'kanban' && kanbanHiddenCount > 0 && !revealHiddenKanban && (
-            <button
-              type="button"
-              onClick={() => setRevealHiddenKanban(true)}
-              className="mb-3 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[12px] font-semibold text-amber-800 hover:bg-amber-100"
-              title="Reveal tasks the Kanban board is hiding — no due date or not-yet-ready"
-            >
-              <AlertTriangle className="h-3.5 w-3.5" />
-              <span className="tabular-nums">{kanbanHiddenCount}</span>
-              &nbsp;hidden — no due date / not started
-              <span className="text-amber-600">· reveal</span>
-            </button>
-          )}
-          {activeTab === 'kanban' && revealHiddenKanban && (
-            <button
-              type="button"
-              onClick={() => setRevealHiddenKanban(false)}
-              className="mb-3 inline-flex items-center gap-2 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-1.5 text-[12px] font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-            >
-              <X className="h-3.5 w-3.5" />
-              Hide undated / future-start again
-            </button>
-          )}
+          {/* MT-3: hidden-kanban chip + "hide" counterpart moved into
+              the tasks-count summary row above; no chip renders here
+              any more. */}
 
           <DndContext sensors={sensors} collisionDetection={closestCorners}
             onDragStart={(e: DragStartEvent) => setActiveDragId(String(e.active.id))}
