@@ -54,7 +54,9 @@ export class ContactsMappingPresetService {
     kind: string;
     name: string;
     description?: string | null;
-    mapping: Record<string, string>;
+    // QA4 R2 IMP-8 — a preset field can now carry an array of source
+    // headers when the user mapped many-to-one at save time.
+    mapping: Record<string, string | string[]>;
     userId: number;
   }) {
     if (!input.kind) throw new BadRequestException('kind is required');
@@ -120,30 +122,58 @@ export class ContactsMappingPresetService {
  * (guards against a stale FE sending a "phone2" key we won't use), and
  * strips empty header values so an accidentally-blanked row in the UI
  * doesn't persist as `{ email: "" }`.
+ *
+ * QA4 R2 IMP-8 (2026-09-29) — a field may carry a list of source
+ * headers when the user mapped many-to-one at save time. A single
+ * remaining header collapses back to a scalar so old FE clients
+ * still work with the same preset.
  */
-function validateMapping(raw: Record<string, string>): Record<ContactField, string> {
+function validateMapping(
+  raw: Record<string, string | string[]>,
+): Record<ContactField, string | string[]> {
   if (!raw || typeof raw !== 'object') {
     throw new BadRequestException('mapping must be an object');
   }
   const validFields = new Set<string>(CONTACT_FIELDS);
-  const out: Partial<Record<ContactField, string>> = {};
+  const out: Partial<Record<ContactField, string | string[]>> = {};
   for (const [key, value] of Object.entries(raw)) {
     if (!validFields.has(key)) {
       throw new BadRequestException(
         `Unknown mapping field "${key}". Allowed: ${CONTACT_FIELDS.join(', ')}`,
       );
     }
-    if (typeof value !== 'string') continue;
-    const trimmed = value.trim();
-    if (trimmed) out[key as ContactField] = trimmed;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) out[key as ContactField] = trimmed;
+      continue;
+    }
+    if (Array.isArray(value)) {
+      const seen = new Set<string>();
+      const cleaned: string[] = [];
+      for (const h of value) {
+        if (typeof h !== 'string') continue;
+        const trimmed = h.trim();
+        if (!trimmed) continue;
+        if (seen.has(trimmed)) continue;
+        seen.add(trimmed);
+        cleaned.push(trimmed);
+      }
+      if (cleaned.length === 1) out[key as ContactField] = cleaned[0];
+      else if (cleaned.length > 1) out[key as ContactField] = cleaned;
+      continue;
+    }
+    // ignore any other shape (null, number, object) — keeps this
+    // tolerant of a stale FE sending something we don't know about.
   }
   if (Object.keys(out).length === 0) {
     throw new BadRequestException('mapping is empty — set at least one field');
   }
-  return out as Record<ContactField, string>;
+  return out as Record<ContactField, string | string[]>;
 }
 
-function mappingSignature(mapping: Record<ContactField, string>): { fields: ContactField[] } {
+function mappingSignature(
+  mapping: Record<ContactField, string | string[]>,
+): { fields: ContactField[] } {
   return {
     fields: (Object.keys(mapping) as ContactField[]).sort((a, b) => a.localeCompare(b)),
   };

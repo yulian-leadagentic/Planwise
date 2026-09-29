@@ -21,7 +21,18 @@ export type ContactField =
   | 'address'
   | 'note';
 
-export type ContactsMapping = Partial<Record<ContactField, string>>;
+/**
+ * Column mapping shape.
+ *
+ * QA4 R2 IMP-8 (2026-09-29) — a target field may be fed by MORE THAN
+ * ONE source column. When the value is a string, only that header
+ * feeds the field (unchanged behaviour). When the value is a
+ * `string[]`, every listed header is tokenised and the classifier
+ * decides by content — used e.g. when the sheet has two columns both
+ * describing Job Title, or when phone/mobile share a "contact info"
+ * column. An empty array is treated as "not mapped".
+ */
+export type ContactsMapping = Partial<Record<ContactField, string | string[]>>;
 
 export interface ExtractedSheet {
   name: string;

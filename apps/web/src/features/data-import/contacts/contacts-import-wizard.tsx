@@ -788,14 +788,24 @@ function MapStep({
 
   // Which presets can safely apply to this sheet? A preset applies when
   // every header it references exists in the sheet.
+  // QA4 R2 IMP-8 — a preset value may be a list of headers; every one
+  // of them has to be present for the preset to apply cleanly.
   const applicablePresets = useMemo(() => {
     const set = new Set(headerCells.filter(Boolean));
     return presets.filter((p) =>
-      Object.values(p.mapping).every((h) => !h || set.has(h)),
+      Object.values(p.mapping).every((value) => {
+        const headers = mapHeaderList(value);
+        if (headers.length === 0) return true;
+        return headers.every((h) => set.has(h));
+      }),
     );
   }, [presets, headerCells]);
 
-  const canProceed = !!(mapping.email || mapping.phone || mapping.mobile);
+  // QA4 R2 IMP-8 — a field value can be a single header or a list;
+  // canProceed just needs "at least one header on any contact-anchor field".
+  const canProceed = mapHeaderList(mapping.email).length > 0
+    || mapHeaderList(mapping.phone).length > 0
+    || mapHeaderList(mapping.mobile).length > 0;
 
   return (
     <div className="space-y-4">
@@ -836,30 +846,84 @@ function MapStep({
 
       <div className="rounded-[14px] border border-slate-200 bg-white divide-y divide-slate-100">
         {CONTACT_FIELDS.map((field) => {
-          // People UX M5 — wire label to select with a real htmlFor/id
-          // pair so screen readers announce the field name when the
-          // select gets focus (was a floating <label> pointing nowhere).
-          const selectId = `contacts-map-${field}`;
+          // QA4 R2 IMP-8 — a field may be fed by N source columns.
+          // The first selector is always shown; "+ add another source"
+          // appends an extra selector whose contribution the classifier
+          // merges by content. Removing a row via its "— skip —" option
+          // collapses the mapping back to a single header for backward
+          // compatibility with old presets.
+          const headers = mapHeaderList(mapping[field]);
+          const rows = headers.length > 0 ? headers : [''];
           return (
-            <div key={field} className="grid grid-cols-[180px_1fr] items-center gap-4 px-4 py-3">
-              <div>
-                <label htmlFor={selectId} className="text-[13px] font-semibold text-slate-700">
+            <div key={field} className="grid grid-cols-[180px_1fr] items-start gap-4 px-4 py-3">
+              <div className="pt-2">
+                <label htmlFor={`contacts-map-${field}-0`} className="text-[13px] font-semibold text-slate-700">
                   {CONTACT_FIELD_LABELS[field]}
                 </label>
+                {headers.length > 1 && (
+                  <div className="text-[11px] font-medium text-blue-600 mt-0.5">
+                    {headers.length} sources merged
+                  </div>
+                )}
               </div>
-              <select
-                id={selectId}
-                value={mapping[field] ?? ''}
-                onChange={(e) => onChange({ ...mapping, [field]: e.target.value || undefined })}
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
-              >
-                <option value="">— skip —</option>
-                {headerCells.filter(Boolean).map((h, i) => (
-                  <option key={`${h}-${i}`} value={h}>
-                    {h}
-                  </option>
-                ))}
-              </select>
+              <div className="space-y-2">
+                {rows.map((currentHeader, rowIdx) => {
+                  const selectId = `contacts-map-${field}-${rowIdx}`;
+                  const isExtra = rowIdx > 0;
+                  return (
+                    <div key={rowIdx} className="flex items-center gap-2">
+                      <select
+                        id={selectId}
+                        value={currentHeader}
+                        onChange={(e) =>
+                          onChange({
+                            ...mapping,
+                            [field]: setMappingHeaderAt(headers, rowIdx, e.target.value),
+                          })
+                        }
+                        className="w-full px-3 py-2 rounded-lg border border-slate-200 text-[13px] text-slate-700 focus:border-blue-500 focus:outline-none"
+                      >
+                        <option value="">— skip —</option>
+                        {headerCells.filter(Boolean).map((h, i) => (
+                          <option key={`${h}-${i}`} value={h}>
+                            {h}
+                          </option>
+                        ))}
+                      </select>
+                      {isExtra && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onChange({
+                              ...mapping,
+                              [field]: removeMappingHeaderAt(headers, rowIdx),
+                            })
+                          }
+                          className="text-[11px] font-semibold text-slate-500 hover:text-red-600 px-2 py-1"
+                          aria-label={`Remove source ${rowIdx + 1} from ${CONTACT_FIELD_LABELS[field]}`}
+                          title="Remove this source column"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+                {headers.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onChange({
+                        ...mapping,
+                        [field]: [...headers, ''],
+                      })
+                    }
+                    className="text-[11px] font-semibold text-blue-600 hover:text-blue-700"
+                  >
+                    + add another source
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}
@@ -2250,13 +2314,71 @@ function indexMappingToHeaderMapping(
  * (treating "unset" and "empty string" as identical). Used to decide
  * whether a Map-step edit invalidates decisions already taken on
  * Preview. People UX U4 (P-20) · 2026-09-27
+ *
+ * QA4 R2 IMP-8 (2026-09-29) — a field value can now be an ordered list
+ * of source headers; equality is set-based on the list contents so
+ * re-ordering doesn't spuriously invalidate decisions.
  */
 function mappingsEqual(a: ContactsMapping, b: ContactsMapping): boolean {
   const fields = new Set<string>([...Object.keys(a), ...Object.keys(b)]);
   for (const f of fields) {
-    const av = a[f as ContactField] ?? '';
-    const bv = b[f as ContactField] ?? '';
-    if (av !== bv) return false;
+    const av = mapHeaderList(a[f as ContactField]);
+    const bv = mapHeaderList(b[f as ContactField]);
+    if (av.length !== bv.length) return false;
+    for (let i = 0; i < av.length; i++) {
+      if (av[i] !== bv[i]) return false;
+    }
   }
   return true;
+}
+
+/**
+ * QA4 R2 IMP-8 — normalise a mapping field value to an ordered list of
+ * header strings, dropping empties + duplicates. Mirrors the backend
+ * `mappingHeaders` helper so the FE and BE agree on shape.
+ */
+function mapHeaderList(value: string | string[] | undefined): string[] {
+  if (!value) return [];
+  const arr = Array.isArray(value) ? value : [value];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const h of arr) {
+    const t = (h ?? '').trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
+/**
+ * QA4 R2 IMP-8 — replace the header at `index`, then collapse the list
+ * back to a scalar / undefined / array so the mapping stays in its
+ * canonical shape (single header = string, none = undefined).
+ */
+function setMappingHeaderAt(
+  headers: string[],
+  index: number,
+  value: string,
+): string | string[] | undefined {
+  const next = headers.slice();
+  if (index >= next.length) next.push(value);
+  else next[index] = value;
+  return normaliseMappingList(next);
+}
+
+function removeMappingHeaderAt(
+  headers: string[],
+  index: number,
+): string | string[] | undefined {
+  const next = headers.slice();
+  next.splice(index, 1);
+  return normaliseMappingList(next);
+}
+
+function normaliseMappingList(list: string[]): string | string[] | undefined {
+  const cleaned = mapHeaderList(list);
+  if (cleaned.length === 0) return undefined;
+  if (cleaned.length === 1) return cleaned[0];
+  return cleaned;
 }

@@ -134,8 +134,46 @@ export interface RowSynthesis {
  * Column mapping the wizard passes in — canonical field → source
  * header text (Stage 3's shape). Header text is used to look up the
  * cell in `raw`, so it must exactly match the sheet's header.
+ *
+ * QA4 R2 IMP-8 (2026-09-29) — a target field may accept an array of
+ * source headers, and the classifier merges them by content-type at
+ * parse time (e.g. two sheet columns feeding "Job Title", or a
+ * phone-info column feeding both `phone` and `mobile`). A single
+ * string still works for backward compatibility with all Stage 3
+ * presets and every caller written before this change.
  */
-export type ColumnMapping = Partial<Record<ContactField, string>>;
+export type ColumnMapping = Partial<Record<ContactField, string | string[]>>;
+
+/**
+ * Normalise a mapping value to an ordered list of source headers.
+ * Empty / undefined values → empty list. String → single-element list.
+ * Callers can iterate the returned list uniformly without checking
+ * the shape at every site. Blank/duplicate headers are dropped.
+ */
+export function mappingHeaders(value: string | string[] | undefined): string[] {
+  if (!value) return [];
+  const arr = Array.isArray(value) ? value : [value];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of arr) {
+    const h = (raw ?? '').trim();
+    if (!h) continue;
+    if (seen.has(h)) continue;
+    seen.add(h);
+    out.push(h);
+  }
+  return out;
+}
+
+/**
+ * Convenience — get the primary (first) mapped header for a field.
+ * Preserves the pre-IMP-8 "one header per field" call sites that need
+ * a scalar for display / preset serialisation.
+ */
+export function primaryMappingHeader(value: string | string[] | undefined): string | undefined {
+  const list = mappingHeaders(value);
+  return list[0];
+}
 
 @Injectable()
 export class ContactsSplitMergeService {
@@ -192,31 +230,81 @@ export class ContactsSplitMergeService {
     let extraPhones: string[] | undefined;
 
     // Copy simple text fields straight through (trim only — never split).
+    // QA4 R2 IMP-8 — every field may be fed by MULTIPLE source columns;
+    // iterate and pick the first non-blank value for the text-only
+    // fields. The classifier handles the phone/email fields separately
+    // below (they're the interesting merge cases).
     for (const field of ['contact', 'company', 'discipline', 'role', 'address', 'note'] as const) {
-      const header = mapping[field];
-      if (!header) continue;
-      const v = (raw[header] ?? '').trim();
-      if (v) values[field] = v;
+      const headers = mappingHeaders(mapping[field]);
+      if (headers.length === 0) continue;
+      const collectedTextValues: string[] = [];
+      for (const header of headers) {
+        const v = (raw[header] ?? '').trim();
+        if (v) collectedTextValues.push(v);
+      }
+      if (collectedTextValues.length === 0) continue;
+      // For `role` and `discipline` we join with " · " so IMP-10 sees
+      // both classifier hits. For the identity fields (contact/company)
+      // keep the first non-blank — merging two identity strings would
+      // corrupt the dedup key.
+      if (field === 'role' || field === 'discipline' || field === 'note' || field === 'address') {
+        // Dedup case-insensitively; the sheet may repeat the same
+        // value across two mapped columns.
+        const seen = new Set<string>();
+        const uniq = collectedTextValues.filter((v) => {
+          const key = v.toLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        values[field] = uniq.length > 1 ? uniq.join(' · ') : uniq[0];
+      } else {
+        values[field] = collectedTextValues[0];
+      }
     }
 
     // ── EMAIL split ─────────────────────────────────────────────────
-    const emailHeader = mapping.email;
-    if (emailHeader) {
-      const cell = (raw[emailHeader] ?? '').trim();
-      if (cell) {
+    // QA4 R2 IMP-8 — iterate every mapped email column and union
+    // their split results. The first valid email lands on `values.email`;
+    // subsequent ones flow into `extraEmails`. A failed split on any
+    // one column still flags the row (surfaces to conflict lane).
+    const emailHeaders = mappingHeaders(mapping.email);
+    if (emailHeaders.length > 0) {
+      const allEmails: string[] = [];
+      let anyFailed = false;
+      let anySplit = false;
+      const failedCells: string[] = [];
+      for (const emailHeader of emailHeaders) {
+        const cell = (raw[emailHeader] ?? '').trim();
+        if (!cell) continue;
         const parts = splitEmailCell(cell);
         if (parts.status === 'single') {
-          values.email = parts.emails[0];
+          if (parts.emails[0]) allEmails.push(parts.emails[0]);
         } else if (parts.status === 'split') {
-          values.email = parts.emails[0];
-          extraEmails = parts.emails.slice(1);
-          synthesis.emailSplit = true;
+          allEmails.push(...parts.emails);
+          anySplit = true;
         } else {
-          // The cell had a delimiter but at least one piece did not
-          // validate — send to conflict lane. Preserve the original
-          // text so the user can decide.
-          values.email = cell;
-          synthesis.emailSplitFailed = true;
+          allEmails.push(cell);
+          anyFailed = true;
+          failedCells.push(cell);
+        }
+      }
+      // Dedup email list case-insensitively.
+      const seen = new Set<string>();
+      const uniq = allEmails.filter((e) => {
+        const key = e.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (uniq.length > 0) {
+        values.email = uniq[0];
+        if (uniq.length > 1) extraEmails = uniq.slice(1);
+      }
+      if (anySplit) synthesis.emailSplit = true;
+      if (anyFailed) {
+        synthesis.emailSplitFailed = true;
+        for (const cell of failedCells) {
           errors.push(
             `email cell "${truncate(cell)}" contains a delimiter but one or more pieces are not valid email addresses`,
           );
@@ -230,26 +318,29 @@ export class ContactsSplitMergeService {
     // the existing "split into mobile/phone slots" behaviour AND pull
     // a secretary/office-manager name out of the same cell as a
     // secondary contact, without a per-file heuristic.
-    const mobileHeader = mapping.mobile;
-    const phoneHeader = mapping.phone;
+    // QA4 R2 IMP-8 — every mobile/phone-mapped column feeds the same
+    // accumulator; the classifier decides which slot each token
+    // belongs to by content, regardless of the source column.
+    const mobileHeaders = mappingHeaders(mapping.mobile);
+    const phoneHeaders = mappingHeaders(mapping.phone);
 
     const collected: { mobile: string[]; phone: string[]; extra: string[]; anyFailed: boolean; anySplit: boolean } = {
       mobile: [], phone: [], extra: [], anyFailed: false, anySplit: false,
     };
     const secondaries: SecondaryContact[] = [];
 
-    if (mobileHeader) {
+    for (const header of mobileHeaders) {
       processPhoneCellWithClassifier(
-        (raw[mobileHeader] ?? '').trim(),
+        (raw[header] ?? '').trim(),
         'mobile',
         collected,
         secondaries,
         (values.contact ?? '').trim(),
       );
     }
-    if (phoneHeader) {
+    for (const header of phoneHeaders) {
       processPhoneCellWithClassifier(
-        (raw[phoneHeader] ?? '').trim(),
+        (raw[header] ?? '').trim(),
         'phone',
         collected,
         secondaries,

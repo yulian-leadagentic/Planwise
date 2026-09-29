@@ -2,7 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 
 import { ContactsHeaderDetectionService, SheetGrade } from './header-detection.service';
 import { CONTACT_FIELDS, ContactField } from './header-dictionary';
-import { ContactsSplitMergeService, ColumnMapping, ResolvedRow } from './split-merge.service';
+import { ContactsSplitMergeService, ColumnMapping, ResolvedRow, mappingHeaders } from './split-merge.service';
 import { ContactsDedupService, DedupDecision } from './dedup.service';
 import { ExtractedSheet, TriageResult } from './triage.service';
 
@@ -42,9 +42,17 @@ export class ContactsResolveService {
     const { records: dataRows, excelRowIndexes } = sheetToRecords(sheet.rows, headerIdx, headerCells);
 
     // Fail-fast: every mapped header must actually exist in the sheet.
-    const missing = Object.entries(mapping)
-      .filter(([, header]) => header && !headerCells.some((h) => h === header))
-      .map(([field, header]) => `${field} → "${header}"`);
+    // QA4 R2 IMP-8 — a field may map to a list of headers; each header
+    // in the list is validated independently.
+    const headerSet = new Set(headerCells.filter(Boolean));
+    const missing: string[] = [];
+    for (const [field, value] of Object.entries(mapping)) {
+      for (const header of mappingHeaders(value as string | string[] | undefined)) {
+        if (!headerSet.has(header)) {
+          missing.push(`${field} → "${header}"`);
+        }
+      }
+    }
     if (missing.length > 0) {
       throw new BadRequestException(
         `Mapping references headers not present in sheet "${sheet.name}": ${missing.join(', ')}`,
@@ -116,7 +124,13 @@ export interface PreviewSummary {
 
 function findHeaderIndexFromGrade(sheet: ExtractedSheet, mapping: ColumnMapping): number {
   // Fallback — scan for the first row that contains ALL mapped headers.
-  const mappedHeaders = new Set(Object.values(mapping).filter(Boolean) as string[]);
+  // QA4 R2 IMP-8 — a mapping value may be a list; flatten before the scan.
+  const mappedHeaders = new Set<string>();
+  for (const value of Object.values(mapping)) {
+    for (const header of mappingHeaders(value as string | string[] | undefined)) {
+      mappedHeaders.add(header);
+    }
+  }
   for (let i = 0; i < sheet.rows.length; i++) {
     const row = sheet.rows[i]?.map((c) => (c ?? '').trim());
     if (!row) continue;
@@ -166,9 +180,14 @@ function validateMapping(mapping: ColumnMapping) {
         `Unknown mapping field "${key}". Allowed: ${CONTACT_FIELDS.join(', ')}`,
       );
     }
-    if (value != null && typeof value !== 'string') {
-      throw new BadRequestException(`mapping.${key} must be a string header name`);
-    }
+    // QA4 R2 IMP-8 — either a single string header name or an array
+    // of them. Any other shape is a bad request.
+    if (value == null) continue;
+    if (typeof value === 'string') continue;
+    if (Array.isArray(value) && value.every((h) => typeof h === 'string')) continue;
+    throw new BadRequestException(
+      `mapping.${key} must be a header string or an array of header strings`,
+    );
   }
 }
 
