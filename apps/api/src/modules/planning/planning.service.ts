@@ -260,55 +260,48 @@ export class PlanningService {
     // ORIGINAL deliverable name (e.g. "תכנון ראשוני") captured at
     // template-authoring time, while the current Template row has been
     // renamed to "<marker>\<detail-suffix>" (e.g. "תכנון ראשוני\תשתית
-    // ודוח קריטי"). An exact IN(...) misses those rows.
+    // ודוח קריטי").
     //
-    // We fetch every task_list Template that COULD match — the union
-    // of `name = marker` and `name LIKE marker%` (using Prisma
-    // startsWith) — then, in-memory, we keep the closest match per
-    // marker (exact wins over prefix).
-    const markerArr = Array.from(markerNames);
-    const markerTemplates = markerArr.length === 0 ? [] : await this.prisma.template.findMany({
-      where: {
-        deletedAt: null,
-        type: 'task_list',
-        OR: markerArr.flatMap((m) => [
-          { name: m },
-          { name: { startsWith: `${m}\\` } },
-        ]),
-      },
-      select: {
-        name: true,
-        phase: { select: { id: true, name: true, color: true } },
-      },
-    });
-    // Bucket per marker: prefer an EXACT name match; fall back to the
-    // first prefix match. All hits carry the same source template's
-    // phase, so any prefix hit is safe as a fallback.
+    // Earlier attempts used Prisma `startsWith: marker + '\\'`, which
+    // Prisma compiles to `LIKE 'marker\%'` — the backslash escapes the
+    // `%` in MySQL, so the query looks for the LITERAL string `marker%`
+    // and matches nothing. Rather than fight LIKE escaping, we fetch
+    // every task_list Template with a phase set (a small catalog — a
+    // handful of rows in practice) and filter in-memory. This also
+    // makes the semantics obvious in code.
     const phaseByMarkerName = new Map<string, { id: number; name: string; color: string | null }>();
-    // First pass — exact.
-    for (const t of markerTemplates) {
-      if (!t.phase) continue;
-      if (markerNames.has(t.name) && !phaseByMarkerName.has(t.name)) {
-        phaseByMarkerName.set(t.name, {
-          id: t.phase.id,
-          name: t.phase.name,
-          color: (t.phase as any).color ?? null,
-        });
-      }
-    }
-    // Second pass — prefix (marker + '\'). Only sets the entry if the
-    // exact pass didn't already resolve it.
-    for (const t of markerTemplates) {
-      if (!t.phase) continue;
-      for (const m of markerNames) {
-        if (phaseByMarkerName.has(m)) continue;
-        if (t.name.startsWith(`${m}\\`)) {
-          phaseByMarkerName.set(m, {
+    if (markerNames.size > 0) {
+      const allTemplates = await this.prisma.template.findMany({
+        where: { deletedAt: null, type: 'task_list', phaseId: { not: null } },
+        select: {
+          name: true,
+          phase: { select: { id: true, name: true, color: true } },
+        },
+      });
+      // First pass — exact name match wins.
+      for (const t of allTemplates) {
+        if (!t.phase) continue;
+        if (markerNames.has(t.name) && !phaseByMarkerName.has(t.name)) {
+          phaseByMarkerName.set(t.name, {
             id: t.phase.id,
             name: t.phase.name,
             color: (t.phase as any).color ?? null,
           });
-          break;
+        }
+      }
+      // Second pass — prefix (marker + '\'). Sets only unresolved markers.
+      for (const t of allTemplates) {
+        if (!t.phase) continue;
+        for (const m of markerNames) {
+          if (phaseByMarkerName.has(m)) continue;
+          if (t.name.startsWith(`${m}\\`)) {
+            phaseByMarkerName.set(m, {
+              id: t.phase.id,
+              name: t.phase.name,
+              color: (t.phase as any).color ?? null,
+            });
+            break;
+          }
         }
       }
     }
