@@ -810,7 +810,11 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
           blue with a heavier underline, inactive ones reveal a grey fill on
           hover. */}
       <div className="border-b border-slate-200 dark:border-slate-700">
-        <div className="flex gap-1.5 flex-nowrap overflow-x-auto">
+        {/* OPS-2 (QA4 · 2026-09-29): mirror OPS-1's fix — pin
+            `overflow-y-hidden` on this tab strip too so the browser
+            can't render a phantom vertical scrollbar (▲▼ chrome) when
+            the row's intrinsic height mismatches its parent by 1px. */}
+        <div className="flex gap-1.5 flex-nowrap overflow-x-auto overflow-y-hidden">
           {([
             { key: 'matrix', label: 'Matrix', sub: 'Zone × Deliverable' },
             { key: 'zone-tasks', label: 'Zone Tasks', sub: 'Zone × Task' },
