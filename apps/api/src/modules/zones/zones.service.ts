@@ -233,11 +233,31 @@ export class ZonesService {
       );
     }
 
+    // ZONE-DELETE-500 fix (2026-09-29) — the unique constraint
+    // `zones_project_id_name_deleted_at_key` covers (project_id, name,
+    // deleted_at). When two sibling zones share a name (e.g. two "Level"
+    // sub-zones under one parent), a bulk updateMany writes the SAME
+    // `deletedAt` to both and the tuple collides. Rename each zone at
+    // soft-delete with a `#deleted-<id>-<epoch>` suffix so the tuple is
+    // guaranteed unique across concurrent deletes without a schema
+    // change. Active reads still filter `deletedAt IS NULL`; archive
+    // views can strip the suffix for display if needed.
+    const zonesToSoftDelete = await this.prisma.zone.findMany({
+      where: { id: { in: allIds }, deletedAt: null },
+      select: { id: true, name: true },
+    });
+    const nowMs = now.getTime();
+
     await this.prisma.$transaction([
-      this.prisma.zone.updateMany({
-        where: { id: { in: allIds }, deletedAt: null },
-        data: { deletedAt: now },
-      }),
+      ...zonesToSoftDelete.map((z) =>
+        this.prisma.zone.update({
+          where: { id: z.id },
+          data: {
+            deletedAt: now,
+            name: `${z.name} #deleted-${z.id}-${nowMs}`,
+          },
+        }),
+      ),
       // Soft-delete tasks belonging to any of the affected zones. Tasks
       // already have a deletedAt column (used for the manual delete
       // path); reusing it keeps the archive list consistent.
