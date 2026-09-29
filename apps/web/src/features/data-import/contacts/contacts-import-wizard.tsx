@@ -1411,6 +1411,10 @@ function PreviewTable({
                 <PreviewTh>Phone</PreviewTh>
                 <PreviewTh>Mobile</PreviewTh>
                 <PreviewTh>Email</PreviewTh>
+                {/* IMP-6 (QA4 Round-2 · 2026-09-29): Job Title / Role
+                    column so the PM can add or fix it inline. Editable
+                    even when the mapping didn't auto-fill it. */}
+                <PreviewTh>Job Title</PreviewTh>
                 <PreviewTh>Office manager</PreviewTh>
                 <PreviewTh className="w-40">Verdict</PreviewTh>
               </tr>
@@ -1583,6 +1587,19 @@ function PreviewTableRow({
           />
         </td>
         <td className="px-2 py-2">
+          {/* IMP-6 (QA4 Round-2 · 2026-09-29): Job Title / Role cell.
+              Always editable — even when the mapping didn't feed it, so
+              the PM can add it during load. The commit prefers this
+              override over `dec.values.role`. */}
+          <EditableCell
+            field="role"
+            value={effective('role', dec.values.role)}
+            edited={isEdited('role')}
+            placeholder="—"
+            onCommit={(v) => onOverride('role', v)}
+          />
+        </td>
+        <td className="px-2 py-2">
           {/* QA4 IMP-4 — extracted office managers appear as their own
               rows below; this cell summarizes them so the primary row
               still reads as a complete record. When the PM types an
@@ -1620,7 +1637,8 @@ function PreviewTableRow({
       </tr>
       {isExpanded && (
         <tr className={cn('align-top', rowTint)}>
-          <td colSpan={9} className="px-3 pt-0 pb-2.5">
+          {/* colSpan bumped to 10 for the IMP-6 Job Title column. */}
+          <td colSpan={10} className="px-3 pt-0 pb-2.5">
             <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2 space-y-1">
               <div className="text-[11px] text-slate-600 dark:text-slate-300 flex items-center gap-1">
                 <span className="font-semibold">Organization:</span>{' '}

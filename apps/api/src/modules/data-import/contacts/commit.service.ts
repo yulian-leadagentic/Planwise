@@ -270,7 +270,10 @@ export class ContactsCommitService {
                   typeId: workerOf.id,
                   isPrimary: true,
                   titleAtB:
-                    dec.values.role ?? eff('discipline') ?? null,
+                    // QA4 Round-2 IMP-6: prefer the PM's inline
+                    // Role/Title override when set — falls back to the
+                    // Excel role column and then the row's discipline.
+                    eff('role') ?? dec.values.role ?? eff('discipline') ?? null,
                 },
               });
               result.workerOfLinksCreated++;
@@ -308,7 +311,9 @@ export class ContactsCommitService {
                     roleId,
                     isPrimary: false,
                     titleInProject:
-                      eff('discipline') ?? dec.values.role ?? null,
+                      // QA4 Round-2 IMP-6 — role override takes
+                      // precedence for the per-project title.
+                      eff('role') ?? eff('discipline') ?? dec.values.role ?? null,
                     onBehalfOfPartyId: orgBpId ?? null,
                   },
                 });
@@ -674,6 +679,7 @@ export type OverrideField =
   | 'mobile'
   | 'email'
   | 'discipline'
+  | 'role'
   | 'officeManager';
 
 export type RowOverrides = Partial<Record<OverrideField, string | null>>;

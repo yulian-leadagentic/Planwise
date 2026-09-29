@@ -173,6 +173,11 @@ export interface MappingPreset {
  * extracted secondary-contact rows (see QA4 IMP-4) and, when edited on
  * the primary row, carries an office-manager name the classifier pulled
  * from the phone cell.
+ *
+ * QA4 Round-2 IMP-6 (2026-09-29) added `role` — the person's Job Title
+ * (aka professional role, e.g. Architect, Structural engineer). Editable
+ * even for rows the mapping didn't auto-fill, so the PM can add the
+ * missing title during load.
  */
 export type OverrideField =
   | 'contact'
@@ -181,6 +186,7 @@ export type OverrideField =
   | 'mobile'
   | 'email'
   | 'discipline'
+  | 'role'
   | 'officeManager';
 
 export type RowOverrides = Partial<Record<OverrideField, string | null>>;
