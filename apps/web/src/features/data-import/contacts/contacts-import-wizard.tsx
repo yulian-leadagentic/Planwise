@@ -1822,6 +1822,9 @@ function PeopleTable({
   onDecide,
   onOverride,
   showCompany,
+  onMovePerson,
+  moveTargets,
+  currentGroupKey,
 }: {
   people: Array<{ decision: DedupDecision; skipped: boolean }>;
   rowByIndex: Map<number, ResolvedRow>;
@@ -1830,10 +1833,28 @@ function PeopleTable({
   onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
   onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
   showCompany: boolean;
+  /**
+   * QA4 E4 (2026-09-29) — move a person to another org (or Individuals).
+   * `null` moves them to the individuals bucket; a batchOrgKey string
+   * assigns them under that org card.
+   */
+  onMovePerson?: (rowIndex: number, targetKey: string | null) => void;
+  /** QA4 E4 — list of possible move targets (org cards + Individuals). */
+  moveTargets?: Array<{ key: string | null; label: string; domain?: string | null }>;
+  /** QA4 E4 — the group this table lives in, filtered out of the "Move to" list. */
+  currentGroupKey?: string | null;
 }) {
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+  const [expandedFields, setExpandedFields] = useState<Set<number>>(() => new Set());
   const toggle = (i: number) =>
     setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  const toggleFields = (i: number) =>
+    setExpandedFields((prev) => {
       const next = new Set(prev);
       if (next.has(i)) next.delete(i);
       else next.add(i);
@@ -1845,6 +1866,7 @@ function PeopleTable({
       <table className="w-full text-[12px] border-collapse">
         <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-800/70 text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
           <tr>
+            <PreviewTh className="w-8">&nbsp;</PreviewTh>
             <PreviewTh className="w-16">Sheet row</PreviewTh>
             <PreviewTh>Discipline</PreviewTh>
             <PreviewTh>Contact</PreviewTh>
@@ -1866,6 +1888,7 @@ function PeopleTable({
             const rowDec = decisions[decisionKeyFor(d.sourceRowIndex)];
             const effectiveOrgAction = rowDec?.orgAction ?? d.org.action;
             const isExpanded = expanded.has(d.sourceRowIndex);
+            const isFieldsExpanded = expandedFields.has(d.sourceRowIndex);
             const isSkipped = !!rowDec?.skipped;
             const secondaries = d.secondaryContacts ?? [];
             return (
@@ -1876,9 +1899,11 @@ function PeopleTable({
                   rowDec={rowDec}
                   effectiveOrgAction={effectiveOrgAction}
                   isExpanded={isExpanded}
+                  isFieldsExpanded={isFieldsExpanded}
                   isSkipped={isSkipped}
                   showCompany={showCompany}
                   onToggleExpand={() => toggle(d.sourceRowIndex)}
+                  onToggleFields={() => toggleFields(d.sourceRowIndex)}
                   onToggleSkipped={() =>
                     onDecide(d.sourceRowIndex, { skipped: !isSkipped })
                   }
@@ -1886,6 +1911,9 @@ function PeopleTable({
                   onOverride={(field, value) =>
                     onOverride(d.sourceRowIndex, field, value)
                   }
+                  onMovePerson={onMovePerson}
+                  moveTargets={moveTargets}
+                  currentGroupKey={currentGroupKey}
                 />
                 {secondaries.map((s, i) => (
                   <SecondaryContactRow
@@ -2230,18 +2258,29 @@ function PreviewTableRow({
   rowDec,
   effectiveOrgAction,
   isExpanded,
+  isFieldsExpanded,
   isSkipped,
   showCompany,
   onToggleExpand,
+  onToggleFields,
   onToggleSkipped,
   onDecide,
   onOverride,
+  onMovePerson,
+  moveTargets,
+  currentGroupKey,
 }: {
   dec: DedupDecision;
   row: ResolvedRow;
   rowDec: RowDecision | undefined;
   effectiveOrgAction: DedupDecision['org']['action'];
   isExpanded: boolean;
+  /**
+   * QA4 E1 (2026-09-29) — separate expand state that opens a stacked
+   * form of every editable field beneath the row. Independent of
+   * `isExpanded` which still opens the dedup-reasoning info panel.
+   */
+  isFieldsExpanded: boolean;
   /** QA4 R2b ORG-6 — reviewer marked the row `skip` via the trash icon. */
   isSkipped: boolean;
   /**
@@ -2251,9 +2290,14 @@ function PreviewTableRow({
    */
   showCompany: boolean;
   onToggleExpand: () => void;
+  onToggleFields: () => void;
   onToggleSkipped: () => void;
   onDecide: (patch: Partial<RowDecision>) => void;
   onOverride: (field: OverrideField, value: string | null | undefined) => void;
+  /** QA4 E4 (2026-09-29) — see PeopleTable props. */
+  onMovePerson?: (rowIndex: number, targetKey: string | null) => void;
+  moveTargets?: Array<{ key: string | null; label: string; domain?: string | null }>;
+  currentGroupKey?: string | null;
 }) {
   const isConflict = dec.org.action === 'conflict';
   const belowContract = !dec.meetsMinimumContract;
@@ -2288,6 +2332,26 @@ function PreviewTableRow({
   return (
     <>
       <tr className={cn('align-top', rowTint, rowMuted)}>
+        <td className="px-2 py-2 text-center">
+          {/* QA4 E1 (2026-09-29) — chevron toggles the stacked field
+              editor beneath the row (all fields inline-editable). */}
+          <button
+            type="button"
+            onClick={onToggleFields}
+            className="inline-flex items-center justify-center h-5 w-5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 focus:outline-none focus:bg-slate-100 dark:focus:bg-slate-800"
+            aria-expanded={isFieldsExpanded}
+            aria-label={isFieldsExpanded ? 'Collapse person fields' : 'Expand person fields'}
+            title={isFieldsExpanded ? 'Hide all person fields' : 'Show all person fields'}
+          >
+            <ChevronRight
+              className={cn(
+                'h-3.5 w-3.5 text-slate-500 dark:text-slate-400 transition-transform',
+                isFieldsExpanded && 'rotate-90',
+              )}
+              aria-hidden="true"
+            />
+          </button>
+        </td>
         <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
           <div className="pt-0.5" title="Actual sheet row number — matches the source file">
             Row {dec.sourceRowIndex}
@@ -2442,14 +2506,138 @@ function PreviewTableRow({
           )}
         </td>
       </tr>
+      {isFieldsExpanded && (
+        <tr className={cn('align-top', rowTint)}>
+          {/* QA4 E1 (2026-09-29) — expanded stacked field editor. Same
+              colSpan math as the info panel: base 12 (chevron + row +
+              Discipline + Contact + Phone + Mobile + Email + Person +
+              Job Title + Office mgr + Verdict + trash) + 1 optional
+              Company column. Each field is an EditableCell so blur
+              commits (mirrors the row's inline cells). */}
+          <td colSpan={showCompany ? 13 : 12} className="px-3 pt-0 pb-3">
+            <div className="rounded-md border border-blue-200 dark:border-blue-900/50 bg-blue-50/40 dark:bg-blue-950/20 p-3">
+              <div className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 dark:text-slate-400 mb-2">
+                Row {dec.sourceRowIndex} · all fields
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2">
+                <FieldEditorRow label="Name" hint="the person's display name (required)">
+                  <EditableCell
+                    field="contact"
+                    value={(rowDec?.overrides && 'contact' in rowDec.overrides ? rowDec.overrides.contact ?? null : dec.values.contact ?? null)}
+                    edited={!!rowDec?.overrides && 'contact' in (rowDec.overrides ?? {})}
+                    strong
+                    placeholder="no name"
+                    onCommit={(v) => onOverride('contact', v)}
+                  />
+                </FieldEditorRow>
+                {showCompany && (
+                  <FieldEditorRow label="Company">
+                    <EditableCell
+                      field="company"
+                      value={(rowDec?.overrides && 'company' in rowDec.overrides ? rowDec.overrides.company ?? null : dec.values.company ?? null)}
+                      edited={!!rowDec?.overrides && 'company' in (rowDec.overrides ?? {})}
+                      inherited={!(rowDec?.overrides && 'company' in rowDec.overrides) && row.synthesis.companyFilled}
+                      placeholder="no company"
+                      onCommit={(v) => onOverride('company', v)}
+                    />
+                  </FieldEditorRow>
+                )}
+                <FieldEditorRow label="Phone">
+                  <EditableCell
+                    field="phone"
+                    value={(rowDec?.overrides && 'phone' in rowDec.overrides ? rowDec.overrides.phone ?? null : dec.values.phone ?? null)}
+                    edited={!!rowDec?.overrides && 'phone' in (rowDec.overrides ?? {})}
+                    synthesized={!(rowDec?.overrides && 'phone' in rowDec.overrides) && row.synthesis.phoneSplit}
+                    failed={!(rowDec?.overrides && 'phone' in rowDec.overrides) && row.synthesis.phoneSplitFailed}
+                    placeholder="—"
+                    onCommit={(v) => onOverride('phone', v)}
+                  />
+                </FieldEditorRow>
+                <FieldEditorRow label="Mobile">
+                  <EditableCell
+                    field="mobile"
+                    value={(rowDec?.overrides && 'mobile' in rowDec.overrides ? rowDec.overrides.mobile ?? null : dec.values.mobile ?? null)}
+                    edited={!!rowDec?.overrides && 'mobile' in (rowDec.overrides ?? {})}
+                    synthesized={!(rowDec?.overrides && 'mobile' in rowDec.overrides) && row.synthesis.phoneSplit}
+                    placeholder="—"
+                    onCommit={(v) => onOverride('mobile', v)}
+                  />
+                </FieldEditorRow>
+                <FieldEditorRow
+                  label="Email"
+                  hint={row.extraEmails && row.extraEmails.length > 0 ? `extras: ${row.extraEmails.join(', ')}` : undefined}
+                >
+                  <EditableCell
+                    field="email"
+                    value={(rowDec?.overrides && 'email' in rowDec.overrides ? rowDec.overrides.email ?? null : dec.values.email ?? null)}
+                    edited={!!rowDec?.overrides && 'email' in (rowDec.overrides ?? {})}
+                    synthesized={!(rowDec?.overrides && 'email' in rowDec.overrides) && row.synthesis.emailSplit}
+                    failed={!(rowDec?.overrides && 'email' in rowDec.overrides) && row.synthesis.emailSplitFailed}
+                    placeholder="—"
+                    onCommit={(v) => onOverride('email', v)}
+                  />
+                </FieldEditorRow>
+                <FieldEditorRow label="Discipline">
+                  <EditableCell
+                    field="discipline"
+                    value={(rowDec?.overrides && 'discipline' in rowDec.overrides ? rowDec.overrides.discipline ?? null : dec.values.discipline ?? null)}
+                    edited={!!rowDec?.overrides && 'discipline' in (rowDec.overrides ?? {})}
+                    inherited={!(rowDec?.overrides && 'discipline' in rowDec.overrides) && row.synthesis.disciplineFilled}
+                    placeholder="—"
+                    onCommit={(v) => onOverride('discipline', v)}
+                  />
+                </FieldEditorRow>
+                <FieldEditorRow label="Job title / role">
+                  <EditableCell
+                    field="role"
+                    value={(rowDec?.overrides && 'role' in rowDec.overrides ? rowDec.overrides.role ?? null : dec.values.role ?? null)}
+                    edited={!!rowDec?.overrides && 'role' in (rowDec.overrides ?? {})}
+                    placeholder="—"
+                    onCommit={(v) => onOverride('role', v)}
+                  />
+                </FieldEditorRow>
+                <FieldEditorRow label="Office manager" hint="extracted from phone cell">
+                  <EditableCell
+                    field="officeManager"
+                    value={(() => {
+                      const overrides = rowDec?.overrides ?? {};
+                      if ('officeManager' in overrides) return overrides.officeManager ?? null;
+                      const extractedSummary =
+                        row.secondaryContacts && row.secondaryContacts.length > 0
+                          ? row.secondaryContacts.map((s) => s.name).join(', ')
+                          : null;
+                      return extractedSummary;
+                    })()}
+                    edited={!!rowDec?.overrides && 'officeManager' in (rowDec.overrides ?? {})}
+                    extracted={!(rowDec?.overrides && 'officeManager' in rowDec.overrides) && (row.secondaryContacts?.length ?? 0) > 0}
+                    placeholder="—"
+                    onCommit={(v) => onOverride('officeManager', v)}
+                  />
+                </FieldEditorRow>
+              </div>
+              {onMovePerson && moveTargets && moveTargets.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-blue-200 dark:border-blue-900/50 flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                    Move to:
+                  </span>
+                  <MoveToDropdown
+                    targets={moveTargets.filter((t) => t.key !== (currentGroupKey ?? null))}
+                    onMove={(key) => onMovePerson(dec.sourceRowIndex, key)}
+                  />
+                </div>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
       {isExpanded && (
         <tr className={cn('align-top', rowTint)}>
-          {/* colSpan tracks the visible cells: base 11 (Sheet row +
-              Discipline + Contact + Phone + Mobile + Email + Person
-              badge + Job Title + Office mgr + Verdict + trash), plus
-              1 for the optional Company column (RD-1: hidden under
-              org cards, shown under Individuals). */}
-          <td colSpan={showCompany ? 12 : 11} className="px-3 pt-0 pb-2.5">
+          {/* colSpan tracks the visible cells: base 12 (chevron +
+              Sheet row + Discipline + Contact + Phone + Mobile +
+              Email + Person badge + Job Title + Office mgr + Verdict
+              + trash), plus 1 for the optional Company column (RD-1:
+              hidden under org cards, shown under Individuals). */}
+          <td colSpan={showCompany ? 13 : 12} className="px-3 pt-0 pb-2.5">
             <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2 space-y-1">
               <div className="text-[11px] text-slate-600 dark:text-slate-300 flex items-center gap-1">
                 <span className="font-semibold">Organization:</span>{' '}
@@ -2548,6 +2736,7 @@ function SecondaryContactRow({
 }) {
   return (
     <tr className="align-top bg-indigo-50/30 dark:bg-indigo-950/10">
+      <td className="px-2 py-2" aria-hidden="true">&nbsp;</td>
       <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
         <div className="pt-0.5">
           <span className="text-indigo-500 dark:text-indigo-400 mr-1">↳</span>
@@ -3158,4 +3347,119 @@ function isPlausibleCompanyDisplay(raw: string | null | undefined): boolean {
   if (s.includes('@')) return false;
   if (/^[-‐-―–—]+$/.test(s)) return false;
   return true;
+}
+
+/**
+ * QA4 E1 (2026-09-29) — one label + editable cell in the stacked
+ * "all fields" panel that expands beneath a person row. The child is
+ * an EditableCell already wired to the row's `onOverride`.
+ */
+function FieldEditorRow({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5 min-w-0">
+      <div className="flex items-baseline gap-1">
+        <span className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 dark:text-slate-400">
+          {label}
+        </span>
+        {hint && (
+          <span className="text-[10px] text-slate-400 dark:text-slate-500 italic truncate">
+            {hint}
+          </span>
+        )}
+      </div>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * QA4 E4 (2026-09-29) — "Move to…" dropdown fallback for the drag-and-
+ * drop person mover. Lists every other org card + a "Move to
+ * Individuals" entry. Keyboard-accessible; type-to-filter.
+ */
+function MoveToDropdown({
+  targets,
+  onMove,
+}: {
+  targets: Array<{ key: string | null; label: string; domain?: string | null }>;
+  onMove: (targetKey: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    if (open) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+  const needle = q.trim().toLowerCase();
+  const filtered = needle
+    ? targets.filter(
+        (t) => t.label.toLowerCase().includes(needle) || (t.domain ?? '').toLowerCase().includes(needle),
+      )
+    : targets;
+  return (
+    <div className="relative inline-block" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500 focus:outline-none focus:border-blue-500 dark:focus:border-blue-400"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        Choose org <ChevronDown className="h-3 w-3" aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-40 mt-1 w-72 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg overflow-hidden">
+          <div className="border-b border-slate-100 dark:border-slate-800 px-2 py-1.5">
+            <input
+              type="text"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search…"
+              className="w-full bg-transparent text-[12px] text-slate-800 dark:text-slate-100 placeholder:text-slate-400 outline-none"
+              autoFocus
+            />
+          </div>
+          <div className="max-h-60 overflow-y-auto py-1">
+            {filtered.length === 0 ? (
+              <div className="px-3 py-2 text-[11px] italic text-slate-400 dark:text-slate-500">
+                No matches
+              </div>
+            ) : (
+              filtered.map((t) => (
+                <button
+                  key={t.key ?? '__ind__'}
+                  type="button"
+                  onClick={() => {
+                    onMove(t.key);
+                    setOpen(false);
+                    setQ('');
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200"
+                >
+                  <span className="truncate">{t.label}</span>
+                  {t.domain && (
+                    <span className="ml-auto text-[10px] font-mono text-slate-400 dark:text-slate-500">
+                      @{t.domain}
+                    </span>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
