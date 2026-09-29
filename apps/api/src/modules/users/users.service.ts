@@ -632,6 +632,14 @@ export class UsersService implements OnModuleInit {
     if ('position' in data) {
       try { await this.syncPositionToProfession(id, data.position); }
       catch (e) { Sentry.captureException(e); /* swallow — user.update already committed */ }
+      // QA4 JT-3 (2026-09-29) — additionally resolve the position string
+      // against the `positions` catalog and set the linked BP's
+      // `positionId`. The BP is the authoritative source once JT-5
+      // repoints the ~15 subtitle readers off `User.position`. This
+      // sync is best-effort; the string round-trip continues to work
+      // even when no matching catalog row exists.
+      try { await this.syncPositionToBpPositionId(id, data.position); }
+      catch (e) { Sentry.captureException(e); /* swallow */ }
     }
 
     // Phase 4 · Stage 1c — when the email moved on/off a home domain,
@@ -702,6 +710,44 @@ export class UsersService implements OnModuleInit {
         businessPartnerId: user.businessPartnerId,
         professionId: profession.id,
       },
+    });
+  }
+
+  /**
+   * QA4 JT-3 (2026-09-29) — mirror User.position to the linked BP's
+   * `positionId` FK. Companion to syncPositionToProfession above but
+   * targets the NEW Position catalog (the descriptive-title half of
+   * the JT-1 split). Best-effort:
+   *   • empty string / null clears BP.positionId (people admin sets
+   *     "Position = None" for a person)
+   *   • non-empty string is looked up in `positions` by exact name;
+   *     unmatched string leaves BP.positionId unchanged so the caller
+   *     doesn't clobber a Position that was set through the drawer.
+   */
+  private async syncPositionToBpPositionId(userId: number, position: string | null | undefined): Promise<void> {
+    const trimmed = position?.trim() ?? '';
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { businessPartnerId: true },
+    });
+    if (!user?.businessPartnerId) return;
+
+    if (trimmed === '') {
+      // People admin cleared the field → clear the BP FK too.
+      await this.prisma.businessPartner.update({
+        where: { id: user.businessPartnerId },
+        data: { positionId: null },
+      });
+      return;
+    }
+    const pos = await this.prisma.position.findFirst({
+      where: { name: { equals: trimmed } },
+      select: { id: true },
+    });
+    if (!pos) return; // Free-text outside the catalog — leave the FK alone.
+    await this.prisma.businessPartner.update({
+      where: { id: user.businessPartnerId },
+      data: { positionId: pos.id },
     });
   }
 

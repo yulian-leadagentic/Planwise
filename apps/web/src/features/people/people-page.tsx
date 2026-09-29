@@ -112,6 +112,19 @@ export function PeoplePage() {
     [orgUnitsTree],
   );
 
+  // JT-3 (QA4 · 2026-09-29) — Position catalog; shares the same query
+  // key as the partner-drawer's PositionSection so both selects hit
+  // warm cache. `positions` is the descriptive-title catalog seeded
+  // by migration `20260929210000_seed_positions`.
+  const { data: positions = [] } = useQuery<Array<{ id: number; code: string; name: string; nameHe: string | null }>>({
+    queryKey: ['admin', 'config', 'positions'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/config/positions').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
   const { data: professions = [] } = useQuery({
     queryKey: ['admin', 'professions'],
     staleTime: 10 * 60 * 1000,
@@ -838,14 +851,24 @@ export function PeoplePage() {
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
+                {/* JT-3 (QA4 · 2026-09-29): renamed "Job Title" → "Position"
+                    and re-sourced from `positions`. Kept as an inline
+                    SelectField (rather than reusing edit-modal's
+                    PositionSelectField component) because the create form
+                    has its own state shape; the query key is shared, so
+                    the two selects hit the same cached catalog. */}
                 <SelectField
-                  label="Job Title"
+                  label="Position"
                   name="position"
                   value={form.position}
                   onChange={(e) => patchCreate('position', e.target.value)}
                 >
-                  <option value="">Select job title</option>
-                  {professions.map((p: any) => <option key={p.id} value={p.name}>{p.name}</option>)}
+                  <option value="">Select position</option>
+                  {positions.map((p) => (
+                    <option key={p.id} value={p.name}>
+                      {p.name}{p.nameHe ? ` · ${p.nameHe}` : ''}
+                    </option>
+                  ))}
                 </SelectField>
                 <SelectField
                   label="Department"

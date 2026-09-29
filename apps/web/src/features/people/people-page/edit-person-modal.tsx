@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef } from 'react';
 import { Coins } from 'lucide-react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePermissions } from '@/hooks/use-permissions';
 import { notify } from '@/lib/notify';
 import client from '@/api/client';
@@ -262,21 +262,19 @@ export function EditPersonModal({
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <SelectField
-              label="Job Title"
-              name="position"
+            {/* JT-3 (QA4 · 2026-09-29): renamed "Job Title" → "Position"
+                and re-sourced the dropdown from the `positions` catalog
+                (Yulian-approved: CEO / VP / HR manager / Finance). The
+                write still round-trips through `User.position` as a
+                string; the backend's `syncPositionToBpPositionId` hook
+                mirrors the name onto the linked BP's `positionId` FK so
+                the drawer sees it too. A previously-set free-text
+                value is preserved as a "(legacy)" option until the
+                user picks a catalog row. */}
+            <PositionSelectField
               value={form.position}
-              onChange={(e) => patch('position', e.target.value)}
-            >
-              <option value="">Select job title</option>
-              {professions.map((p: any) => (
-                <option key={p.id} value={p.name}>{p.name}</option>
-              ))}
-              {form.position &&
-                !professions.some((p: any) => p.name === form.position) && (
-                  <option value={form.position}>{form.position} (legacy)</option>
-                )}
-            </SelectField>
+              onChange={(v) => patch('position', v)}
+            />
             <SelectField
               label="Department"
               name="orgUnitId"
@@ -378,5 +376,54 @@ export function EditPersonModal({
         <UserRateModal user={user} onClose={() => setShowOverrideModal(false)} />
       )}
     </>
+  );
+}
+
+/**
+ * JT-3 (QA4 · 2026-09-29) — descriptive-Position select for the People
+ * edit modal. Sources from `/admin/config/positions` (JT-1 catalog);
+ * value is the Position's NAME so the parent form keeps writing
+ * `user.position` (string) as it always has. The backend hook
+ * `syncPositionToBpPositionId` mirrors the name onto BusinessPartner.
+ *
+ * A previously-set free-text position that isn't in the catalog is
+ * preserved as a "(legacy)" option, matching the historical Job Title
+ * behaviour, so opening the modal never silently changes what a user
+ * had.
+ */
+function PositionSelectField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const { data: positions = [] } = useQuery<Array<{ id: number; code: string; name: string; nameHe: string | null }>>({
+    queryKey: ['admin', 'config', 'positions'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/config/positions').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
+  const isLegacy = !!value && !positions.some((p) => p.name === value);
+  return (
+    <SelectField
+      label="Position"
+      name="position"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">Select position</option>
+      {positions.map((p) => (
+        <option key={p.id} value={p.name}>
+          {p.name}{p.nameHe ? ` · ${p.nameHe}` : ''}
+        </option>
+      ))}
+      {isLegacy && (
+        <option value={value}>{value} (legacy)</option>
+      )}
+    </SelectField>
   );
 }
