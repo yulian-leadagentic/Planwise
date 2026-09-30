@@ -286,15 +286,23 @@ export class ContactsCommitService {
           // primary email column when the row carried both — same
           // routing as the row loop uses.
           const routedOrgEmail = pickOrgPrimaryEmailForRow(leader, leaderDp);
-          const leaderPrimaryEmail = leaderDp?.overrides && 'email' in leaderDp.overrides
-            ? leaderDp.overrides.email ?? null
-            : (leaderDp?.chosenEmail ?? leader.values.email ?? null);
+          // QA4 IW-6 (2026-09-30) — NEVER stamp a person's personal email
+          // onto the org. Real staging repro: `aryeh@mra.co.il` was landing
+          // as the org's `email` because the leader row's primary address
+          // fell through the ?? chain. The three legitimate sources for an
+          // org's email are (1) an explicit `orgOverride.email` typed by
+          // the reviewer in the wizard's Org details editor (IW-1), (2) the
+          // routed generic mailbox (office@ / info@ / …) surfaced by the
+          // ORG-5b generic-mailbox path, or (3) null. A person's personal
+          // corporate address (`aryeh@mra.co.il`) belongs on the person BP
+          // and only there — the `worker_of` edge already ties them to
+          // this org, so nothing is lost by dropping the fallback.
           const created = await this.prisma.businessPartner.create({
             data: {
               partnerType: 'organization',
               displayName: safeOrgName.displayName,
               companyName: overrideCompanyName ?? safeOrgName.companyName,
-              email: trimOrNull(orgOverride?.email) ?? routedOrgEmail ?? leaderPrimaryEmail,
+              email: trimOrNull(orgOverride?.email) ?? routedOrgEmail ?? null,
               phone: trimOrNull(orgOverride?.phone) ?? parsedOrgPhone,
               mobile: trimOrNull(orgOverride?.mobile),
               address: trimOrNull(orgOverride?.address) ?? leader.values.address ?? null,
@@ -567,7 +575,14 @@ export class ContactsCommitService {
             const orgPhone = eff('phone')
               ?? (dec.secondaryContacts ?? []).map((s) => s.phone).find(Boolean)
               ?? null;
-            const orgPrimaryEmail = emailRouting.orgPrimary ?? emailForCommit();
+            // QA4 IW-6 (2026-09-30) — mirrors the batch-leader path: the
+            // org's email is either the routed generic mailbox (office@…)
+            // OR null. NEVER the row's `emailForCommit()` — that's the
+            // person's personal address (`aryeh@mra.co.il`) and it must
+            // stay on the person BP only. The `worker_of` edge below
+            // still binds this person to the org, so the org card's
+            // "people" list still shows them.
+            const orgPrimaryEmail = emailRouting.orgPrimary ?? null;
             const created = await this.prisma.businessPartner.create({
               data: {
                 partnerType: 'organization',
@@ -605,9 +620,14 @@ export class ContactsCommitService {
         // orgBpId is known. Idempotent: upsert on (BP, email) so a
         // re-import doesn't stack duplicates. Also seeds the primary
         // as a row of its own so the drawer can show one clean list.
+        // QA4 IW-6 (2026-09-30) — mirrors the create paths above: the
+        // org's primary email row is the routed generic mailbox OR
+        // nothing. Dropped the old `emailForCommit()` fallback that
+        // used to seed the person's personal address as a "primary"
+        // row on the org's emails list, which showed up as the org's
+        // email in the drawer + Organizations catalog.
         if (orgBpId != null) {
-          const orgPrimaryEmail = emailRouting.orgPrimary
-            ?? (orgAction === 'create' ? (emailForCommit() ?? null) : null);
+          const orgPrimaryEmail = emailRouting.orgPrimary ?? null;
           await this.upsertPartnerEmails(
             orgBpId,
             orgPrimaryEmail,
