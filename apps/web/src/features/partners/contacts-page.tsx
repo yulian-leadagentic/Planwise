@@ -1306,12 +1306,41 @@ function ExpandedContactRow({
 }
 
 /* ─── By Project view ───────────────────────────────────────────────────
-   QA3 Commit D (Item 6d, 2026-09-01). Grouped list — one card per
-   project the caller can see that has at least one attached contact.
-   Contacts come from project_partner_roles across every role except
-   the buying-org 'customer' row (so participants, customer contacts,
-   and every discipline-holder show up). Sourced from
-   GET /projects/attached-contacts. */
+   CT-2 (2026-09-30) — rewritten as a grouped table so users can scan
+   contacts across projects the same way they scan people on People or
+   team members on the Team tab. One <tbody> per project holds a sticky
+   group header row (project name + number + count + "Open project"),
+   followed by the contact rows. Columns follow the app's table
+   convention: uppercase 11px header on #FAFBFC, 13px body, hover
+   highlight, no rings on focus.
+
+   Sort is header-click driven (asc → desc → clear). Filter is a single
+   free-text input above the table that matches name / role / email /
+   phone / org / project — the same "one box that searches everything"
+   pattern People uses. Both apply BEFORE grouping so an empty project
+   drops out of the table entirely when filters exclude all its rows.
+
+   Data source is unchanged: GET /projects/attached-contacts. */
+
+type ByProjectSortKey = 'name' | 'role' | 'email' | 'phone' | 'org';
+type ByProjectSortDir = 'asc' | 'desc';
+
+interface ByProjectRow {
+  projectId: number;
+  projectName: string;
+  projectNumber: string | null;
+  contactId: number;
+  displayName: string;
+  firstName: string | null;
+  lastName: string | null;
+  partnerType: 'person' | 'organization';
+  email: string | null;
+  phone: string | null;
+  role: string;
+  orgName: string | null;
+  isInternal: boolean;
+  rowKey: string;
+}
 
 function ByProjectView({
   groups, isLoading, onSelectContact, onOpenProject,
@@ -1321,6 +1350,113 @@ function ByProjectView({
   onSelectContact: (id: number) => void;
   onOpenProject: (projectId: number) => void;
 }) {
+  const [filter, setFilter] = useState('');
+  const debouncedFilter = useDebounce(filter, 200);
+  const [sort, setSort] = useState<{ key: ByProjectSortKey; dir: ByProjectSortDir } | null>(null);
+  // Which project bodies are collapsed. Empty = everyone expanded.
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<number>>(new Set());
+
+  // Flatten API groups into row records so sort + filter are one-pass.
+  const allRows: ByProjectRow[] = useMemo(() => {
+    const out: ByProjectRow[] = [];
+    for (const g of groups) {
+      for (const c of g.contacts) {
+        out.push({
+          projectId: g.projectId,
+          projectName: g.projectName,
+          projectNumber: g.projectNumber,
+          contactId: c.id,
+          displayName: c.displayName,
+          firstName: c.firstName,
+          lastName: c.lastName,
+          partnerType: c.partnerType,
+          email: c.email,
+          phone: null, // attached-contacts endpoint doesn't ship phone today
+          role: c.titleInProject ?? c.roleName,
+          orgName: c.orgName,
+          isInternal: c.isInternal,
+          rowKey: `${g.projectId}-${c.id}-${c.roleCode}`,
+        });
+      }
+    }
+    return out;
+  }, [groups]);
+
+  const filteredRows = useMemo(() => {
+    const q = debouncedFilter.trim().toLowerCase();
+    if (!q) return allRows;
+    return allRows.filter((r) => {
+      return (
+        r.displayName.toLowerCase().includes(q) ||
+        (r.email ?? '').toLowerCase().includes(q) ||
+        (r.phone ?? '').toLowerCase().includes(q) ||
+        r.role.toLowerCase().includes(q) ||
+        (r.orgName ?? '').toLowerCase().includes(q) ||
+        r.projectName.toLowerCase().includes(q) ||
+        (r.projectNumber ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [allRows, debouncedFilter]);
+
+  const sortedRows = useMemo(() => {
+    if (!sort) return filteredRows;
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    const key = sort.key;
+    const value = (r: ByProjectRow): string => {
+      switch (key) {
+        case 'name': return r.displayName;
+        case 'role': return r.role;
+        case 'email': return r.email ?? '';
+        case 'phone': return r.phone ?? '';
+        case 'org': return r.orgName ?? '';
+      }
+    };
+    return [...filteredRows].sort((a, b) => value(a).localeCompare(value(b)) * dir);
+  }, [filteredRows, sort]);
+
+  // Group sorted rows by project. Keep project order stable: first
+  // appearance in the sorted output — respects the sort so grouping
+  // stays consistent (project A ordering by name, project A rows sorted).
+  const projectGroups = useMemo(() => {
+    const map = new Map<number, ByProjectRow[]>();
+    const projectOrder: number[] = [];
+    for (const r of sortedRows) {
+      if (!map.has(r.projectId)) {
+        map.set(r.projectId, []);
+        projectOrder.push(r.projectId);
+      }
+      map.get(r.projectId)!.push(r);
+    }
+    return projectOrder.map((pid) => {
+      const rows = map.get(pid)!;
+      return {
+        projectId: pid,
+        projectName: rows[0]!.projectName,
+        projectNumber: rows[0]!.projectNumber,
+        rows,
+      };
+    });
+  }, [sortedRows]);
+
+  const toggleSort = (k: ByProjectSortKey) => {
+    setSort((prev) => {
+      if (!prev || prev.key !== k) return { key: k, dir: 'asc' };
+      if (prev.dir === 'asc') return { key: k, dir: 'desc' };
+      return null;
+    });
+  };
+  const toggleProject = (pid: number) => {
+    setCollapsedProjects((prev) => {
+      const next = new Set(prev);
+      if (next.has(pid)) next.delete(pid);
+      else next.add(pid);
+      return next;
+    });
+  };
+  const allCollapsed = projectGroups.length > 0 && projectGroups.every((g) => collapsedProjects.has(g.projectId));
+  const applyExpandAll = () => setCollapsedProjects(new Set());
+  const applyCollapseAll = () => setCollapsedProjects(new Set(projectGroups.map((g) => g.projectId)));
+
   if (isLoading) {
     return (
       <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center text-sm text-slate-400 dark:text-slate-500">
@@ -1339,122 +1475,242 @@ function ByProjectView({
       </div>
     );
   }
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-      {groups.map((g) => (
-        <ProjectContactsCard
-          key={g.projectId}
-          group={g}
-          onSelectContact={onSelectContact}
-          onOpenProject={onOpenProject}
-        />
-      ))}
-    </div>
-  );
-}
 
-function ProjectContactsCard({
-  group, onSelectContact, onOpenProject,
-}: {
-  group: AttachedProject;
-  onSelectContact: (id: number) => void;
-  onOpenProject: (projectId: number) => void;
-}) {
-  return (
-    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden hover:shadow-md transition-shadow">
-      {/* Header — clickable, opens the project detail page. Same
-          affordance the CustomerCard uses (dedicated button that
-          participates in focus order + keyboard access). */}
-      <button
-        type="button"
-        onClick={() => onOpenProject(group.projectId)}
-        className="w-full flex items-center gap-3 px-4 py-3 text-left border-b border-slate-100 dark:border-slate-800 bg-gradient-to-br from-blue-50 to-white dark:from-blue-950/30 dark:to-slate-900 hover:bg-blue-50/60 dark:hover:bg-blue-900/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-        title={`Open ${group.projectName}`}
-      >
-        <div className="rounded-lg bg-blue-100 dark:bg-blue-900/50 p-2 shrink-0">
-          <FolderKanban className="h-5 w-5 text-blue-700 dark:text-blue-300" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h3 className="font-bold text-[14px] text-slate-800 dark:text-slate-100 truncate" title={group.projectName}>
-            {group.projectName}
-          </h3>
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-            {group.projectNumber && (
-              <span className="font-mono tabular-nums text-slate-600 dark:text-slate-300 mr-2">{group.projectNumber}</span>
-            )}
-            <span className="tabular-nums">
-              {group.contacts.length} {group.contacts.length === 1 ? 'contact' : 'contacts'}
-            </span>
-          </p>
-        </div>
-        <ArrowRight className="h-4 w-4 text-slate-300 dark:text-slate-600 shrink-0" aria-hidden="true" />
-      </button>
+  const columns: Array<{ key: ByProjectSortKey; label: string; className?: string }> = [
+    { key: 'name',  label: 'Contact' },
+    { key: 'role',  label: 'Role on project' },
+    { key: 'email', label: 'Email' },
+    { key: 'phone', label: 'Phone' },
+    { key: 'org',   label: 'Organization' },
+  ];
 
-      {/* Contact rows. Per-project empty state deliberately unreachable
-          — the API omits projects with no contacts (see
-          ProjectsService.getAttachedContacts). Left as a defensive
-          guard so a stale response never renders a blank card. */}
-      {group.contacts.length === 0 ? (
-        <div className="px-4 py-6 text-center text-[12px] text-slate-400 dark:text-slate-500 italic">
-          No contacts on this project yet.
-        </div>
-      ) : (
-        <div className="divide-y divide-slate-50 dark:divide-slate-800 max-h-[320px] overflow-y-auto">
-          {group.contacts.map((c) => (
-            <ProjectContactRow key={`${c.id}-${c.roleCode}`} c={c} onSelect={onSelectContact} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ProjectContactRow({
-  c, onSelect,
-}: {
-  c: AttachedProject['contacts'][number];
-  onSelect: (id: number) => void;
-}) {
-  const isOrg = c.partnerType === 'organization';
   return (
-    <button
-      type="button"
-      onClick={() => onSelect(c.id)}
-      className="group w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-blue-50/40 dark:hover:bg-blue-900/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-      title={`Open ${c.displayName}`}
-    >
-      {isOrg ? (
-        <div className="rounded-full bg-violet-100 dark:bg-violet-900/40 p-1.5 shrink-0">
-          <Building2 className="h-3.5 w-3.5 text-violet-700 dark:text-violet-300" />
-        </div>
-      ) : (
-        <UserAvatar
-          firstName={c.firstName ?? ''}
-          lastName={c.lastName ?? ''}
-          avatarUrl={null}
-          size="sm"
-        />
-      )}
-      <div className="flex-1 min-w-0">
-        <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">
-          {c.displayName}
-          {c.isInternal && (
-            <span
-              className="ml-1.5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-[1px] text-[9px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300"
-              title="Internal team member (has a login account)"
+    <div className="space-y-3">
+      {/* Table toolbar — free-text filter + collapse/expand all shortcut.
+          The filter matches everything (name / role / email / phone /
+          org / project), the same "one box" pattern the People screen
+          uses. */}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-[220px] max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500" />
+          <input
+            type="text"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter by name, role, email, phone, org, project…"
+            className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 pl-9 pr-9 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+          />
+          {filter && (
+            <button
+              onClick={() => setFilter('')}
+              title="Clear filter"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
             >
-              Internal
-            </span>
+              <X className="h-3.5 w-3.5" />
+            </button>
           )}
-        </p>
-        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-          <span className="text-slate-600 dark:text-slate-300">{c.titleInProject ?? c.roleName}</span>
-          {c.orgName && (
-            <> · <span className="text-slate-500 dark:text-slate-400">{c.orgName}</span></>
-          )}
-        </p>
+        </div>
+        <div className="flex items-center gap-2 text-[12px] text-slate-500 dark:text-slate-400">
+          <span className="tabular-nums">
+            <span className="font-semibold text-slate-700 dark:text-slate-200">{sortedRows.length}</span>
+            {' '}row{sortedRows.length === 1 ? '' : 's'} across{' '}
+            <span className="font-semibold text-slate-700 dark:text-slate-200">{projectGroups.length}</span>
+            {' '}project{projectGroups.length === 1 ? '' : 's'}
+          </span>
+          <button
+            type="button"
+            onClick={allCollapsed ? applyExpandAll : applyCollapseAll}
+            className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
+            disabled={projectGroups.length === 0}
+          >
+            {allCollapsed ? 'Expand all' : 'Collapse all'}
+          </button>
+        </div>
       </div>
-    </button>
+
+      {projectGroups.length === 0 ? (
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center text-sm text-slate-400 dark:text-slate-500">
+          No rows match the current filter.
+        </div>
+      ) : (
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+          <div className="max-h-[70vh] overflow-auto">
+            <table className="w-full border-collapse">
+              <thead className="sticky top-0 z-20">
+                <tr className="bg-[#FAFBFC] dark:bg-slate-800/80 border-b border-slate-100 dark:border-slate-800 backdrop-blur">
+                  {columns.map((c) => (
+                    <th
+                      key={c.key}
+                      scope="col"
+                      className="text-left px-3 py-2 text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em]"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleSort(c.key)}
+                        className="inline-flex items-center gap-1 hover:text-slate-700 dark:hover:text-slate-100"
+                      >
+                        <span>{c.label}</span>
+                        <span className="text-slate-300 dark:text-slate-600 text-[9px] font-mono">
+                          {sort?.key === c.key ? (sort.dir === 'asc' ? '▲' : '▼') : '⇅'}
+                        </span>
+                      </button>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              {projectGroups.map((g) => {
+                const collapsed = collapsedProjects.has(g.projectId);
+                return (
+                  <tbody key={g.projectId} className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {/* Group header — a full-width cell with the project
+                        name / number / count and an inline "Open project"
+                        affordance. Sticky under the column header so it
+                        stays anchored while long groups scroll. */}
+                    <tr
+                      className="bg-slate-50/95 dark:bg-slate-800/95 backdrop-blur sticky z-10"
+                      style={{ top: 34 }}
+                    >
+                      <td colSpan={columns.length} className="px-3 py-1.5">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleProject(g.projectId)}
+                            aria-expanded={!collapsed}
+                            className="inline-flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100"
+                          >
+                            {collapsed ? (
+                              <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+                            ) : (
+                              <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                            )}
+                            <FolderKanban className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                            <span className="normal-case tracking-normal">{g.projectName}</span>
+                            {g.projectNumber && (
+                              <span className="font-mono normal-case tracking-normal text-slate-500 dark:text-slate-400 text-[11px]">
+                                {g.projectNumber}
+                              </span>
+                            )}
+                            <span className="text-slate-400 dark:text-slate-500 font-mono font-medium">
+                              {g.rows.length}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onOpenProject(g.projectId)}
+                            className="ml-auto inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
+                            title={`Open ${g.projectName}`}
+                          >
+                            Open project
+                            <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    {!collapsed && g.rows.map((r) => (
+                      <ByProjectTableRow
+                        key={r.rowKey}
+                        row={r}
+                        onSelect={onSelectContact}
+                      />
+                    ))}
+                  </tbody>
+                );
+              })}
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** CT-2 — table row for the By-Project view. Deliberately its own
+ *  component so the row-level click handler + hover state don't leak
+ *  into the group header row above it. */
+function ByProjectTableRow({
+  row: r, onSelect,
+}: {
+  row: ByProjectRow;
+  onSelect: (contactId: number) => void;
+}) {
+  const isOrg = r.partnerType === 'organization';
+  return (
+    <tr
+      onClick={() => onSelect(r.contactId)}
+      className="cursor-pointer hover:bg-slate-50/60 dark:hover:bg-slate-800/40"
+    >
+      <td className="px-3 py-2 align-middle">
+        <div className="flex items-center gap-2 min-w-0">
+          {isOrg ? (
+            <div className="rounded-full bg-violet-100 dark:bg-violet-900/40 p-1.5 shrink-0">
+              <Building2 className="h-3.5 w-3.5 text-violet-700 dark:text-violet-300" />
+            </div>
+          ) : (
+            <UserAvatar
+              firstName={r.firstName ?? ''}
+              lastName={r.lastName ?? ''}
+              avatarUrl={null}
+              size="sm"
+            />
+          )}
+          <div className="min-w-0">
+            <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate" title={r.displayName}>
+              {r.displayName}
+              {r.isInternal && (
+                <span
+                  className="ml-1.5 rounded-[5px] bg-emerald-600/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300"
+                  title="Internal team member (has a login account)"
+                >
+                  Internal
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+      </td>
+      <td className="px-3 py-2 text-[13px] text-slate-700 dark:text-slate-200">
+        {r.role || <span className="italic text-slate-400 dark:text-slate-500">—</span>}
+      </td>
+      <td className="px-3 py-2 text-[13px]">
+        {r.email ? (
+          <a
+            href={`mailto:${r.email}`}
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-200 hover:text-blue-700 truncate max-w-full"
+            title={r.email}
+          >
+            <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
+            <span className="truncate">{r.email}</span>
+          </a>
+        ) : (
+          <span className="text-slate-300 dark:text-slate-600 italic">—</span>
+        )}
+      </td>
+      <td className="px-3 py-2 text-[13px]">
+        {r.phone ? (
+          <a
+            href={`tel:${r.phone}`}
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-200 hover:text-blue-700"
+          >
+            <Phone className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
+            <span className="tabular-nums">{r.phone}</span>
+          </a>
+        ) : (
+          <span className="text-slate-300 dark:text-slate-600 italic">—</span>
+        )}
+      </td>
+      <td className="px-3 py-2 text-[13px] text-slate-600 dark:text-slate-300">
+        {r.orgName ? (
+          <span className="inline-flex items-center gap-1.5 truncate max-w-full" title={r.orgName}>
+            <Building2 className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
+            <span className="truncate">{r.orgName}</span>
+          </span>
+        ) : (
+          <span className="text-slate-300 dark:text-slate-600 italic">—</span>
+        )}
+      </td>
+    </tr>
   );
 }
 
