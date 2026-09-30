@@ -2549,8 +2549,12 @@ function PeopleTable({
             <PreviewTh>Mobile</PreviewTh>
             <PreviewTh>Email</PreviewTh>
             <PreviewTh className="w-24">Person</PreviewTh>
+            {/* QA4 IW-3 (2026-09-30) — the standalone "Office manager"
+                column was dropped: an extracted office manager is a
+                normal person under the org and now renders as its own
+                SecondaryContactRow with its title in the Job Title
+                cell, not in a dedicated column. */}
             <PreviewTh>Job Title</PreviewTh>
-            <PreviewTh>Office manager</PreviewTh>
             <PreviewTh className="w-40">Verdict</PreviewTh>
             <PreviewTh className="w-10 text-center">&nbsp;</PreviewTh>
           </tr>
@@ -3153,30 +3157,12 @@ function PreviewTableRow({
             onCommit={(v) => onOverride('role', v)}
           />
         </td>
-        <td className="px-2 py-2">
-          {/* QA4 IMP-4 — extracted office managers appear as their own
-              rows below; this cell summarizes them so the primary row
-              still reads as a complete record. When the PM types an
-              override here it wins on commit (per IMP-2). */}
-          {(() => {
-            const extractedSummary =
-              row.secondaryContacts && row.secondaryContacts.length > 0
-                ? row.secondaryContacts.map((s) => s.name).join(', ')
-                : null;
-            return (
-              <EditableCell
-                field="officeManager"
-                value={effective('officeManager', extractedSummary)}
-                edited={isEdited('officeManager')}
-                extracted={
-                  !isEdited('officeManager') && !!extractedSummary
-                }
-                placeholder="—"
-                onCommit={(v) => onOverride('officeManager', v)}
-              />
-            );
-          })()}
-        </td>
+        {/* QA4 IW-3 (2026-09-30) — Office manager column removed.
+            Extracted office managers are rendered below as their own
+            SecondaryContactRow (a normal person nested under the org).
+            The `officeManager` OverrideField still exists for backward
+            compat with any stale RowDecision payload but is no longer
+            editable from the wizard. */}
         <td className="px-2 py-2">
           <VerdictCell
             dec={dec}
@@ -3217,12 +3203,13 @@ function PreviewTableRow({
       {isFieldsExpanded && (
         <tr className={cn('align-top', rowTint)}>
           {/* QA4 E1 (2026-09-29) — expanded stacked field editor. Same
-              colSpan math as the info panel: base 12 (chevron + row +
+              colSpan math as the info panel: base 11 (chevron + row +
               Discipline + Contact + Phone + Mobile + Email + Person +
-              Job Title + Office mgr + Verdict + trash) + 1 optional
-              Company column. Each field is an EditableCell so blur
-              commits (mirrors the row's inline cells). */}
-          <td colSpan={showCompany ? 13 : 12} className="px-3 pt-0 pb-3">
+              Job Title + Verdict + trash) + 1 optional Company column.
+              (QA4 IW-3 2026-09-30 — Office mgr column dropped, so the
+              base count is 11 not 12.) Each field is an EditableCell
+              so blur commits (mirrors the row's inline cells). */}
+          <td colSpan={showCompany ? 12 : 11} className="px-3 pt-0 pb-3">
             <div className="rounded-md border border-blue-200 dark:border-blue-900/50 bg-blue-50/40 dark:bg-blue-950/20 p-3">
               <div className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 dark:text-slate-400 mb-2">
                 Row {dec.sourceRowIndex} · all fields
@@ -3304,24 +3291,10 @@ function PreviewTableRow({
                     onCommit={(v) => onOverride('role', v)}
                   />
                 </FieldEditorRow>
-                <FieldEditorRow label="Office manager" hint="extracted from phone cell">
-                  <EditableCell
-                    field="officeManager"
-                    value={(() => {
-                      const overrides = rowDec?.overrides ?? {};
-                      if ('officeManager' in overrides) return overrides.officeManager ?? null;
-                      const extractedSummary =
-                        row.secondaryContacts && row.secondaryContacts.length > 0
-                          ? row.secondaryContacts.map((s) => s.name).join(', ')
-                          : null;
-                      return extractedSummary;
-                    })()}
-                    edited={!!rowDec?.overrides && 'officeManager' in (rowDec.overrides ?? {})}
-                    extracted={!(rowDec?.overrides && 'officeManager' in rowDec.overrides) && (row.secondaryContacts?.length ?? 0) > 0}
-                    placeholder="—"
-                    onCommit={(v) => onOverride('officeManager', v)}
-                  />
-                </FieldEditorRow>
+                {/* QA4 IW-3 (2026-09-30) — Office manager editor
+                    dropped. Extracted managers now render as their
+                    own nested SecondaryContactRow (a person under the
+                    org) rather than a per-row summary field. */}
               </div>
               {/* QA4 E5 — per-field diff chooser for matched people. */}
               {dec.contact.action === 'link' && dec.contact.existingFields && onConflictResolve && (
@@ -3365,12 +3338,13 @@ function PreviewTableRow({
       )}
       {isExpanded && (
         <tr className={cn('align-top', rowTint)}>
-          {/* colSpan tracks the visible cells: base 12 (chevron +
+          {/* colSpan tracks the visible cells: base 11 (chevron +
               Sheet row + Discipline + Contact + Phone + Mobile +
-              Email + Person badge + Job Title + Office mgr + Verdict
-              + trash), plus 1 for the optional Company column (RD-1:
-              hidden under org cards, shown under Individuals). */}
-          <td colSpan={showCompany ? 13 : 12} className="px-3 pt-0 pb-2.5">
+              Email + Person badge + Job Title + Verdict + trash), plus
+              1 for the optional Company column (RD-1: hidden under org
+              cards, shown under Individuals). (QA4 IW-3 2026-09-30 —
+              Office mgr column dropped, so base = 11.) */}
+          <td colSpan={showCompany ? 12 : 11} className="px-3 pt-0 pb-2.5">
             <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2 space-y-1">
               <div className="text-[11px] text-slate-600 dark:text-slate-300 flex items-center gap-1">
                 <span className="font-semibold">Organization:</span>{' '}
@@ -3501,14 +3475,18 @@ function SecondaryContactRow({
             visually aligned with the primary row's Person column. */}
         <EntityBadge kind="new" />
       </td>
+      {/* QA4 IW-3 (2026-09-30) — the standalone Office manager column
+          is gone; the secondary's title (usually "Office manager")
+          now lives in the Job Title column so it reads as a normal
+          person's role. */}
       <td className="px-2 py-2">
-        <div className="flex flex-col gap-0.5">
+        <div className="flex flex-col gap-0.5 min-w-0">
           <span
             className="truncate text-slate-700 dark:text-slate-200 font-semibold"
             title={
               secondary.city
-                ? `Office manager · ${secondary.city}`
-                : 'Office manager (extracted from phone cell)'
+                ? `${secondary.title} · ${secondary.city}`
+                : `${secondary.title} (extracted from ${secondary.sourceField} cell)`
             }
           >
             {secondary.title}
