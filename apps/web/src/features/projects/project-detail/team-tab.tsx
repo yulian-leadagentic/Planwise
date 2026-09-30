@@ -39,7 +39,6 @@ import {
   Check,
   AlertTriangle,
   Users as UsersIcon,
-  Building2,
   Upload as UploadIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -58,7 +57,6 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { Modal } from '@/components/shared/modal';
 import { ContactsImportWizard } from '@/features/data-import/contacts/contacts-import-wizard';
 import { RoleAssignmentPicker } from './role-assignment-picker';
-import { CustomerContactPicker } from './customer-contact-picker';
 import { AddMemberDialog } from './add-member-dialog';
 import { getInitials } from './utils';
 import type {
@@ -199,7 +197,10 @@ export function TeamTab({
       }),
   });
 
-  const customerContactRoleType = roleCatalog.find((rt) => rt.code === 'customer_contact') ?? null;
+  // CT-3 (2026-09-30) — `customerContactRoleType` was dropped with the
+  // "Add contact at <customer>" button that consumed it. Customer
+  // contacts are still fully manageable via the role-first Add flow,
+  // which looks up the customer_contact role type itself.
 
   // Roles that appear in the "+ Add" role-first picker — excludes the
   // system-locked ones (customer / participant / customer_contact) so
@@ -240,7 +241,10 @@ export function TeamTab({
   const [focusedPartnerId, setFocusedPartnerId] = useState<number | null>(null);
   const [addPickerOpen, setAddPickerOpen] = useState(false);
   const [roleAssignmentTarget, setRoleAssignmentTarget] = useState<ProjectRoleTypeRow | null>(null);
-  const [showCustomerContactPicker, setShowCustomerContactPicker] = useState(false);
+  // CT-3 (2026-09-30) — the `showCustomerContactPicker` state that
+  // drove the per-group "Add contact at <customer>" button was removed
+  // with that button. Customer contacts are added via the role-first
+  // Add flow (Customer Contact role → role assignment picker).
   // QA4 D9 — project-scoped contacts import (Excel). Mounts the shared
   // ContactsImportWizard in a modal with defaultProjectId={projectId}
   // so imported people land as stakeholders on THIS project. `dirty`
@@ -1186,12 +1190,6 @@ export function TeamTab({
             toggleGroup={toggleGroup}
             openDrawer={openDrawer}
             canWrite={canWritePartners}
-            onAddContactAtOrg={
-              customerContactRoleType && team.customer
-                ? () => setShowCustomerContactPicker(true)
-                : null
-            }
-            customerName={team.customer?.displayName ?? null}
             projectId={projectId}
             roleAssignments={team.roleAssignments}
             addableRoles={addableRoles}
@@ -1260,16 +1258,10 @@ export function TeamTab({
         />
       )}
 
-      {showCustomerContactPicker && team.customer && customerContactRoleType && (
-        <CustomerContactPicker
-          projectId={projectId}
-          customerOrgId={team.customer.organizationId}
-          customerName={team.customer.displayName}
-          customerContactRoleId={customerContactRoleType.id}
-          existingContactBpIds={team.customerContacts.map((p) => p.businessPartnerId)}
-          onClose={() => setShowCustomerContactPicker(false)}
-        />
-      )}
+      {/* CT-3 (2026-09-30) — CustomerContactPicker mount removed with
+          the "Add contact at <customer>" button that used to open it.
+          The role-first Add flow (Customer Contact role → role
+          assignment picker) covers this path now. */}
 
       {/*
         QA4 D9 — project-scoped contacts import. Mounts the same
@@ -1655,8 +1647,6 @@ function TableBody({
   toggleGroup,
   openDrawer,
   canWrite,
-  onAddContactAtOrg,
-  customerName,
   projectId,
   roleAssignments,
   addableRoles,
@@ -1674,12 +1664,6 @@ function TableBody({
   toggleGroup: (k: string) => void;
   openDrawer: (bpId: number) => void;
   canWrite: boolean;
-  onAddContactAtOrg: (() => void) | null;
-  /** QA4 D8 — used to spell out the customer's name in the grey
-   *  "Add contact" button so it doesn't read as a duplicate of the
-   *  blue "Add person" CTA. Nullable — the button only shows when
-   *  `onAddContactAtOrg` is set, which itself gates on a customer. */
-  customerName: string | null;
   /** QA4 D7 — inline-edit context. `projectId` scopes the
    *  eligible-parties query the Project Role cell fires when opened.
    *  `roleAssignments` maps party -> held PPRs so the cell knows which
@@ -1802,17 +1786,16 @@ function TableBody({
                           {g.rows.length}
                         </span>
                       </button>
-                      {isOrgGroup && canWrite && onAddContactAtOrg && (
-                        <button
-                          type="button"
-                          onClick={onAddContactAtOrg}
-                          title="Attach a person from the customer as a stakeholder"
-                          className="ml-auto inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
-                        >
-                          <Building2 className="h-3 w-3" aria-hidden="true" />
-                          {customerName ? `Add contact at ${customerName}` : 'Add customer contact'}
-                        </button>
-                      )}
+                      {/* CT-3 (2026-09-30) — the "Add contact at
+                          <customerName>" affordance was removed here.
+                          It read as a duplicate of the blue "Add person"
+                          CTA at the top of the tab (and rendered on
+                          every org group, so it flooded stakeholder
+                          views with the same button repeated). The
+                          role-first Add flow above already covers
+                          adding a customer contact via the Customer
+                          Contact role — no dedicated shortcut is
+                          needed. */}
                     </div>
                   </td>
                 </tr>
