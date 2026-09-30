@@ -2800,11 +2800,17 @@ function PeopleTable({
 }
 
 /**
- * QA4 RD-2 (2026-09-29) — LINK / NEW chip used on both the org card
- * header and each person row. Green LINK when the commit would attach
- * to an existing BP (an emoji-free, colour-blind-safe pair); blue NEW
- * otherwise. `matchedName` shows next to LINK when there's a specific
- * record to name (e.g. `LINK · Yulian Abramovich`).
+ * QA4 RD-2 (2026-09-29) — EXIST / NEW chip used on both the org card
+ * header and each person row. Blue EXIST when the commit would attach
+ * to an already-in-database record (i.e. link, not create); green NEW
+ * otherwise. `matchedName` shows next to EXIST when there's a specific
+ * record to name (e.g. `EXIST · Yulian Abramovich`).
+ *
+ * QA4 IW-7 (2026-09-30): the underlying decision.kind value stays
+ * `'link'` — this component only maps `link` → the user-facing word
+ * "EXIST" so the review reads as "already in the system" rather than
+ * the technical "link". Verdict column shows the same word (see
+ * ActionBadge's label map).
  */
 function EntityBadge({
   kind,
@@ -2817,9 +2823,9 @@ function EntityBadge({
     return (
       <span
         className="inline-flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300"
-        title={matchedName ? `Will LINK to existing "${matchedName}"` : 'Will LINK to an existing record'}
+        title={matchedName ? `Already exists in the system — "${matchedName}"` : 'Already exists in the system'}
       >
-        link
+        EXIST
         {matchedName ? (
           <span className="font-normal normal-case tracking-normal text-blue-700/80 dark:text-blue-300/80 truncate max-w-[12rem]">
             {matchedName}
@@ -2833,7 +2839,7 @@ function EntityBadge({
       className="inline-flex items-center rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"
       title="Will CREATE a new record"
     >
-      new
+      NEW
     </span>
   );
 }
@@ -4019,6 +4025,16 @@ function VerdictCell({
   );
 }
 
+/**
+ * QA4 IW-7 (2026-09-30): the verdict column reads more clearly as
+ * "exist" (matches EntityBadge) than the pipeline term "link". The map
+ * below is display-only — the underlying `action` state stays 'link'
+ * everywhere so no other code needs to change.
+ */
+const ACTION_DISPLAY_LABELS: Record<string, string> = {
+  link: 'exist',
+};
+
 function ActionBadge({ action }: { action: string }) {
   const cfg = {
     create:
@@ -4028,11 +4044,12 @@ function ActionBadge({ action }: { action: string }) {
       'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300',
     skip: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300',
   }[action] ?? 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400';
+  const label = ACTION_DISPLAY_LABELS[action] ?? action;
   return (
     <span
       className={cn('font-mono text-[10px] font-bold px-1.5 py-0.5 rounded-[5px]', cfg)}
     >
-      {action}
+      {label}
     </span>
   );
 }
