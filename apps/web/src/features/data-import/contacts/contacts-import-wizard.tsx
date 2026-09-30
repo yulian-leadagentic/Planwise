@@ -149,6 +149,38 @@ const FALLBACK_ROLE_CODES = ['external_contact', 'contact', 'consultant'] as con
 
 type WizardStep = 'upload' | 'sheet' | 'map' | 'preview' | 'commit';
 
+/**
+ * QA4 IW-1 (2026-09-30) — per-batchOrgKey overrides that carry the
+ * full BP field set. `name` + `domain` continue to drive org identity
+ * (E2); the additional fields land on the freshly-created org BP at
+ * commit time. All optional; an unset field falls back to whatever
+ * the classifier parsed off the leader row.
+ */
+type OrgOverrideValues = {
+  name?: string;
+  domain?: string;
+  companyName?: string;
+  taxId?: string;
+  email?: string;
+  phone?: string;
+  mobile?: string;
+  website?: string;
+  address?: string;
+  notes?: string;
+};
+
+/** Every editable BP-level field available on an org card (order = UI order). */
+const ORG_EXTRA_FIELDS: Array<{ key: keyof OrgOverrideValues; label: string; type: 'text' | 'url' | 'multiline' }> = [
+  { key: 'companyName', label: 'Company name', type: 'text' },
+  { key: 'taxId', label: 'Tax ID / code', type: 'text' },
+  { key: 'email', label: 'Email', type: 'text' },
+  { key: 'phone', label: 'Phone', type: 'text' },
+  { key: 'mobile', label: 'Mobile', type: 'text' },
+  { key: 'website', label: 'Website', type: 'url' },
+  { key: 'address', label: 'Address', type: 'text' },
+  { key: 'notes', label: 'Notes', type: 'multiline' },
+];
+
 const STEP_LABELS: Record<WizardStep, string> = {
   upload: '1 · Upload',
   sheet: '2 · Pick sheet',
@@ -209,8 +241,14 @@ export function ContactsImportWizard({
   // org identity (name and/or domain). Applied at commit time via the
   // `orgOverrides` payload; the wizard's grouped review reads them so
   // an edit is visible immediately.
+  //
+  // QA4 IW-1 (2026-09-30) — extended to carry the full BP field set
+  // (taxId, email, phone, mobile, website, address, notes) so the
+  // reviewer can complete BP-level fields inline before commit. Only
+  // applied to NEW org creates — matched-existing orgs use E5
+  // conflict resolution to pick per field.
   const [orgOverrides, setOrgOverrides] = useState<
-    Record<string, { name?: string; domain?: string }>
+    Record<string, OrgOverrideValues>
   >({});
   // QA4 E3 (2026-09-29) — orgs the reviewer removed. `orgDeleted` is
   // the set of batchOrgKeys marked deleted; `orgDeleteMode[key]`
@@ -625,12 +663,21 @@ export function ContactsImportWizard({
           }
           onOrgOverride={(key, patch) =>
             setOrgOverrides((prev) => {
-              const merged = { ...(prev[key] ?? {}), ...patch };
-              // Strip empty strings + undefined so a cleared field
-              // falls back to the parsed value.
-              const cleaned: { name?: string; domain?: string } = {};
+              const merged: OrgOverrideValues = { ...(prev[key] ?? {}), ...patch };
+              // QA4 IW-1 (2026-09-30) — strip empty strings + undefined
+              // per field so a cleared value falls back to the parsed
+              // value (or nothing) at commit. `domain` is lower-cased.
+              const cleaned: OrgOverrideValues = {};
               if (merged.name && merged.name.trim()) cleaned.name = merged.name.trim();
               if (merged.domain && merged.domain.trim()) cleaned.domain = merged.domain.trim().toLowerCase();
+              if (merged.companyName && merged.companyName.trim()) cleaned.companyName = merged.companyName.trim();
+              if (merged.taxId && merged.taxId.trim()) cleaned.taxId = merged.taxId.trim();
+              if (merged.email && merged.email.trim()) cleaned.email = merged.email.trim();
+              if (merged.phone && merged.phone.trim()) cleaned.phone = merged.phone.trim();
+              if (merged.mobile && merged.mobile.trim()) cleaned.mobile = merged.mobile.trim();
+              if (merged.website && merged.website.trim()) cleaned.website = merged.website.trim();
+              if (merged.address && merged.address.trim()) cleaned.address = merged.address.trim();
+              if (merged.notes && merged.notes.trim()) cleaned.notes = merged.notes.trim();
               const next = { ...prev };
               if (Object.keys(cleaned).length === 0) delete next[key];
               else next[key] = cleaned;
@@ -1328,8 +1375,9 @@ function PreviewStep({
   decisions: Record<string, RowDecision>;
   /** QA4 R2b ORG-3 — per-batchOrgKey role code chosen by the reviewer. */
   orgTypes: Record<string, string>;
-  /** QA4 E2 — inline name / domain overrides per batchOrgKey. */
-  orgOverrides: Record<string, { name?: string; domain?: string }>;
+  /** QA4 E2 — inline name / domain overrides per batchOrgKey.
+   * QA4 IW-1 (2026-09-30) — extended to carry the full BP field set. */
+  orgOverrides: Record<string, OrgOverrideValues>;
   /** QA4 E3 — reviewer-deleted orgs + their cascade mode. */
   orgDeleted: Set<string>;
   orgDeleteMode: Record<string, 'cascade' | 'keep-people'>;
@@ -1338,7 +1386,7 @@ function PreviewStep({
   /** QA4 E5 — per-record per-field conflict choice. */
   conflictResolutions: Record<string, Record<string, 'existing' | 'imported'>>;
   onOrgTypeChange: (batchOrgKey: string, code: string | null) => void;
-  onOrgOverride: (batchOrgKey: string, patch: { name?: string; domain?: string }) => void;
+  onOrgOverride: (batchOrgKey: string, patch: Partial<OrgOverrideValues>) => void;
   onOrgDelete: (batchOrgKey: string, mode: 'cascade' | 'keep-people') => void;
   onOrgDeleteUndo: (batchOrgKey: string) => void;
   onMovePerson: (rowIndex: number, targetKey: string | null) => void;
@@ -1812,12 +1860,12 @@ function GroupedReview({
   decisionKeyFor: (rowIndex: number) => string;
   conflictsOnly: boolean;
   orgTypes: Record<string, string>;
-  orgOverrides: Record<string, { name?: string; domain?: string }>;
+  orgOverrides: Record<string, OrgOverrideValues>;
   orgDeleted: Set<string>;
   orgDeleteMode: Record<string, 'cascade' | 'keep-people'>;
   conflictResolutions: Record<string, Record<string, 'existing' | 'imported'>>;
   onOrgTypeChange: (batchOrgKey: string, code: string | null) => void;
-  onOrgOverride: (batchOrgKey: string, patch: { name?: string; domain?: string }) => void;
+  onOrgOverride: (batchOrgKey: string, patch: Partial<OrgOverrideValues>) => void;
   onOrgDelete: (batchOrgKey: string, mode: 'cascade' | 'keep-people') => void;
   onOrgDeleteUndo: (batchOrgKey: string) => void;
   onMovePerson: (rowIndex: number, targetKey: string | null) => void;
@@ -2040,8 +2088,8 @@ function OrgCard({
   decisionKeyFor: (rowIndex: number) => string;
   orgTypes: Record<string, string>;
   onOrgTypeChange: (batchOrgKey: string, code: string | null) => void;
-  orgOverride: { name?: string; domain?: string } | undefined;
-  onOrgOverride: (batchOrgKey: string, patch: { name?: string; domain?: string }) => void;
+  orgOverride: OrgOverrideValues | undefined;
+  onOrgOverride: (batchOrgKey: string, patch: Partial<OrgOverrideValues>) => void;
   isDeleted: boolean;
   deleteMode: 'cascade' | 'keep-people' | undefined;
   onOrgDelete: (batchOrgKey: string, mode: 'cascade' | 'keep-people') => void;
@@ -2314,6 +2362,18 @@ function OrgCard({
           </button>
         )}
       </div>
+      {/* QA4 IW-1 (2026-09-30) — full BP-field editor beneath the
+          header. Collapsible so the reviewer can scan a long list of
+          orgs first, then expand the ones they need to complete.
+          Only offered for NEW org groups; matched-existing orgs use
+          E5 conflict resolution to pick per field instead. */}
+      {!isDeleted && group.isNew && group.hasBatchKey && (
+        <OrgDetailsEditor
+          group={group}
+          orgOverride={orgOverride}
+          onOrgOverride={onOrgOverride}
+        />
+      )}
       {isExpanded && !isDeleted && (
         <div className="mt-2 ml-6 rounded-md border border-slate-200 dark:border-slate-700 overflow-hidden">
           {visiblePeople.length === 0 ? (
@@ -2338,6 +2398,96 @@ function OrgCard({
               onConflictResolve={onConflictResolve}
             />
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * QA4 IW-1 (2026-09-30) — inline BP-field editor beneath an org card.
+ * A collapsible "Org details" section exposing the full set of BP-
+ * level fields (companyName, taxId, email, phone, mobile, website,
+ * address, notes) as editable inputs. Values live on `orgOverrides[key]`
+ * and are sent to the commit path (which applies them at org-create
+ * time on the freshly-created BusinessPartner row).
+ */
+function OrgDetailsEditor({
+  group,
+  orgOverride,
+  onOrgOverride,
+}: {
+  group: OrgGroup;
+  orgOverride: OrgOverrideValues | undefined;
+  onOrgOverride: (batchOrgKey: string, patch: Partial<OrgOverrideValues>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const setValues = orgOverride ?? {};
+  const editedCount = ORG_EXTRA_FIELDS.reduce(
+    (n, f) => (setValues[f.key] ? n + 1 : n),
+    0,
+  );
+  return (
+    <div className="mt-2 ml-6 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/30">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 focus:outline-none focus:bg-slate-100 dark:focus:bg-slate-800/60"
+        aria-expanded={open}
+        aria-label={open ? 'Collapse organization details' : 'Expand organization details'}
+      >
+        <ChevronRight
+          className={cn(
+            'h-3.5 w-3.5 text-slate-500 dark:text-slate-400 transition-transform',
+            open && 'rotate-90',
+          )}
+          aria-hidden="true"
+        />
+        <span className="uppercase tracking-wide">Org details</span>
+        {editedCount > 0 && (
+          <span className="ml-1 inline-flex items-center rounded-[4px] border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-[1px] text-[9px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+            {editedCount} edited
+          </span>
+        )}
+        <span className="ml-auto text-[10px] font-normal text-slate-400 dark:text-slate-500">
+          {open ? 'hide' : 'edit'}
+        </span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3 pt-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-3 gap-y-2">
+          {ORG_EXTRA_FIELDS.map((field) => {
+            const value = setValues[field.key] ?? '';
+            const inputId = `org-${group.key}-${field.key}`;
+            const commonProps = {
+              id: inputId,
+              value,
+              onChange: (
+                e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+              ) => onOrgOverride(group.key, { [field.key]: e.target.value }),
+              placeholder: field.type === 'url' ? 'https://…' : '—',
+              className: cn(
+                'w-full rounded-md border px-2 py-1 text-[12px] focus:outline-none',
+                'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900',
+                'text-slate-800 dark:text-slate-100 focus:border-blue-500 dark:focus:border-blue-400',
+                setValues[field.key] && 'text-emerald-800 dark:text-emerald-200',
+              ),
+            } as const;
+            return (
+              <div key={field.key} className="flex flex-col gap-0.5 min-w-0">
+                <label
+                  htmlFor={inputId}
+                  className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 dark:text-slate-400"
+                >
+                  {field.label}
+                </label>
+                {field.type === 'multiline' ? (
+                  <textarea rows={2} {...commonProps} className={cn(commonProps.className, 'resize-none')} />
+                ) : (
+                  <input type={field.type === 'url' ? 'url' : 'text'} {...commonProps} />
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

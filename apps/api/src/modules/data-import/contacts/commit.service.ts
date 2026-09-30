@@ -252,9 +252,18 @@ export class ContactsCommitService {
           // parsed cell. Domain override replaces the leader row's
           // extracted domain for both the org identity fallback + the
           // domain claim.
+          //
+          // QA4 IW-1 (2026-09-30) — orgOverride also carries the
+          // full BP field set (companyName, taxId, email, phone,
+          // mobile, website, address, notes). An override wins over
+          // the parsed leader-row value; an unset field falls back.
           const orgOverride = input.orgOverrides?.[key];
           const overrideName = orgOverride?.name?.trim();
           const overrideDomain = orgOverride?.domain?.trim().toLowerCase();
+          const trimOrNull = (v: string | undefined | null): string | null => {
+            const t = (v ?? '').trim();
+            return t.length > 0 ? t : null;
+          };
           // QA4 RD-3 (2026-09-29) — never let an email / dash /
           // single-character cell become the org identity. The batch
           // key already collapsed the group under its domain, so the
@@ -264,8 +273,13 @@ export class ContactsCommitService {
           const safeOrgName = overrideName
             ? { displayName: overrideName, companyName: overrideName }
             : deriveSafeOrgName(rawOrgName, overrideDomain ?? leader.domain);
+          // QA4 IW-1 — a separate companyName override lands here.
+          // Only overrides companyName (not displayName); when both
+          // `name` and `companyName` are set, `name` still drives
+          // displayName but `companyName` wins on the companyName col.
+          const overrideCompanyName = trimOrNull(orgOverride?.companyName);
           const domainToClaim = overrideDomain ?? leader.domain ?? null;
-          const orgPhone = eff('phone')
+          const parsedOrgPhone = eff('phone')
             ?? (leader.secondaryContacts ?? []).map((s) => s.phone).find(Boolean)
             ?? null;
           // Prefer the routed generic mailbox (office@…) over the
@@ -279,11 +293,14 @@ export class ContactsCommitService {
             data: {
               partnerType: 'organization',
               displayName: safeOrgName.displayName,
-              companyName: safeOrgName.companyName,
-              email: routedOrgEmail ?? leaderPrimaryEmail,
-              phone: orgPhone,
-              address: leader.values.address ?? null,
-              notes: leader.values.note ?? null,
+              companyName: overrideCompanyName ?? safeOrgName.companyName,
+              email: trimOrNull(orgOverride?.email) ?? routedOrgEmail ?? leaderPrimaryEmail,
+              phone: trimOrNull(orgOverride?.phone) ?? parsedOrgPhone,
+              mobile: trimOrNull(orgOverride?.mobile),
+              address: trimOrNull(orgOverride?.address) ?? leader.values.address ?? null,
+              website: trimOrNull(orgOverride?.website),
+              taxId: trimOrNull(orgOverride?.taxId),
+              notes: trimOrNull(orgOverride?.notes) ?? leader.values.note ?? null,
               source: 'import',
               createdByImportId: importRecord.id,
             },
@@ -1478,8 +1495,27 @@ export interface CommitInput {
    * per batchOrgKey. `name` overrides both displayName + companyName;
    * `domain` (optional) replaces the domain claimed on commit.
    * Matched-existing orgs use E5 conflictResolutions instead.
+   *
+   * QA4 IW-1 (2026-09-30) — carries the full BP field set so the
+   * reviewer can complete BP-level details in the wizard's org card.
+   * Each additional field is optional and, when present, wins over
+   * the parsed leader-row value at commit.
    */
-  orgOverrides?: Record<string, { name?: string; domain?: string }>;
+  orgOverrides?: Record<
+    string,
+    {
+      name?: string;
+      domain?: string;
+      companyName?: string;
+      taxId?: string;
+      email?: string;
+      phone?: string;
+      mobile?: string;
+      website?: string;
+      address?: string;
+      notes?: string;
+    }
+  >;
   /**
    * QA4 E3 (2026-09-29) — orgs the reviewer deleted before commit.
    * List of batchOrgKeys; `orgDeleteMode` picks whether the org's

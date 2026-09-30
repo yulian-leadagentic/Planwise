@@ -374,8 +374,29 @@ export const contactsImportApi = {
      * `companyName`; `domain` (optional) is the domain claimed on
      * commit. NEW orgs only — matched-existing orgs use E5 conflict
      * resolution instead.
+     *
+     * QA4 IW-1 (2026-09-30) — extended to carry the full BP field
+     * set. When present, each additional field lands on the freshly-
+     * created BusinessPartner row: `companyName` overrides just the
+     * companyName (leaving displayName to `name`'s effect); the rest
+     * map to their obvious BP columns. All optional; an omitted field
+     * falls back to the parsed leader-row value.
      */
-    orgOverrides?: Record<string, { name?: string; domain?: string }>;
+    orgOverrides?: Record<
+      string,
+      {
+        name?: string;
+        domain?: string;
+        companyName?: string;
+        taxId?: string;
+        email?: string;
+        phone?: string;
+        mobile?: string;
+        website?: string;
+        address?: string;
+        notes?: string;
+      }
+    >;
     /**
      * QA4 E3 (2026-09-29) — list of batchOrgKeys the reviewer removed.
      * With `orgDeleteMode` per key: `cascade` skips all their people,
