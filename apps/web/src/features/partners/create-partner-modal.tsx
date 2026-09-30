@@ -549,40 +549,17 @@ function PersonForm({
         ) : null}
       </div>
 
-      {/* Qualification (Profession). JT-3b-4 (QA4 · 2026-09-29):
-          relabelled after the JT-1 split. Wire is unchanged — still
-          `primaryProfessionId` writing to `business_partner_professions`
-          — but the concept is Qualification (functional capability
-          that gates project-role eligibility), not Job Title. Position
-          (org title, e.g. CEO) is a separate axis handled by the
-          drawer's PositionSection + People modal. */}
-      <div>
-        <label
-          className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block"
-          title="Determines which project roles this person can be assigned to. Managed at /templates/types → Qualifications."
-        >
-          Qualification <span className="text-slate-400 dark:text-slate-500 font-normal">(optional)</span>
-        </label>
-        <select
-          value={form.primaryProfessionId}
-          onChange={(e) => setForm((f: any) => ({ ...f, primaryProfessionId: e.target.value }))}
-          className={inputClass}
-          disabled={professions.length === 0}
-        >
-          <option value="">
-            {professions.length === 0
-              ? 'No qualifications configured — add some under Admin › Templates › Types first'
-              : '— None / set later —'}
-          </option>
-          {professions.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-        <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
-          <span className="font-semibold text-slate-500 dark:text-slate-400">Determines which project roles this person can be assigned to.</span>
-          {' '}The person's actual profession (e.g. Architect, MEP Engineer). Add more titles from the contact profile after creation.
-        </p>
-      </div>
+      {/* QA4 CT-6/IW-10 (2026-09-30) — the Qualification picker is
+          dropped from this modal. This surface only ever creates
+          external contacts (the 'employee' role is filtered out of
+          applicableRoles above and the /admin/employees flow owns
+          internal-staff creation), so the eligibility gate
+          Qualifications drive is never relevant here. External
+          contacts use Discipline (rendered below) as their primary
+          professional descriptor. The `primaryProfessionId` form field
+          + POST-create profession assignment call are preserved in
+          the component so a stale caller (or a future internal path)
+          still round-trips harmlessly. */}
 
       {/* BM2 QA-2 Commit 4 (2026-08-27) — Role(s), multi-select. Relabelled
           from "Main Role" to "Role(s)" so the multi-select semantics are

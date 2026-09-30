@@ -1083,8 +1083,15 @@ function DetailsTab({
               non-edit mode so admins can find a title in a long
               catalog by typing. "Saved" pill flashes after each save.
               The picker sets the PRIMARY profession — bulk chip
-              management stays in the read view. */}
-          <JobTitleCombobox bpId={bp.id} />
+              management stays in the read view.
+              QA4 CT-6/IW-10 (2026-09-30) — external contacts (no
+              `bp.user`, i.e. no login account) DON'T get the
+              Qualification picker on the drawer edit surface: their
+              primary professional descriptor is Discipline, which
+              lives above this block. Internal employees (people with
+              a User row) still see the combobox because their
+              project-role eligibility runs through Qualifications. */}
+          {bp.user && <JobTitleCombobox bpId={bp.id} />}
         </>
       )}
       <TextField
