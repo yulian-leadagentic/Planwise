@@ -510,12 +510,22 @@ export function ContactsImportWizard({
   };
   const topBackEnabled = step !== 'upload' && step !== 'commit';
 
+  // QA4 IW-4 (2026-09-30) — file name in the wizard header. The upload
+  // handler stores the File object; triage echoes the server-side
+  // filename back on success. Prefer the local File.name (available
+  // immediately) and fall back to the triage value for a re-mounted
+  // wizard where the File went out of scope.
+  const currentFilename =
+    file?.name ??
+    (triage && triage.kind !== 'reject' ? triage.filename ?? null : null);
+
   // ─── Stepper ─────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
       <Stepper
         step={step}
         onBack={topBackEnabled ? topBackHandler : undefined}
+        filename={currentFilename}
       />
 
       {step === 'upload' && (
@@ -736,6 +746,7 @@ export function ContactsImportWizard({
 function Stepper({
   step,
   onBack,
+  filename,
 }: {
   step: WizardStep;
   /**
@@ -745,6 +756,12 @@ function Stepper({
    * on step 1 (nothing to rewind to) and step 5 (commit is terminal).
    */
   onBack?: () => void;
+  /**
+   * QA4 IW-4 (2026-09-30) — current file name, shown to the right of
+   * the step progress on every step. Null before an upload lands.
+   * Truncated with ellipsis; full name on the title tooltip.
+   */
+  filename?: string | null;
 }) {
   const steps: WizardStep[] = ['upload', 'sheet', 'map', 'preview', 'commit'];
   const idx = steps.indexOf(step);
@@ -797,6 +814,21 @@ function Stepper({
           );
         })}
       </ol>
+      {/* QA4 IW-4 (2026-09-30) — file-name chip on every step. */}
+      {filename && (
+        <div
+          className="ml-auto inline-flex items-center gap-1.5 min-w-0 max-w-[24rem] rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-2.5 py-1 text-[11px]"
+          title={filename}
+        >
+          <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" aria-hidden="true" />
+          <span className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 dark:text-slate-400 shrink-0">
+            File
+          </span>
+          <span className="truncate text-slate-700 dark:text-slate-200 font-mono" aria-label="Current file name">
+            {filename}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
