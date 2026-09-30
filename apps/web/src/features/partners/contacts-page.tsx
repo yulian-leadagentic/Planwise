@@ -49,6 +49,10 @@ type Contact = {
   linkedinUrl: string | null;
   status: string;
   mainRoleType: { id: number; code: string; name: string } | null;
+  // CT-5 (2026-09-30) — Discipline (Architecture / MEP / Structural /
+  // …). Person-only lookup; null when unset or when the row is an
+  // organization. Rendered as its own column on both grouped tables.
+  discipline: { id: number; name: string } | null;
   // BM2 ops-surfaces Phase A: shape from the new-shape include on the
   // /business-partners response. `partnerRelationshipsA` = party↔party
   // rows where THIS contact is party A (their worker_of employer lives here).
@@ -97,6 +101,10 @@ type AttachedProject = {
     orgId: number | null;
     orgName: string | null;
     isInternal: boolean;
+    // CT-5 (2026-09-30) — surfaced so the By-Project table can render
+    // a Discipline column. Null when the row is an org party or the
+    // person's discipline is unset on their BP.
+    discipline: { id: number; name: string } | null;
   }>;
 };
 
@@ -881,7 +889,7 @@ function ContactStatusBadge({ status }: { status: string }) {
 */
 
 type ByOrgSort = 'count' | 'name';
-type ByOrgSortKey = 'name' | 'role' | 'email' | 'phone';
+type ByOrgSortKey = 'name' | 'role' | 'discipline' | 'email' | 'phone';
 type ByOrgSortDir = 'asc' | 'desc';
 
 interface ByOrgRow {
@@ -893,6 +901,8 @@ interface ByOrgRow {
   firstName: string | null;
   lastName: string | null;
   role: string; // mainRoleType.name or ''
+  /** CT-5 (2026-09-30) — Discipline name shown between Role and Email. */
+  discipline: string;
   email: string | null;
   phone: string | null;
   rowKey: string;
@@ -940,6 +950,7 @@ function ByOrganizationView({
         (r) => r.type?.code === 'worker_of',
       );
       const role = c.mainRoleType?.name ?? '';
+      const discipline = c.discipline?.name ?? '';
       const phone = c.phone || c.mobile || '';
       if (workerEdges.length === 0) {
         out.push({
@@ -951,6 +962,7 @@ function ByOrganizationView({
           firstName: c.firstName,
           lastName: c.lastName,
           role,
+          discipline,
           email: c.email,
           phone: phone || null,
           rowKey: `unaff-${c.id}`,
@@ -971,6 +983,7 @@ function ByOrganizationView({
           firstName: c.firstName,
           lastName: c.lastName,
           role,
+          discipline,
           email: c.email,
           phone: phone || null,
           rowKey: `${r.partyBId}-${c.id}`,
@@ -991,6 +1004,9 @@ function ByOrganizationView({
       (r.email ?? '').toLowerCase().includes(q) ||
       (r.phone ?? '').toLowerCase().includes(q) ||
       r.role.toLowerCase().includes(q) ||
+      // CT-5 — Discipline participates in the free-text filter so
+      // typing "MEP" narrows both tables to the MEP people.
+      r.discipline.toLowerCase().includes(q) ||
       (r.orgName ?? '').toLowerCase().includes(q),
     );
   }, [allRows, debouncedFilter]);
@@ -1005,6 +1021,7 @@ function ByOrganizationView({
       switch (key) {
         case 'name': return r.displayName;
         case 'role': return r.role;
+        case 'discipline': return r.discipline;
         case 'email': return r.email ?? '';
         case 'phone': return r.phone ?? '';
       }
@@ -1097,12 +1114,16 @@ function ByOrganizationView({
     );
   }
 
-  // 4 columns; keep in sync with the header + tbody rows below.
+  // 5 columns; keep in sync with the header + tbody rows below.
+  // CT-5 (2026-09-30) — Discipline slots between Role and Email so the
+  // engineering classification lives next to the person's role label
+  // and doesn't split the reach columns (email + phone).
   const columns: Array<{ key: ByOrgSortKey; label: string }> = [
-    { key: 'name',  label: 'Contact' },
-    { key: 'role',  label: 'Role' },
-    { key: 'email', label: 'Email' },
-    { key: 'phone', label: 'Phone' },
+    { key: 'name',       label: 'Contact' },
+    { key: 'role',       label: 'Role' },
+    { key: 'discipline', label: 'Discipline' },
+    { key: 'email',      label: 'Email' },
+    { key: 'phone',      label: 'Phone' },
   ];
 
   return (
@@ -1117,7 +1138,7 @@ function ByOrganizationView({
             type="text"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter by name, role, email, phone, org…"
+            placeholder="Filter by name, role, discipline, email, phone, org…"
             className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 pl-9 pr-9 py-2 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
           />
           {filter && (
@@ -1317,6 +1338,11 @@ function ByOrgTableRow({
       <td className="px-3 py-2 text-[13px] text-slate-700 dark:text-slate-200">
         {r.role || <span className="italic text-slate-400 dark:text-slate-500">—</span>}
       </td>
+      {/* CT-5 — Discipline column (Architecture / MEP / …). Renders
+          '—' when the person has no discipline set on their BP. */}
+      <td className="px-3 py-2 text-[13px] text-slate-700 dark:text-slate-200">
+        {r.discipline || <span className="italic text-slate-400 dark:text-slate-500">—</span>}
+      </td>
       <td className="px-3 py-2 text-[13px]">
         {r.email ? (
           <a
@@ -1367,7 +1393,7 @@ function ByOrgTableRow({
 
    Data source is unchanged: GET /projects/attached-contacts. */
 
-type ByProjectSortKey = 'name' | 'role' | 'email' | 'phone' | 'org';
+type ByProjectSortKey = 'name' | 'role' | 'discipline' | 'email' | 'phone' | 'org';
 type ByProjectSortDir = 'asc' | 'desc';
 
 interface ByProjectRow {
@@ -1382,6 +1408,8 @@ interface ByProjectRow {
   email: string | null;
   phone: string | null;
   role: string;
+  /** CT-5 (2026-09-30) — Discipline shown between Role and Email. */
+  discipline: string;
   orgName: string | null;
   isInternal: boolean;
   rowKey: string;
@@ -1418,6 +1446,7 @@ function ByProjectView({
           email: c.email,
           phone: null, // attached-contacts endpoint doesn't ship phone today
           role: c.titleInProject ?? c.roleName,
+          discipline: c.discipline?.name ?? '',
           orgName: c.orgName,
           isInternal: c.isInternal,
           rowKey: `${g.projectId}-${c.id}-${c.roleCode}`,
@@ -1436,6 +1465,9 @@ function ByProjectView({
         (r.email ?? '').toLowerCase().includes(q) ||
         (r.phone ?? '').toLowerCase().includes(q) ||
         r.role.toLowerCase().includes(q) ||
+        // CT-5 — Discipline joins the free-text filter so "MEP" or
+        // "Architecture" narrows the projects table too.
+        r.discipline.toLowerCase().includes(q) ||
         (r.orgName ?? '').toLowerCase().includes(q) ||
         r.projectName.toLowerCase().includes(q) ||
         (r.projectNumber ?? '').toLowerCase().includes(q)
@@ -1451,6 +1483,7 @@ function ByProjectView({
       switch (key) {
         case 'name': return r.displayName;
         case 'role': return r.role;
+        case 'discipline': return r.discipline;
         case 'email': return r.email ?? '';
         case 'phone': return r.phone ?? '';
         case 'org': return r.orgName ?? '';
@@ -1522,11 +1555,15 @@ function ByProjectView({
   }
 
   const columns: Array<{ key: ByProjectSortKey; label: string; className?: string }> = [
-    { key: 'name',  label: 'Contact' },
-    { key: 'role',  label: 'Role on project' },
-    { key: 'email', label: 'Email' },
-    { key: 'phone', label: 'Phone' },
-    { key: 'org',   label: 'Organization' },
+    { key: 'name',       label: 'Contact' },
+    { key: 'role',       label: 'Role on project' },
+    // CT-5 (2026-09-30) — Discipline column slots between Role and
+    // Email so the engineering classification lives next to the role
+    // label; keeps the ByOrganization + ByProject tables in parity.
+    { key: 'discipline', label: 'Discipline' },
+    { key: 'email',      label: 'Email' },
+    { key: 'phone',      label: 'Phone' },
+    { key: 'org',        label: 'Organization' },
   ];
 
   return (
@@ -1542,7 +1579,7 @@ function ByProjectView({
             type="text"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter by name, role, email, phone, org, project…"
+            placeholder="Filter by name, role, discipline, email, phone, org, project…"
             className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 pl-9 pr-9 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
           />
           {filter && (
@@ -1715,6 +1752,10 @@ function ByProjectTableRow({
       </td>
       <td className="px-3 py-2 text-[13px] text-slate-700 dark:text-slate-200">
         {r.role || <span className="italic text-slate-400 dark:text-slate-500">—</span>}
+      </td>
+      {/* CT-5 — Discipline column mirrors ByOrganizationView's shape. */}
+      <td className="px-3 py-2 text-[13px] text-slate-700 dark:text-slate-200">
+        {r.discipline || <span className="italic text-slate-400 dark:text-slate-500">—</span>}
       </td>
       <td className="px-3 py-2 text-[13px]">
         {r.email ? (

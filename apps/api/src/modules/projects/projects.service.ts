@@ -1597,6 +1597,11 @@ export class ProjectsService {
         orgId: number | null;
         orgName: string | null;
         isInternal: boolean;
+        // CT-5 (2026-09-30) — the person's Discipline, sourced from
+        // BusinessPartner.discipline (a person-only lookup). Null when
+        // the row is an org, or the person has no discipline set. Used
+        // by the Contacts page's By-Project / By-Organization tables.
+        discipline: { id: number; name: string } | null;
       }>;
     }>
   > {
@@ -1636,6 +1641,10 @@ export class ProjectsService {
             lastName: true,
             email: true,
             user: { select: { id: true } },
+            // CT-5 (2026-09-30) — surface the party's discipline so the
+            // Contacts page can render it inline. Person-only lookup on
+            // the BP schema; null-safe when the party is an org.
+            discipline: { select: { id: true, name: true } },
           },
         },
         contactParty: {
@@ -1647,6 +1656,9 @@ export class ProjectsService {
             lastName: true,
             email: true,
             user: { select: { id: true } },
+            // CT-5 — matching include so the person under a
+            // customer-org row also carries discipline.
+            discipline: { select: { id: true, name: true } },
           },
         },
       },
@@ -1671,6 +1683,8 @@ export class ProjectsService {
       orgId: number | null;
       orgName: string | null;
       isInternal: boolean;
+      /** CT-5 — Discipline shown on the Contacts page tables. */
+      discipline: { id: number; name: string } | null;
     };
     const byProject = new Map<
       number,
@@ -1728,6 +1742,9 @@ export class ProjectsService {
         orgId,
         orgName,
         isInternal: !!contactSource.user?.id,
+        // CT-5 — nullish when the row is an org party or the person's
+        // discipline is unset. The FE renders '—' in the column then.
+        discipline: contactSource.discipline ?? null,
       });
     }
 
