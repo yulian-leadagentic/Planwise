@@ -421,6 +421,15 @@ export const contactsImportApi = {
      * value). Fields absent from the map default to `existing`.
      */
     conflictResolutions?: Record<string, Record<string, 'existing' | 'imported'>>;
+    /**
+     * QA4 IW-8 (2026-09-30) — reviewer-removed inherited / secondary
+     * contacts. Each entry is `${sourceRowIndex}:${secondaryIndex}` —
+     * the position of the extracted contact inside its primary row's
+     * `secondaryContacts` array. Commit filters
+     * `dec.secondaryContacts` by these keys before creating the person
+     * BPs (no BP, no worker_of edge, no project attach).
+     */
+    deletedSecondaries?: string[];
   }): Promise<CommitSummary> => {
     const r = await client.post<CommitSummary>('/data-import/contacts/commit', input);
     return unwrap<CommitSummary>(r);

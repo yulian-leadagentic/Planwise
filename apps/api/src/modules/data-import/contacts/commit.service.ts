@@ -900,7 +900,17 @@ export class ContactsCommitService {
         // shape this importer supports). Idempotency: match on
         // (partnerType='person', orgBpId, name/email/phone) so a
         // re-import doesn't duplicate.
-        const secondaries = dec.secondaryContacts ?? [];
+        //
+        // QA4 IW-8 (2026-09-30) — the reviewer can trash individual
+        // extracted contacts in the wizard's preview. `deletedSecondaries`
+        // carries `${sourceRowIndex}:${secondaryIndex}` keys; we filter
+        // by ORIGINAL index (before dropping) so a removal never shifts
+        // subsequent secondaries' keys. Filtered rows create no person
+        // BP, no worker_of edge, no project attach.
+        const deletedSecondaryKeys = new Set(input.deletedSecondaries ?? []);
+        const secondaries = (dec.secondaryContacts ?? []).filter(
+          (_, idx) => !deletedSecondaryKeys.has(`${dec.sourceRowIndex}:${idx}`),
+        );
         if (secondaries.length > 0 && orgBpId != null) {
           for (const secondary of secondaries) {
             try {
@@ -1562,6 +1572,15 @@ export interface CommitInput {
    * default to `existing`.
    */
   conflictResolutions?: Record<string, Record<string, 'existing' | 'imported'>>;
+  /**
+   * QA4 IW-8 (2026-09-30) — reviewer-removed inherited / secondary
+   * contacts. Each entry is `${sourceRowIndex}:${secondaryIndex}` —
+   * the position of the extracted contact inside its primary row's
+   * `secondaryContacts` array. Commit filters those secondaries out
+   * before creating the person BPs (no BP, no worker_of edge, no
+   * project attach for a deleted secondary).
+   */
+  deletedSecondaries?: string[];
 }
 
 export interface CommitResult {

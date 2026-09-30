@@ -283,6 +283,16 @@ export function ContactsImportWizard({
   const [userCreatedOrgs, setUserCreatedOrgs] = useState<
     Array<{ key: string; name: string; domain?: string }>
   >([]);
+  // QA4 IW-8 (2026-09-30) — reviewer-deleted secondary (inherited)
+  // contacts. Keyed by `${primary.sourceRowIndex}:${secondaryIndex}`
+  // so each extracted secondary has a stable id even when the primary
+  // decision list is re-ordered by React Query invalidations. The
+  // commit payload ships the full set as `deletedSecondaries: string[]`
+  // and the backend filters `dec.secondaryContacts` at write time.
+  // Trash → strike + undo, mirroring the org-delete pattern from E3.
+  const [deletedSecondaries, setDeletedSecondaries] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [commitResult, setCommitResult] = useState<
     | (Awaited<ReturnType<typeof contactsImportApi.commit>>)
     | null
@@ -408,6 +418,13 @@ export function ContactsImportWizard({
           : undefined,
         // QA4 E5 — per-field conflict picks (keep existing vs use imported).
         conflictResolutions: Object.keys(conflictResolutions).length > 0 ? conflictResolutions : undefined,
+        // QA4 IW-8 (2026-09-30) — inherited/secondary contacts the
+        // reviewer trashed pre-commit. Keys are the same
+        // `${sourceRowIndex}:${secondaryIndex}` used in the FE state so
+        // commit.service.ts can filter each row's `dec.secondaryContacts`
+        // by index before creating the person BPs.
+        deletedSecondaries:
+          deletedSecondaries.size > 0 ? [...deletedSecondaries] : undefined,
       });
     },
     onSuccess: (data) => {
@@ -451,6 +468,7 @@ export function ContactsImportWizard({
     setPersonOrgOverrides({});
     setConflictResolutions({});
     setUserCreatedOrgs([]);
+    setDeletedSecondaries(new Set());
     setCommitResult(null);
     // Re-apply prefill for "Import another file" — if the wizard was
     // deep-linked from a project, that context still holds. The role
@@ -716,6 +734,21 @@ export function ContactsImportWizard({
               const inner = { ...(prev[recordKey] ?? {}) };
               inner[field] = choice;
               return { ...prev, [recordKey]: inner };
+            })
+          }
+          deletedSecondaries={deletedSecondaries}
+          onDeleteSecondary={(rowIndex, secondaryIndex) =>
+            setDeletedSecondaries((prev) => {
+              const next = new Set(prev);
+              next.add(`${rowIndex}:${secondaryIndex}`);
+              return next;
+            })
+          }
+          onUndoDeleteSecondary={(rowIndex, secondaryIndex) =>
+            setDeletedSecondaries((prev) => {
+              const next = new Set(prev);
+              next.delete(`${rowIndex}:${secondaryIndex}`);
+              return next;
             })
           }
           userCreatedOrgs={userCreatedOrgs}
@@ -1350,6 +1383,9 @@ function PreviewStep({
   orgDeleteMode,
   personOrgOverrides,
   conflictResolutions,
+  deletedSecondaries,
+  onDeleteSecondary,
+  onUndoDeleteSecondary,
   onOrgTypeChange,
   onOrgOverride,
   onOrgDelete,
@@ -1385,6 +1421,11 @@ function PreviewStep({
   personOrgOverrides: Record<number, string | null>;
   /** QA4 E5 — per-record per-field conflict choice. */
   conflictResolutions: Record<string, Record<string, 'existing' | 'imported'>>;
+  /** QA4 IW-8 — set of `${rowIndex}:${secondaryIndex}` keys the
+   *  reviewer removed from the import; commit filters them out. */
+  deletedSecondaries: Set<string>;
+  onDeleteSecondary: (rowIndex: number, secondaryIndex: number) => void;
+  onUndoDeleteSecondary: (rowIndex: number, secondaryIndex: number) => void;
   onOrgTypeChange: (batchOrgKey: string, code: string | null) => void;
   onOrgOverride: (batchOrgKey: string, patch: Partial<OrgOverrideValues>) => void;
   onOrgDelete: (batchOrgKey: string, mode: 'cascade' | 'keep-people') => void;
@@ -1746,6 +1787,9 @@ function PreviewStep({
         orgDeleted={orgDeleted}
         orgDeleteMode={orgDeleteMode}
         conflictResolutions={conflictResolutions}
+        deletedSecondaries={deletedSecondaries}
+        onDeleteSecondary={onDeleteSecondary}
+        onUndoDeleteSecondary={onUndoDeleteSecondary}
         onOrgTypeChange={onOrgTypeChange}
         onOrgOverride={onOrgOverride}
         onOrgDelete={onOrgDelete}
@@ -1839,6 +1883,9 @@ function GroupedReview({
   orgDeleted,
   orgDeleteMode,
   conflictResolutions,
+  deletedSecondaries,
+  onDeleteSecondary,
+  onUndoDeleteSecondary,
   onOrgTypeChange,
   onOrgOverride,
   onOrgDelete,
@@ -1864,6 +1911,10 @@ function GroupedReview({
   orgDeleted: Set<string>;
   orgDeleteMode: Record<string, 'cascade' | 'keep-people'>;
   conflictResolutions: Record<string, Record<string, 'existing' | 'imported'>>;
+  /** QA4 IW-8 — secondary-row deletion state + handlers. */
+  deletedSecondaries: Set<string>;
+  onDeleteSecondary: (rowIndex: number, secondaryIndex: number) => void;
+  onUndoDeleteSecondary: (rowIndex: number, secondaryIndex: number) => void;
   onOrgTypeChange: (batchOrgKey: string, code: string | null) => void;
   onOrgOverride: (batchOrgKey: string, patch: Partial<OrgOverrideValues>) => void;
   onOrgDelete: (batchOrgKey: string, mode: 'cascade' | 'keep-people') => void;
@@ -2001,6 +2052,9 @@ function GroupedReview({
                   orgRoleTypesLoading={orgRoleTypesLoading}
                   onDecide={onDecide}
                   onOverride={onOverride}
+                  deletedSecondaries={deletedSecondaries}
+                  onDeleteSecondary={onDeleteSecondary}
+                  onUndoDeleteSecondary={onUndoDeleteSecondary}
                 />
               );
             })}
@@ -2038,6 +2092,9 @@ function GroupedReview({
           moveTargets={moveTargets}
           conflictResolutions={conflictResolutions}
           onConflictResolve={onConflictResolve}
+          deletedSecondaries={deletedSecondaries}
+          onDeleteSecondary={onDeleteSecondary}
+          onUndoDeleteSecondary={onUndoDeleteSecondary}
         />
       )}
     </div>
@@ -2077,6 +2134,9 @@ function OrgCard({
   orgRoleTypesLoading,
   onDecide,
   onOverride,
+  deletedSecondaries,
+  onDeleteSecondary,
+  onUndoDeleteSecondary,
 }: {
   group: OrgGroup;
   isExpanded: boolean;
@@ -2102,6 +2162,10 @@ function OrgCard({
   orgRoleTypesLoading: boolean;
   onDecide: (rowIndex: number, patch: Partial<RowDecision>) => void;
   onOverride: (rowIndex: number, field: OverrideField, value: string | null | undefined) => void;
+  /** QA4 IW-8 — secondary-row deletion state + handlers. */
+  deletedSecondaries: Set<string>;
+  onDeleteSecondary: (rowIndex: number, secondaryIndex: number) => void;
+  onUndoDeleteSecondary: (rowIndex: number, secondaryIndex: number) => void;
 }) {
   const pickedCode = orgTypes[group.key] ?? '';
   const needsPick = group.isNew && group.hasBatchKey && !pickedCode && group.personCount > 0 && !isDeleted;
@@ -2396,6 +2460,9 @@ function OrgCard({
               currentGroupKey={group.key}
               conflictResolutions={conflictResolutions}
               onConflictResolve={onConflictResolve}
+              deletedSecondaries={deletedSecondaries}
+              onDeleteSecondary={onDeleteSecondary}
+              onUndoDeleteSecondary={onUndoDeleteSecondary}
             />
           )}
         </div>
@@ -2513,6 +2580,9 @@ function IndividualsSection({
   moveTargets,
   conflictResolutions,
   onConflictResolve,
+  deletedSecondaries,
+  onDeleteSecondary,
+  onUndoDeleteSecondary,
 }: {
   people: Array<{ decision: DedupDecision; skipped: boolean }>;
   totalPeople: number;
@@ -2529,6 +2599,10 @@ function IndividualsSection({
   /** QA4 E5 — per-field conflict picks (kept/use imported). */
   conflictResolutions?: Record<string, Record<string, 'existing' | 'imported'>>;
   onConflictResolve?: (recordKey: string, field: string, choice: 'existing' | 'imported') => void;
+  /** QA4 IW-8 — secondary-row deletion state + handlers. */
+  deletedSecondaries?: Set<string>;
+  onDeleteSecondary?: (rowIndex: number, secondaryIndex: number) => void;
+  onUndoDeleteSecondary?: (rowIndex: number, secondaryIndex: number) => void;
 }) {
   // QA4 E4 (2026-09-29) — droppable target for "move to individuals".
   const { isOver, setNodeRef: setDroppableRef } = useDroppable({
@@ -2657,6 +2731,9 @@ function IndividualsSection({
           currentGroupKey={null}
           conflictResolutions={conflictResolutions}
           onConflictResolve={onConflictResolve}
+          deletedSecondaries={deletedSecondaries}
+          onDeleteSecondary={onDeleteSecondary}
+          onUndoDeleteSecondary={onUndoDeleteSecondary}
         />
       )}
     </div>
@@ -2683,6 +2760,9 @@ function PeopleTable({
   currentGroupKey,
   conflictResolutions,
   onConflictResolve,
+  deletedSecondaries,
+  onDeleteSecondary,
+  onUndoDeleteSecondary,
 }: {
   people: Array<{ decision: DedupDecision; skipped: boolean }>;
   rowByIndex: Map<number, ResolvedRow>;
@@ -2704,6 +2784,10 @@ function PeopleTable({
   /** QA4 E5 — per-field conflict picks (keep/use imported). */
   conflictResolutions?: Record<string, Record<string, 'existing' | 'imported'>>;
   onConflictResolve?: (recordKey: string, field: string, choice: 'existing' | 'imported') => void;
+  /** QA4 IW-8 — secondary-row deletion state + handlers. */
+  deletedSecondaries?: Set<string>;
+  onDeleteSecondary?: (rowIndex: number, secondaryIndex: number) => void;
+  onUndoDeleteSecondary?: (rowIndex: number, secondaryIndex: number) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
   const [expandedFields, setExpandedFields] = useState<Set<number>>(() => new Set());
@@ -2782,14 +2866,30 @@ function PeopleTable({
                   conflictResolutions={conflictResolutions}
                   onConflictResolve={onConflictResolve}
                 />
-                {secondaries.map((s, i) => (
-                  <SecondaryContactRow
-                    key={`${d.sourceRowIndex}-secondary-${i}`}
-                    primary={d}
-                    secondary={s}
-                    showCompany={showCompany}
-                  />
-                ))}
+                {secondaries.map((s, i) => {
+                  const secondaryKey = `${d.sourceRowIndex}:${i}`;
+                  const isSecondaryDeleted = !!deletedSecondaries?.has(secondaryKey);
+                  return (
+                    <SecondaryContactRow
+                      key={`${d.sourceRowIndex}-secondary-${i}`}
+                      primary={d}
+                      secondary={s}
+                      secondaryIndex={i}
+                      showCompany={showCompany}
+                      isDeleted={isSecondaryDeleted}
+                      onDelete={
+                        onDeleteSecondary
+                          ? () => onDeleteSecondary(d.sourceRowIndex, i)
+                          : undefined
+                      }
+                      onUndoDelete={
+                        onUndoDeleteSecondary
+                          ? () => onUndoDeleteSecondary(d.sourceRowIndex, i)
+                          : undefined
+                      }
+                    />
+                  );
+                })}
               </React.Fragment>
             );
           })}
@@ -3643,15 +3743,34 @@ function PreviewTableRow({
 function SecondaryContactRow({
   primary,
   secondary,
+  secondaryIndex: _secondaryIndex,
   showCompany,
+  isDeleted,
+  onDelete,
+  onUndoDelete,
 }: {
   primary: DedupDecision;
   secondary: SecondaryContact;
+  /** Position within `primary.secondaryContacts`; part of the delete key. */
+  secondaryIndex: number;
   /** QA4 RD-1 — match the primary row's column layout under org cards. */
   showCompany: boolean;
+  /** QA4 IW-8 (2026-09-30) — reviewer removed this extracted contact. */
+  isDeleted?: boolean;
+  onDelete?: () => void;
+  onUndoDelete?: () => void;
 }) {
+  // QA4 IW-8 — visual state matches the primary row's `isSkipped` shape:
+  // muted background + strike-through on nested spans. Reversible via
+  // the Undo affordance next to the strike.
+  const rowTint = isDeleted
+    ? 'bg-slate-100/70 dark:bg-slate-800/50'
+    : 'bg-indigo-50/30 dark:bg-indigo-950/10';
+  const rowMuted = isDeleted
+    ? 'opacity-60 [&_span]:line-through [&_.font-mono]:no-underline'
+    : '';
   return (
-    <tr className="align-top bg-indigo-50/30 dark:bg-indigo-950/10">
+    <tr className={cn('align-top', rowTint, rowMuted)}>
       <td className="px-2 py-2" aria-hidden="true">&nbsp;</td>
       <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
         <div className="pt-0.5">
@@ -3712,19 +3831,47 @@ function SecondaryContactRow({
       </td>
       <td className="px-2 py-2">
         <div className="flex flex-col gap-1">
-          <ActionBadge action="create" />
+          <ActionBadge action={isDeleted ? 'skip' : 'create'} />
           <span
             className="text-[10px] text-slate-400 dark:text-slate-500 italic"
             title={`Classifier confidence ${(secondary.confidence * 100).toFixed(0)}% · sourceField ${secondary.sourceField}`}
           >
-            secondary
+            {isDeleted ? 'removed from import' : 'secondary'}
           </span>
         </div>
       </td>
-      {/* Empty trash column keeps the row width aligned with the
-          primary rows above (ORG-6). Secondary contacts follow the
-          primary's skip state — removing the primary drops them too. */}
-      <td className="px-2 py-2" />
+      {/* QA4 IW-8 (2026-09-30) — trash / undo for extracted secondary
+          contacts. Matches the primary row's trash-icon affordance
+          (Trash2 → RotateCcw undo). No delete when no handler was
+          threaded (defensive; the wizard always passes one). */}
+      <td className="px-2 py-2 text-center">
+        {isDeleted ? (
+          onUndoDelete && (
+            <button
+              type="button"
+              onClick={onUndoDelete}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:text-slate-300 hover:border-slate-400 dark:hover:border-slate-500 focus:outline-none focus:border-blue-500 dark:focus:border-blue-400"
+              aria-label={`Restore extracted contact ${secondary.name} from row ${primary.sourceRowIndex}`}
+              title="Restore this extracted contact to the import"
+            >
+              <RotateCcw className="h-3 w-3" aria-hidden="true" />
+              Undo
+            </button>
+          )
+        ) : (
+          onDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              className="inline-flex items-center justify-center h-6 w-6 rounded-md border border-transparent text-slate-400 dark:text-slate-500 hover:border-red-300 hover:text-red-600 dark:hover:border-red-800 dark:hover:text-red-400 focus:outline-none focus:border-red-500 dark:focus:border-red-500"
+              aria-label={`Remove extracted contact ${secondary.name} from row ${primary.sourceRowIndex}`}
+              title="Remove this extracted contact from the import"
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          )
+        )}
+      </td>
     </tr>
   );
 }
