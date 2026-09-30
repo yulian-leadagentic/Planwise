@@ -3915,17 +3915,39 @@ function CommitStep({
       </div>
 
       {result.perRow.some((r) => r.status === 'error') && (
-        <div className="rounded-[14px] border border-red-200 bg-white divide-y divide-red-100 max-h-64 overflow-y-auto">
-          <div className="bg-[#FAFBFC] px-3 py-1.5 text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">
+        <div className="rounded-[14px] border border-red-200 dark:border-red-900/50 bg-white dark:bg-slate-900 divide-y divide-red-100 dark:divide-red-900/50 max-h-64 overflow-y-auto">
+          <div className="bg-[#FAFBFC] dark:bg-slate-800/70 px-3 py-1.5 text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em]">
             Errors
           </div>
           {result.perRow
             .filter((r) => r.status === 'error')
             .map((r) => (
-              <div key={r.sourceRowIndex} className="px-3 py-2 text-[12px] text-red-700">
+              <div key={r.sourceRowIndex} className="px-3 py-2 text-[12px] text-red-700 dark:text-red-300">
                 <span className="font-mono text-[11px]">Row {r.sourceRowIndex}</span> · {r.message}
               </div>
             ))}
+        </div>
+      )}
+
+      {/* QA4 IW-BUG (2026-09-30) — belt-and-suspenders orphan guard.
+          Any row that reached the commit path with `create person` +
+          no resolved org gets withheld and surfaces here. In practice
+          the E6 FE gate blocks these before commit; this section
+          exists so a slipped-through case is IMPOSSIBLE to miss. */}
+      {(result.withheldOrphans?.length ?? 0) > 0 && (
+        <div className="rounded-[14px] border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 max-h-64 overflow-y-auto">
+          <div className="bg-amber-100/70 dark:bg-amber-900/40 px-3 py-1.5 text-[11px] uppercase font-semibold text-amber-800 dark:text-amber-200 tracking-[0.05em] flex items-center gap-1.5">
+            <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+            Withheld orphans ({result.withheldOrphans!.length})
+          </div>
+          <div className="divide-y divide-amber-200 dark:divide-amber-900/50">
+            {result.withheldOrphans!.map((o) => (
+              <div key={o.sourceRowIndex} className="px-3 py-2 text-[12px] text-amber-800 dark:text-amber-200">
+                <span className="font-mono text-[11px]">Row {o.sourceRowIndex}</span> ·{' '}
+                <span className="font-semibold">{o.personKey}</span> — {o.reason}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

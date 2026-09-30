@@ -281,6 +281,20 @@ export interface CommitSummary {
     contactBpId: number | null;
     message?: string;
   }>;
+  /**
+   * QA4 IW-BUG (2026-09-30) — belt-and-suspenders orphan guard. When
+   * the commit path resolves a person as `create` but `orgBpId` is
+   * null (any code path where the FE E6 gate got bypassed), the row is
+   * WITHHELD — no person BP is written, no worker_of edge, no project
+   * attach — and it lands here with a clear reason. In practice this
+   * list should always be empty; a non-empty list points at an FE gate
+   * bug or a race between reassignment and commit.
+   */
+  withheldOrphans?: Array<{
+    sourceRowIndex: number;
+    personKey: string;
+    reason: string;
+  }>;
 }
 
 // ─── API ──────────────────────────────────────────────────────────────

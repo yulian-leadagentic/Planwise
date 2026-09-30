@@ -659,6 +659,42 @@ export class ContactsCommitService {
           // via emailRouting.orgPrimary in the batch pass above.
           result.contactsSkipped++;
         } else if (contactAction === 'create') {
+          // QA4 IW-BUG (2026-09-30) — belt-and-suspenders orphan guard.
+          // The wizard's E6 gate already blocks commit when any kept
+          // person has no org; but if a race, a reassignment loop, or
+          // a genuine bug drops the org resolution to null here, NEVER
+          // create a dangling person BP with no `worker_of` employer.
+          // Withhold the row instead — the reviewer sees a clear
+          // per-row reason on the commit result and can re-run after
+          // fixing the assignment. Consistent with RD-6.
+          if (orgBpId == null) {
+            const personLabel = eff('contact') ?? emailRouting.personPrimary ?? emailForCommit() ?? `row:${dec.sourceRowIndex}`;
+            const reason = orgAction === 'skip'
+              ? 'org action resolved to skip — cannot create a person without an employer'
+              : `no organization resolved for row ${dec.sourceRowIndex} (batchOrgKey missing or reassignment left it orphaned)`;
+            result.contactsSkipped++;
+            (result.withheldOrphans ??= []).push({
+              sourceRowIndex: dec.sourceRowIndex,
+              personKey: personLabel,
+              reason,
+            });
+            result.perRow.push({
+              sourceRowIndex: dec.sourceRowIndex,
+              status: 'skipped',
+              orgBpId: null,
+              contactBpId: null,
+              message: `withheld orphan: ${reason}`,
+            });
+            await this.recordRow(
+              importRecord.id,
+              dec.sourceRowIndex,
+              'skipped',
+              null,
+              `withheld orphan: ${reason}`,
+              dec.values,
+            );
+            continue;
+          }
           // QA4 R2 IMP-9 — prefer the routed personal address as the
           // person's primary; that way `office@` never lands on the
           // person BP as their primary email.
@@ -1484,6 +1520,19 @@ export interface CommitResult {
     orgBpId: number | null;
     contactBpId: number | null;
     message?: string;
+  }>;
+  /**
+   * QA4 IW-BUG (2026-09-30) — rows withheld by the belt-and-suspenders
+   * orphan guard: a `create` person action reached the commit path with
+   * `orgBpId === null`. The E6 gate on the FE already blocks commit for
+   * orphans, so this list should always be EMPTY in practice; a
+   * non-empty list means the FE gate was bypassed and the reviewer
+   * needs to fix each row's org assignment before re-committing.
+   */
+  withheldOrphans?: Array<{
+    sourceRowIndex: number;
+    personKey: string;
+    reason: string;
   }>;
 }
 
