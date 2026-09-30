@@ -863,24 +863,40 @@ function ContactStatusBadge({ status }: { status: string }) {
 }
 
 /* ─── By Organization view ──────────────────────────────────────────────
-   CT-1 (2026-09-30) — replaces the old By-Customer view.
+   CT-1b (2026-09-30) — reshaped as a grouped table to match By Project.
 
-   Grid of cards, one per BP organization, listing the people whose
-   `worker_of` edge points at that org. Same mental model as the
-   contacts-import review screen: org header, then its people nested.
-   Contacts with no `worker_of` edge (imported without an employer,
-   personal-email contacts, …) land in an "Unaffiliated" bucket so
-   they stay discoverable.
+   Same chrome as ByProjectView: one rounded container with a sticky
+   4-column header (Contact · Role · Email · Phone), one <tbody> per
+   org holding a sticky group-header row (chevron · Building2 · org
+   name · type badge · contact count · "Open org →"). The Organization
+   column dropped — the group header IS the org. Toolbar sits above
+   the table with a free-text filter (matches name/role/email/phone) +
+   "N contacts across M organizations" + Expand/Collapse all.
 
-   The user can:
-   • Sort orgs by name or by contact count (most first)
-   • Expand / collapse all cards from a single control
-   • Add a new contact scoped to a specific org (opens the shared
-     CreatePartnerModal with `preselectEmployerOrgId` locked, same
-     flow the old By-Customer view used).
+   Data source unchanged: /business-partners?partnerType=person&withProjects=true.
+   Grouping key is the person's `worker_of` edge target (partyBId);
+   people with no `worker_of` land in a trailing "Unaffiliated" group.
+   Sort control keeps its two modes (count / name) — the group order
+   for the table body reads from it.
 */
 
 type ByOrgSort = 'count' | 'name';
+type ByOrgSortKey = 'name' | 'role' | 'email' | 'phone';
+type ByOrgSortDir = 'asc' | 'desc';
+
+interface ByOrgRow {
+  orgId: number | null; // null = Unaffiliated bucket
+  orgName: string | null;
+  orgTypeBadge: string; // "Partner" / "Customer" / "Organization" / …
+  contactId: number;
+  displayName: string;
+  firstName: string | null;
+  lastName: string | null;
+  role: string; // mainRoleType.name or ''
+  email: string | null;
+  phone: string | null;
+  rowKey: string;
+}
 
 function ByOrganizationView({
   orgs, contacts, onSelect, onAddContact, onOpenOrg,
@@ -891,133 +907,241 @@ function ByOrganizationView({
   onAddContact: (orgId: number) => void;
   onOpenOrg: (orgId: number) => void;
 }) {
-  const [sort, setSort] = useState<ByOrgSort>('count');
-  // Global "expand all / collapse all" default — starts expanded so the
-  // first paint mirrors the historical By-Customer surface (users saw
-  // everything without extra clicks). `collapsedIds` overrides the
-  // default per card so a click doesn't fight the global toggle.
-  const [expandAll, setExpandAll] = useState(true);
-  const [collapsedIds, setCollapsedIds] = useState<Set<number>>(new Set());
+  // Which org grouping to sort by (secondary to the header-column
+  // sort — the two apply in different scopes). Kept behind a small
+  // toolbar control so the count-vs-name intent stays discoverable.
+  const [orgSort, setOrgSort] = useState<ByOrgSort>('count');
+  // Column sort — same tri-state cycle as By Project (asc → desc → clear).
+  const [sort, setSort] = useState<{ key: ByOrgSortKey; dir: ByOrgSortDir } | null>(null);
+  // Free-text filter across name/role/email/phone. Debounced so a
+  // typing user doesn't re-flatten the grid on every keystroke.
+  const [filter, setFilter] = useState('');
+  const debouncedFilter = useDebounce(filter, 200);
+  // Which org bodies are collapsed. Empty = everyone expanded (matches
+  // the historical default so the first paint is dense with content).
+  const [collapsedOrgs, setCollapsedOrgs] = useState<Set<number>>(new Set());
   // "Unaffiliated" bucket has no numeric org id; use a sentinel so it
-  // participates in the same collapsed-set + expand-all logic as real
-  // org cards.
+  // participates in the same collapsed-set logic as real org groups.
   const UNAFFILIATED_ID = -1;
 
-  // Group contacts by employer (worker_of edge). A contact WITHOUT any
-  // worker_of edge lands in the "Unaffiliated" bucket. A contact with
-  // multiple worker_of edges shows under each employer — that's the
-  // correct read (they work for both).
-  const byOrgId = useMemo(() => {
-    const m = new Map<number, Contact[]>();
-    const unaffiliated: Contact[] = [];
+  const orgById = useMemo(() => {
+    const m = new Map<number, Org>();
+    for (const o of orgs) m.set(o.id, o);
+    return m;
+  }, [orgs]);
+
+  // Flatten every person + their worker_of edges into row records.
+  // A person with N worker_of edges surfaces N rows (they work at N
+  // orgs — same read the old card grid used). No edge → Unaffiliated.
+  const allRows: ByOrgRow[] = useMemo(() => {
+    const out: ByOrgRow[] = [];
     for (const c of contacts) {
       const workerEdges = (c.partnerRelationshipsA ?? []).filter(
         (r) => r.type?.code === 'worker_of',
       );
+      const role = c.mainRoleType?.name ?? '';
+      const phone = c.phone || c.mobile || '';
       if (workerEdges.length === 0) {
-        unaffiliated.push(c);
+        out.push({
+          orgId: null,
+          orgName: null,
+          orgTypeBadge: 'Unaffiliated',
+          contactId: c.id,
+          displayName: c.displayName,
+          firstName: c.firstName,
+          lastName: c.lastName,
+          role,
+          email: c.email,
+          phone: phone || null,
+          rowKey: `unaff-${c.id}`,
+        });
         continue;
       }
       const seen = new Set<number>();
       for (const r of workerEdges) {
-        if (seen.has(r.partyBId)) continue; // dedupe multiple edges to same org
+        if (seen.has(r.partyBId)) continue; // dedupe multi-edges to same org
         seen.add(r.partyBId);
-        const arr = m.get(r.partyBId) ?? [];
-        arr.push(c);
-        m.set(r.partyBId, arr);
+        const org = orgById.get(r.partyBId);
+        out.push({
+          orgId: r.partyBId,
+          orgName: org?.displayName ?? `Organization #${r.partyBId}`,
+          orgTypeBadge: org?.mainRoleType?.name ?? 'Organization',
+          contactId: c.id,
+          displayName: c.displayName,
+          firstName: c.firstName,
+          lastName: c.lastName,
+          role,
+          email: c.email,
+          phone: phone || null,
+          rowKey: `${r.partyBId}-${c.id}`,
+        });
       }
     }
-    // Sort each bucket by name — predictable read order inside the card.
-    for (const arr of m.values()) {
-      arr.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    return out;
+  }, [contacts, orgById]);
+
+  // Free-text filter — matches EVERY high-signal field. Applied
+  // BEFORE grouping so an org whose all rows fail the filter drops
+  // out of the table entirely (empty groups are noise).
+  const filteredRows = useMemo(() => {
+    const q = debouncedFilter.trim().toLowerCase();
+    if (!q) return allRows;
+    return allRows.filter((r) =>
+      r.displayName.toLowerCase().includes(q) ||
+      (r.email ?? '').toLowerCase().includes(q) ||
+      (r.phone ?? '').toLowerCase().includes(q) ||
+      r.role.toLowerCase().includes(q) ||
+      (r.orgName ?? '').toLowerCase().includes(q),
+    );
+  }, [allRows, debouncedFilter]);
+
+  // Header-driven column sort. Applied AFTER filter and BEFORE group
+  // assembly so within-org row order reflects the current sort.
+  const sortedRows = useMemo(() => {
+    if (!sort) return filteredRows;
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    const key = sort.key;
+    const value = (r: ByOrgRow): string => {
+      switch (key) {
+        case 'name': return r.displayName;
+        case 'role': return r.role;
+        case 'email': return r.email ?? '';
+        case 'phone': return r.phone ?? '';
+      }
+    };
+    return [...filteredRows].sort((a, b) => value(a).localeCompare(value(b)) * dir);
+  }, [filteredRows, sort]);
+
+  // Assemble groups. Order = orgSort (count-desc | name-asc); the
+  // Unaffiliated bucket ALWAYS tail-sorts (never surprises the user
+  // as the first group).
+  const groups = useMemo(() => {
+    const map = new Map<number, ByOrgRow[]>();
+    const unaff: ByOrgRow[] = [];
+    for (const r of sortedRows) {
+      if (r.orgId == null) {
+        unaff.push(r);
+        continue;
+      }
+      const arr = map.get(r.orgId) ?? [];
+      arr.push(r);
+      map.set(r.orgId, arr);
     }
-    unaffiliated.sort((a, b) => a.displayName.localeCompare(b.displayName));
-    return { m, unaffiliated };
-  }, [contacts]);
-
-  // Only surface orgs that have at least one contact (keeps the grid
-  // dense on tenants with hundreds of empty orgs). The old By-Customer
-  // view showed empty customer cards on purpose to prompt "add the
-  // first contact" — that's not the mental model here. Users create
-  // orgs elsewhere; this view is about seeing WHO works WHERE.
-  const orgsWithContacts = useMemo(() => {
-    return orgs.filter((o) => (byOrgId.m.get(o.id)?.length ?? 0) > 0);
-  }, [orgs, byOrgId]);
-
-  const sortedOrgs = useMemo(() => {
-    const arr = [...orgsWithContacts];
-    if (sort === 'count') {
-      arr.sort((a, b) => {
-        const ca = byOrgId.m.get(a.id)?.length ?? 0;
-        const cb = byOrgId.m.get(b.id)?.length ?? 0;
-        if (ca !== cb) return cb - ca;
-        return a.displayName.localeCompare(b.displayName);
+    const orgGroups = Array.from(map.entries()).map(([orgId, rows]) => {
+      const first = rows[0]!;
+      return {
+        orgId,
+        orgName: first.orgName ?? '',
+        orgTypeBadge: first.orgTypeBadge,
+        rows,
+      };
+    });
+    if (orgSort === 'count') {
+      orgGroups.sort((a, b) => {
+        if (b.rows.length !== a.rows.length) return b.rows.length - a.rows.length;
+        return a.orgName.localeCompare(b.orgName);
       });
     } else {
-      arr.sort((a, b) => a.displayName.localeCompare(b.displayName));
+      orgGroups.sort((a, b) => a.orgName.localeCompare(b.orgName));
     }
-    return arr;
-  }, [orgsWithContacts, byOrgId, sort]);
-
-  // Compose the visible card sequence: sorted real orgs, then the
-  // Unaffiliated bucket at the end (only if it holds anything).
-  const cards: Array<
-    | { kind: 'org'; org: Org; contacts: Contact[] }
-    | { kind: 'unaffiliated'; contacts: Contact[] }
-  > = useMemo(() => {
-    const out: typeof cards = [];
-    for (const o of sortedOrgs) {
-      out.push({ kind: 'org', org: o, contacts: byOrgId.m.get(o.id) ?? [] });
-    }
-    if (byOrgId.unaffiliated.length > 0) {
-      out.push({ kind: 'unaffiliated', contacts: byOrgId.unaffiliated });
-    }
+    const out: Array<
+      | { kind: 'org'; orgId: number; orgName: string; orgTypeBadge: string; rows: ByOrgRow[] }
+      | { kind: 'unaffiliated'; rows: ByOrgRow[] }
+    > = orgGroups.map((g) => ({ kind: 'org' as const, ...g }));
+    if (unaff.length > 0) out.push({ kind: 'unaffiliated', rows: unaff });
     return out;
-  }, [sortedOrgs, byOrgId]);
+  }, [sortedRows, orgSort]);
 
-  const toggleCard = (id: number) => {
-    setCollapsedIds((prev) => {
+  const toggleSort = (k: ByOrgSortKey) => {
+    setSort((prev) => {
+      if (!prev || prev.key !== k) return { key: k, dir: 'asc' };
+      if (prev.dir === 'asc') return { key: k, dir: 'desc' };
+      return null;
+    });
+  };
+  const toggleGroup = (id: number) => {
+    setCollapsedOrgs((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
   };
-
-  const applyExpandAll = (nextExpanded: boolean) => {
-    setExpandAll(nextExpanded);
-    setCollapsedIds(new Set()); // clear per-card overrides
+  const allCollapsed =
+    groups.length > 0 &&
+    groups.every((g) =>
+      collapsedOrgs.has(g.kind === 'org' ? g.orgId : UNAFFILIATED_ID),
+    );
+  const applyExpandAll = () => setCollapsedOrgs(new Set());
+  const applyCollapseAll = () => {
+    const next = new Set<number>();
+    for (const g of groups) {
+      next.add(g.kind === 'org' ? g.orgId : UNAFFILIATED_ID);
+    }
+    setCollapsedOrgs(next);
   };
 
-  if (cards.length === 0) {
+  const orgGroupCount = groups.filter((g) => g.kind === 'org').length;
+  const totalContactRows = sortedRows.length;
+
+  if (allRows.length === 0) {
     return (
       <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center text-sm text-slate-400 dark:text-slate-500">
         <Building className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600 mb-3" />
         <p className="font-semibold text-slate-700 dark:text-slate-200">No contacts to group yet</p>
         <p className="mt-1 text-[12px] text-slate-400 dark:text-slate-500">
           Add contacts and link them to an organization to see them grouped here. Contacts
-          without an employer still show up in the "Unaffiliated" bucket.
+          without an employer still show up in the "Unaffiliated" group.
         </p>
       </div>
     );
   }
 
+  // 4 columns; keep in sync with the header + tbody rows below.
+  const columns: Array<{ key: ByOrgSortKey; label: string }> = [
+    { key: 'name',  label: 'Contact' },
+    { key: 'role',  label: 'Role' },
+    { key: 'email', label: 'Email' },
+    { key: 'phone', label: 'Phone' },
+  ];
+
   return (
     <div className="space-y-3">
-      {/* Card-grid toolbar — sort control + expand/collapse all. Sits
-          just above the grid so the affordance is discoverable without
-          hunting per card. */}
+      {/* Toolbar — free-text filter + orgs-with-contacts summary +
+          expand/collapse all shortcut. Same shape as By Project so
+          both surfaces read identically. */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="text-[12px] text-slate-500 dark:text-slate-400">
-          <span className="font-semibold text-slate-700 dark:text-slate-200 tabular-nums">{cards.length}</span>
-          {' '}organization{cards.length === 1 ? '' : 's'} with contacts
+        <div className="relative flex-1 min-w-[220px] max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500" />
+          <input
+            type="text"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter by name, role, email, phone, org…"
+            className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 pl-9 pr-9 py-2 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+          />
+          {filter && (
+            <button
+              onClick={() => setFilter('')}
+              title="Clear filter"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
-        <div className="flex items-center gap-2">
-          <label className="inline-flex items-center gap-1.5 text-[12px] text-slate-500 dark:text-slate-400">
-            <span>Sort:</span>
+        <div className="flex items-center gap-2 text-[12px] text-slate-500 dark:text-slate-400">
+          <span className="tabular-nums">
+            <span className="font-semibold text-slate-700 dark:text-slate-200">{totalContactRows}</span>
+            {' '}contact{totalContactRows === 1 ? '' : 's'} across{' '}
+            <span className="font-semibold text-slate-700 dark:text-slate-200">{orgGroupCount}</span>
+            {' '}organization{orgGroupCount === 1 ? '' : 's'}
+          </span>
+          <label className="inline-flex items-center gap-1.5">
+            <span>Sort orgs:</span>
             <select
-              value={sort}
-              onChange={(e) => setSort(e.target.value as ByOrgSort)}
+              value={orgSort}
+              onChange={(e) => setOrgSort(e.target.value as ByOrgSort)}
               className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-[12px] font-semibold text-slate-700 dark:text-slate-200"
               aria-label="Sort organizations"
             >
@@ -1027,281 +1151,202 @@ function ByOrganizationView({
           </label>
           <button
             type="button"
-            onClick={() => applyExpandAll(!expandAll)}
+            onClick={allCollapsed ? applyExpandAll : applyCollapseAll}
             className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
-            title={expandAll ? 'Collapse every card' : 'Expand every card'}
+            disabled={groups.length === 0}
           >
-            {expandAll ? 'Collapse all' : 'Expand all'}
+            {allCollapsed ? 'Expand all' : 'Collapse all'}
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {cards.map((card) => {
-          if (card.kind === 'unaffiliated') {
-            const isCollapsed = collapsedIds.has(UNAFFILIATED_ID)
-              ? expandAll
-              : !expandAll;
-            return (
-              <UnaffiliatedCard
-                key="unaffiliated"
-                contacts={card.contacts}
-                collapsed={isCollapsed}
-                onToggle={() => toggleCard(UNAFFILIATED_ID)}
-                onSelect={onSelect}
-              />
-            );
-          }
-          const isCollapsed = collapsedIds.has(card.org.id)
-            ? expandAll
-            : !expandAll;
-          return (
-            <OrganizationCard
-              key={card.org.id}
-              org={card.org}
-              contacts={card.contacts}
-              collapsed={isCollapsed}
-              onToggle={() => toggleCard(card.org.id)}
-              onSelect={onSelect}
-              onAddContact={onAddContact}
-              onOpenOrg={onOpenOrg}
-            />
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function OrganizationCard({
-  org, contacts, collapsed, onToggle, onSelect, onAddContact, onOpenOrg,
-}: {
-  org: Org;
-  contacts: Contact[];
-  collapsed: boolean;
-  onToggle: () => void;
-  onSelect: (id: number) => void;
-  onAddContact: (orgId: number) => void;
-  onOpenOrg: (orgId: number) => void;
-}) {
-  const typeBadge = org.mainRoleType?.name ?? 'Organization';
-  return (
-    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
-      {/* Header — click toggles expand/collapse. Org / add / open actions
-          participate in the same stretched flex row so keyboard focus
-          order stays linear. Uses the violet-toned entity color for
-          orgs (Planwise design system: Partner/Contact/Person → violet). */}
-      <div className="border-b border-slate-100 dark:border-slate-800 bg-gradient-to-br from-violet-50 to-white dark:from-violet-950/30 dark:to-slate-900">
-        <div className="flex items-stretch">
-          <button
-            type="button"
-            onClick={onToggle}
-            className="flex items-center gap-3 flex-1 min-w-0 px-4 py-3 text-left hover:bg-violet-50/60 dark:hover:bg-violet-900/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-l-[14px]"
-            title={collapsed ? 'Expand' : 'Collapse'}
-            aria-expanded={!collapsed}
-          >
-            <span className="shrink-0 text-slate-500 dark:text-slate-400" aria-hidden="true">
-              {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </span>
-            <div className="rounded-lg bg-violet-100 dark:bg-violet-900/50 p-2 shrink-0">
-              <Building2 className="h-5 w-5 text-violet-700 dark:text-violet-300" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <h3 className="font-bold text-[14px] text-slate-800 dark:text-slate-100 truncate" title={org.displayName}>
-                {org.displayName}
-              </h3>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                <span className="inline-flex items-center gap-1 rounded-[5px] bg-violet-600/10 px-2 py-0.5 text-[11px] font-bold tracking-wide text-violet-700 dark:text-violet-300">
-                  {typeBadge}
-                </span>
-                <span className="ml-2 tabular-nums">
-                  {contacts.length} {contacts.length === 1 ? 'contact' : 'contacts'}
-                </span>
-              </p>
-            </div>
-          </button>
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onOpenOrg(org.id); }}
-            className="shrink-0 px-2 flex items-center text-slate-400 dark:text-slate-500 hover:text-violet-700 dark:hover:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/30 border-l border-slate-200 dark:border-slate-700"
-            title={`Open ${org.displayName}`}
-            aria-label={`Open ${org.displayName}`}
-          >
-            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onAddContact(org.id); }}
-            className="shrink-0 px-3 flex items-center gap-1 text-[11px] font-semibold text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 border-l border-slate-200 dark:border-slate-700 rounded-r-[14px] focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-            title={`Add a contact at ${org.displayName}`}
-          >
-            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-            Add contact
-          </button>
+      {groups.length === 0 ? (
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center text-sm text-slate-400 dark:text-slate-500">
+          No rows match the current filter.
         </div>
-      </div>
-
-      {!collapsed && (
-        <div className="divide-y divide-slate-50 dark:divide-slate-800 max-h-[420px] overflow-y-auto">
-          {contacts.map((c) => (
-            <ExpandedContactRow
-              key={c.id}
-              contact={c}
-              orgName={org.displayName}
-              onSelect={onSelect}
-            />
-          ))}
+      ) : (
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+          <div className="max-h-[70vh] overflow-auto">
+            <table className="w-full border-collapse">
+              <thead className="sticky top-0 z-20">
+                <tr className="bg-[#FAFBFC] dark:bg-slate-800/80 border-b border-slate-100 dark:border-slate-800 backdrop-blur">
+                  {columns.map((c) => (
+                    <th
+                      key={c.key}
+                      scope="col"
+                      className="text-left px-3 py-2 text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em]"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleSort(c.key)}
+                        className="inline-flex items-center gap-1 hover:text-slate-700 dark:hover:text-slate-100"
+                      >
+                        <span>{c.label}</span>
+                        <span className="text-slate-300 dark:text-slate-600 text-[9px] font-mono">
+                          {sort?.key === c.key ? (sort.dir === 'asc' ? '▲' : '▼') : '⇅'}
+                        </span>
+                      </button>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              {groups.map((g) => {
+                const groupId = g.kind === 'org' ? g.orgId : UNAFFILIATED_ID;
+                const collapsed = collapsedOrgs.has(groupId);
+                return (
+                  <tbody key={groupId} className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {/* Group header — full-width cell with the org
+                        name / type badge / count and inline "Open org"
+                        + "+ Add contact" affordances. Sticky under the
+                        column header so it stays anchored while long
+                        groups scroll. */}
+                    <tr
+                      className="bg-slate-50/95 dark:bg-slate-800/95 backdrop-blur sticky z-10"
+                      style={{ top: 34 }}
+                    >
+                      <td colSpan={columns.length} className="px-3 py-1.5">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleGroup(groupId)}
+                            aria-expanded={!collapsed}
+                            className="inline-flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100"
+                          >
+                            {collapsed ? (
+                              <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+                            ) : (
+                              <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                            )}
+                            {g.kind === 'org' ? (
+                              <>
+                                <Building2 className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" aria-hidden="true" />
+                                <span className="normal-case tracking-normal text-slate-800 dark:text-slate-100">{g.orgName}</span>
+                                <span
+                                  className="normal-case tracking-normal inline-flex items-center rounded-[5px] bg-violet-600/10 px-2 py-0.5 text-[11px] font-bold text-violet-700 dark:text-violet-300"
+                                  title="Organization type"
+                                >
+                                  {g.orgTypeBadge}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <UserPlus className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" aria-hidden="true" />
+                                <span className="normal-case tracking-normal text-slate-700 dark:text-slate-200">Unaffiliated</span>
+                                <span
+                                  className="normal-case tracking-normal inline-flex items-center rounded-[5px] bg-slate-200/70 dark:bg-slate-700/60 px-2 py-0.5 text-[11px] font-bold text-slate-600 dark:text-slate-300"
+                                  title="Contacts without a worker_of edge"
+                                >
+                                  No employer
+                                </span>
+                              </>
+                            )}
+                            <span className="text-slate-400 dark:text-slate-500 font-mono font-medium tabular-nums">
+                              {g.rows.length}
+                            </span>
+                          </button>
+                          <div className="ml-auto flex items-center gap-1">
+                            {g.kind === 'org' && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => onAddContact(g.orgId)}
+                                  className="inline-flex items-center gap-1 rounded-md border border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:text-blue-700 dark:hover:text-blue-300"
+                                  title={`Add a contact at ${g.orgName}`}
+                                >
+                                  <Plus className="h-3 w-3" aria-hidden="true" />
+                                  Add contact
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenOrg(g.orgId)}
+                                  className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500"
+                                  title={`Open ${g.orgName}`}
+                                >
+                                  Open org
+                                  <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                    {!collapsed && g.rows.map((r) => (
+                      <ByOrgTableRow key={r.rowKey} row={r} onSelect={onSelect} />
+                    ))}
+                  </tbody>
+                );
+              })}
+            </table>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function UnaffiliatedCard({
-  contacts, collapsed, onToggle, onSelect,
+/** CT-1b (2026-09-30) — per-contact table row for the grouped-table
+ *  By-Organization view. Deliberately its own component so the row's
+ *  click handler doesn't leak into the group header row above it. */
+function ByOrgTableRow({
+  row: r, onSelect,
 }: {
-  contacts: Contact[];
-  collapsed: boolean;
-  onToggle: () => void;
-  onSelect: (id: number) => void;
+  row: ByOrgRow;
+  onSelect: (contactId: number) => void;
 }) {
   return (
-    <div className="rounded-[14px] border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 overflow-hidden">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-100 dark:hover:bg-slate-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-        aria-expanded={!collapsed}
-        title={collapsed ? 'Expand' : 'Collapse'}
-      >
-        <span className="shrink-0 text-slate-500 dark:text-slate-400" aria-hidden="true">
-          {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-        </span>
-        <div className="rounded-lg bg-slate-200 dark:bg-slate-800 p-2 shrink-0">
-          <UserPlus className="h-5 w-5 text-slate-500 dark:text-slate-400" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h3 className="font-bold text-[14px] text-slate-700 dark:text-slate-200">
-            Unaffiliated
-          </h3>
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-            <span className="italic">No employer set</span>
-            <span className="ml-2 tabular-nums">
-              {contacts.length} {contacts.length === 1 ? 'contact' : 'contacts'}
-            </span>
-          </p>
-        </div>
-      </button>
-      {!collapsed && (
-        <div className="divide-y divide-slate-50 dark:divide-slate-800 max-h-[420px] overflow-y-auto bg-white dark:bg-slate-900">
-          {contacts.map((c) => (
-            <ExpandedContactRow
-              key={c.id}
-              contact={c}
-              orgName={null}
-              onSelect={onSelect}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** CT-1 (2026-09-30) — per-contact row for the By-Organization view.
- *  Shows every high-signal field on one row: name, role/relationship,
- *  email (clickable mailto), phone (clickable tel) and the employer's
- *  name (redundant inside its own org card, but the spec asks for it
- *  explicitly — helps when the card is one of many on screen and the
- *  user is scanning without the header in view).
- */
-function ExpandedContactRow({
-  contact: c, orgName, onSelect,
-}: {
-  contact: Contact;
-  orgName: string | null;
-  onSelect: (id: number) => void;
-}) {
-  const phone = c.phone || c.mobile || '';
-  return (
-    <div
-      onClick={() => onSelect(c.id)}
-      className="group flex flex-col md:flex-row md:items-center gap-2 md:gap-3 px-3 py-2.5 hover:bg-blue-50/40 dark:hover:bg-blue-900/20 cursor-pointer transition-colors"
+    <tr
+      onClick={() => onSelect(r.contactId)}
+      className="cursor-pointer hover:bg-slate-50/60 dark:hover:bg-slate-800/40"
     >
-      {/* Identity — avatar + name + role */}
-      <div className="flex items-center gap-2.5 min-w-0 md:w-[220px] md:shrink-0">
-        <UserAvatar firstName={c.firstName ?? ''} lastName={c.lastName ?? ''} avatarUrl={null} size="sm" />
-        <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate" title={c.displayName}>
-            {c.displayName}
-          </p>
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-            {c.mainRoleType?.name ?? <span className="italic text-slate-400 dark:text-slate-500">no role</span>}
-          </p>
+      <td className="px-3 py-2 align-middle">
+        <div className="flex items-center gap-2 min-w-0">
+          <UserAvatar
+            firstName={r.firstName ?? ''}
+            lastName={r.lastName ?? ''}
+            avatarUrl={null}
+            size="sm"
+          />
+          <div className="min-w-0">
+            <p className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate" title={r.displayName}>
+              {r.displayName}
+            </p>
+          </div>
         </div>
-      </div>
-
-      {/* Email */}
-      <div className="min-w-0 md:w-[200px] md:shrink-0 text-[12px]">
-        {c.email ? (
+      </td>
+      <td className="px-3 py-2 text-[13px] text-slate-700 dark:text-slate-200">
+        {r.role || <span className="italic text-slate-400 dark:text-slate-500">—</span>}
+      </td>
+      <td className="px-3 py-2 text-[13px]">
+        {r.email ? (
           <a
-            href={`mailto:${c.email}`}
+            href={`mailto:${r.email}`}
             onClick={(e) => e.stopPropagation()}
             className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-200 hover:text-blue-700 truncate max-w-full"
-            title={c.email}
+            title={r.email}
           >
             <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
-            <span className="truncate">{c.email}</span>
+            <span className="truncate">{r.email}</span>
           </a>
         ) : (
-          <span className="inline-flex items-center gap-1.5 text-slate-300 dark:text-slate-600">
-            <Mail className="h-3.5 w-3.5" /> <span className="italic">no email</span>
-          </span>
+          <span className="text-slate-300 dark:text-slate-600 italic">—</span>
         )}
-      </div>
-
-      {/* Phone */}
-      <div className="min-w-0 md:w-[140px] md:shrink-0 text-[12px]">
-        {phone ? (
+      </td>
+      <td className="px-3 py-2 text-[13px]">
+        {r.phone ? (
           <a
-            href={`tel:${phone}`}
+            href={`tel:${r.phone}`}
             onClick={(e) => e.stopPropagation()}
             className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-200 hover:text-blue-700"
           >
             <Phone className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
-            <span className="tabular-nums">{phone}</span>
+            <span className="tabular-nums font-mono">{r.phone}</span>
           </a>
         ) : (
-          <span className="inline-flex items-center gap-1.5 text-slate-300 dark:text-slate-600">
-            <Phone className="h-3.5 w-3.5" /> <span className="italic">no phone</span>
-          </span>
+          <span className="text-slate-300 dark:text-slate-600 italic">—</span>
         )}
-      </div>
-
-      {/* Org name — spec asks for the employer to be visible per row
-          even inside its own org card; helps scanning when multiple
-          cards are on screen. Suppressed for the Unaffiliated bucket
-          where `orgName === null`. */}
-      <div className="min-w-0 flex-1 text-[12px]">
-        {orgName ? (
-          <span className="inline-flex items-center gap-1.5 text-slate-500 dark:text-slate-400 truncate max-w-full" title={orgName}>
-            <Building2 className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
-            <span className="truncate">{orgName}</span>
-          </span>
-        ) : null}
-      </div>
-
-      <div className="hidden md:flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button
-          onClick={(e) => { e.stopPropagation(); onSelect(c.id); }}
-          className="rounded-md p-1.5 text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30"
-          title="Edit contact"
-          aria-label={`Edit ${c.displayName}`}
-        >
-          <Pencil className="h-3.5 w-3.5" />
-        </button>
-      </div>
-    </div>
+      </td>
+    </tr>
   );
 }
 
