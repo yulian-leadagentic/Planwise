@@ -314,7 +314,13 @@ export class ContactsCommitService {
           // on the freshly-created org so the Organizations list shows
           // a real TYPE instead of "not set". Idempotent via
           // `@@unique([businessPartnerId, roleTypeId])`.
-          const roleCode = input.orgTypes?.[key];
+          //
+          // QA4 IW-2 (2026-09-30) — a NEW org that reached commit
+          // without a user-picked type falls back to `partner` (the
+          // wizard's default; matches the FE gate's pre-selected value).
+          // A commit call that omits `orgTypes[key]` still produces a
+          // typed org rather than the pre-IW-2 "not set" shape.
+          const roleCode = input.orgTypes?.[key] ?? 'partner';
           if (roleCode) {
             const roleType = await this.prisma.partnerRoleType.findUnique({
               where: { code: roleCode.toLowerCase() },

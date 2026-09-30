@@ -1527,6 +1527,29 @@ function PreviewStep({
     [orgRoleTypesQuery.data],
   );
 
+  // QA4 IW-2 (2026-09-30) — default NEW-org type is Partner.
+  // Auto-seed the `partner` PartnerRoleType.code on every new-org
+  // group the first time it enters the list. A `Set` ref tracks
+  // which keys we've already seeded so if the reviewer clears the
+  // pick (setting the state entry back to undefined) we DON'T
+  // re-seed it on the next render — an explicit clear is honoured
+  // (the commit backend falls back to `partner` anyway, matching
+  // this default).
+  const seededPartnerKeys = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (orgRoleTypes.length === 0) return;
+    const partnerCode = orgRoleTypes.find((rt) => rt.code === 'partner')?.code;
+    if (!partnerCode) return;
+    for (const g of newOrgGroups) {
+      if (seededPartnerKeys.current.has(g.key)) continue;
+      seededPartnerKeys.current.add(g.key);
+      if (!(g.key in orgTypes)) {
+        onOrgTypeChange(g.key, partnerCode);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgRoleTypes, newOrgGroups.length]);
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
