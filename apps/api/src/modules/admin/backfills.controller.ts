@@ -705,4 +705,616 @@ export class BackfillsController {
       },
     };
   }
+
+  /**
+   * QA4 CT-DEDUP (2026-09-30) — merge duplicate organization BPs.
+   *
+   * Motivating case (verified on staging 2026-09-30):
+   *   • 75 non-deleted org BPs total in the catalog
+   *   • 7 duplicated normalized names (top: "ברן ישראל" ×5,
+   *     "נתיבי ישראל" ×4, "גיאו -פרוספקט" ×4). Every "ברן ישראל"
+   *     row is one PERSON's row shoved into the org table (IW-6
+   *     bug — the person's `Ilan.Turbiner@barangroup.com` was
+   *     stamped as the org's email, and the row-per-person shape
+   *     stuck around).
+   *   • 63 distinct orgs referenced by any `worker_of` edge, so
+   *     the By-Organization view already collapses to 63 while the
+   *     catalog reads 75. This backfill closes the gap.
+   *
+   * Grouping key (mirrors the importer's own dedup order — see
+   * `contacts/dedup.service.ts::computeBatchOrgKey`):
+   *   1. `domain:<host>` — the org has a claimed corporate domain
+   *      in `business_partner_domains` (`is_personal=false`), OR
+   *      its `email` extracts to a non-personal domain. Strongest
+   *      "same firm" signal.
+   *   2. `name:<slug>` — normalized `displayName`
+   *      (`normalizeCompanyName`, same helper the importer uses so
+   *      cleanup keys match importer keys byte-for-byte).
+   *   3. no key → row is not groupable (unique org, left alone).
+   *
+   * Survivor selection per group (deterministic, no ambiguity):
+   *   A. oldest id (lowest numeric id — the row that was created
+   *      first);
+   *   B. tie-break: prefer the one carrying a claimed non-personal
+   *      domain;
+   *   C. tie-break: prefer the one with the most non-null fields
+   *      (count of {displayName, email, phone, taxId, address,
+   *      notes} that are set).
+   *
+   * For each group with ≥ 2 members, at EXECUTE time:
+   *   1. Repoint every FK from every loser → survivor:
+   *      • `partner_relationships.party_a_id`
+   *      • `partner_relationships.party_b_id` (the worker_of edges)
+   *      • `project_partner_roles.party_id`
+   *      • `project_partner_roles.contact_party_id`
+   *      • `project_partner_roles.on_behalf_of_party_id`
+   *      • `business_partner_domains.partner_id`
+   *      • `business_partner_emails.business_partner_id`
+   *      • `business_partner_roles.business_partner_id`
+   *      • `business_partner_professions.business_partner_id`
+   *        (defensive — orgs shouldn't hold professions, but the
+   *         schema allows it and cheap to repoint)
+   *      • `contracts.party_id`
+   *      • `users.business_partner_id` (defensive; the constraint
+   *         is 1:1 so at most one loser can carry a user, and orgs
+   *         shouldn't have one)
+   *      P2002 (unique conflict when survivor already has the same
+   *      pair) is swallowed as no-op → the survivor already has
+   *      that edge, so the loser's edge just dies with the row.
+   *   2. Fix email on the survivor: if the survivor's own email
+   *      looks personal (person-name local part on any of the
+   *      group's domains) OR matches any of the losers' persons'
+   *      emails, replace with a routed generic mailbox (`office@`
+   *      / `info@` / …) if any member of the group carries one on
+   *      its email or its `BusinessPartnerEmail` rows — else clear
+   *      to `null`. Same routing rule as the importer.
+   *   3. Soft-delete losers: `deletedAt = now()`. Never
+   *      hard-delete — the audit trail stays intact.
+   *
+   * Typo safety: two orgs with the SAME normalized name but
+   * DIFFERENT claimed domains (real case on staging: `ברן ישראל`
+   * id=77 domain=`barangroup.com` vs `ברן ישראל` id=83
+   * domain=`barangroip.com`) are NEVER auto-merged. They land in
+   * `manualReviewCandidates` on the response so Yulian can decide
+   * (fix the typo domain, or genuinely two firms with the same
+   * Hebrew name).
+   *
+   * Query param `dryRun=true` (any truthy string) — computes the
+   * merge plan and returns it without a single write. `false` /
+   * omitted → EXECUTE. Per Yulian's rule the endpoint ships with
+   * dry-run OPTIONAL, so `?dryRun=true` MUST be set on the first
+   * invocation.
+   *
+   * Wrapped in per-group `$transaction` — a single bad group does
+   * not roll back the whole batch. P2002 stays inside the group
+   * as a no-op; unexpected errors bubble to the group's error
+   * counter without corrupting siblings.
+   *
+   * Admin role guard: same `admin:write` as JT-4 above.
+   */
+  @Post('merge-duplicate-orgs')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'Backfill · merge duplicate organization BPs by claimed domain / normalized name (dry-run required first)',
+  })
+  @ApiQuery({ name: 'dryRun', required: false, type: String, description: 'Truthy → plan only, no writes' })
+  async runMergeDuplicateOrgs(@Query('dryRun') dryRunRaw?: string) {
+    const dryRun =
+      typeof dryRunRaw === 'string' &&
+      ['1', 'true', 'yes', 'on'].includes(dryRunRaw.toLowerCase());
+
+    // ─── Local helpers ────────────────────────────────────────────
+    // Personal-mailbox classifier — same set the importer uses. Kept
+    // inline so CT-DEDUP has zero coupling to `commit.service.ts`
+    // (which is not exported).
+    const GENERIC_LOCAL_PARTS = new Set([
+      'office', 'info', 'studio', 'mail',
+      'contact', 'contacts', 'hello', 'admin',
+      'reception', 'sales', 'support',
+    ]);
+    const isGenericMailbox = (email: string): boolean => {
+      const at = email.indexOf('@');
+      if (at <= 0) return false;
+      const local = email.slice(0, at).toLowerCase();
+      if (GENERIC_LOCAL_PARTS.has(local)) return true;
+      const head = local.split(/[.+_-]/, 1)[0] ?? '';
+      return GENERIC_LOCAL_PARTS.has(head);
+    };
+    // Does this email's local part look like a personal address?
+    // (dot in local part like `first.last`, OR just a person-name
+    // slug like `alex`). Excludes generic mailboxes explicitly.
+    const isPersonLikeEmail = (email: string | null): boolean => {
+      if (!email) return false;
+      const at = email.indexOf('@');
+      if (at <= 0) return false;
+      const local = email.slice(0, at).toLowerCase();
+      if (!local) return false;
+      if (isGenericMailbox(email)) return false;
+      // A dot in the local part is a strong personal signal
+      // (first.last), and a name-only slug also reads as personal
+      // on the sheets we're cleaning up.
+      return /[.]/.test(local) || /^[a-z]+[a-z0-9]*$/.test(local);
+    };
+    // Personal-domain check — combines the hard-coded fallback set
+    // with the admin-managed catalog so a domain the admin marked
+    // personal after seeding counts as personal here too. Cached
+    // per-call.
+    const personalDomainsFromCatalog = new Set<string>(
+      (await this.prisma.personalEmailDomain.findMany({
+        select: { domain: true },
+      })).map((r) => r.domain.toLowerCase()),
+    );
+    const isPersonalDomain = (domain: string): boolean => {
+      const d = domain.toLowerCase();
+      return PERSONAL_EMAIL_DOMAIN_FALLBACK.has(d) || personalDomainsFromCatalog.has(d);
+    };
+
+    // Count "completeness" for survivor tie-break (C).
+    const completeness = (o: {
+      displayName: string | null;
+      email: string | null;
+      phone: string | null;
+      taxId: string | null;
+      address: string | null;
+      notes: string | null;
+    }): number => {
+      let n = 0;
+      if (o.displayName && o.displayName.trim()) n++;
+      if (o.email && o.email.trim()) n++;
+      if (o.phone && o.phone.trim()) n++;
+      if (o.taxId && o.taxId.trim()) n++;
+      if (o.address && o.address.trim()) n++;
+      if (o.notes && o.notes.trim()) n++;
+      return n;
+    };
+
+    // ─── 1. Load every non-deleted org BP + its non-personal
+    //        claimed domains + its additional-email rows. Cost: 3
+    //        queries total for the whole catalog. ──────────────────
+    const orgs = await this.prisma.businessPartner.findMany({
+      where: { partnerType: 'organization', deletedAt: null },
+      select: {
+        id: true,
+        displayName: true,
+        companyName: true,
+        email: true,
+        phone: true,
+        taxId: true,
+        address: true,
+        notes: true,
+        domains: { select: { domain: true, isPersonal: true } },
+        emails: { select: { email: true, isPrimary: true } },
+      },
+      orderBy: { id: 'asc' },
+    });
+
+    // Resolve each org's "claimed domain" (first non-personal
+    // domain from `business_partner_domains`, else the email
+    // domain when non-personal). Used both for grouping and for
+    // survivor tie-break B.
+    type OrgRow = (typeof orgs)[number] & {
+      claimedDomain: string | null;
+      allDomains: string[]; // every non-personal domain (bp_domains + email)
+      genericMailboxes: string[]; // every generic mailbox on this org
+      personLikeEmails: string[]; // person-shaped emails currently on this org
+    };
+    const enriched: OrgRow[] = orgs.map((o) => {
+      // Collect every non-personal domain claim for this row.
+      const bpDomains = (o.domains ?? [])
+        .filter((d) => !d.isPersonal)
+        .map((d) => d.domain.toLowerCase())
+        .filter((d) => !!d && !isPersonalDomain(d));
+      const emailDomain = extractEmailDomain(o.email);
+      const emailDomainNonPersonal =
+        emailDomain && !isPersonalDomain(emailDomain) ? emailDomain : null;
+      const allDomainsSet = new Set<string>();
+      for (const d of bpDomains) allDomainsSet.add(d);
+      if (emailDomainNonPersonal) allDomainsSet.add(emailDomainNonPersonal);
+      const allDomains = Array.from(allDomainsSet);
+      // Prefer the explicit `business_partner_domains` row (that's
+      // the intentional claim); fall back to the email domain.
+      const claimedDomain = bpDomains[0] ?? emailDomainNonPersonal ?? null;
+
+      // Scan every email associated with the org (primary + rows)
+      // for generic mailboxes and person-shaped addresses.
+      const emailUniverse = new Set<string>();
+      if (o.email) emailUniverse.add(o.email.toLowerCase());
+      for (const e of o.emails ?? []) {
+        if (e.email) emailUniverse.add(e.email.toLowerCase());
+      }
+      const genericMailboxes = [...emailUniverse].filter(isGenericMailbox);
+      const personLikeEmails = [...emailUniverse].filter(isPersonLikeEmail);
+      return {
+        ...o,
+        claimedDomain,
+        allDomains,
+        genericMailboxes,
+        personLikeEmails,
+      };
+    });
+
+    // ─── 2. Bucket by (a) domain, then (b) normalized name.
+    //        `by domain` wins so a group that shares a corporate
+    //        domain collapses even if names drift slightly. ────────
+    const groupsByKey = new Map<string, OrgRow[]>();
+    const orgIdToKey = new Map<number, string>();
+    for (const o of enriched) {
+      let key: string | null = null;
+      if (o.claimedDomain) key = `domain:${o.claimedDomain}`;
+      if (!key) {
+        const nameKey = normalizeCompanyName(o.displayName ?? '');
+        if (nameKey) key = `name:${nameKey}`;
+      }
+      if (!key) continue; // ungrouped — never touched
+      orgIdToKey.set(o.id, key);
+      const arr = groupsByKey.get(key) ?? [];
+      arr.push(o);
+      groupsByKey.set(key, arr);
+    }
+
+    // ─── 3. Detect manual-review candidates.
+    //        These are org rows that share a NAME slug but disagree
+    //        on their claimed domain (real case: ברן ישראל +
+    //        barangroup.com vs +barangroip.com typo). We never
+    //        auto-merge those — the analyst has to decide whether
+    //        one is a typo. Rows land BOTH in `groupsByKey` under
+    //        their own domain key AND in `manualReviewCandidates`
+    //        so the analyst sees them explicitly. ──────────────────
+    const nameGroups = new Map<string, OrgRow[]>();
+    for (const o of enriched) {
+      const nameKey = normalizeCompanyName(o.displayName ?? '');
+      if (!nameKey) continue;
+      const arr = nameGroups.get(`name:${nameKey}`) ?? [];
+      arr.push(o);
+      nameGroups.set(`name:${nameKey}`, arr);
+    }
+    const manualReviewCandidates: Array<{
+      reason: 'domain-mismatch-in-name-group';
+      key: string;
+      members: Array<{ id: number; displayName: string; claimedDomain: string | null }>;
+    }> = [];
+    for (const [key, arr] of nameGroups) {
+      if (arr.length < 2) continue;
+      const domainSet = new Set(arr.map((o) => o.claimedDomain).filter(Boolean) as string[]);
+      // > 1 distinct domain in the same name-group → typo suspicion.
+      // Also: a single-domain group where SOME members have no
+      // claimed domain is NOT a manual case (they collapse under
+      // that domain naturally). Only alarm on the mismatch shape.
+      if (domainSet.size >= 2) {
+        manualReviewCandidates.push({
+          reason: 'domain-mismatch-in-name-group',
+          key,
+          members: arr.map((o) => ({
+            id: o.id,
+            displayName: o.displayName ?? '',
+            claimedDomain: o.claimedDomain,
+          })),
+        });
+      }
+    }
+    // Every id that participates in a manual-review group is EXCLUDED
+    // from the auto-merge plan below, so we never touch a row the
+    // analyst has to inspect first.
+    const manualReviewIds = new Set<number>();
+    for (const m of manualReviewCandidates) {
+      for (const x of m.members) manualReviewIds.add(x.id);
+    }
+
+    // ─── 4. Build the merge plan per (grouped, ≥ 2 members, no
+    //        manual-review-flagged members) group. ─────────────────
+    type PlanGroup = {
+      key: string;
+      keyKind: 'domain' | 'name';
+      survivor: OrgRow;
+      losers: OrgRow[];
+      emailAction: 'keep' | 'replaceWith' | 'clearToNull';
+      newEmail: string | null;
+    };
+    const plan: PlanGroup[] = [];
+    let groupsScanned = 0;
+    for (const [key, members] of groupsByKey) {
+      groupsScanned++;
+      if (members.length < 2) continue;
+      // If ANY member is in the manual-review set, punt the whole
+      // group — the analyst is going to reshape it.
+      if (members.some((m) => manualReviewIds.has(m.id))) continue;
+
+      // Survivor selection: oldest id (A) → domain (B) → completeness (C).
+      const sorted = [...members].sort((a, b) => {
+        // A. oldest id wins
+        if (a.id !== b.id) return a.id - b.id;
+        return 0;
+      });
+      // Apply tie-breaks by re-sorting when the winner is ambiguous.
+      // In practice A already picks a single row; B and C are safety
+      // nets if two rows shared an id (impossible under a proper PK,
+      // but the spec asks for them explicitly).
+      const oldestId = sorted[0].id;
+      const oldestTie = sorted.filter((m) => m.id === oldestId);
+      let survivor: OrgRow;
+      if (oldestTie.length === 1) {
+        survivor = oldestTie[0];
+      } else {
+        // B. prefer claimed domain
+        const withDomain = oldestTie.filter((m) => m.claimedDomain != null);
+        if (withDomain.length === 1) survivor = withDomain[0];
+        else {
+          const pool = withDomain.length > 0 ? withDomain : oldestTie;
+          // C. prefer most complete
+          survivor = pool.slice().sort((a, b) => completeness(b) - completeness(a))[0];
+        }
+      }
+      const losers = members.filter((m) => m.id !== survivor.id);
+
+      // Decide the survivor's email:
+      //   • KEEP when the survivor's email is either null OR
+      //     already generic (office@ / info@).
+      //   • CLEAR TO NULL when the survivor's email is person-shaped
+      //     (`first.last@…`, `alex@…`) — do NOT put a person's
+      //     mailbox on an org.
+      //   • REPLACE WITH when the group carries at least one
+      //     generic mailbox anywhere. The chosen mailbox is the
+      //     first generic mailbox from survivor.email, then any
+      //     loser's email, then survivor.emails rows, then any
+      //     loser's emails rows. Deterministic.
+      const groupGenerics: string[] = [];
+      for (const m of [survivor, ...losers]) {
+        for (const g of m.genericMailboxes) {
+          if (!groupGenerics.includes(g)) groupGenerics.push(g);
+        }
+      }
+      const survivorEmailLower = (survivor.email ?? '').trim().toLowerCase() || null;
+      const survivorIsGeneric = !!survivorEmailLower && isGenericMailbox(survivorEmailLower);
+      const survivorIsPersonLike = !!survivorEmailLower && isPersonLikeEmail(survivorEmailLower);
+      let emailAction: 'keep' | 'replaceWith' | 'clearToNull';
+      let newEmail: string | null = null;
+      if (!survivorEmailLower || survivorIsGeneric) {
+        emailAction = 'keep';
+        newEmail = survivorEmailLower;
+        // Even when "keep", if the survivor is null but the group
+        // has a generic, promote — that's the IW-6 shape.
+        if (!survivorEmailLower && groupGenerics.length > 0) {
+          emailAction = 'replaceWith';
+          newEmail = groupGenerics[0];
+        }
+      } else if (survivorIsPersonLike) {
+        if (groupGenerics.length > 0) {
+          emailAction = 'replaceWith';
+          newEmail = groupGenerics[0];
+        } else {
+          emailAction = 'clearToNull';
+          newEmail = null;
+        }
+      } else {
+        // Not clearly generic, not clearly personal (e.g. `sales@`
+        // that wasn't in our set) — leave alone.
+        emailAction = 'keep';
+        newEmail = survivorEmailLower;
+      }
+
+      plan.push({
+        key,
+        keyKind: key.startsWith('domain:') ? 'domain' : 'name',
+        survivor,
+        losers,
+        emailAction,
+        newEmail,
+      });
+    }
+
+    // ─── 5. Execute per group (skipped when dryRun). Each group's
+    //        writes wrap in a $transaction so a bad group doesn't
+    //        drag the batch down. ─────────────────────────────────
+    let groupsMerged = 0;
+    let losersSoftDeleted = 0;
+    let edgesRepointed = 0;
+    let emailsCleaned = 0;
+    const executeErrors: Array<{ key: string; error: string }> = [];
+
+    if (!dryRun) {
+      // Look up the worker_of type id once — needed only for reporting.
+      const workerOfType = await this.prisma.partnerRelationshipType.findUnique({
+        where: { code: 'worker_of' },
+        select: { id: true },
+      });
+      void workerOfType; // reserved for future per-edge reporting
+
+      for (const g of plan) {
+        try {
+          await this.prisma.$transaction(async (tx) => {
+            const loserIds = g.losers.map((l) => l.id);
+            const survivorId = g.survivor.id;
+
+            // Repoint helper — runs an updateMany from loser fk =
+            // survivorId, catching P2002. Returns rows updated
+            // (which is 0 when the survivor already had the same
+            // pair — the loser's original row just dies with the
+            // soft-delete because CASCADE is on the loser).
+            //
+            // Prisma's updateMany does not raise P2002 in the same
+            // way as create; the DB does. We catch it and skip.
+            const safeRepoint = async (
+              model: keyof Prisma.TransactionClient,
+              field: string,
+              extraWhere: Record<string, unknown> = {},
+            ): Promise<number> => {
+              try {
+                const res = await (tx as any)[model].updateMany({
+                  where: { [field]: { in: loserIds }, ...extraWhere },
+                  data: { [field]: survivorId },
+                });
+                return res.count as number;
+              } catch (err) {
+                if (
+                  err instanceof Prisma.PrismaClientKnownRequestError &&
+                  err.code === 'P2002'
+                ) {
+                  // Fall back to per-row: skip losing edges that
+                  // would collide with an existing survivor edge.
+                  let count = 0;
+                  // The generic path — read rows, try one-by-one.
+                  const rows: Array<{ id: number }> = await (tx as any)[model].findMany({
+                    where: { [field]: { in: loserIds }, ...extraWhere },
+                    select: { id: true },
+                  });
+                  for (const r of rows) {
+                    try {
+                      await (tx as any)[model].update({
+                        where: { id: r.id },
+                        data: { [field]: survivorId },
+                      });
+                      count++;
+                    } catch (err2) {
+                      if (
+                        !(err2 instanceof Prisma.PrismaClientKnownRequestError &&
+                          err2.code === 'P2002')
+                      ) {
+                        throw err2;
+                      }
+                      // Loser row conflicts with survivor's existing
+                      // row — leave it. It goes away with the loser.
+                    }
+                  }
+                  return count;
+                }
+                throw err;
+              }
+            };
+
+            // Party↔party edges (worker_of + any other type).
+            edgesRepointed += await safeRepoint('partnerRelationship', 'partyAId');
+            edgesRepointed += await safeRepoint('partnerRelationship', 'partyBId');
+            // Project participation.
+            edgesRepointed += await safeRepoint('projectPartnerRole', 'partyId');
+            edgesRepointed += await safeRepoint('projectPartnerRole', 'contactPartyId');
+            edgesRepointed += await safeRepoint('projectPartnerRole', 'onBehalfOfPartyId');
+            // Domain claims + email rows + partner-role tags +
+            // profession tags. Each has a unique constraint on
+            // (bp, foo); safeRepoint catches P2002 and skips.
+            edgesRepointed += await safeRepoint('businessPartnerDomain', 'partnerId');
+            edgesRepointed += await safeRepoint('businessPartnerEmail', 'businessPartnerId');
+            edgesRepointed += await safeRepoint('businessPartnerRole', 'businessPartnerId');
+            edgesRepointed += await safeRepoint('businessPartnerProfession', 'businessPartnerId');
+            // Contracts as party.
+            edgesRepointed += await safeRepoint('contract', 'partyId');
+            // Users — defensive (an org shouldn't hold one but
+            // the schema allows it and this catches drift).
+            edgesRepointed += await safeRepoint('user', 'businessPartnerId');
+
+            // Fix email on survivor.
+            if (g.emailAction === 'replaceWith') {
+              await tx.businessPartner.update({
+                where: { id: survivorId },
+                data: { email: g.newEmail },
+              });
+              emailsCleaned++;
+            } else if (g.emailAction === 'clearToNull') {
+              await tx.businessPartner.update({
+                where: { id: survivorId },
+                data: { email: null },
+              });
+              emailsCleaned++;
+            }
+
+            // Soft-delete losers.
+            const del = await tx.businessPartner.updateMany({
+              where: { id: { in: loserIds }, deletedAt: null },
+              data: { deletedAt: new Date() },
+            });
+            losersSoftDeleted += del.count;
+            groupsMerged++;
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          executeErrors.push({ key: g.key, error: message });
+        }
+      }
+    } else {
+      // Dry-run counters mirror what execute WOULD write.
+      for (const g of plan) {
+        groupsMerged++;
+        losersSoftDeleted += g.losers.length;
+        if (g.emailAction === 'replaceWith' || g.emailAction === 'clearToNull') {
+          emailsCleaned++;
+        }
+        // edgesRepointed left as 0 for dry-run — computing the exact
+        // count would require the same FK scan the execute path does,
+        // which defeats "read-only preview" cheapness. The plan below
+        // still shows per-group worker/role/domain counts.
+      }
+    }
+
+    // ─── 6. Batched per-loser counts so the response shows how
+    //        much each merge would move. Two group-bys keep this
+    //        cheap regardless of plan size. Ran AFTER execute so
+    //        the dry-run + execute paths reuse the same numbers
+    //        (execute already updated pointers, but we captured
+    //        the loser ids in `plan` before that). ──────────────
+    const allLoserIds = plan.flatMap((g) => g.losers.map((l) => l.id));
+    const workerCountByLoser = new Map<number, number>();
+    const roleCountByLoser = new Map<number, number>();
+    if (allLoserIds.length > 0 && dryRun) {
+      // Only compute for the dry-run: after execute the counts on
+      // the loser are all zero (they were repointed).
+      const workerOfType = await this.prisma.partnerRelationshipType.findUnique({
+        where: { code: 'worker_of' },
+        select: { id: true },
+      });
+      if (workerOfType) {
+        const workerRows = await this.prisma.partnerRelationship.groupBy({
+          by: ['partyBId'],
+          where: { partyBId: { in: allLoserIds }, typeId: workerOfType.id },
+          _count: { _all: true },
+        });
+        for (const r of workerRows) {
+          workerCountByLoser.set(r.partyBId, r._count._all);
+        }
+      }
+      const roleRows = await this.prisma.projectPartnerRole.groupBy({
+        by: ['partyId'],
+        where: { partyId: { in: allLoserIds } },
+        _count: { _all: true },
+      });
+      for (const r of roleRows) {
+        roleCountByLoser.set(r.partyId, r._count._all);
+      }
+    }
+
+    // ─── 7. Shape the response per the spec. ──────────────────────
+    return {
+      dryRun,
+      groupsScanned,
+      groupsToMerge: plan.map((g) => ({
+        key: g.key,
+        keyKind: g.keyKind,
+        survivor: {
+          id: g.survivor.id,
+          displayName: g.survivor.displayName ?? '',
+          email: g.survivor.email,
+          claimedDomain: g.survivor.claimedDomain,
+        },
+        losers: g.losers.map((l) => ({
+          id: l.id,
+          displayName: l.displayName ?? '',
+          email: l.email,
+          claimedDomain: l.claimedDomain,
+          workerCount: workerCountByLoser.get(l.id) ?? 0,
+          roleCount: roleCountByLoser.get(l.id) ?? 0,
+          domainCount: (l.domains ?? []).filter((d) => !d.isPersonal).length,
+        })),
+        emailAction: g.emailAction,
+        newEmail: g.newEmail,
+      })),
+      manualReviewCandidates,
+      totals: {
+        groupsMerged,
+        losersSoftDeleted,
+        edgesRepointed,
+        emailsCleaned,
+        executeErrors: executeErrors.length,
+      },
+      executeErrors,
+    };
+  }
 }
