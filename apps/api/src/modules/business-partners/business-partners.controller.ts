@@ -61,6 +61,20 @@ export class BusinessPartnersController {
     return this.service.findOne(id);
   }
 
+  /**
+   * QA4 CT-4 (2026-09-30) — list the people that carry a `worker_of`
+   * edge pointing at this org. Powers the Organizations catalog's
+   * expandable nested-contacts row. Returns the fields the nested row
+   * renders (name / role / email / phone) — see service for shape.
+   * Read-only, guarded by `partners:read`.
+   */
+  @Get(':id/workers')
+  @RequirePermissions({ module: 'partners', action: 'read' })
+  @ApiOperation({ summary: 'List people whose worker_of edge targets this org' })
+  listWorkers(@Param('id', ParseIntPipe) id: number) {
+    return this.service.listOrgWorkers(id);
+  }
+
   @Patch(':id')
   @RequirePermissions({ module: 'partners', action: 'write' })
   @ApiOperation({ summary: 'Update a business partner' })

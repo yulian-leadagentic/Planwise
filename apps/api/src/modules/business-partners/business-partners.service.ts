@@ -451,10 +451,143 @@ export class BusinessPartnersService {
     // returned zero rows or when every row is an org.
     const withEmployeeFlag = await this.attachIsEmployee(enriched as any[]);
 
+    // QA4 CT-4 (2026-09-30) — attach `contactCount` to every ORG row so
+    // the Organizations catalog page can badge each row without a
+    // second fetch. One aggregate query per page regardless of size.
+    const withContactCount = await this.attachOrgContactCount(withEmployeeFlag as any[]);
+
     return {
-      data: withEmployeeFlag,
+      data: withContactCount,
       meta: { total, page, perPage, totalPages: Math.ceil(total / perPage) },
     };
+  }
+
+  /**
+   * QA4 CT-4 (2026-09-30) — enrich every ORG row with a `contactCount`
+   * scalar (the number of DISTINCT persons whose `worker_of` edge
+   * points at that org, excluding soft-deleted persons). Cost: one
+   * `groupBy` on `partner_relationships` per page. Persons pass through
+   * untouched — `contactCount` is emitted only where it's meaningful.
+   */
+  private async attachOrgContactCount<T extends { id: number; partnerType: string }>(
+    rows: T[],
+  ): Promise<Array<T & { contactCount?: number }>> {
+    if (rows.length === 0) return rows as any;
+    const orgIds = rows.filter((r) => r.partnerType === 'organization').map((r) => r.id);
+    if (orgIds.length === 0) return rows as any;
+    const workerOfType = await this.prisma.partnerRelationshipType.findUnique({
+      where: { code: 'worker_of' },
+      select: { id: true },
+    });
+    if (!workerOfType) {
+      // No worker_of type seeded yet — every count is zero. Safer to
+      // emit 0 explicitly than to hide the field.
+      return rows.map((r) => (r.partnerType === 'organization' ? { ...r, contactCount: 0 } : r));
+    }
+    // Fetch DISTINCT (partyAId, partyBId) pairs so a person with two
+    // worker_of edges to the same org doesn't double-count. Prisma's
+    // `groupBy` returns distinct combinations for the grouped columns
+    // naturally — but the count-of-persons semantic wants
+    // `distinct(partyAId)` per partyBId, which Prisma doesn't expose
+    // directly. Compute in-memory: pull the pairs, build a Set per org.
+    const pairs = await this.prisma.partnerRelationship.findMany({
+      where: {
+        typeId: workerOfType.id,
+        partyBId: { in: orgIds },
+        partyA: { deletedAt: null }, // exclude soft-deleted persons
+      },
+      select: { partyAId: true, partyBId: true },
+    });
+    const personIdsByOrg = new Map<number, Set<number>>();
+    for (const p of pairs) {
+      const s = personIdsByOrg.get(p.partyBId) ?? new Set<number>();
+      s.add(p.partyAId);
+      personIdsByOrg.set(p.partyBId, s);
+    }
+    return rows.map((r) =>
+      r.partnerType === 'organization'
+        ? { ...r, contactCount: personIdsByOrg.get(r.id)?.size ?? 0 }
+        : r,
+    );
+  }
+
+  /**
+   * QA4 CT-4 (2026-09-30) — list the people that carry a `worker_of`
+   * edge pointing at this org. Returns the fields the Organizations
+   * catalog nested-row view renders: id, name, role (mainRoleType.name),
+   * email, phone/mobile. Sorted by displayName. Soft-deleted persons
+   * excluded. Returns an empty list for a person BP (defensive — the
+   * FE should only call this on orgs).
+   */
+  async listOrgWorkers(orgId: number) {
+    // Basic existence check — 404 if the org doesn't exist / is deleted.
+    // Reuse `findOne` so the guard is identical to every other detail
+    // endpoint on this controller.
+    await this.findOne(orgId);
+    const workerOfType = await this.prisma.partnerRelationshipType.findUnique({
+      where: { code: 'worker_of' },
+      select: { id: true },
+    });
+    if (!workerOfType) return { data: [] as Array<Record<string, unknown>> };
+    // Fetch the party-A ids (people) whose worker_of edge lands on
+    // this org, with the edge's title so we can show a per-org title
+    // rather than the person's main role — matches the mental model
+    // "who works here as what".
+    const edges = await this.prisma.partnerRelationship.findMany({
+      where: { typeId: workerOfType.id, partyBId: orgId },
+      select: {
+        partyAId: true,
+        titleAtB: true,
+        partyA: {
+          select: {
+            id: true,
+            partnerType: true,
+            displayName: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+            mobile: true,
+            deletedAt: true,
+            mainRoleType: { select: { id: true, code: true, name: true } },
+          },
+        },
+      },
+    });
+    // Dedupe persons (an unusual data shape can produce two edges for
+    // the same person → same org). Prefer the edge that carries a title.
+    const byPersonId = new Map<number, {
+      id: number;
+      displayName: string;
+      firstName: string | null;
+      lastName: string | null;
+      email: string | null;
+      phone: string | null;
+      mobile: string | null;
+      role: string | null;
+      titleAtB: string | null;
+    }>();
+    for (const e of edges) {
+      if (!e.partyA || e.partyA.deletedAt) continue;
+      if (e.partyA.partnerType !== 'person') continue;
+      const existing = byPersonId.get(e.partyA.id);
+      if (existing && existing.titleAtB) continue;
+      byPersonId.set(e.partyA.id, {
+        id: e.partyA.id,
+        displayName: e.partyA.displayName,
+        firstName: e.partyA.firstName,
+        lastName: e.partyA.lastName,
+        email: e.partyA.email,
+        phone: e.partyA.phone,
+        mobile: e.partyA.mobile,
+        role: e.partyA.mainRoleType?.name ?? null,
+        titleAtB: e.titleAtB ?? null,
+      });
+    }
+    const data = Array.from(byPersonId.values()).sort((a, b) =>
+      a.displayName.localeCompare(b.displayName),
+    );
+    return { data };
   }
 
   /**
