@@ -136,11 +136,16 @@ interface OrgGroup {
 }
 
 /**
- * Backend fallback order — mirror the resolver in `commit.service.ts`
- * `pickProjectRoleId()` so the dropdown's default matches what the
- * server would pick if we sent `projectRoleId: null`.
+ * QA4 IW-5 (2026-09-30) — imported contacts are always attached to a
+ * project with the "External Contact" role. The wizard used to expose
+ * a role-type picker with a pre-selected fallback; now the picker is
+ * locked read-only and the fallback resolver looks for exactly
+ * `external_contact` (falling through to any known alt codes only if
+ * that seed is missing on a legacy environment). The backend's own
+ * `pickProjectRoleId()` fallback still adds `contact` / `consultant`
+ * as a safety net, but the FE never presents them.
  */
-const FALLBACK_ROLE_CODES = ['contact', 'external_contact', 'consultant'] as const;
+const FALLBACK_ROLE_CODES = ['external_contact', 'contact', 'consultant'] as const;
 
 type WizardStep = 'upload' | 'sheet' | 'map' | 'preview' | 'commit';
 
@@ -2695,19 +2700,29 @@ function ProjectAttachPanel({
   attachToProjectId,
   onAttachProjectChange,
   projectRoleId,
-  onProjectRoleChange,
+  onProjectRoleChange: _onProjectRoleChange,
   roleTypes,
   roleTypesLoading,
 }: {
   attachToProjectId: number | null;
   onAttachProjectChange: (id: number | null) => void;
   projectRoleId: number | null;
+  /** QA4 IW-5 (2026-09-30) — role is locked in the wizard; setter is
+   * kept in the props for the parent's default effect but the picker
+   * UI never invokes it. */
   onProjectRoleChange: (id: number | null) => void;
   roleTypes: ProjectRoleTypeLite[];
   roleTypesLoading: boolean;
 }) {
   const roleEnabled = attachToProjectId != null;
-  const fallbackDefault = useMemo(() => {
+  // QA4 IW-5 (2026-09-30) — the wizard always attaches imported
+  // contacts with "External Contact" as the project role; the picker
+  // is a locked read-only chip. Look up the actual seeded row so we
+  // can show its real display name (matches what the person will land
+  // with on the project team). Falls back to `contact` / `consultant`
+  // only if the seed migration has not run — which is unexpected on
+  // staging.
+  const externalContact = useMemo(() => {
     for (const code of FALLBACK_ROLE_CODES) {
       const found = roleTypes.find((rt) => rt.code === code);
       if (found) return found;
@@ -2716,23 +2731,25 @@ function ProjectAttachPanel({
   }, [roleTypes]);
 
   return (
-    <div className="rounded-[14px] border border-slate-200 bg-white p-4 space-y-3">
+    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 space-y-3">
       <div className="flex items-center gap-2">
-        <FolderKanban className="h-4 w-4 text-indigo-500" />
-        <h3 className="text-[13px] font-semibold text-slate-700">
-          Attach to project <span className="font-normal text-slate-400">(optional)</span>
+        <FolderKanban className="h-4 w-4 text-indigo-500 dark:text-indigo-400" />
+        <h3 className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">
+          Attach to project <span className="font-normal text-slate-400 dark:text-slate-500">(optional)</span>
         </h3>
       </div>
-      <p className="text-[11px] text-slate-500">
+      <p className="text-[11px] text-slate-500 dark:text-slate-400">
         Pick a project to add every committed person to its team. Each row's
-        <span className="font-mono px-1 text-slate-600">discipline</span> column becomes the
-        person's <em>title on project</em>; the role-type here is the participation role. Leave
-        both empty for a global import (creates contacts and links them to their organizations only).
+        <span className="font-mono px-1 text-slate-600 dark:text-slate-300">discipline</span> column becomes the
+        person's <em>title on project</em>. Imported people always land on the project
+        as <strong>External Contact</strong> — the role is locked here (edit it on the
+        person's project card after the import if needed). Leave the project empty for a
+        global import.
       </p>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
-          <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-1 block">
+          <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1 block">
             Project
           </label>
           <ProjectPickerInline
@@ -2741,37 +2758,41 @@ function ProjectAttachPanel({
           />
         </div>
         <div>
-          <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-1 block">
+          <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1 block">
             Role on project
           </label>
-          <select
-            value={projectRoleId ?? ''}
-            onChange={(e) =>
-              onProjectRoleChange(e.target.value ? Number(e.target.value) : null)
-            }
-            disabled={!roleEnabled || roleTypesLoading}
-            className="w-full px-3 py-2 rounded-lg border border-slate-200 text-[13px] text-slate-700 bg-white focus:border-blue-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed"
+          {/* QA4 IW-5 (2026-09-30) — locked, read-only display. The
+              wizard-level default effect sets projectRoleId to the
+              External Contact seed id when the project is picked. */}
+          <div
+            role="group"
+            aria-label="Role on project (locked to External Contact)"
+            className={cn(
+              'flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-[13px]',
+              'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50',
+              !roleEnabled && 'opacity-60',
+            )}
+            title="Imported contacts always land as External Contact; edit the role on the person's project card after the import."
           >
-            <option value="">
+            <span className="text-slate-700 dark:text-slate-200 font-semibold truncate">
               {roleTypesLoading
-                ? 'Loading roles…'
-                : fallbackDefault
-                  ? `— default: ${fallbackDefault.name} —`
-                  : '— no role · project attach will be skipped —'}
-            </option>
-            {roleTypes.map((rt) => (
-              <option key={rt.id} value={rt.id}>
-                {rt.name}
-                {rt.code === fallbackDefault?.code ? ' · default' : ''}
-              </option>
-            ))}
-          </select>
+                ? 'Loading…'
+                : externalContact?.name ?? 'External Contact'}
+            </span>
+            <span
+              className="ml-auto text-[10px] font-bold uppercase tracking-wide rounded-[4px] border px-1.5 py-0.5 border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900"
+              aria-hidden="true"
+            >
+              locked
+            </span>
+          </div>
           {!roleEnabled && (
-            <p className="mt-1 text-[11px] text-slate-400">Pick a project first.</p>
+            <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">Pick a project first.</p>
           )}
-          {roleEnabled && projectRoleId == null && !fallbackDefault && (
-            <p className="mt-1 text-[11px] text-amber-600">
-              No fallback role-type seeded — pick one, or people will not be attached.
+          {roleEnabled && projectRoleId == null && !externalContact && (
+            <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+              The <code>external_contact</code> role-type seed is missing — commit will
+              fall back to the backend resolver.
             </p>
           )}
         </div>
