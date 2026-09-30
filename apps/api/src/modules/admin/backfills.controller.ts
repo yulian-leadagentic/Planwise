@@ -1,5 +1,6 @@
-import { Controller, Post, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { Controller, Post, Query, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { Prisma } from '@prisma/client';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -9,6 +10,11 @@ import {
   extractServiceMarker,
   resolvePhasesByMarkerNames,
 } from '../planning/marker-phase-resolver';
+import { normalizeCompanyName } from '../data-import/contacts/dedup.service';
+import {
+  extractEmailDomain,
+  PERSONAL_EMAIL_DOMAIN_FALLBACK,
+} from '../business-partners/business-partners.service';
 
 /**
  * One-shot admin backfill endpoints — mutations that fix historical
@@ -371,5 +377,332 @@ export class BackfillsController {
         referencedProfessionIds: Array.from(referencedProfessionIds),
       };
     });
+  }
+
+  /**
+   * QA4 · DP-EMPTY-1 (2026-09-30) — Materialize ProjectDeliverable rows
+   * for every task whose deliverable dimension is unpersisted.
+   *
+   * Root cause (verified live on staging, project 33): 32 tasks each
+   * carry a `[SERVICE:<name>]` marker in `description`, yet the project
+   * has 0 rows in `project_deliverables`. The Planning tab renders a
+   * DELIVERABLE badge via a marker fallback, but Deliverable Planning
+   * grid reads only real `ProjectDeliverable` rows → empty. Systemic:
+   * ~13 projects, ~591 tasks currently in this state (182 via
+   * `deliverableTemplateId`, 409 via `[SERVICE:…]` marker only).
+   *
+   * For every project, for each task where `projectDeliverableId IS NULL`:
+   *   1. If `deliverableTemplateId` is set → resolve name from the
+   *      Template row (also carry over `phaseId` → `serviceId`,
+   *      `sortOrder`, `sourceTemplateId`).
+   *   2. Else parse the `[SERVICE:<name>]` marker (shared regex via
+   *      `extractServiceMarker`). Task's own `phaseId` seeds the new
+   *      deliverable's `serviceId` when consistent within the group.
+   *
+   * Group tasks by (projectId, resolvedName). For each group either
+   * REUSE an existing `ProjectDeliverable` (idempotent — re-run is a
+   * no-op) or CREATE one. Then repoint every task's
+   * `projectDeliverableId` to that row.
+   *
+   * If tasks in a group disagree on `phaseId`, the deliverable is still
+   * created but with `serviceId = null`; the disagreement is reported
+   * as `phaseConflicts` per project so Yulian can inspect.
+   *
+   * Wrapped in a per-project `$transaction` — a bad project doesn't
+   * roll back the whole batch. Same summary shape returned for dry-run
+   * and execute so a diff is trivial.
+   *
+   * Query param: `?dryRun=true` (any truthy string) — reads only, writes
+   * nothing. Default is EXECUTE so a plain POST runs the backfill;
+   * Yulian invokes with `dryRun=true` first, reviews, then re-invokes
+   * without the flag to execute.
+   */
+  @Post('materialize-project-deliverables')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'Backfill · materialize ProjectDeliverable rows from task deliverableTemplateId or [SERVICE:xxx] marker (idempotent; ?dryRun=true for plan-only)',
+  })
+  @ApiQuery({ name: 'dryRun', required: false, type: String, description: 'Truthy → plan only, no writes' })
+  async runMaterializeProjectDeliverables(@Query('dryRun') dryRunRaw?: string) {
+    const dryRun =
+      typeof dryRunRaw === 'string' &&
+      ['1', 'true', 'yes', 'on'].includes(dryRunRaw.toLowerCase());
+
+    // 1. Candidate tasks — every non-deleted task without a
+    //    projectDeliverableId, project-scoped only (personal tasks and
+    //    orphans are excluded). Include the relations we need to resolve
+    //    a name (deliverableTemplate) and to seed the deliverable's
+    //    service (phase) plus the project for reporting.
+    const tasks = (await this.prisma.task.findMany({
+      where: {
+        projectDeliverableId: null,
+        deletedAt: null,
+        projectId: { not: null },
+      },
+      select: {
+        id: true,
+        projectId: true,
+        description: true,
+        deliverableTemplateId: true,
+        phaseId: true,
+        project: { select: { id: true, name: true } },
+        deliverableTemplate: {
+          select: { id: true, name: true, phaseId: true },
+        },
+      },
+    })) as Array<{
+      id: number;
+      projectId: number | null;
+      description: string | null;
+      deliverableTemplateId: number | null;
+      phaseId: number | null;
+      project: { id: number; name: string } | null;
+      deliverableTemplate: { id: number; name: string; phaseId: number | null } | null;
+    }>;
+
+    // 2. Bucket per-project → per-resolvedName; track unresolved
+    //    separately so the summary shows them.
+    type PlanGroup = {
+      name: string;
+      sourceTemplateId: number | null;
+      sourceTemplateSortOrder: number | null;
+      phaseIds: Set<number>;
+      taskIds: number[];
+    };
+    type ProjectPlan = {
+      projectId: number;
+      projectName: string;
+      groups: Map<string, PlanGroup>;
+      unresolved: { taskId: number; reason: string }[];
+    };
+    const plans = new Map<number, ProjectPlan>();
+
+    const ensurePlan = (projectId: number, projectName: string): ProjectPlan => {
+      let p = plans.get(projectId);
+      if (!p) {
+        p = { projectId, projectName, groups: new Map(), unresolved: [] };
+        plans.set(projectId, p);
+      }
+      return p;
+    };
+
+    for (const t of tasks) {
+      if (t.projectId == null || !t.project) continue;
+      const plan = ensurePlan(t.projectId, t.project.name);
+
+      let resolvedName: string | null = null;
+      let sourceTemplateId: number | null = null;
+      let sourceTemplateSortOrder: number | null = null;
+
+      if (t.deliverableTemplateId != null && t.deliverableTemplate?.name) {
+        resolvedName = t.deliverableTemplate.name;
+        sourceTemplateId = t.deliverableTemplate.id;
+        // Template has no sortOrder — we tail-append per project below.
+        sourceTemplateSortOrder = null;
+      } else {
+        const marker = extractServiceMarker(t.description);
+        if (marker) resolvedName = marker;
+      }
+
+      if (!resolvedName) {
+        plan.unresolved.push({
+          taskId: t.id,
+          reason:
+            t.deliverableTemplateId != null
+              ? 'deliverableTemplateId set but template row/name missing'
+              : 'no deliverableTemplateId and no [SERVICE:…] marker in description',
+        });
+        continue;
+      }
+
+      let g = plan.groups.get(resolvedName);
+      if (!g) {
+        g = {
+          name: resolvedName,
+          sourceTemplateId,
+          sourceTemplateSortOrder,
+          phaseIds: new Set<number>(),
+          taskIds: [],
+        };
+        plan.groups.set(resolvedName, g);
+      }
+      // If any task in the group has a template FK, keep it — used to
+      // seed the new deliverable's `sourceTemplateId` and `sortOrder`.
+      if (g.sourceTemplateId == null && sourceTemplateId != null) {
+        g.sourceTemplateId = sourceTemplateId;
+        g.sourceTemplateSortOrder = sourceTemplateSortOrder;
+      }
+      if (t.phaseId != null) g.phaseIds.add(t.phaseId);
+      g.taskIds.push(t.id);
+    }
+
+    // 3. For each project, decide reuse vs create by looking up
+    //    existing ProjectDeliverable rows by (projectId, name). Then
+    //    either report (dryRun) or execute (transactionally per project).
+    let totalCreated = 0;
+    let totalRepointed = 0;
+    let projectsTouched = 0;
+    let totalUnresolved = 0;
+    const perProject: Array<{
+      projectId: number;
+      projectName: string;
+      deliverablesToCreate: Array<{
+        name: string;
+        sourcePhaseId: number | null;
+        sourceTemplateId: number | null;
+        taskCount: number;
+        taskIds: number[];
+      }>;
+      deliverablesToReuse: Array<{
+        existingId: number;
+        name: string;
+        taskCount: number;
+        taskIds: number[];
+      }>;
+      unresolvedTasks: Array<{ taskId: number; reason: string }>;
+      phaseConflicts: Array<{ deliverableName: string; phaseIds: number[] }>;
+    }> = [];
+
+    for (const plan of plans.values()) {
+      const existingByName = new Map<string, number>();
+      const existing = await this.prisma.projectDeliverable.findMany({
+        where: {
+          projectId: plan.projectId,
+          deletedAt: null,
+          name: { in: Array.from(plan.groups.keys()) },
+        },
+        select: { id: true, name: true },
+      });
+      for (const e of existing) existingByName.set(e.name, e.id);
+
+      const toCreate: Array<{
+        name: string;
+        sourcePhaseId: number | null;
+        sourceTemplateId: number | null;
+        taskCount: number;
+        taskIds: number[];
+      }> = [];
+      const toReuse: Array<{
+        existingId: number;
+        name: string;
+        taskCount: number;
+        taskIds: number[];
+      }> = [];
+      const phaseConflicts: Array<{ deliverableName: string; phaseIds: number[] }> = [];
+
+      for (const g of plan.groups.values()) {
+        const hit = existingByName.get(g.name);
+        if (hit != null) {
+          toReuse.push({
+            existingId: hit,
+            name: g.name,
+            taskCount: g.taskIds.length,
+            taskIds: g.taskIds,
+          });
+        } else {
+          const phaseIds = Array.from(g.phaseIds);
+          const consistent = phaseIds.length === 1;
+          const sourcePhaseId = consistent ? phaseIds[0] : null;
+          if (!consistent && phaseIds.length > 1) {
+            phaseConflicts.push({ deliverableName: g.name, phaseIds });
+          }
+          toCreate.push({
+            name: g.name,
+            sourcePhaseId,
+            sourceTemplateId: g.sourceTemplateId,
+            taskCount: g.taskIds.length,
+            taskIds: g.taskIds,
+          });
+        }
+      }
+
+      const anythingToDo =
+        toCreate.length > 0 || toReuse.length > 0;
+
+      if (anythingToDo && !dryRun) {
+        await this.prisma.$transaction(async (tx) => {
+          // Seed sortOrder tail for created rows. Same strategy as
+          // ProjectDeliverablesService.create (max + 1000). Compute once,
+          // then increment locally so multiple creates within one project
+          // land in a predictable order.
+          const last = await tx.projectDeliverable.findFirst({
+            where: { projectId: plan.projectId, deletedAt: null },
+            orderBy: [{ sortOrder: 'desc' }, { id: 'desc' }],
+            select: { sortOrder: true },
+          });
+          let nextSortOrder = (last?.sortOrder ?? 0) + 1000;
+
+          const nameToId = new Map<string, number>();
+
+          for (const c of toCreate) {
+            const created = await tx.projectDeliverable.create({
+              data: {
+                projectId: plan.projectId,
+                name: c.name,
+                sourceTemplateId: c.sourceTemplateId,
+                serviceId: c.sourcePhaseId,
+                sortOrder: nextSortOrder,
+                status: 'active',
+              },
+              select: { id: true, name: true },
+            });
+            nameToId.set(created.name, created.id);
+            nextSortOrder += 1000;
+          }
+          for (const r of toReuse) {
+            nameToId.set(r.name, r.existingId);
+          }
+
+          // Repoint tasks. Guard the WHERE with `projectDeliverableId:
+          // null` so a re-run (which finds all rows already pointed)
+          // touches nothing.
+          for (const [name, deliverableId] of nameToId) {
+            const ids =
+              toCreate.find((c) => c.name === name)?.taskIds ??
+              toReuse.find((r) => r.name === name)?.taskIds ??
+              [];
+            if (ids.length === 0) continue;
+            const res = await tx.task.updateMany({
+              where: { id: { in: ids }, projectDeliverableId: null },
+              data: { projectDeliverableId: deliverableId },
+            });
+            totalRepointed += res.count;
+          }
+          totalCreated += toCreate.length;
+        });
+        projectsTouched++;
+      } else if (anythingToDo && dryRun) {
+        // Dry-run counters mirror what execute would report.
+        totalCreated += toCreate.length;
+        totalRepointed += toCreate.reduce((a, c) => a + c.taskCount, 0)
+          + toReuse.reduce((a, r) => a + r.taskCount, 0);
+        projectsTouched++;
+      }
+
+      totalUnresolved += plan.unresolved.length;
+      perProject.push({
+        projectId: plan.projectId,
+        projectName: plan.projectName,
+        deliverablesToCreate: toCreate,
+        deliverablesToReuse: toReuse,
+        unresolvedTasks: plan.unresolved,
+        phaseConflicts,
+      });
+    }
+
+    perProject.sort((a, b) => a.projectId - b.projectId);
+
+    return {
+      dryRun,
+      projectsProcessed: perProject.length,
+      perProject,
+      totals: {
+        deliverablesCreated: totalCreated,
+        tasksRepointed: totalRepointed,
+        projectsTouched,
+        unresolvedCount: totalUnresolved,
+      },
+    };
   }
 }
