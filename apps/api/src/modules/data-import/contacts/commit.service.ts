@@ -245,6 +245,62 @@ export class ContactsCommitService {
                 );
               }
             }
+            // QA4 IW-9 (2026-09-30) — when the matched org has NO
+            // mainRoleType (null on the DB row) and the reviewer picked
+            // one in the wizard, fill in the null WITHOUT overwriting
+            // an already-set type. Reuses the same `orgTypes[key]` map
+            // NEW-org creates use (IW-2), so the FE wiring stays
+            // identical. Idempotent-friendly: the `businessPartner`
+            // update only fires when both the current value is null
+            // AND the reviewer supplied a code. A concurrent write that
+            // set the type in the meantime is respected (we re-check
+            // the current value under the same lookup before writing).
+            const linkedTypeCode = input.orgTypes?.[key];
+            if (linkedTypeCode) {
+              try {
+                const currentOrg = await this.prisma.businessPartner.findUnique({
+                  where: { id: orgBpId },
+                  select: { mainRoleTypeId: true },
+                });
+                if (currentOrg && currentOrg.mainRoleTypeId == null) {
+                  const roleType = await this.prisma.partnerRoleType.findUnique({
+                    where: { code: linkedTypeCode.toLowerCase() },
+                    select: { id: true },
+                  });
+                  if (roleType) {
+                    await this.prisma.businessPartner.update({
+                      where: { id: orgBpId },
+                      data: { mainRoleTypeId: roleType.id },
+                    });
+                    // Mirror the NEW-org create path: also seed a
+                    // BusinessPartnerRole row so the roles list stays
+                    // consistent with the mainRoleType. Idempotent
+                    // via the composite unique.
+                    try {
+                      await this.prisma.businessPartnerRole.create({
+                        data: {
+                          businessPartnerId: orgBpId,
+                          roleTypeId: roleType.id,
+                          isPrimary: true,
+                        },
+                      });
+                    } catch (roleErr: unknown) {
+                      if (
+                        !(roleErr instanceof Prisma.PrismaClientKnownRequestError
+                          && roleErr.code === 'P2002')
+                      ) {
+                        throw roleErr;
+                      }
+                    }
+                  }
+                }
+              } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : String(err);
+                this.logger.warn(
+                  `contacts-import IW-9 org "${key}" mainRoleType fill-in failed: ${message}`,
+                );
+              }
+            }
           }
         } else if (leaderAction === 'create') {
           const rawOrgName = eff('company');

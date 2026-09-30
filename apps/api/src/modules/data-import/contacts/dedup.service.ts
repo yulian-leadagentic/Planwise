@@ -97,6 +97,14 @@ export class ContactsDedupService {
           mobile: true,
           address: true,
           notes: true,
+          // QA4 IW-9 (2026-09-30) — surface the matched org's current
+          // PartnerRoleType so the wizard can display "keeps existing
+          // type: <TYPE>" on link cards instead of a bare literal.
+          // Null when the org has no main role assigned yet — the FE
+          // then shows the Partner-default type picker (unset existing
+          // orgs are typeable at import time; the commit path fills
+          // the null without overwriting a set type).
+          mainRoleType: { select: { name: true } },
         },
       });
       for (const r of rows) {
@@ -107,6 +115,7 @@ export class ContactsDedupService {
           mobile: r.mobile ?? null,
           address: r.address ?? null,
           note: r.notes ?? null,
+          mainRoleType: r.mainRoleType?.name ?? null,
         });
       }
     }

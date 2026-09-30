@@ -130,6 +130,13 @@ export interface DedupSide {
    * `email`, `phone`, `mobile`, `discipline`, `role`, `address`, `note`.
    * Missing keys mean "not fetched"; a `null` value means "empty on the
    * existing record".
+   *
+   * QA4 IW-9 (2026-09-30) — on the org side, the map also carries
+   * `mainRoleType` (the matched org's current PartnerRoleType name, e.g.
+   * "Partner" / "Customer"). The wizard displays it inline on link
+   * cards; a null value means "no type set" and the FE surfaces the
+   * Partner-default type picker so the reviewer can fill it in during
+   * import (commit only writes when the previous value was null).
    */
   existingFields?: Partial<Record<string, string | null>>;
 }

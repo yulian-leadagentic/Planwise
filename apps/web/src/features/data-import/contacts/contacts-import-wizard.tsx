@@ -1595,10 +1595,27 @@ function PreviewStep({
   // disabled until the reviewer has typed every one. E3 excludes
   // orgs the reviewer deleted — no type needed for a card that will
   // be dropped at commit.
+  //
+  // QA4 IW-9 (2026-09-30) — LINK orgs whose current mainRoleType is
+  // null (no type set on the DB row) join the "needs a pick" set: the
+  // wizard shows the same Partner-default picker for them and the
+  // commit path writes the pick as long as the previous value was
+  // null (never overwrites an already-set type).
   const newOrgGroups = orgGroups.filter(
     (g) => g.isNew && g.hasBatchKey && g.personCount > 0 && !g.isIndividual && !orgDeleted.has(g.key),
   );
-  const untypedNewOrgs = newOrgGroups.filter((g) => !orgTypes[g.key]).length;
+  const linkTypeableOrgGroups = orgGroups.filter(
+    (g) =>
+      !g.isNew
+      && g.hasBatchKey
+      && g.matchedBpId != null
+      && g.personCount > 0
+      && !g.isIndividual
+      && !orgDeleted.has(g.key)
+      && (g.people[0]?.decision.org.existingFields?.mainRoleType ?? null) == null,
+  );
+  const typePickableGroups = [...newOrgGroups, ...linkTypeableOrgGroups];
+  const untypedNewOrgs = typePickableGroups.filter((g) => !orgTypes[g.key]).length;
   // QA4 E6 (2026-09-29) — every person must belong to an org before
   // commit. Count kept-people rows currently sitting in the
   // Individuals bucket AND still live (not skipped, not on a deleted
@@ -1661,12 +1678,19 @@ function PreviewStep({
   // re-seed it on the next render — an explicit clear is honoured
   // (the commit backend falls back to `partner` anyway, matching
   // this default).
+  //
+  // QA4 IW-9 (2026-09-30) — extended to also seed LINK orgs whose
+  // matched-existing `mainRoleType` is null: the wizard's picker for
+  // these is exactly the same as a NEW org's, and defaulting to
+  // Partner keeps them from blocking the type-gate. The commit path
+  // only writes the pick when the previous value was null so an
+  // already-typed org is never downgraded.
   const seededPartnerKeys = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (orgRoleTypes.length === 0) return;
     const partnerCode = orgRoleTypes.find((rt) => rt.code === 'partner')?.code;
     if (!partnerCode) return;
-    for (const g of newOrgGroups) {
+    for (const g of typePickableGroups) {
       if (seededPartnerKeys.current.has(g.key)) continue;
       seededPartnerKeys.current.add(g.key);
       if (!(g.key in orgTypes)) {
@@ -1674,7 +1698,7 @@ function PreviewStep({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgRoleTypes, newOrgGroups.length]);
+  }, [orgRoleTypes, newOrgGroups.length, linkTypeableOrgGroups.length]);
 
   return (
     <div className="space-y-4">
@@ -2168,7 +2192,22 @@ function OrgCard({
   onUndoDeleteSecondary: (rowIndex: number, secondaryIndex: number) => void;
 }) {
   const pickedCode = orgTypes[group.key] ?? '';
-  const needsPick = group.isNew && group.hasBatchKey && !pickedCode && group.personCount > 0 && !isDeleted;
+  // QA4 IW-9 (2026-09-30) — for LINK cards, surface the matched org's
+  // current PartnerRoleType (fetched by dedup.service under
+  // existingFields.mainRoleType). When the existing type is set, we
+  // display "keeps existing type: <NAME>" (no picker). When it's null
+  // ("not set" on the DB row), the reviewer gets the same Partner-
+  // default picker as a NEW org — the commit path fills in the null
+  // on link without ever overwriting a value that's already there.
+  const existingOrgRoleName = !group.isNew && group.hasBatchKey && group.people[0]
+    ? (group.people[0].decision.org.existingFields?.mainRoleType ?? null)
+    : null;
+  const linkNeedsType =
+    !group.isNew && group.hasBatchKey && group.matchedBpId != null && existingOrgRoleName == null;
+  const showTypePicker = !isDeleted && group.hasBatchKey && (group.isNew || linkNeedsType);
+  const needsPick =
+    (group.isNew && group.hasBatchKey && !pickedCode && group.personCount > 0 && !isDeleted)
+    || (linkNeedsType && !pickedCode && group.personCount > 0 && !isDeleted);
   const [askDelete, setAskDelete] = useState(false);
   // QA4 E4 (2026-09-29) — droppable target for the drag/drop mover.
   const { isOver, setNodeRef: setDroppableRef } = useDroppable({
@@ -2341,7 +2380,7 @@ function OrgCard({
             )}
           </div>
         </div>
-        {group.isNew && group.hasBatchKey && !isDeleted ? (
+        {showTypePicker ? (
           <select
             value={pickedCode}
             onChange={(e) => onOrgTypeChange(group.key, e.target.value || null)}
@@ -2363,9 +2402,20 @@ function OrgCard({
               </option>
             ))}
           </select>
-        ) : !isDeleted ? (
+        ) : !isDeleted && group.hasBatchKey ? (
+          // QA4 IW-9 (2026-09-30) — LINK with a set mainRoleType: name
+          // the concrete type inline so the reviewer sees "keeps
+          // existing type: Customer" rather than a generic literal.
           <span className="shrink-0 text-[11px] italic text-slate-400 dark:text-slate-500 mt-1.5">
-            {group.hasBatchKey ? 'keeps existing type' : ''}
+            keeps existing type
+            {existingOrgRoleName ? (
+              <>
+                :{' '}
+                <span className="not-italic font-semibold text-slate-600 dark:text-slate-300">
+                  {existingOrgRoleName}
+                </span>
+              </>
+            ) : null}
           </span>
         ) : null}
         {/* QA4 E3 — delete org. Reversible until commit. */}
