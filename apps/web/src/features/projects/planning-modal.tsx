@@ -651,22 +651,21 @@ interface TaskFilterCtx {
 
 const TaskFilterContext = createContext<TaskFilterCtx | null>(null);
 
-/** Lookups for the project's first-class Deliverable entities. Threaded
- *  through a context so deeply-nested task rows can resolve / re-assign the
- *  project-owned deliverable without prop-drilling. */
-interface ProjectDeliverableLookups {
-  /** All of the project's deliverables, display-ordered. */
-  list: any[];
-  /** ProjectDeliverable id → entity. */
-  byId: Map<number, any>;
-  /** sourceTemplateId → entity (1:1 within a project for backfilled rows). */
-  byTemplateId: Map<number, any>;
-}
-const ProjectDeliverablesContext = createContext<ProjectDeliverableLookups>({
-  list: [],
-  byId: new Map(),
-  byTemplateId: new Map(),
-});
+// DP-EMPTY-3 (2026-09-30) — canonical resolver + lookup shape moved to
+// apps/web/src/features/planning/resolve-task-deliverable.ts so the
+// Deliverable Planning grid and this modal never disagree on the label.
+// The interface + local resolver alias are re-exported here for the
+// dozens of local call-sites that already reference them without an
+// import churn.
+import {
+  resolveTaskDeliverable,
+  type ProjectDeliverableLookups,
+  EMPTY_DELIVERABLE_LOOKUPS,
+} from '@/features/planning/resolve-task-deliverable';
+
+const ProjectDeliverablesContext = createContext<ProjectDeliverableLookups>(
+  EMPTY_DELIVERABLE_LOOKUPS,
+);
 
 /**
  * Multi-level group-by — the ordered list of dimensions the user picked
@@ -717,38 +716,10 @@ type PlanningSubGroupCtx = {
 };
 const PlanningSubGroupContext = createContext<PlanningSubGroupCtx | null>(null);
 
-/**
- * Canonical Deliverable label for a task — the SINGLE resolution used by
- * the group headers, the column-filter option list, and the filter
- * matcher so they never disagree. Priority:
- *   1. projectDeliverable entity (project-owned name — the authoritative
- *      label the PM/customer see). Resolved via the task's
- *      projectDeliverableId, or via its deliverableTemplateId.
- *   2. deliverableTemplate.name  (legacy source Template)
- *   3. serviceType.name          (legacy ServiceType FK)
- *   4. [SERVICE:xxx] marker       (legacy zone-template description) —
- *      this is the path the old filter shortcut missed, which is why
- *      marker-only deliverables like "מיפוי סופי" were absent from the
- *      Deliverable dropdown.
- *   5. 'No Deliverable'
- */
-function resolveTaskDeliverable(t: any, lookups?: ProjectDeliverableLookups): string {
-  if (lookups) {
-    if (t.projectDeliverableId != null) {
-      const d = lookups.byId.get(t.projectDeliverableId);
-      if (d?.name) return d.name;
-    }
-    if (t.deliverableTemplateId != null) {
-      const d = lookups.byTemplateId.get(t.deliverableTemplateId);
-      if (d?.name) return d.name;
-    }
-  }
-  if (t.deliverableTemplate?.name) return t.deliverableTemplate.name;
-  if (t.serviceType?.name) return t.serviceType.name;
-  const marker = t.description?.match?.(/^\[SERVICE:(.+)\]$/)?.[1];
-  if (marker) return marker;
-  return 'No Deliverable';
-}
+// resolveTaskDeliverable — moved to
+// `@/features/planning/resolve-task-deliverable` (DP-EMPTY-3). The
+// same function is now imported at the top of this file and shared
+// with deliverable-planning-tab so both surfaces agree on the label.
 
 /**
  * Resolve the SERVICE column value for a project task. Read-time

@@ -1,12 +1,13 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Calendar, Save, RefreshCcw, Layers, LayoutGrid, GanttChart, AlertTriangle, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight, Filter } from 'lucide-react';
+import { Calendar, Save, RefreshCcw, Layers, LayoutGrid, GanttChart, AlertTriangle, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight, Filter, Lock } from 'lucide-react';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { OpenInDriveButton } from '@/features/drive/open-in-drive-button';
 import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
 import { EmptyState } from '@/components/shared/empty-state';
+import { resolveTaskDeliverableDetailed } from '@/features/planning/resolve-task-deliverable';
 
 /**
  * Zone-type label map (DP-4). Values mirror the `ZoneType` enum on the
@@ -185,6 +186,14 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     // The full task list for this row — feeds the Gantt-bar-click
     // modal (client feedback item 2/3). Kept minimal: id/code/name/end/status.
     taskList: { id: number; code: string | null; name: string; endDate: string | null; status: string }[];
+    // DP-EMPTY-3 (2026-09-30) — true when this row's deliverable is
+    // NOT backed by a real `ProjectDeliverable` row (source was a
+    // `deliverableTemplate.name` or a `[SERVICE:<name>]` marker). The
+    // grid renders these read-only with a "run the materialize backfill
+    // to edit" hint, and they are excluded from save + dirty checks.
+    readOnly?: boolean;
+    // Explanation for the read-only tooltip when `readOnly === true`.
+    readOnlyReason?: string;
   };
   const rows: Row[] = useMemo(() => {
     // Group tasks by (deliverable, zone) so counts + endDate lists can
@@ -200,13 +209,73 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       grouped.get(key)!.push(t);
     }
 
+    // DP-EMPTY-3 — synthesize deliverables from tasks whose
+    // `projectDeliverableId` is NULL but whose deliverable dimension
+    // can still be resolved via `deliverableTemplate.name` or the
+    // legacy `[SERVICE:<name>]` marker. Without this, projects like
+    // #33 (32 tasks, 4 markers, 0 ProjectDeliverable rows) render an
+    // empty grid until the DP-EMPTY-1 backfill runs. Synthetic rows
+    // are keyed by a stable negative id so real ProjectDeliverable ids
+    // never collide, and rendered read-only so the PM can see the
+    // shape they're about to materialize but can't accidentally save
+    // targets against a row that doesn't exist yet.
+    type SyntheticDeliverable = {
+      id: number;
+      name: string;
+      service?: { name: string | null; color: string | null } | null;
+      readOnly: true;
+      readOnlyReason: string;
+    };
+    const syntheticByName = new Map<string, SyntheticDeliverable>();
+    // Track tasks grouped under each synthetic deliverable so counts +
+    // hours + endDates overlay the same as real deliverables.
+    const syntheticGrouped = new Map<string, any[]>();
+    let nextSyntheticId = -1;
+    for (const t of tasks) {
+      if (t.projectDeliverableId != null) continue;
+      const resolved = resolveTaskDeliverableDetailed(t);
+      if (resolved.source !== 'template' && resolved.source !== 'marker') continue;
+      let syn = syntheticByName.get(resolved.name);
+      if (!syn) {
+        syn = {
+          id: nextSyntheticId--,
+          name: resolved.name,
+          // Best-effort service name: prefer the task's own phase (via
+          // the read-time include), then the deliverableTemplate's
+          // phase. Same fallback the SERVICE column already uses.
+          service: t.phase?.name
+            ? { name: t.phase.name, color: t.phase.color ?? null }
+            : t.deliverableTemplate?.phase?.name
+              ? { name: t.deliverableTemplate.phase.name, color: t.deliverableTemplate.phase.color ?? null }
+              : null,
+          readOnly: true,
+          readOnlyReason:
+            resolved.source === 'template'
+              ? 'Not yet planned — the deliverable lives only on the task template. Run the materialize-project-deliverables backfill to edit target dates here.'
+              : 'Not yet planned — the deliverable is a [SERVICE:…] marker. Run the materialize-project-deliverables backfill to edit target dates here.',
+        };
+        syntheticByName.set(resolved.name, syn);
+      }
+      const zoneId = t.zoneId ?? null;
+      const gKey = `${syn.id}:${zoneId ?? 'root'}`;
+      if (!syntheticGrouped.has(gKey)) syntheticGrouped.set(gKey, []);
+      syntheticGrouped.get(gKey)!.push(t);
+    }
+
     const list: Row[] = [];
     const emitted = new Set<string>();
-    const emit = (dId: number, deliverable: any, zoneId: number | null, zoneName: string, zoneType?: string) => {
+    const emit = (
+      dId: number,
+      deliverable: any,
+      zoneId: number | null,
+      zoneName: string,
+      zoneType?: string,
+      opts?: { readOnly?: boolean; readOnlyReason?: string; taskOverride?: any[] },
+    ) => {
       const key = `${dId}:${zoneId ?? 'root'}`;
       if (emitted.has(key)) return;
       emitted.add(key);
-      const group = grouped.get(key) ?? [];
+      const group = opts?.taskOverride ?? grouped.get(key) ?? [];
       const zoneTargetRow = deliverable?.zoneTargets?.find((zt: any) => zt.zoneId === zoneId);
       const savedMonths = zoneTargetRow?.targetMonths ?? deliverable?.targetMonths ?? null;
       const savedDate = zoneTargetRow?.targetDate ?? deliverable?.targetDate ?? null;
@@ -246,6 +315,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         taskStarted,
         taskDone,
         taskList,
+        readOnly: opts?.readOnly,
+        readOnlyReason: opts?.readOnlyReason,
       });
     };
 
@@ -272,6 +343,25 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       const zone = zonesFlat.find((z) => z.id === zoneId);
       const deliverable = deliverables.find((d) => d.id === dId);
       emit(dId, deliverable, zoneId, zone?.name ?? (zoneId == null ? 'Project Root' : `Zone #${zoneId}`), zone?.zoneType);
+    }
+
+    // DP-EMPTY-3 — emit synthetic (read-only) rows for marker/template-
+    // only tasks. Zoned tasks get one row per zone that actually holds
+    // a matching task (no cross-product — we don't know which zones
+    // the PM intends to plan against until they materialize the row).
+    // Root tasks (zoneId=null) get a "Project Root" row.
+    for (const [gKey, group] of syntheticGrouped) {
+      const first = group[0];
+      const zoneId: number | null = first.zoneId ?? null;
+      const zone = zonesFlat.find((z) => z.id === zoneId);
+      const dId = Number(gKey.split(':')[0]);
+      const syn = Array.from(syntheticByName.values()).find((s) => s.id === dId);
+      if (!syn) continue;
+      emit(dId, syn, zoneId, zone?.name ?? (zoneId == null ? 'Project Root' : `Zone #${zoneId}`), zone?.zoneType, {
+        readOnly: true,
+        readOnlyReason: syn.readOnlyReason,
+        taskOverride: group,
+      });
     }
     // Sort: Commit 8 · Model B (drag-authoritative). Render order is
     // ProjectDeliverable.sortOrder ASC, then Zone.sortOrder ASC as a
@@ -383,13 +473,20 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           // Task due dates are AUTHORITATIVE at the task level once
           // set; the PM manages any downstream adjustments manually.
           applyToTasks: false,
-          items: rows.map((r) => ({
-            id: r.deliverableId,
-            zoneId: r.zoneId,
-            months: drafts[r.key] === '' || drafts[r.key] == null ? null : Number(drafts[r.key]),
-            durationWeeks: durationDrafts[r.key] === '' || durationDrafts[r.key] == null ? null : Number(durationDrafts[r.key]),
-            targetDate: targetDateDrafts[r.key] || undefined,
-          })),
+          // DP-EMPTY-3 — synthetic (read-only) rows have negative,
+          // non-existent deliverableIds; excluding them from the
+          // payload keeps the batch endpoint from 404-ing on their
+          // targets. The PM must run the DP-EMPTY-1 backfill to
+          // materialize real rows before they become editable.
+          items: rows
+            .filter((r) => !r.readOnly)
+            .map((r) => ({
+              id: r.deliverableId,
+              zoneId: r.zoneId,
+              months: drafts[r.key] === '' || drafts[r.key] == null ? null : Number(drafts[r.key]),
+              durationWeeks: durationDrafts[r.key] === '' || durationDrafts[r.key] == null ? null : Number(durationDrafts[r.key]),
+              targetDate: targetDateDrafts[r.key] || undefined,
+            })),
         })
         .then((r) => r.data),
     onSuccess: (data: any) => {
@@ -414,6 +511,9 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   const findExceedingTasks = (): ExceedItem[] | null => {
     const offenders: ExceedItem[] = [];
     for (const r of rows) {
+      // DP-EMPTY-3 — synthetic read-only rows never enter the save
+      // payload, so their tasks can't conflict with a saved target.
+      if (r.readOnly) continue;
       const newTargetIso = targetDateDrafts[r.key] || computePreview(drafts[r.key] ?? '') || r.savedDate;
       if (!newTargetIso) continue;
       const targetMs = new Date(newTargetIso).getTime();
@@ -499,6 +599,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
 
   const hasUnsavedChanges = useMemo(() => {
     for (const r of rows) {
+      // DP-EMPTY-3 — read-only (synthetic) rows never contribute to
+      // dirty state; the inputs are disabled and their draft entries
+      // stay at server-null.
+      if (r.readOnly) continue;
       const draft = drafts[r.key] ?? '';
       const server = r.savedMonths == null ? '' : String(r.savedMonths);
       if (draft !== server) return true;
@@ -1064,8 +1168,11 @@ function TableView({
   // top-level too). Zones inside a deliverable follow the same rule
   // when sort col is 'zone', else stay in their default order.
   const sortedGroups = useMemo(() => {
-    // Group by deliverable
-    const map = new Map<number, { deliverableId: number; deliverableName: string; serviceName: string | null; zones: any[] }>();
+    // Group by deliverable. `readOnly` propagates from the zone row
+    // (DP-EMPTY-3) — the header for a group of synthetic zones renders
+    // with a "not yet planned" badge and the zone rows get disabled
+    // inputs.
+    const map = new Map<number, { deliverableId: number; deliverableName: string; serviceName: string | null; zones: any[]; readOnly: boolean; readOnlyReason: string | null }>();
     for (const r of filtered) {
       if (!map.has(r.deliverableId)) {
         map.set(r.deliverableId, {
@@ -1073,6 +1180,8 @@ function TableView({
           deliverableName: r.deliverableName,
           serviceName: r.serviceName,
           zones: [],
+          readOnly: !!r.readOnly,
+          readOnlyReason: r.readOnlyReason ?? null,
         });
       }
       map.get(r.deliverableId)!.zones.push(r);
@@ -1225,12 +1334,30 @@ function TableView({
                     <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap tabular-nums">
                       · {zoneCount} zone{zoneCount === 1 ? '' : 's'}
                     </span>
+                    {/* DP-EMPTY-3 · read-only badge on synthetic (marker /
+                        template-only) deliverable groups. Tells the PM
+                        which rows need the DP-EMPTY-1 backfill to unlock
+                        editable targets. */}
+                    {g.readOnly && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 whitespace-nowrap"
+                        title={g.readOnlyReason ?? 'Not yet planned'}
+                      >
+                        <Lock className="h-3 w-3" aria-hidden="true" />
+                        Not yet planned
+                      </span>
+                    )}
                     <span className="ml-auto" onClick={(e) => e.stopPropagation()}>
                       {/* Open the deliverable's Drive folder (create-if-
                           missing on click). Rate-limited backend; a
                           graceful "not configured" toast fires if the
-                          admin hasn't set up Drive yet. */}
-                      <OpenInDriveButton entity="deliverable" id={g.deliverableId} />
+                          admin hasn't set up Drive yet.
+                          Synthetic (negative-id) deliverables have no
+                          Drive folder — hide the button so the click
+                          doesn't hit the API with an invalid id. */}
+                      {!g.readOnly && (
+                        <OpenInDriveButton entity="deliverable" id={g.deliverableId} />
+                      )}
                     </span>
                   </div>
                 </td>
@@ -1260,11 +1387,17 @@ function TableView({
                 const preview = computePreview(draft);
                 const serverMonths = r.savedMonths == null ? '' : String(r.savedMonths);
                 const serverDur = r.savedDurationWeeks == null ? '' : String(r.savedDurationWeeks);
-                const isDirty = draft !== serverMonths || durDraft !== serverDur;
+                const isDirty = !r.readOnly && (draft !== serverMonths || durDraft !== serverDur);
                 const typeLabel = zoneTypeLabel(r.zoneType);
                 const hoursNum = Number(r.hours || 0);
+                // DP-EMPTY-3 · read-only rows disable both editable
+                // inputs and swap the target-date preview for a "not
+                // yet planned" hint. The reason string comes from the
+                // resolver — it points the PM at the DP-EMPTY-1
+                // backfill so they know how to unlock the row.
+                const readOnlyHint = r.readOnlyReason ?? 'Not yet planned';
                 return (
-                  <tr id={groupBodyId} key={r.key} className={cn('hover:bg-slate-50/40 dark:hover:bg-slate-800/40', isDirty && 'bg-blue-50/30 dark:bg-blue-950/20')}>
+                  <tr id={groupBodyId} key={r.key} className={cn('hover:bg-slate-50/40 dark:hover:bg-slate-800/40', isDirty && 'bg-blue-50/30 dark:bg-blue-950/20', r.readOnly && 'bg-amber-50/30 dark:bg-amber-950/10')}>
                     <td className="px-4 py-2 text-slate-400 dark:text-slate-500">—</td>
                     <td className="px-4 py-2 text-slate-700 dark:text-slate-200">
                       <span className="truncate">{r.zoneName}</span>
@@ -1287,7 +1420,12 @@ function TableView({
                         value={draft}
                         onChange={(e) => setDrafts((s) => ({ ...s, [r.key]: e.target.value }))}
                         placeholder="—"
-                        className="w-[86px] px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 tabular-nums text-right focus:border-blue-500 focus:outline-none"
+                        disabled={r.readOnly}
+                        title={r.readOnly ? readOnlyHint : undefined}
+                        className={cn(
+                          'w-[86px] px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 tabular-nums text-right focus:border-blue-500 focus:outline-none',
+                          r.readOnly && 'cursor-not-allowed bg-slate-50 dark:bg-slate-800/60 text-slate-400 dark:text-slate-500',
+                        )}
                       />
                     </td>
                     <td className="px-4 py-2 text-right">
@@ -1298,7 +1436,12 @@ function TableView({
                         value={durDraft}
                         onChange={(e) => setDurationDrafts((s) => ({ ...s, [r.key]: e.target.value }))}
                         placeholder="—"
-                        className="w-[86px] px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 tabular-nums text-right focus:border-blue-500 focus:outline-none"
+                        disabled={r.readOnly}
+                        title={r.readOnly ? readOnlyHint : undefined}
+                        className={cn(
+                          'w-[86px] px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 tabular-nums text-right focus:border-blue-500 focus:outline-none',
+                          r.readOnly && 'cursor-not-allowed bg-slate-50 dark:bg-slate-800/60 text-slate-400 dark:text-slate-500',
+                        )}
                       />
                     </td>
                     {/* DP-3 · Hours cell — read-only (server-derived).
@@ -1309,7 +1452,14 @@ function TableView({
                         : <span className="text-slate-300 dark:text-slate-600">—</span>}
                     </td>
                     <td className="px-4 py-2 text-slate-700 dark:text-slate-200 tabular-nums">
-                      {preview
+                      {r.readOnly ? (
+                        <span
+                          className="text-[12px] text-amber-700 dark:text-amber-400 italic"
+                          title={readOnlyHint}
+                        >
+                          run backfill to plan
+                        </span>
+                      ) : preview
                         ? preview
                         : r.savedDate
                           ? <span className="text-slate-500 dark:text-slate-400">{r.savedDate}</span>
@@ -1570,6 +1720,11 @@ function GanttView({
     latestTargetMs: number | null;
     earliestStartMs: number | null;
     latestTargetIso: string | null;
+    // DP-EMPTY-3 — true when this deliverable is a synthetic
+    // (marker/template-only) row that needs the DP-EMPTY-1 backfill
+    // before it becomes editable. Copied from the zone row.
+    readOnly: boolean;
+    readOnlyReason: string | null;
   };
   type GanttZoneSlot = { kind: 'zone'; r: any; zoneIdx: number };
   type GanttSlot = GanttGroup | GanttZoneSlot;
@@ -1607,6 +1762,11 @@ function GanttView({
       }
       const latestTargetMs = latestTgt === -Infinity ? null : latestTgt;
       const earliestStartMs = earliestStart === Infinity ? null : earliestStart;
+      // DP-EMPTY-3 — a group is read-only when its first zone row is
+      // (synthetic rows never mix real + synthetic under one
+      // deliverableId, so first-row check is sufficient).
+      const groupReadOnly = !!zonesArr[0]?.readOnly;
+      const groupReadOnlyReason = zonesArr[0]?.readOnlyReason ?? null;
       out.push({
         kind: 'group',
         deliverableId: dId,
@@ -1618,6 +1778,8 @@ function GanttView({
         latestTargetMs,
         earliestStartMs,
         latestTargetIso: latestTargetMs ? new Date(latestTargetMs).toISOString().slice(0, 10) : null,
+        readOnly: groupReadOnly,
+        readOnlyReason: groupReadOnlyReason,
       });
       if (!isCollapsed) {
         for (const { z, zoneIdx } of entries) out.push({ kind: 'zone', r: z, zoneIdx });
@@ -1888,6 +2050,15 @@ function GanttView({
                       : <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />}
                   </button>
                   <span className="font-bold text-slate-800 dark:text-slate-100 truncate">{slot.deliverableName}</span>
+                  {slot.readOnly && (
+                    <span
+                      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 whitespace-nowrap"
+                      title={slot.readOnlyReason ?? 'Not yet planned'}
+                    >
+                      <Lock className="h-2.5 w-2.5" aria-hidden="true" />
+                      Not planned
+                    </span>
+                  )}
                   <span className="ml-auto text-[10px] font-medium text-slate-500 dark:text-slate-400 tabular-nums whitespace-nowrap">
                     {slot.zoneCount}z{slot.hoursSum > 0 ? ` · ${slot.hoursSum}h` : ''}
                   </span>
