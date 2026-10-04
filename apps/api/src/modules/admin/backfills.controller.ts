@@ -1317,4 +1317,331 @@ export class BackfillsController {
       executeErrors,
     };
   }
+
+  /**
+   * QA4 · DN-1 (2026-10-04) — Relink TemplateTask / TemplateZoneTask
+   * rows whose `deliverableTemplateId` is NULL back to the live
+   * Deliverable Template, parsing the carried `[SERVICE:<marker>]`
+   * description marker.
+   *
+   * Context (verified live on staging 2026-10-04):
+   *   • Zone-template rows written BEFORE QA4 B1 (2026-09-28)
+   *     carry only the `[SERVICE:<name>]` marker in `description`;
+   *     the `deliverableTemplateId` FK is NULL.
+   *   • The FE prefers `task.deliverableTemplate?.name` with a
+   *     fallback to the marker (read-only-zone-node.tsx L37,
+   *     zone-tree-node.tsx L69). With the FK null, the FE falls
+   *     back to the STALE marker — a Deliverable rename in the
+   *     catalog never reaches the zone-template label.
+   *   • Deliverable templates follow a `base\detail` naming
+   *     convention. The marker contains only the `base` segment
+   *     (the pre-rename name), so a strict exact-string match
+   *     misses the renamed rows. The durable rule is: match on
+   *     `name = <marker>` OR `name LIKE <marker>\%`.
+   *
+   * Example (staging): marker `תכנון ראשוני` → template id 18
+   * `תכנון ראשוני\תשתית ודוח קריטי` (base-prefix match).
+   *
+   * TEMPLATES ONLY — this backfill never touches `Task` or
+   * `ProjectDeliverable`. A project copies the template at pull
+   * time; its `ProjectDeliverable` rows are an owned snapshot and
+   * template renames must NOT propagate into existing projects.
+   *
+   * Marker regex: delegates to `extractServiceMarker` so this
+   * endpoint cannot drift from the planning read-resolver or the
+   * other backfills that read the same marker.
+   *
+   * Candidate lookup: Prisma's JS filter (same approach as
+   * `resolvePhasesByMarkerNames`) — raw `LIKE 'm\%'` SQL would
+   * require double-escaping the literal `\` and has been shown
+   * (94ebb43) to zero-match on this schema. The catalog of
+   * `type=task_list` templates is small (9 on staging), so an
+   * in-memory filter is fine.
+   *
+   * Preference when multiple candidates match a marker:
+   *   1. If the task carries a `serviceTypeId`, prefer a template
+   *      whose `phaseId` matches the task's `phaseId` (templates
+   *      key off phase, not serviceType — closest alignment).
+   *   2. If still > 1 candidates, prefer exact `name = marker`
+   *      over a `base\detail` prefix match.
+   *   3. If still > 1, record under `ambiguous[]` — never guess.
+   *
+   * Idempotent: WHERE `deliverableTemplateId IS NULL` so a re-run
+   * after execute returns `toRelink: []`.
+   *
+   * Transaction scope: batched by target deliverable id. A single
+   * bad batch doesn't roll back the siblings; a per-task
+   * transaction would be overkill for a short catalog.
+   *
+   * Query param `dryRun=true` → plan only. Default `false` so a
+   * raw POST executes (per the admin-backfill house convention).
+   * Yulian always invokes with `?dryRun=true` first.
+   */
+  @Post('relink-template-deliverables')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'Backfill · relink TemplateTask / TemplateZoneTask.deliverableTemplateId from [SERVICE:xxx] marker (idempotent; ?dryRun=true for plan-only)',
+  })
+  @ApiQuery({ name: 'dryRun', required: false, type: String, description: 'Truthy → plan only, no writes' })
+  async runRelinkTemplateDeliverables(@Query('dryRun') dryRunRaw?: string) {
+    const dryRun =
+      typeof dryRunRaw === 'string' &&
+      ['1', 'true', 'yes', 'on'].includes(dryRunRaw.toLowerCase());
+
+    // 1. Catalog of candidate target templates (deliverable templates).
+    //    Only active (deletedAt null) and only `task_list` type — zone
+    //    and combined templates are never a task's deliverable target.
+    const catalog = await this.prisma.template.findMany({
+      where: { deletedAt: null, type: 'task_list' },
+      select: { id: true, name: true, phaseId: true },
+    });
+
+    // 2. Candidate tasks on both sides: null FK + description starts
+    //    with the marker prefix. `startsWith` compiles to literal
+    //    MySQL (no LIKE escaping) because the prefix carries no
+    //    wildcards.
+    const [templateTasks, templateZoneTasks] = await Promise.all([
+      this.prisma.templateTask.findMany({
+        where: {
+          deliverableTemplateId: null,
+          description: { startsWith: '[SERVICE:' },
+        },
+        select: {
+          id: true,
+          templateId: true,
+          serviceTypeId: true,
+          phaseId: true,
+          description: true,
+        },
+      }),
+      this.prisma.templateZoneTask.findMany({
+        where: {
+          deliverableTemplateId: null,
+          description: { startsWith: '[SERVICE:' },
+        },
+        select: {
+          id: true,
+          templateZoneId: true,
+          serviceTypeId: true,
+          phaseId: true,
+          description: true,
+          templateZone: { select: { templateId: true } },
+        },
+      }),
+    ]);
+
+    const scanned = {
+      templateTasks: templateTasks.length,
+      templateZoneTasks: templateZoneTasks.length,
+    };
+
+    // 3. Resolve each candidate.
+    type RelinkRow = {
+      kind: 'TemplateTask' | 'TemplateZoneTask';
+      taskId: number;
+      taskTemplateId?: number;
+      zoneTemplateId?: number;
+      marker: string;
+      deliverableTemplateId: number;
+      deliverableTemplateName: string;
+      matchKind: 'exact' | 'base-prefix';
+    };
+    type UnmatchedRow = {
+      kind: 'TemplateTask' | 'TemplateZoneTask';
+      taskId: number;
+      marker: string;
+      reason: string;
+    };
+    type AmbiguousRow = {
+      kind: 'TemplateTask' | 'TemplateZoneTask';
+      taskId: number;
+      marker: string;
+      candidates: { id: number; name: string }[];
+    };
+
+    const toRelink: RelinkRow[] = [];
+    const unmatched: UnmatchedRow[] = [];
+    const ambiguous: AmbiguousRow[] = [];
+
+    const resolveMarker = (
+      marker: string,
+      taskPhaseId: number | null,
+    ): {
+      pick?: { id: number; name: string; matchKind: 'exact' | 'base-prefix' };
+      candidates: { id: number; name: string }[];
+    } => {
+      const exact = catalog.filter((t) => t.name === marker);
+      const prefix = catalog.filter((t) => t.name.startsWith(`${marker}\\`));
+      // All candidates for the ambiguous report (exact + prefix).
+      const all = [
+        ...exact.map((t) => ({ id: t.id, name: t.name, matchKind: 'exact' as const, phaseId: t.phaseId })),
+        ...prefix.map((t) => ({ id: t.id, name: t.name, matchKind: 'base-prefix' as const, phaseId: t.phaseId })),
+      ];
+      if (all.length === 0) return { candidates: [] };
+      if (all.length === 1) {
+        return { pick: all[0], candidates: all.map(({ id, name }) => ({ id, name })) };
+      }
+      // > 1 — apply preferences.
+      //   1. Phase match (if task has a phaseId).
+      if (taskPhaseId != null) {
+        const sameePhase = all.filter((c) => c.phaseId === taskPhaseId);
+        if (sameePhase.length === 1) {
+          return { pick: sameePhase[0], candidates: all.map(({ id, name }) => ({ id, name })) };
+        }
+        if (sameePhase.length > 1) {
+          const exactPhase = sameePhase.find((c) => c.matchKind === 'exact');
+          if (exactPhase) {
+            return { pick: exactPhase, candidates: all.map(({ id, name }) => ({ id, name })) };
+          }
+          // Fall through to overall exact preference below.
+        }
+      }
+      //   2. Prefer exact over prefix.
+      if (exact.length === 1) {
+        return {
+          pick: { id: exact[0].id, name: exact[0].name, matchKind: 'exact' },
+          candidates: all.map(({ id, name }) => ({ id, name })),
+        };
+      }
+      // Still ambiguous.
+      return { candidates: all.map(({ id, name }) => ({ id, name })) };
+    };
+
+    for (const t of templateTasks) {
+      const marker = extractServiceMarker(t.description);
+      if (!marker) {
+        unmatched.push({
+          kind: 'TemplateTask',
+          taskId: t.id,
+          marker: '',
+          reason: 'description starts with [SERVICE: but regex did not match',
+        });
+        continue;
+      }
+      const { pick, candidates } = resolveMarker(marker, t.phaseId ?? null);
+      if (pick) {
+        toRelink.push({
+          kind: 'TemplateTask',
+          taskId: t.id,
+          taskTemplateId: t.templateId,
+          marker,
+          deliverableTemplateId: pick.id,
+          deliverableTemplateName: pick.name,
+          matchKind: pick.matchKind,
+        });
+      } else if (candidates.length === 0) {
+        unmatched.push({
+          kind: 'TemplateTask',
+          taskId: t.id,
+          marker,
+          reason: 'no active task_list Template with name = marker or name LIKE marker\\%',
+        });
+      } else {
+        ambiguous.push({
+          kind: 'TemplateTask',
+          taskId: t.id,
+          marker,
+          candidates,
+        });
+      }
+    }
+
+    for (const t of templateZoneTasks) {
+      const marker = extractServiceMarker(t.description);
+      if (!marker) {
+        unmatched.push({
+          kind: 'TemplateZoneTask',
+          taskId: t.id,
+          marker: '',
+          reason: 'description starts with [SERVICE: but regex did not match',
+        });
+        continue;
+      }
+      const { pick, candidates } = resolveMarker(marker, t.phaseId ?? null);
+      if (pick) {
+        toRelink.push({
+          kind: 'TemplateZoneTask',
+          taskId: t.id,
+          zoneTemplateId: t.templateZone?.templateId,
+          marker,
+          deliverableTemplateId: pick.id,
+          deliverableTemplateName: pick.name,
+          matchKind: pick.matchKind,
+        });
+      } else if (candidates.length === 0) {
+        unmatched.push({
+          kind: 'TemplateZoneTask',
+          taskId: t.id,
+          marker,
+          reason: 'no active task_list Template with name = marker or name LIKE marker\\%',
+        });
+      } else {
+        ambiguous.push({
+          kind: 'TemplateZoneTask',
+          taskId: t.id,
+          marker,
+          candidates,
+        });
+      }
+    }
+
+    // 4. Totals + by-deliverable rollup.
+    const byDeliverable: Record<number, { name: string; count: number }> = {};
+    for (const r of toRelink) {
+      const key = r.deliverableTemplateId;
+      if (!byDeliverable[key]) {
+        byDeliverable[key] = { name: r.deliverableTemplateName, count: 0 };
+      }
+      byDeliverable[key].count++;
+    }
+
+    // 5. Execute batched by deliverable id. A bad group doesn't roll
+    //    back siblings.
+    if (!dryRun && toRelink.length > 0) {
+      // Group row ids by (kind, deliverableTemplateId).
+      const groups = new Map<
+        string,
+        { kind: 'TemplateTask' | 'TemplateZoneTask'; deliverableTemplateId: number; ids: number[] }
+      >();
+      for (const r of toRelink) {
+        const key = `${r.kind}:${r.deliverableTemplateId}`;
+        let g = groups.get(key);
+        if (!g) {
+          g = { kind: r.kind, deliverableTemplateId: r.deliverableTemplateId, ids: [] };
+          groups.set(key, g);
+        }
+        g.ids.push(r.taskId);
+      }
+      for (const g of groups.values()) {
+        await this.prisma.$transaction(async (tx) => {
+          if (g.kind === 'TemplateTask') {
+            await tx.templateTask.updateMany({
+              where: { id: { in: g.ids }, deliverableTemplateId: null },
+              data: { deliverableTemplateId: g.deliverableTemplateId },
+            });
+          } else {
+            await tx.templateZoneTask.updateMany({
+              where: { id: { in: g.ids }, deliverableTemplateId: null },
+              data: { deliverableTemplateId: g.deliverableTemplateId },
+            });
+          }
+        });
+      }
+    }
+
+    return {
+      dryRun,
+      scanned,
+      toRelink,
+      unmatched,
+      ambiguous,
+      totals: {
+        toRelink: toRelink.length,
+        unmatchedCount: unmatched.length,
+        ambiguousCount: ambiguous.length,
+        byDeliverable,
+      },
+    };
+  }
 }
