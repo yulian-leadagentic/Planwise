@@ -1,9 +1,68 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { extractServiceMarker } from '../planning/marker-phase-resolver';
 
 @Injectable()
 export class TemplatesService {
   constructor(private prisma: PrismaService) {}
+
+  /**
+   * QA4 · DN-2 (2026-10-04) — Server-side resolve a Deliverable
+   * Template FK from a `[SERVICE:<marker>]` description marker.
+   *
+   * Used by `addTask` + `addZoneTask` as a defensive fallback when
+   * the caller sends only the legacy marker (e.g. an older FE build
+   * cached in a tab, or a direct API caller). The B1 service-picker
+   * flows already send `deliverableTemplateId` explicitly; this is
+   * belt-and-braces so new rows written through either of those
+   * endpoints can never again end up with a null FK + stale marker.
+   *
+   * Matches `catalog.name = marker` first, then `name LIKE marker\%`
+   * (the `base\detail` rename form). Same preference rules as the
+   * DN-1 backfill:
+   *   1. Phase match (if the task has `phaseId`).
+   *   2. Prefer exact over prefix.
+   *   3. Still > 1 → return null (never guess).
+   * Zero candidates → null.
+   *
+   * Templates-side only: never resolves against anything other than
+   * `type=task_list, deletedAt=null` catalog rows.
+   */
+  private async resolveDeliverableTemplateByMarker(
+    description: string | null | undefined,
+    taskPhaseId: number | null | undefined,
+  ): Promise<number | null> {
+    const marker = extractServiceMarker(description);
+    if (!marker) return null;
+
+    const catalog = await this.prisma.template.findMany({
+      where: { deletedAt: null, type: 'task_list' },
+      select: { id: true, name: true, phaseId: true },
+    });
+
+    const exact = catalog.filter((t) => t.name === marker);
+    const prefix = catalog.filter((t) => t.name.startsWith(`${marker}\\`));
+    const all = [
+      ...exact.map((t) => ({ ...t, matchKind: 'exact' as const })),
+      ...prefix.map((t) => ({ ...t, matchKind: 'prefix' as const })),
+    ];
+    if (all.length === 0) return null;
+    if (all.length === 1) return all[0].id;
+
+    // > 1 — phase preference first.
+    if (taskPhaseId != null) {
+      const samePhase = all.filter((c) => c.phaseId === taskPhaseId);
+      if (samePhase.length === 1) return samePhase[0].id;
+      if (samePhase.length > 1) {
+        const exactPhase = samePhase.find((c) => c.matchKind === 'exact');
+        if (exactPhase) return exactPhase.id;
+      }
+    }
+    // Prefer exact over prefix.
+    if (exact.length === 1) return exact[0].id;
+    // Still ambiguous — refuse to guess.
+    return null;
+  }
 
   async findAll(type?: string) {
     const where: any = { deletedAt: null };
@@ -141,10 +200,18 @@ export class TemplatesService {
     if (body.tasks && Array.isArray(body.tasks)) {
       for (let i = 0; i < body.tasks.length; i++) {
         const t = body.tasks[i];
+        // QA4 · DN-2 (2026-10-04) — pass the Deliverable Template FK
+        // through from the inline body; if the body carries only the
+        // legacy `[SERVICE:<name>]` marker, resolve the FK server-side
+        // so new rows never land with null FK + marker.
+        const deliverableTemplateId =
+          t.deliverableTemplateId
+          ?? (await this.resolveDeliverableTemplateByMarker(t.description, t.phaseId ?? null));
         await this.prisma.templateTask.create({
           data: {
             templateId: template.id,
             serviceTypeId: t.serviceTypeId || null,
+            deliverableTemplateId,
             code: t.code,
             name: t.name,
             description: t.description || null,
@@ -274,14 +341,21 @@ export class TemplatesService {
       where: { templateId },
       _max: { sortOrder: true },
     });
+    // QA4 · B1 (2026-09-28) — accept the deliverable FK from the
+    // pickers. Optional (some callers still write only the marker);
+    // when both come in, this is the source of truth going forward.
+    // QA4 · DN-2 (2026-10-04) — if the caller sent only the legacy
+    // `[SERVICE:<name>]` marker (no FK), resolve the FK server-side
+    // so new rows never land as null-FK + stale-marker (the exact
+    // shape DN-1 had to clean up on staging).
+    const deliverableTemplateId =
+      body.deliverableTemplateId
+      ?? (await this.resolveDeliverableTemplateByMarker(body.description, body.phaseId ?? null));
     return this.prisma.templateTask.create({
       data: {
         templateId,
         serviceTypeId: body.serviceTypeId || null,
-        // QA4 · B1 (2026-09-28) — accept the deliverable FK from the
-        // pickers. Optional (some callers still write only the marker);
-        // when both come in, this is the source of truth going forward.
-        deliverableTemplateId: body.deliverableTemplateId ?? null,
+        deliverableTemplateId,
         code: body.code,
         name: body.name,
         description: body.description || null,
@@ -388,6 +462,13 @@ export class TemplatesService {
       where: { templateZoneId },
       _max: { sortOrder: true },
     });
+    // QA4 · B1 (2026-09-28) — mirror of addTask() above; keeps the
+    // deliverable FK in sync when the zone-picker writes the task.
+    // QA4 · DN-2 (2026-10-04) — marker-only callers get the FK
+    // resolved server-side. See addTask for rationale.
+    const deliverableTemplateId =
+      body.deliverableTemplateId
+      ?? (await this.resolveDeliverableTemplateByMarker(body.description, body.phaseId ?? null));
     return this.prisma.templateZoneTask.create({
       data: {
         templateZoneId,
@@ -398,9 +479,7 @@ export class TemplatesService {
         defaultBudgetAmount: body.defaultBudgetAmount || null,
         phaseId: body.phaseId || null,
         serviceTypeId: body.serviceTypeId || null,
-        // QA4 · B1 (2026-09-28) — mirror of addTask() above; keeps the
-        // deliverable FK in sync when the zone-picker writes the task.
-        deliverableTemplateId: body.deliverableTemplateId ?? null,
+        deliverableTemplateId,
         defaultPriority: body.defaultPriority || 'medium',
         sortOrder: body.sortOrder ?? (maxOrder._max.sortOrder ?? 0) + 1,
       },
@@ -433,6 +512,11 @@ export class TemplatesService {
         data: {
           templateId: newTemplate.id,
           serviceTypeId: task.serviceTypeId,
+          // QA4 · DN-2 (2026-10-04) — carry the Deliverable FK across
+          // a template clone. Without this, a duplicated Deliverable
+          // Template produces tasks with a stale `[SERVICE:…]` marker
+          // but no FK, re-introducing the exact drift DN-1 cleaned up.
+          deliverableTemplateId: (task as any).deliverableTemplateId ?? null,
           code: task.code,
           name: task.name,
           description: task.description,
