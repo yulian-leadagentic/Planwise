@@ -575,4 +575,150 @@ export class ReportsController {
 
     return { memberRoleTypes, nullOrEmpty };
   }
+
+  /**
+   * FEAS-2 (incident 2026-10-07) — read-only report of the data
+   * conditions that trigger the feasibility-engine wedge.
+   *
+   * Two buckets, both independent:
+   *   • `farFutureEndDates` — Projects whose `endDate` is more than
+   *     10 years from now. The year-9999 projects we found during
+   *     the incident live here; `yearsAhead` makes the scale
+   *     immediately legible.
+   *   • `cyclicDependencies` — Projects whose task-dependency graph
+   *     contains at least one cycle. We run the same gray/black DFS
+   *     the FEAS-1 fix added to the feasibility engine — JUST the
+   *     cycle check, not the full feasibility computation.
+   *
+   * No writes. The user inspects the report and corrects the data
+   * through the UI (edit the project endDate, break the cycle in
+   * task dependencies). A separate write endpoint can be added if
+   * the list grows and we want a bulk reset.
+   *
+   * Guard: `admin:read` — same roles.guard as the BackfillsController
+   * endpoints, scoped to read.
+   */
+  @Get('feasibility-triggers')
+  @RequirePermissions({ module: 'admin', action: 'read' })
+  @ApiOperation({
+    summary:
+      'FEAS-2 · read-only report of projects with feasibility-wedge triggers (far-future endDate + cyclic task deps)',
+  })
+  async feasibilityTriggers() {
+    const now = new Date();
+    const tenYearsOut = new Date(now.getTime() + 10 * 365 * 86400000);
+
+    // ── 1. Far-future endDates ───────────────────────────────────────
+    const farFutureRaw = await this.prisma.project.findMany({
+      where: {
+        deletedAt: null,
+        endDate: { gt: tenYearsOut },
+      },
+      select: { id: true, name: true, endDate: true },
+      orderBy: { endDate: 'desc' },
+    });
+    const farFutureEndDates = farFutureRaw.map((p) => ({
+      projectId: p.id,
+      projectName: p.name,
+      endDate: p.endDate?.toISOString().split('T')[0] ?? null,
+      yearsAhead: p.endDate
+        ? Math.round(
+            ((p.endDate.getTime() - now.getTime()) / (365 * 86400000)) * 10,
+          ) / 10
+        : null,
+    }));
+
+    // ── 2. Cyclic task-dependency graphs ─────────────────────────────
+    // We scan every active project. For each, pull its tasks + their
+    // dependencies and run tri-color DFS. Any taskId that we re-enter
+    // while gray is a cycle member — we record the ids.
+    const scannedProjects = await this.prisma.project.findMany({
+      where: { deletedAt: null },
+      select: { id: true, name: true },
+      orderBy: { id: 'asc' },
+    });
+
+    const cyclicDependencies: Array<{
+      projectId: number;
+      projectName: string;
+      cycle: number[];
+    }> = [];
+
+    for (const p of scannedProjects) {
+      const tasks = await this.prisma.task.findMany({
+        where: { projectId: p.id, deletedAt: null, isArchived: false },
+        select: {
+          id: true,
+          dependencies: { select: { dependsOnId: true } },
+        },
+      });
+      if (tasks.length === 0) continue;
+
+      const taskIds = new Set(tasks.map((t) => t.id));
+      const adj = new Map<number, number[]>();
+      for (const t of tasks) {
+        adj.set(
+          t.id,
+          (t.dependencies ?? [])
+            .map((d) => d.dependsOnId)
+            .filter((id): id is number => id != null && taskIds.has(id)),
+        );
+      }
+
+      const visited = new Set<number>();     // black
+      const visiting = new Set<number>();     // gray
+      const cycleMembers = new Set<number>();
+
+      // Iterative DFS — avoids recursion depth on dense graphs. For
+      // each root we walk edges with an explicit stack of
+      // (node, dependenciesIterator) frames; a re-entry of a gray
+      // node yields a cycle member.
+      for (const root of adj.keys()) {
+        if (visited.has(root)) continue;
+        const stack: Array<{ id: number; it: Iterator<number> }> = [
+          { id: root, it: (adj.get(root) ?? [])[Symbol.iterator]() },
+        ];
+        visiting.add(root);
+
+        while (stack.length > 0) {
+          const top = stack[stack.length - 1];
+          const next = top.it.next();
+          if (next.done) {
+            visiting.delete(top.id);
+            visited.add(top.id);
+            stack.pop();
+            continue;
+          }
+          const neighbor = next.value;
+          if (visiting.has(neighbor)) {
+            cycleMembers.add(neighbor);
+            cycleMembers.add(top.id);
+            // continue — don't recurse into the gray node.
+            continue;
+          }
+          if (visited.has(neighbor)) continue;
+          visiting.add(neighbor);
+          stack.push({ id: neighbor, it: (adj.get(neighbor) ?? [])[Symbol.iterator]() });
+        }
+      }
+
+      if (cycleMembers.size > 0) {
+        cyclicDependencies.push({
+          projectId: p.id,
+          projectName: p.name,
+          cycle: [...cycleMembers].sort((a, b) => a - b),
+        });
+      }
+    }
+
+    return {
+      farFutureEndDates,
+      cyclicDependencies,
+      totals: {
+        farFutureCount: farFutureEndDates.length,
+        cyclicCount: cyclicDependencies.length,
+        scannedProjects: scannedProjects.length,
+      },
+    };
+  }
 }
