@@ -5806,7 +5806,46 @@ function PlanningView({ projectId }: { projectId: number }) {
 
   // Sort
   const sorted = useMemo(() => {
-    if (!sortCol) return filtered;
+    if (!sortCol) {
+      // QA5 UI-15 — default order within a group:
+      //   1. Dated tasks (endDate != null) ASC by endDate.
+      //   2. Undated tasks: ASC by `typicalRank` (server-computed
+      //      median relative rank; see `TaskTypicalRank`).
+      //   3. No dueDate AND no typicalRank → stable tail by
+      //      sortOrder, then name.
+      // Stable: identical keys preserve the backend's own ordering
+      // (zoneId ASC, sortOrder ASC, createdAt ASC) because
+      // `Array.prototype.sort` is stable in V8.
+      return [...filtered].sort((a: any, b: any) => {
+        const aEnd = a?.endDate ? String(a.endDate).slice(0, 10) : '';
+        const bEnd = b?.endDate ? String(b.endDate).slice(0, 10) : '';
+        const aHas = !!aEnd;
+        const bHas = !!bEnd;
+        if (aHas && bHas) {
+          if (aEnd !== bEnd) return aEnd < bEnd ? -1 : 1;
+          // Dated tasks on the same day: keep the backend order.
+          return 0;
+        }
+        if (aHas) return -1; // dated first
+        if (bHas) return 1;
+        // Both undated: typicalRank fallback. Smaller rank = typically earlier.
+        const aRank = typeof a?.typicalRank === 'number' ? a.typicalRank : null;
+        const bRank = typeof b?.typicalRank === 'number' ? b.typicalRank : null;
+        if (aRank != null && bRank != null) {
+          if (aRank !== bRank) return aRank - bRank;
+        } else if (aRank != null) return -1;
+        else if (bRank != null) return 1;
+        // Neither has rank history. Fall back to persisted sortOrder,
+        // then name — matches the stable tail the backend returns.
+        const aSo = Number(a?.sortOrder ?? 0);
+        const bSo = Number(b?.sortOrder ?? 0);
+        if (aSo !== bSo) return aSo - bSo;
+        const an = (a?.name ?? '').toLowerCase();
+        const bn = (b?.name ?? '').toLowerCase();
+        if (an !== bn) return an < bn ? -1 : 1;
+        return 0;
+      });
+    }
     return [...filtered].sort((a: any, b: any) => {
       let va: any, vb: any;
       switch (sortCol) {
