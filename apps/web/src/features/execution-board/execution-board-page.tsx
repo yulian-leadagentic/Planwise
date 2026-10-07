@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight, Grid3X3, FolderKanban, MapPin, AlertTriangle, AlertCircle, RefreshCw } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
@@ -8,6 +9,12 @@ import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { useMe } from '@/hooks/use-auth';
+import {
+  userPreferencesApi,
+  USER_PREF_KEYS,
+  type ExecutionBoardColumnOrder,
+} from '@/api/user-preferences.api';
+import { notify } from '@/lib/notify';
 import { getTaskHealth, type TaskHealth } from '@/lib/task-health';
 import { STATUS_LABEL } from '@/lib/task-constants';
 import { cn } from '@/lib/utils';
@@ -122,6 +129,114 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   const didAutoExpand = useRef(false);
   // Current user (department drives the Zone Tasks default Service filter).
   const { data: me } = useMe();
+
+  // QA5 UI-13 — per-user deliverable column order. Persisted server-
+  // side so the same user sees the same order on a second device /
+  // session. Shape: `{ [deliverableName]: orderNumber }`. Columns with
+  // no number fall to the end of the row in stable (template-driven)
+  // order. See `apps/api/src/modules/user-preferences/` for the store.
+  //
+  // Local state is the source of truth for UI; server reads prime it
+  // once, server writes are a debounced side-effect of local changes.
+  const queryClient = useQueryClient();
+  const [columnOrder, setColumnOrder] = useState<ExecutionBoardColumnOrder>({});
+  const columnOrderPrimed = useRef(false);
+  const columnOrderQuery = useQuery({
+    queryKey: ['user-preference', USER_PREF_KEYS.EXECUTION_BOARD_COLUMN_ORDER],
+    queryFn: () =>
+      userPreferencesApi.get<ExecutionBoardColumnOrder>(
+        USER_PREF_KEYS.EXECUTION_BOARD_COLUMN_ORDER,
+      ),
+    // The order shouldn't flicker during a single session — only prime
+    // from the server once on mount. The debounced mutation below
+    // writes back; refetching here would race the typing.
+    staleTime: Infinity,
+  });
+  // Prime local state exactly once from the first server read. After
+  // that, local edits own the state so a stale refetch can't clobber
+  // what the user is typing.
+  useEffect(() => {
+    if (columnOrderPrimed.current) return;
+    if (columnOrderQuery.data == null) return;
+    const value = columnOrderQuery.data.value;
+    if (value && typeof value === 'object') {
+      // Defensive copy — the query cache object is frozen in dev.
+      const next: ExecutionBoardColumnOrder = {};
+      for (const [k, v] of Object.entries(value)) {
+        if (typeof v === 'number' && Number.isFinite(v)) next[k] = v;
+      }
+      setColumnOrder(next);
+    }
+    columnOrderPrimed.current = true;
+  }, [columnOrderQuery.data]);
+
+  const saveColumnOrder = useMutation({
+    mutationFn: (next: ExecutionBoardColumnOrder) =>
+      userPreferencesApi.put<ExecutionBoardColumnOrder>(
+        USER_PREF_KEYS.EXECUTION_BOARD_COLUMN_ORDER,
+        next,
+      ),
+    onSuccess: (res) => {
+      // Keep the react-query cache in sync so a late remount after a
+      // save renders the saved value, not an empty one.
+      queryClient.setQueryData(
+        ['user-preference', USER_PREF_KEYS.EXECUTION_BOARD_COLUMN_ORDER],
+        res,
+      );
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to save column order'),
+  });
+
+  // Debounce the save: a user typing "1 → 2 → 3" would otherwise fire
+  // three PUTs. 400ms matches the spec.
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleColumnOrderSave = useCallback(
+    (next: ExecutionBoardColumnOrder) => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(() => {
+        saveTimerRef.current = null;
+        saveColumnOrder.mutate(next);
+      }, 400);
+    },
+    [saveColumnOrder],
+  );
+  // Flush any pending save on unmount so a quick nav-away doesn't drop
+  // the last keystroke.
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        // Fire-and-forget — the mutation handles its own error toast.
+        saveColumnOrder.mutate(columnOrder);
+      }
+    };
+    // Intentionally only on unmount — depending on `columnOrder` would
+    // schedule a save after every keystroke even without an edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * Change the order number for one deliverable. Empty / NaN clears
+   * the entry so the column falls back to the end of the row.
+   */
+  const setColumnOrderFor = useCallback(
+    (name: string, raw: string) => {
+      const trimmed = raw.trim();
+      const parsed = trimmed === '' ? null : Number(trimmed);
+      setColumnOrder((prev) => {
+        const next = { ...prev };
+        if (parsed == null || !Number.isFinite(parsed) || parsed < 1) {
+          delete next[name];
+        } else {
+          // Store as integer so typing "2.5" doesn't persist a float.
+          next[name] = Math.floor(parsed);
+        }
+        scheduleColumnOrderSave(next);
+        return next;
+      });
+    },
+    [scheduleColumnOrderSave],
+  );
 
   // Don't pass serviceId to the server anymore; we filter client-side.
   // For projectId, pass the forcedProjectId only (embedded mode); the
@@ -421,15 +536,36 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     // into ONE cell per zone; the render just needs a matching
     // single-column header. Keep the template-driven order (that's
     // how sortOrder flows through), just skip duplicates on push.
-    const orderedColumns: string[] = [];
+    const stableOrdered: string[] = [];
     for (const tpl of templates) {
-      if (nameToHasTasks.has(tpl.name) && !orderedColumns.includes(tpl.name)) {
-        orderedColumns.push(tpl.name);
+      if (nameToHasTasks.has(tpl.name) && !stableOrdered.includes(tpl.name)) {
+        stableOrdered.push(tpl.name);
       }
     }
     for (const name of nameToHasTasks) {
-      if (!orderedColumns.includes(name)) orderedColumns.push(name);
+      if (!stableOrdered.includes(name)) stableOrdered.push(name);
     }
+
+    // QA5 UI-13 — overlay the user's typed order. Columns WITH a
+    // number sort by that number ASC first; columns with no number
+    // keep the stable template-driven order and fall to the end.
+    // `stableIdx` is the ultimate tiebreaker so two columns the user
+    // numbered the same don't jitter between renders.
+    const stableIdxOf = new Map<string, number>();
+    stableOrdered.forEach((n, i) => stableIdxOf.set(n, i));
+    const orderedColumns = stableOrdered.slice().sort((a, b) => {
+      const ao = columnOrder[a];
+      const bo = columnOrder[b];
+      const aHas = typeof ao === 'number' && Number.isFinite(ao);
+      const bHas = typeof bo === 'number' && Number.isFinite(bo);
+      if (aHas && bHas) {
+        if (ao !== bo) return ao - bo;
+        return (stableIdxOf.get(a) ?? 0) - (stableIdxOf.get(b) ?? 0);
+      }
+      if (aHas) return -1;
+      if (bHas) return 1;
+      return (stableIdxOf.get(a) ?? 0) - (stableIdxOf.get(b) ?? 0);
+    });
 
     return {
       phaseColumns: orderedColumns,
@@ -437,7 +573,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       hasNoPhase: _hasNoPhase,
       phaseToService: nameToService,
     };
-  }, [filteredTasks, data?.templates]);
+  }, [filteredTasks, data?.templates, columnOrder]);
 
   // Dedicated per-project bucket for root tasks (zoneId=null). The
   // 'Project Root' synthetic row pulls from here instead of the matrix
@@ -875,13 +1011,39 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
 
         {/* Deliverable multi-select — the small pill under each column
             header. Picking some narrows the matrix to columns whose
-            deliverable is in the selection. */}
+            deliverable is in the selection.
+
+            QA5 UI-13 — each option row carries a tiny order-number
+            input (right side). Typing `1, 2, 3, …` reorders the board
+            columns ascending; unnumbered deliverables fall to the end
+            in stable (template-driven) order. The order is persisted
+            per user via `/users/me/preferences/execution-board.column-order`.
+            Checkbox (show/hide) remains independent of the number. */}
         <MultiSelectFilter
           options={availableServices.map((name) => ({ value: name, label: name }))}
           selected={serviceFilter}
           onChange={setServiceFilter}
           placeholder="Deliverables"
           title="Filter by deliverable"
+          popoverClassName="w-80"
+          renderOptionTrailing={(o) => (
+            <input
+              type="number"
+              min={1}
+              step={1}
+              inputMode="numeric"
+              value={columnOrder[o.value] ?? ''}
+              onChange={(e) => setColumnOrderFor(String(o.value), e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+              placeholder="#"
+              title="Column order (lower = further left)"
+              aria-label={`Column order for ${o.label}`}
+              // slate border + mono digits per planwise-design; no ring
+              // chrome on focus so the dropdown stays visually calm.
+              className="w-10 shrink-0 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-1 py-0.5 text-right text-xs font-mono text-slate-700 dark:text-slate-200 focus:outline-none focus:border-blue-500 dark:focus:border-blue-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            />
+          )}
         />
 
         {/* General task-status filter — applies to Matrix only. Removed

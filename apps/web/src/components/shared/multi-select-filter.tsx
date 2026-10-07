@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import { Check, ChevronDown, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -35,6 +35,21 @@ interface MultiSelectFilterProps<T extends string | number> {
   title?: string;
   /** Tailwind width class on the trigger (default w-48). */
   triggerClassName?: string;
+  /**
+   * QA5 UI-13 — optional trailing control rendered inside each option
+   * row (right of the label). Used by the Execution Board's deliverable
+   * filter to attach a per-row "order number" input so the user can
+   * reorder the board columns from inside the dropdown. The control is
+   * a sibling of the label — clicking it must NOT also toggle the
+   * row's checkbox, so the renderer should stopPropagation on its own
+   * interactions.
+   */
+  renderOptionTrailing?: (option: MultiSelectOption<T>) => ReactNode;
+  /**
+   * Make the popover wider when the trailing control needs room. The
+   * default w-72 is tight once an order input + label are both there.
+   */
+  popoverClassName?: string;
 }
 
 export function MultiSelectFilter<T extends string | number>({
@@ -44,6 +59,8 @@ export function MultiSelectFilter<T extends string | number>({
   placeholder,
   title,
   triggerClassName,
+  renderOptionTrailing,
+  popoverClassName,
 }: MultiSelectFilterProps<T>) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -178,7 +195,15 @@ export function MultiSelectFilter<T extends string | number>({
         // z-50 beats sticky page headers (the Execution Board's ZONE
         // column header sits at ~z-40 and was obscuring the first rows
         // of the project dropdown).
-        <div dir="ltr" role="listbox" aria-multiselectable="true" className="absolute start-0 top-full z-50 mt-1 w-72 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg">
+        <div
+          dir="ltr"
+          role="listbox"
+          aria-multiselectable="true"
+          className={cn(
+            'absolute start-0 top-full z-50 mt-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg',
+            popoverClassName ?? 'w-72',
+          )}
+        >
           {/* Search + clear-all */}
           <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 px-2 py-1.5">
             <Search className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />
@@ -212,6 +237,58 @@ export function MultiSelectFilter<T extends string | number>({
               filtered.map((o, i) => {
                 const isOn = selected.has(o.value);
                 const isHighlighted = i === highlightIdx;
+                // When a trailing control is present we wrap the row in
+                // a <div> and keep the toggle itself a <button>, so an
+                // <input> inside the trailing slot stays a valid child.
+                // Nesting an interactive control inside a <button> is a
+                // DOM-illegal pattern that produces hydration warnings.
+                const rowBase = cn(
+                  'flex w-full items-center gap-2 px-3 py-1.5 text-[12.5px] text-left',
+                  isHighlighted
+                    ? 'bg-slate-100 dark:bg-slate-800/60'
+                    : 'hover:bg-slate-50 dark:hover:bg-slate-800/50',
+                  isOn && 'bg-blue-50/40',
+                );
+                const checkbox = (
+                  <div
+                    className={cn(
+                      'flex h-4 w-4 shrink-0 items-center justify-center rounded border-2',
+                      // Unchecked: thicker slate-400 border + slight bg
+                      // so the box reads as a distinct element instead
+                      // of disappearing into the white popover background
+                      // (which made labels look like their first letter
+                      // was missing).
+                      isOn
+                        ? 'border-blue-500 bg-blue-500 text-white'
+                        : 'border-slate-400 dark:border-slate-500 bg-slate-50 dark:bg-slate-800/50',
+                    )}
+                  >
+                    {isOn && <Check className="h-3 w-3" strokeWidth={3} aria-hidden="true" />}
+                  </div>
+                );
+                if (renderOptionTrailing) {
+                  return (
+                    <div
+                      key={String(o.value)}
+                      role="option"
+                      aria-selected={isOn}
+                      onMouseEnter={() => setHighlightIdx(i)}
+                      className={rowBase}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggle(o.value)}
+                        aria-label={`${isOn ? 'Deselect' : 'Select'} ${o.label}`}
+                        className="flex flex-1 items-center gap-2 text-left"
+                      >
+                        {checkbox}
+                        <span className="flex-1 truncate text-slate-700 dark:text-slate-200">{o.label}</span>
+                        {o.hint && <span className="text-[11px] text-slate-400 dark:text-slate-500">{o.hint}</span>}
+                      </button>
+                      {renderOptionTrailing(o)}
+                    </div>
+                  );
+                }
                 return (
                   <button
                     key={String(o.value)}
@@ -220,29 +297,9 @@ export function MultiSelectFilter<T extends string | number>({
                     aria-selected={isOn}
                     onMouseEnter={() => setHighlightIdx(i)}
                     onClick={() => toggle(o.value)}
-                    className={cn(
-                      'flex w-full items-center gap-2 px-3 py-1.5 text-[12.5px] text-left',
-                      isHighlighted
-                        ? 'bg-slate-100 dark:bg-slate-800/60'
-                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/50',
-                      isOn && 'bg-blue-50/40',
-                    )}
+                    className={rowBase}
                   >
-                    <div
-                      className={cn(
-                        'flex h-4 w-4 shrink-0 items-center justify-center rounded border-2',
-                        // Unchecked: thicker slate-400 border + slight bg
-                        // so the box reads as a distinct element instead
-                        // of disappearing into the white popover background
-                        // (which made labels look like their first letter
-                        // was missing).
-                        isOn
-                          ? 'border-blue-500 bg-blue-500 text-white'
-                          : 'border-slate-400 dark:border-slate-500 bg-slate-50 dark:bg-slate-800/50',
-                      )}
-                    >
-                      {isOn && <Check className="h-3 w-3" strokeWidth={3} aria-hidden="true" />}
-                    </div>
+                    {checkbox}
                     <span className="flex-1 truncate text-slate-700 dark:text-slate-200">{o.label}</span>
                     {o.hint && <span className="text-[11px] text-slate-400 dark:text-slate-500">{o.hint}</span>}
                   </button>
