@@ -114,10 +114,12 @@ export function ProjectDetailPage() {
                 <ArrowLeft className="h-3.5 w-3.5" />
                 Projects
               </button>
+              {/* QA5 UI-9: removed the duplicate `<h1>{project.name}</h1>`
+                  heading that sat next to the picker — the ProjectPrevNext
+                  switcher already shows the current project name on its
+                  trigger button, so repeating it here just crowded the
+                  header. The switcher is the single project title now. */}
               <ProjectPrevNext currentId={projectId} />
-              <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-                {project.name}
-              </h1>
               <button onClick={() => navigate(`/projects/${projectId}/edit`)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100" aria-label="Edit project">
                 <Pencil className="h-3.5 w-3.5" />
               </button>
