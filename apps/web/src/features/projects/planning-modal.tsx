@@ -2,7 +2,6 @@ import { useState, useMemo, useRef, useEffect, useCallback, createContext, useCo
 import { useNavigate, useParams } from 'react-router-dom';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle, ChevronsDownUp, ChevronsUpDown, Pencil, SlidersHorizontal, Archive, Undo2, Calendar } from 'lucide-react';
-import { formatDuration } from '@/lib/date-utils';
 import { notify, getErrorMessage } from '@/lib/notify';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
@@ -40,68 +39,13 @@ import { CSS } from '@dnd-kit/utilities';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { PeopleMultiSelect } from '@/components/shared/people-multi-select';
 
-// ─── Feasibility Badge ───────────────────────────────────────────────────────
-
-function FeasibilityBadge({ projectId }: { projectId: number }) {
-  const { data, isLoading } = useQuery({
-    queryKey: ['feasibility', projectId],
-    queryFn: () => client.get(`/projects/${projectId}/feasibility`).then((r) => r.data?.data ?? r.data),
-    staleTime: 60 * 1000,
-    enabled: !!projectId,
-  });
-
-  const progressQuery = useQuery({
-    queryKey: ['progress', projectId],
-    queryFn: () => client.get(`/projects/${projectId}/progress`).then((r) => r.data?.data ?? r.data),
-    staleTime: 60 * 1000,
-    enabled: !!projectId,
-  });
-
-  const progress = (progressQuery.data as any)?.overallProgress ?? 0;
-  const feasibility = data as any;
-  const status = feasibility?.status ?? 'UNKNOWN';
-
-  const statusConfig: Record<string, { bg: string; text: string; label: string; icon: string }> = {
-    OK: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'On Track', icon: '✓' },
-    AT_RISK: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'At Risk', icon: '⚠' },
-    IMPOSSIBLE: { bg: 'bg-red-100', text: 'text-red-700', label: 'Impossible', icon: '✗' },
-    UNKNOWN: { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-500 dark:text-slate-400', label: 'Checking...', icon: '…' },
-  };
-  const cfg = statusConfig[status] || statusConfig.UNKNOWN;
-
-  if (isLoading) return <span className="text-[11px] text-slate-400 dark:text-slate-500">Analyzing...</span>;
-
-  return (
-    <div className="flex items-center gap-3">
-      {/* Progress bar */}
-      <div className="flex items-center gap-2">
-        <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Progress</span>
-        <div className="w-24 h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-          <div
-            className={cn(
-              'h-full rounded-full transition-all',
-              progress >= 80 ? 'bg-emerald-500' : progress >= 50 ? 'bg-blue-500' : progress >= 25 ? 'bg-amber-500' : 'bg-slate-400 dark:bg-slate-500',
-            )}
-            style={{ width: `${Math.min(100, progress)}%` }}
-          />
-        </div>
-        <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">{progress}%</span>
-      </div>
-
-      {/* Feasibility badge */}
-      <div className={cn('flex items-center gap-1 rounded-[6px] px-2.5 py-1 text-[11px] font-bold', cfg.bg, cfg.text)}
-        title={feasibility?.details ? `${feasibility.details.overloadedAssignees?.length ?? 0} overloaded, ${feasibility.details.blockedTasks?.length ?? 0} blocked, ${feasibility.details.unassignedTasks?.length ?? 0} unassigned` : ''}>
-        <span>{cfg.icon}</span>
-        <span>{cfg.label}</span>
-        {feasibility?.details?.daysRemaining != null && (
-          <span className="opacity-70 ml-1" title={`${feasibility.details.daysRemaining} days`}>
-            ({formatDuration(feasibility.details.daysRemaining)} left)
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
+// QA5 UI-12: the FeasibilityBadge component (Progress bar + On Track /
+// At Risk / Impossible chip) was deleted from this file in Wave 1 — it
+// was only used in the "Project Tasks" header where it duplicated the
+// Progress bar in the project header tiles (UI-8) and the feasibility
+// chip's "N years left" readout was a 9999-endDate artifact FEAS-1
+// already clamps elsewhere. The /feasibility and /progress endpoints
+// stay available for any other callers.
 
 // ─── Status Badge Dropdown (clickable badge that opens status picker) ─────────
 
@@ -6681,8 +6625,13 @@ function PlanningView({ projectId }: { projectId: number }) {
                 {sorted.length} tasks · {totalHours}h budget · <span className={cn('font-semibold', totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-slate-500 dark:text-slate-400')}>{totalLoggedHours}h logged</span> · ₪{totalAmount.toLocaleString()}
               </span>
             </div>
-            {/* Feasibility + Progress */}
-            <FeasibilityBadge projectId={projectId} />
+            {/* QA5 UI-12: removed the <FeasibilityBadge /> cluster
+                (Progress bar + "On Track / feasibility" chip). The
+                Progress bar duplicated the one in the project header
+                tiles (UI-8), and the feasibility chip's "N years left"
+                readout is a 9999-endDate artifact already clamped by
+                FEAS-1 elsewhere. Keep the 23 tasks · 0h budget · 0h
+                logged summary on the left (unchanged). */}
           </div>
 
           {/* Column header for non-zone grouping — matches ZoneGroup table */}
