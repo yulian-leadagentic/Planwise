@@ -8,6 +8,28 @@ import { OpenInDriveButton } from '@/features/drive/open-in-drive-button';
 import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
 import { EmptyState } from '@/components/shared/empty-state';
 import { resolveTaskDeliverableDetailed } from '@/features/planning/resolve-task-deliverable';
+import { GroupControl, dpGroupDimLabel, type DPGroupDim } from '@/features/planning/group-control';
+
+/**
+ * UI-14 · Resolve a row's value under a given group dimension. Returns
+ * both a stable string key (used for grouping / collapse-set membership)
+ * and a human label (shown in the group header or sub-row). The key is
+ * namespaced per-dim so a zoneId and a deliverableId can never collide
+ * when the user flips the primary dim mid-session.
+ */
+function rowDimKey(r: any, dim: DPGroupDim): string {
+  if (dim === 'deliverable') return `del:${r.deliverableId}`;
+  if (dim === 'zone') return `zone:${r.zoneId ?? 'root'}`;
+  // service — Phase name is a string, nullable. Treat null/empty as a
+  // dedicated "no service" bucket so rows don't get spread into the
+  // default group silently.
+  return `svc:${(r.serviceName ?? '').trim() || '(no service)'}`;
+}
+function rowDimLabel(r: any, dim: DPGroupDim): string {
+  if (dim === 'deliverable') return r.deliverableName ?? `Deliverable #${r.deliverableId}`;
+  if (dim === 'zone') return r.zoneName ?? '—';
+  return (r.serviceName ?? '').trim() || 'No service';
+}
 
 /**
  * Zone-type label map (DP-4). Values mirror the `ZoneType` enum on the
@@ -71,19 +93,23 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
 
   // DP-6 · Deliverable-group collapse state, LIFTED here so Table and
   // Gantt share one source of truth (toggling in one view is reflected
-  // in the other). A `Set<number>` of collapsed deliverable ids —
-  // ABSENT = expanded, so brand-new deliverables default to expanded
-  // without a re-init. Persisted per-project to `localStorage` under
-  // `planwise:deliv:collapsed:v1:<projectId>`; a missing key = all
-  // expanded, and every read is `try/catch`-guarded because private-
-  // browsing mode / cleared site data can throw on access.
-  const collapsedKey = `planwise:deliv:collapsed:v1:${projectId}`;
-  const [collapsed, setCollapsed] = useState<Set<number>>(() => {
+  // in the other). A `Set<string>` of collapsed group KEYS (UI-14 —
+  // was `Set<number>` of deliverableIds before the primary group dim
+  // became configurable). ABSENT = expanded, so brand-new groups
+  // default to expanded without a re-init. Persisted per-project to
+  // `localStorage` under `planwise:deliv:collapsed:v2:<projectId>`; a
+  // missing key = all expanded, and every read is `try/catch`-guarded
+  // because private-browsing mode / cleared site data can throw on
+  // access. v2 bumped so older number-id payloads don't leak in as
+  // bogus string keys — on first mount under v2 everything just
+  // defaults to expanded.
+  const collapsedKey = `planwise:deliv:collapsed:v2:${projectId}`;
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
     try {
       const raw = localStorage.getItem(collapsedKey);
       if (!raw) return new Set();
       const arr = JSON.parse(raw);
-      return new Set(Array.isArray(arr) ? arr.filter((n) => typeof n === 'number') : []);
+      return new Set(Array.isArray(arr) ? arr.filter((n) => typeof n === 'string') : []);
     } catch { return new Set(); }
   });
   useEffect(() => {
@@ -91,14 +117,40 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       localStorage.setItem(collapsedKey, JSON.stringify(Array.from(collapsed)));
     } catch { /* ignore — private mode / blocked storage */ }
   }, [collapsed, collapsedKey]);
-  const toggleCollapse = (id: number) => {
+  const toggleCollapse = (key: string) => {
     setCollapsed((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
+
+  // UI-14 · Group + sub-group dims. Default primary=deliverable,
+  // sub=zone preserves DP-DISP-1's "Deliverable · Zone" ordering (the
+  // Gantt label column header reads from these dims). Persisted per-
+  // project so returning to the tab keeps the user's pick; stored as a
+  // single object under `deliverable-planning.grouping.<projectId>` so
+  // a schema bump can migrate in one key, not two.
+  const groupingKey = `deliverable-planning.grouping.${projectId}`;
+  type GroupingPref = { primary: DPGroupDim | null; secondary: DPGroupDim | null };
+  const defaultGrouping: GroupingPref = { primary: 'deliverable', secondary: 'zone' };
+  const [grouping, setGrouping] = useState<GroupingPref>(() => {
+    try {
+      const raw = localStorage.getItem(groupingKey);
+      if (!raw) return defaultGrouping;
+      const parsed = JSON.parse(raw);
+      const dims = new Set<DPGroupDim>(['zone', 'deliverable', 'service']);
+      const primary = parsed?.primary && dims.has(parsed.primary) ? parsed.primary : null;
+      const secondary = parsed?.secondary && dims.has(parsed.secondary) && parsed.secondary !== primary ? parsed.secondary : null;
+      return { primary, secondary };
+    } catch { return defaultGrouping; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(groupingKey, JSON.stringify(grouping)); } catch { /* ignore */ }
+  }, [grouping, groupingKey]);
+  const outerDim: DPGroupDim = grouping.primary ?? 'deliverable';
+  const innerDim: DPGroupDim | null = grouping.secondary;
 
   // Draft edits keyed by `${deliverableId}:${zoneId}`. Empty string = clear.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -676,9 +728,9 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   // groups that were collapsed but hidden by filters — the intent of
   // "expand all" is "leave nothing collapsed").
   const collapseAll = () => {
-    const ids = new Set<number>();
-    for (const r of visibleRows) ids.add(r.deliverableId);
-    setCollapsed(ids);
+    const keys = new Set<string>();
+    for (const r of visibleRows) keys.add(rowDimKey(r, outerDim));
+    setCollapsed(keys);
   };
   const expandAll = () => setCollapsed(new Set());
 
@@ -859,6 +911,26 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           </p>
         </div>
         <div className="ml-auto flex items-end gap-2">
+          {/* UI-14 · Group + sub-group — same control the Planning tab
+              uses. Default primary=Deliverable, sub=Zone preserves the
+              DP-DISP-1 ordering (Gantt label column reads "Deliverable
+              · Zone"); flipping either dim regroups the Table rows
+              AND relabels the Gantt row-label header. State is per-
+              project in localStorage (see `groupingKey`). */}
+          <div className="pb-1">
+            <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Grouping</label>
+            <GroupControl
+              primary={grouping.primary}
+              secondary={grouping.secondary}
+              onChangePrimary={(p) => setGrouping((g) => {
+                // When primary changes to the current secondary, drop
+                // the secondary — matches the Planning tab's guard.
+                const nextSec = p && g.secondary === p ? null : g.secondary;
+                return { primary: p, secondary: p ? nextSec : null };
+              })}
+              onChangeSecondary={(s) => setGrouping((g) => ({ ...g, secondary: s }))}
+            />
+          </div>
           {/* PR-012 · Service (Phase) multi-select. Sourced from the
               service names appearing on the current rows so options
               never surface something with zero matches. Composes with
@@ -979,6 +1051,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           computePreview={computePreview}
           collapsed={collapsed}
           onToggleCollapse={toggleCollapse}
+          outerDim={outerDim}
+          innerDim={innerDim}
         />
       ) : (
         <GanttView
@@ -994,6 +1068,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           baseDate={baseDate}
           collapsed={collapsed}
           onToggleCollapse={toggleCollapse}
+          outerDim={outerDim}
+          innerDim={innerDim}
         />
       )}
 
@@ -1021,6 +1097,8 @@ function TableView({
   computePreview,
   collapsed,
   onToggleCollapse,
+  outerDim,
+  innerDim,
 }: {
   rows: any[];
   drafts: Record<string, string>;
@@ -1034,8 +1112,14 @@ function TableView({
   computePreview: (m: string) => string;
   // DP-6 · Collapse state (shared with GanttView, persisted per-project
   // in the parent). Absent from the set = the group is expanded.
-  collapsed: Set<number>;
-  onToggleCollapse: (deliverableId: number) => void;
+  // UI-14 — now a Set<string> keyed by outer-dim group key.
+  collapsed: Set<string>;
+  onToggleCollapse: (key: string) => void;
+  // UI-14 · Group + sub-group dims flow in from the parent so the Table
+  // can regroup by Zone / Deliverable / Service and relabel the first
+  // two columns dynamically. Default stays Deliverable · Zone.
+  outerDim: DPGroupDim;
+  innerDim: DPGroupDim | null;
 }) {
   // Per-column filters — arrays of selected values (empty = no filter).
   // A row passes a column filter if its value is IN the selected array.
@@ -1163,35 +1247,39 @@ function TableView({
     return { totalWeeks, totalHours, latestDate };
   };
 
-  // Sort within the same deliverable group. Deliverable order is
-  // ALWAYS driven by the sort setting (so users can sort deliverables
-  // top-level too). Zones inside a deliverable follow the same rule
-  // when sort col is 'zone', else stay in their default order.
+  // Sort within the same group. UI-14 — groups are now bucketed by the
+  // configurable outer dim (default: Deliverable). readOnly propagates
+  // from the zone row (DP-EMPTY-3) ONLY when outerDim='deliverable' so
+  // we keep the "not yet planned" badge honest; the flag has no meaning
+  // under a Zone or Service bucketing (a zone/service bucket mixes
+  // real and synthetic rows).
   const sortedGroups = useMemo(() => {
-    // Group by deliverable. `readOnly` propagates from the zone row
-    // (DP-EMPTY-3) — the header for a group of synthetic zones renders
-    // with a "not yet planned" badge and the zone rows get disabled
-    // inputs.
-    const map = new Map<number, { deliverableId: number; deliverableName: string; serviceName: string | null; zones: any[]; readOnly: boolean; readOnlyReason: string | null }>();
+    type Group = { key: string; label: string; deliverableId: number; serviceName: string | null; zones: any[]; readOnly: boolean; readOnlyReason: string | null };
+    const map = new Map<string, Group>();
     for (const r of filtered) {
-      if (!map.has(r.deliverableId)) {
-        map.set(r.deliverableId, {
+      const k = rowDimKey(r, outerDim);
+      if (!map.has(k)) {
+        map.set(k, {
+          key: k,
+          label: rowDimLabel(r, outerDim),
+          // Keep the first row's deliverableId / serviceName for the
+          // Drive button + rollup display; they're only used when the
+          // outer dim is 'deliverable' / 'service' respectively.
           deliverableId: r.deliverableId,
-          deliverableName: r.deliverableName,
           serviceName: r.serviceName,
           zones: [],
-          readOnly: !!r.readOnly,
-          readOnlyReason: r.readOnlyReason ?? null,
+          readOnly: outerDim === 'deliverable' ? !!r.readOnly : false,
+          readOnlyReason: outerDim === 'deliverable' ? (r.readOnlyReason ?? null) : null,
         });
       }
-      map.get(r.deliverableId)!.zones.push(r);
+      map.get(k)!.zones.push(r);
     }
     const groups = Array.from(map.values());
 
     // Sort the groups
     const sign = sort.dir === 'asc' ? 1 : -1;
     const cmp = (a: string | number, b: string | number) => (a > b ? 1 : a < b ? -1 : 0) * sign;
-    if (sort.col === 'deliverable') groups.sort((a, b) => cmp(a.deliverableName.toLowerCase(), b.deliverableName.toLowerCase()));
+    if (sort.col === 'deliverable') groups.sort((a, b) => cmp(a.label.toLowerCase(), b.label.toLowerCase()));
     else if (sort.col === 'service') groups.sort((a, b) => cmp((a.serviceName ?? '').toLowerCase(), (b.serviceName ?? '').toLowerCase()));
     else if (sort.col === 'zone') groups.sort((a, b) => cmp((a.zones[0]?.zoneName ?? '').toLowerCase(), (b.zones[0]?.zoneName ?? '').toLowerCase()));
     else if (sort.col === 'months') groups.sort((a, b) => cmp(Number(effectiveMonths(a.zones[0]) || 0), Number(effectiveMonths(b.zones[0]) || 0)));
@@ -1216,7 +1304,7 @@ function TableView({
       }
     }
     return groups;
-  }, [filtered, sort, drafts, durationDrafts, targetDateDrafts]);
+  }, [filtered, sort, drafts, durationDrafts, targetDateDrafts, outerDim]);
 
   const toggleSort = (col: typeof sort.col) => {
     setSort((s) => (s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'asc' }));
@@ -1227,8 +1315,13 @@ function TableView({
       <table className="w-full text-sm">
         <thead className="bg-[#FAFBFC] border-b border-slate-100 dark:border-slate-800">
           <tr className="text-[11px] uppercase tracking-wider text-slate-400 dark:text-slate-500">
+            {/* UI-14 — the first column labels the outer group dim; the
+                second labels the sub-dim (or stays "Row" when sub=none).
+                Sort/filter column keys are kept stable ('deliverable'/
+                'zone') since the sort code already knows them — only the
+                header LABEL rotates with the dim. */}
             <SortableFilterableHeader
-              label="Deliverable" width="w-[240px]"
+              label={dpGroupDimLabel(outerDim)} width="w-[240px]"
               sort={sort} col="deliverable" onToggleSort={() => toggleSort('deliverable')}
               options={optionsFor('deliverable')} activeCount={colFilters.deliverable.length}
               onToggleValue={(v) => toggleFilterValue('deliverable', v)}
@@ -1236,7 +1329,7 @@ function TableView({
               open={openFilter === 'deliverable'} onToggleOpen={() => setOpenFilter((c) => c === 'deliverable' ? null : 'deliverable')}
             />
             <SortableFilterableHeader
-              label="Zone"
+              label={innerDim ? dpGroupDimLabel(innerDim) : 'Row'}
               sort={sort} col="zone" onToggleSort={() => toggleSort('zone')}
               options={optionsFor('zone')} activeCount={colFilters.zone.length}
               onToggleValue={(v) => toggleFilterValue('zone', v)}
@@ -1290,27 +1383,34 @@ function TableView({
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           {sortedGroups.map((g) => {
-            const isCollapsed = collapsed.has(g.deliverableId);
+            const isCollapsed = collapsed.has(g.key);
             const rollup = groupRollup(g.zones);
-            const groupBodyId = `deliv-group-${g.deliverableId}`;
-            const zoneCount = g.zones.length;
+            const groupBodyId = `deliv-group-${g.key}`;
+            const subCount = g.zones.length;
+            // Sub-dim affects only the count-label phrasing (e.g.
+            // "3 zones" vs "3 deliverables"). When outerDim='zone' or
+            // 'service' the Drive button hides because it is only
+            // meaningful on a real ProjectDeliverable row.
+            const subNoun = outerDim === 'deliverable' ? 'zone' : outerDim === 'zone' ? 'deliverable' : 'row';
             return (
-            <FragmentGroup key={g.deliverableId}>
-              {/* DP-2 · Deliverable header row — rendered ACROSS the
-                  column grid (not one merged cell) so the rollup totals
-                  line up under Duration / Hours / Target. Chevron + name
-                  + N-zones badge in the first cell; Σ weeks in the
+            <FragmentGroup key={g.key}>
+              {/* DP-2 · Group header row — rendered ACROSS the column
+                  grid (not one merged cell) so the rollup totals line
+                  up under Duration / Hours / Target. Chevron + name
+                  + N-sub-rows badge in the first cell; Σ weeks in the
                   Duration cell; Σ hours in the Hours cell; latest
-                  resolved date in the Target Date cell. Service column
-                  is deliberately left empty — the same value already
-                  reads twice per row and looked like a data leak. */}
+                  resolved date in the Target Date cell. UI-14 — the
+                  "name" is the outer-dim label; service column is
+                  deliberately left empty under outerDim='deliverable'
+                  since the same value already reads twice per row and
+                  looked like a data leak. */}
               <tr
                 className="bg-slate-50/70 dark:bg-slate-800/70 group cursor-pointer select-none hover:bg-slate-100/80 dark:hover:bg-slate-800"
-                onClick={() => onToggleCollapse(g.deliverableId)}
+                onClick={() => onToggleCollapse(g.key)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    onToggleCollapse(g.deliverableId);
+                    onToggleCollapse(g.key);
                   }
                 }}
                 aria-expanded={!isCollapsed}
@@ -1321,23 +1421,23 @@ function TableView({
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); onToggleCollapse(g.deliverableId); }}
+                      onClick={(e) => { e.stopPropagation(); onToggleCollapse(g.key); }}
                       className="inline-flex items-center justify-center w-5 h-5 rounded hover:bg-slate-200/70 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400"
-                      aria-label={isCollapsed ? `Expand ${g.deliverableName}` : `Collapse ${g.deliverableName}`}
+                      aria-label={isCollapsed ? `Expand ${g.label}` : `Collapse ${g.label}`}
                       title={isCollapsed ? 'Expand' : 'Collapse'}
                     >
                       {isCollapsed
                         ? <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
                         : <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />}
                     </button>
-                    <span className="truncate">{g.deliverableName}</span>
+                    <span className="truncate">{g.label}</span>
                     <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap tabular-nums">
-                      · {zoneCount} zone{zoneCount === 1 ? '' : 's'}
+                      · {subCount} {subNoun}{subCount === 1 ? '' : 's'}
                     </span>
                     {/* DP-EMPTY-3 · read-only badge on synthetic (marker /
-                        template-only) deliverable groups. Tells the PM
-                        which rows need the DP-EMPTY-1 backfill to unlock
-                        editable targets. */}
+                        template-only) deliverable groups. Only meaningful
+                        when outerDim='deliverable' (otherwise a zone or
+                        service bucket mixes real and synthetic rows). */}
                     {g.readOnly && (
                       <span
                         className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 whitespace-nowrap"
@@ -1349,13 +1449,10 @@ function TableView({
                     )}
                     <span className="ml-auto" onClick={(e) => e.stopPropagation()}>
                       {/* Open the deliverable's Drive folder (create-if-
-                          missing on click). Rate-limited backend; a
-                          graceful "not configured" toast fires if the
-                          admin hasn't set up Drive yet.
-                          Synthetic (negative-id) deliverables have no
-                          Drive folder — hide the button so the click
-                          doesn't hit the API with an invalid id. */}
-                      {!g.readOnly && (
+                          missing on click). Only renders when outerDim is
+                          'deliverable' (the id is a real ProjectDeliverable
+                          id in that case) and the group is editable. */}
+                      {outerDim === 'deliverable' && !g.readOnly && (
                         <OpenInDriveButton entity="deliverable" id={g.deliverableId} />
                       )}
                     </span>
@@ -1400,16 +1497,26 @@ function TableView({
                   <tr id={groupBodyId} key={r.key} className={cn('hover:bg-slate-50/40 dark:hover:bg-slate-800/40', isDirty && 'bg-blue-50/30 dark:bg-blue-950/20', r.readOnly && 'bg-amber-50/30 dark:bg-amber-950/10')}>
                     <td className="px-4 py-2 text-slate-400 dark:text-slate-500">—</td>
                     <td className="px-4 py-2 text-slate-700 dark:text-slate-200">
-                      <span className="truncate">{r.zoneName}</span>
-                      {/* DP-4 · zone-type badge — muted, matches the
-                          existing row height (no `rounded-full` — the
-                          codebase's rectangular-badge convention). */}
-                      <span
-                        className="ml-2 rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 whitespace-nowrap"
-                        title={`Zone type: ${typeLabel}`}
-                      >
-                        {typeLabel}
+                      {/* UI-14 — the sub-column label switches to the
+                          current innerDim; the zone-type badge only
+                          renders when innerDim='zone' (its only honest
+                          domain). When no sub-group is picked, show
+                          the row's own zone+deliverable identity so the
+                          row is still readable. */}
+                      <span className="truncate">
+                        {innerDim === 'zone' ? r.zoneName
+                          : innerDim === 'deliverable' ? r.deliverableName
+                          : innerDim === 'service' ? (r.serviceName ?? '—')
+                          : `${r.zoneName} · ${r.deliverableName}`}
                       </span>
+                      {innerDim === 'zone' && (
+                        <span
+                          className="ml-2 rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 whitespace-nowrap"
+                          title={`Zone type: ${typeLabel}`}
+                        >
+                          {typeLabel}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-2 text-slate-600 dark:text-slate-300 text-[13px]">{r.serviceName ?? '—'}</td>
                     <td className="px-4 py-2 text-right">
@@ -1653,6 +1760,8 @@ function GanttView({
   baseDate,
   collapsed,
   onToggleCollapse,
+  outerDim,
+  innerDim,
 }: {
   projectId: number;
   rows: any[];
@@ -1664,10 +1773,15 @@ function GanttView({
   setTargetDateDrafts: (updater: (prev: Record<string, string>) => Record<string, string>) => void;
   computePreview: (m: string) => string;
   baseDate: string;
-  // DP-5/DP-6 · deliverable-group collapse state, shared with the Table
-  // view (parent owns the Set + persistence).
-  collapsed: Set<number>;
-  onToggleCollapse: (deliverableId: number) => void;
+  // DP-5/DP-6 · group collapse state, shared with the Table view
+  // (parent owns the Set + persistence). UI-14 — keys are now outer-
+  // dim group keys as strings.
+  collapsed: Set<string>;
+  onToggleCollapse: (key: string) => void;
+  // UI-14 · group+sub-group dims. The Gantt label column header reads
+  // "<outer> · <sub>" dynamically; rows group by outerDim.
+  outerDim: DPGroupDim;
+  innerDim: DPGroupDim | null;
 }) {
   // Row order — persisted per browser via localStorage. Rebuilt from
   // the incoming rows whenever the row set changes, preserving any
@@ -1703,16 +1817,19 @@ function GanttView({
     return [...ordered, ...missing];
   }, [rows, rowOrder]);
 
-  // DP-5 · Group orderedRows by deliverableId, preserving the encounter
-  // order (so a drag-persisted order still drives which deliverable
-  // shows first). Each display slot is either a `group` header (chevron
-  // + rollup) or a `zone` bar; the two columns of the Gantt iterate
-  // this list in lockstep so the label column and the timeline column
-  // stay vertically aligned when groups collapse/expand.
+  // DP-5 · Group orderedRows by the outer group dim (UI-14 — was a
+  // hardcoded `r.deliverableId` before the dim became configurable),
+  // preserving the encounter order (so a drag-persisted order still
+  // drives which group shows first). Each display slot is either a
+  // `group` header (chevron + rollup) or a `zone` bar; the two columns
+  // of the Gantt iterate this list in lockstep so the label column and
+  // the timeline column stay vertically aligned when groups collapse/
+  // expand.
   type GanttGroup = {
     kind: 'group';
-    deliverableId: number;
-    deliverableName: string;
+    key: string;             // outer-dim group key (collapse-set membership)
+    deliverableId: number;   // first row's deliverableId — only honest when outerDim='deliverable'
+    label: string;           // outer-dim human label
     zones: any[];
     isCollapsed: boolean;
     zoneCount: number;
@@ -1720,29 +1837,30 @@ function GanttView({
     latestTargetMs: number | null;
     earliestStartMs: number | null;
     latestTargetIso: string | null;
-    // DP-EMPTY-3 — true when this deliverable is a synthetic
-    // (marker/template-only) row that needs the DP-EMPTY-1 backfill
-    // before it becomes editable. Copied from the zone row.
+    // DP-EMPTY-3 — true when every row in this group is a synthetic
+    // (marker/template-only) row. Only meaningful when outerDim is
+    // 'deliverable' (zone/service buckets can mix real + synthetic).
     readOnly: boolean;
     readOnlyReason: string | null;
   };
   type GanttZoneSlot = { kind: 'zone'; r: any; zoneIdx: number };
   type GanttSlot = GanttGroup | GanttZoneSlot;
   const displaySlots: GanttSlot[] = useMemo(() => {
-    const groupOrder: number[] = [];
-    const groupZones = new Map<number, { z: any; zoneIdx: number }[]>();
+    const groupOrder: string[] = [];
+    const groupZones = new Map<string, { z: any; zoneIdx: number }[]>();
     orderedRows.forEach((r, idx) => {
-      if (!groupZones.has(r.deliverableId)) {
-        groupOrder.push(r.deliverableId);
-        groupZones.set(r.deliverableId, []);
+      const k = rowDimKey(r, outerDim);
+      if (!groupZones.has(k)) {
+        groupOrder.push(k);
+        groupZones.set(k, []);
       }
-      groupZones.get(r.deliverableId)!.push({ z: r, zoneIdx: idx });
+      groupZones.get(k)!.push({ z: r, zoneIdx: idx });
     });
     const out: GanttSlot[] = [];
-    for (const dId of groupOrder) {
-      const entries = groupZones.get(dId)!;
+    for (const gKey of groupOrder) {
+      const entries = groupZones.get(gKey)!;
       const zonesArr = entries.map((e) => e.z);
-      const isCollapsed = collapsed.has(dId);
+      const isCollapsed = collapsed.has(gKey);
       // Rollup: sum hours, find latest resolved target, find earliest
       // resolved start (target − durationWeeks × 7d). Uses the same
       // resolution order as GanttRow (see comment at line ~1647).
@@ -1762,15 +1880,16 @@ function GanttView({
       }
       const latestTargetMs = latestTgt === -Infinity ? null : latestTgt;
       const earliestStartMs = earliestStart === Infinity ? null : earliestStart;
-      // DP-EMPTY-3 — a group is read-only when its first zone row is
-      // (synthetic rows never mix real + synthetic under one
-      // deliverableId, so first-row check is sufficient).
-      const groupReadOnly = !!zonesArr[0]?.readOnly;
-      const groupReadOnlyReason = zonesArr[0]?.readOnlyReason ?? null;
+      // DP-EMPTY-3 — only honest when outerDim='deliverable'; otherwise
+      // zero out so a mixed zone/service bucket doesn't inherit a bogus
+      // "not yet planned" badge from its first row.
+      const groupReadOnly = outerDim === 'deliverable' && !!zonesArr[0]?.readOnly;
+      const groupReadOnlyReason = outerDim === 'deliverable' ? (zonesArr[0]?.readOnlyReason ?? null) : null;
       out.push({
         kind: 'group',
-        deliverableId: dId,
-        deliverableName: zonesArr[0]?.deliverableName ?? `Deliverable #${dId}`,
+        key: gKey,
+        deliverableId: zonesArr[0]?.deliverableId ?? 0,
+        label: rowDimLabel(zonesArr[0] ?? {}, outerDim),
         zones: zonesArr,
         isCollapsed,
         zoneCount: zonesArr.length,
@@ -1786,7 +1905,7 @@ function GanttView({
       }
     }
     return out;
-  }, [orderedRows, collapsed, drafts, durationDrafts, targetDateDrafts, computePreview]);
+  }, [orderedRows, collapsed, drafts, durationDrafts, targetDateDrafts, computePreview, outerDim]);
 
   // Compact scale so 3 years fit in one viewport (client feedback
   // 2026-08-02 item 5). 8 px/week × 156 weeks (3 yr) ≈ 1250px, which
@@ -1972,9 +2091,11 @@ function GanttView({
 
       {/* 2-column grid — LEFT: labels (fixed), RIGHT: scrollable timeline. */}
       <div className="grid grid-cols-[260px_1fr]">
-        {/* Header row spanning both columns */}
+        {/* Header row spanning both columns — UI-14 relabels this
+            dynamically from the configured outer/sub group dims (was a
+            hardcoded "Deliverable · Zone" under DP-DISP-1). */}
         <div className="px-4 py-2 text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 border-r border-b border-slate-200 dark:border-slate-700 bg-[#FAFBFC] flex items-end">
-          Deliverable · Zone
+          {dpGroupDimLabel(outerDim)}{innerDim ? ` · ${dpGroupDimLabel(innerDim)}` : ''}
         </div>
         <div
           className="overflow-hidden border-b border-slate-200 dark:border-slate-700 bg-[#FAFBFC]"
@@ -2022,16 +2143,16 @@ function GanttView({
         <div className="divide-y divide-slate-100 dark:divide-slate-800 border-r border-slate-200 dark:border-slate-700">
           {displaySlots.map((slot, i) => {
             if (slot.kind === 'group') {
-              const groupBodyId = `deliv-gantt-group-${slot.deliverableId}`;
+              const groupBodyId = `deliv-gantt-group-${slot.key}`;
               return (
                 <div
-                  key={`g-${slot.deliverableId}`}
+                  key={`g-${slot.key}`}
                   className="group h-8 px-3 flex items-center gap-2 text-[12px] bg-slate-50 dark:bg-slate-800/60 cursor-pointer select-none hover:bg-slate-100 dark:hover:bg-slate-800"
-                  onClick={() => onToggleCollapse(slot.deliverableId)}
+                  onClick={() => onToggleCollapse(slot.key)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
-                      onToggleCollapse(slot.deliverableId);
+                      onToggleCollapse(slot.key);
                     }
                   }}
                   aria-expanded={!slot.isCollapsed}
@@ -2040,16 +2161,16 @@ function GanttView({
                 >
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); onToggleCollapse(slot.deliverableId); }}
+                    onClick={(e) => { e.stopPropagation(); onToggleCollapse(slot.key); }}
                     className="inline-flex items-center justify-center w-5 h-5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 shrink-0"
-                    aria-label={slot.isCollapsed ? `Expand ${slot.deliverableName}` : `Collapse ${slot.deliverableName}`}
+                    aria-label={slot.isCollapsed ? `Expand ${slot.label}` : `Collapse ${slot.label}`}
                     title={slot.isCollapsed ? 'Expand' : 'Collapse'}
                   >
                     {slot.isCollapsed
                       ? <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
                       : <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />}
                   </button>
-                  <span className="font-bold text-slate-800 dark:text-slate-100 truncate">{slot.deliverableName}</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-100 truncate">{slot.label}</span>
                   {slot.readOnly && (
                     <span
                       className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 whitespace-nowrap"
@@ -2060,14 +2181,18 @@ function GanttView({
                     </span>
                   )}
                   <span className="ml-auto text-[10px] font-medium text-slate-500 dark:text-slate-400 tabular-nums whitespace-nowrap">
-                    {slot.zoneCount}z{slot.hoursSum > 0 ? ` · ${slot.hoursSum}h` : ''}
+                    {slot.zoneCount}{outerDim === 'deliverable' ? 'z' : ''}{slot.hoursSum > 0 ? ` · ${slot.hoursSum}h` : ''}
                   </span>
                 </div>
               );
             }
-            // zone slot
+            // zone slot — UI-14: label text depends on the sub-dim.
             const r = slot.r;
             const typeLabel = zoneTypeLabel(r.zoneType);
+            const rowLabel = innerDim === 'zone' ? r.zoneName
+              : innerDim === 'deliverable' ? r.deliverableName
+              : innerDim === 'service' ? (r.serviceName ?? '—')
+              : `${r.zoneName} · ${r.deliverableName}`;
             return (
               <div
                 key={r.key}
@@ -2090,12 +2215,15 @@ function GanttView({
                 data-slot-index={i}
               >
                 <span className="text-slate-300 dark:text-slate-600 group-hover:text-slate-500 leading-none">⋮⋮</span>
-                <span className="font-medium text-slate-800 dark:text-slate-100 truncate">{r.zoneName}</span>
-                {/* DP-4 · zone-type badge in the Gantt label column,
-                    matching the Table badge exactly. */}
-                <span className="rounded px-1.5 py-0.5 text-[9px] font-medium bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 whitespace-nowrap">
-                  {typeLabel}
-                </span>
+                <span className="font-medium text-slate-800 dark:text-slate-100 truncate">{rowLabel}</span>
+                {/* DP-4 · zone-type badge in the Gantt label column.
+                    Only renders when innerDim='zone' (otherwise the
+                    badge wouldn't match the shown label). */}
+                {innerDim === 'zone' && (
+                  <span className="rounded px-1.5 py-0.5 text-[9px] font-medium bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 whitespace-nowrap">
+                    {typeLabel}
+                  </span>
+                )}
               </div>
             );
           })}
@@ -2134,7 +2262,7 @@ function GanttView({
                 if (!slot.isCollapsed) {
                   return (
                     <div
-                      key={`gtrack-${slot.deliverableId}`}
+                      key={`gtrack-${slot.key}`}
                       className="relative h-8 bg-slate-50 dark:bg-slate-800/60"
                     />
                   );
@@ -2147,10 +2275,10 @@ function GanttView({
                 const isPast = hasSpan && slot.latestTargetMs! < todayMsLocal;
                 return (
                   <div
-                    key={`gtrack-${slot.deliverableId}`}
+                    key={`gtrack-${slot.key}`}
                     className="relative h-8 bg-slate-50 dark:bg-slate-800/60 cursor-pointer"
-                    onClick={() => onToggleCollapse(slot.deliverableId)}
-                    title={`${slot.deliverableName} — click to expand`}
+                    onClick={() => onToggleCollapse(slot.key)}
+                    title={`${slot.label} — click to expand`}
                   >
                     {hasSpan && (
                       <div
