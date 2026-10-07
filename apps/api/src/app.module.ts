@@ -47,6 +47,7 @@ import { SecretCryptoModule } from './common/secret-crypto.module';
 import { SsoAdminModule } from './modules/sso-admin/sso-admin.module';
 import { DriveAdminModule } from './modules/drive-admin/drive-admin.module';
 import { DriveModule } from './modules/drive/drive.module';
+import { UserPreferencesModule } from './modules/user-preferences/user-preferences.module';
 
 @Module({
   imports: [
@@ -129,6 +130,7 @@ import { DriveModule } from './modules/drive/drive.module';
     SsoAdminModule,
     DriveAdminModule,
     DriveModule,
+    UserPreferencesModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

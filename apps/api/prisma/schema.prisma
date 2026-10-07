@@ -349,6 +349,14 @@ model User {
   /// key — NEVER email — so a renamed mailbox doesn't lose its user.
   identities UserIdentity[]
 
+  /// QA5 UI-13 (2026-10-07) — generic per-user key/value preference
+  /// store. Each row holds one JSON blob under a stable `key`. First
+  /// consumer: `execution-board.column-order` (the deliverable column
+  /// order the user types into the "All Deliverables" filter). Kept
+  /// generic so future "remember this view" settings don't need a new
+  /// table per feature. Cascade-delete on user removal.
+  preferences UserPreference[]
+
   @@index([roleId])
   @@index([email])
   @@index([userType])
@@ -357,6 +365,68 @@ model User {
   @@index([createdByImportId])
   @@index([orgUnitId])
   @@map("users")
+}
+
+/// Per-user key/value preference store (QA5 UI-13). Each row holds a
+/// single JSON blob keyed by `(userId, key)`. The server never
+/// interprets `value` — the shape is owned by whichever feature set
+/// the key. Current keys:
+///   • `execution-board.column-order` →
+///       `{ [deliverableName: string]: number }` — user-typed order
+///       numbers for the deliverable columns on the Execution Board.
+model UserPreference {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  /// Stable key, e.g. `execution-board.column-order`. Namespaced so
+  /// different features can't collide; length matches the migration
+  /// VARCHAR(200).
+  key       String   @db.VarChar(200)
+  /// Opaque JSON payload. The feature that owns the key owns the shape.
+  value     Json
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([userId])
+  @@map("user_preferences")
+}
+
+/// QA5 UI-15 (2026-10-07) — cached statistical rank of a task identity
+/// within its Deliverable Template. Populated by
+/// `PlanningService.recomputeTaskTypicalRanks()` from dated
+/// (`endDate IS NOT NULL`) task occurrences across all projects:
+///
+///   relativeRank(task, project) =
+///       (0-based index of task among the project's dated tasks for
+///        that deliverable) / (count of dated tasks in that group)
+///   medianRank(deliverableTemplate, identity) =
+///       median of relativeRank across every project that holds this
+///       identity under this deliverable.
+///
+/// Identity key is `"name:<normalized_name>"` — lowercase + trimmed +
+/// internal whitespace collapsed. Tasks don't carry a template-task FK
+/// so the name is the only stable identity we have. The planning
+/// endpoint LEFT-JOINs this on `(deliverableTemplateId, taskIdentity)`
+/// to surface a `typicalRank` on undated tasks for the Planning tab's
+/// learned ordering. NEVER written in a request path — only by the
+/// bounded recompute service method.
+model TaskTypicalRank {
+  id                    Int      @id @default(autoincrement())
+  deliverableTemplateId Int      @map("deliverable_template_id")
+  /// Normalized identity, see model doc. Length matches the migration
+  /// VARCHAR(255).
+  taskIdentity          String   @map("task_identity") @db.VarChar(255)
+  /// Median relative rank in [0.0, 1.0]. 0 = typically first, 1 = last.
+  medianRank            Float    @map("median_rank")
+  /// How many dated project occurrences fed the median. Surfaced for
+  /// debugging / confidence calls — "ranks learned from N projects".
+  sampleSize            Int      @map("sample_size")
+  computedAt            DateTime @default(now()) @map("computed_at")
+
+  @@unique([deliverableTemplateId, taskIdentity])
+  @@map("task_typical_ranks")
 }
 
 model Role {
