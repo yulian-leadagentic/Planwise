@@ -84,12 +84,45 @@ client.interceptors.response.use(
         return client(originalRequest);
       } catch (refreshError: any) {
         processQueue(refreshError, null);
-        // Log to the console so the failure is visible (helps diagnose
-        // the kick-out reports). The redirect still happens — but at
-        // least we leave a trace.
-        console.warn('[auth] refresh failed → redirecting to /login', refreshError?.message ?? refreshError);
-        useAuthStore.getState().clearAuth();
-        window.location.href = '/login';
+
+        // FEAS-3 / fix-midwork-logout policy (incident 2026-10-07):
+        // ONLY clear auth + redirect on an EXPLICIT auth failure from
+        // the refresh endpoint. The previous code treated any thrown
+        // refreshError — network timeout, 5xx right after a deploy,
+        // Railway restart loop, AbortError — as "session invalid" and
+        // forced the user to /login mid-work.
+        //
+        // What counts as "session invalid":
+        //   • HTTP 401 from `/auth/refresh` — the refresh token is
+        //     actually rejected by the server.
+        //   • HTTP 403 — same (role/account disabled).
+        // Everything else (network error, 5xx, timeout) is a
+        // TRANSIENT failure. We reject the original request so
+        // react-query / the call site can retry, but we KEEP the
+        // session: the user hasn't been authenticated-out, the API
+        // just briefly isn't reachable.
+        const refreshStatus: number | undefined =
+          refreshError?.response?.status;
+        const isTerminalAuthFailure =
+          refreshStatus === 401 || refreshStatus === 403;
+
+        if (isTerminalAuthFailure) {
+          console.warn(
+            '[auth] refresh rejected by server (401/403) → redirecting to /login',
+            refreshError?.message ?? refreshError,
+          );
+          useAuthStore.getState().clearAuth();
+          window.location.href = '/login';
+        } else {
+          // Transient — keep the session. Log for diagnostics so the
+          // kick-out reports still have a trail; the UI will show
+          // the per-call error from the rejection below.
+          console.warn(
+            '[auth] refresh failed transiently (keeping session, caller may retry):',
+            refreshStatus ?? refreshError?.code ?? 'network',
+            refreshError?.message ?? refreshError,
+          );
+        }
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;
