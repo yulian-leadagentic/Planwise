@@ -12,7 +12,8 @@ import { RootManualTaskForm } from './root-manual-task-form';
 import { RootServicePickerModal } from './root-service-picker-modal';
 import { RootCatalogPickerModal } from './root-catalog-picker-modal';
 import { ManualZoneForm } from './manual-zone-form';
-import { ZONE_TYPES, ZONE_DISPLAY } from './constants';
+import { ZONE_DISPLAY } from './constants';
+import { useZoneTypeOptions } from './use-zone-type-options';
 
 // ---------------------------------------------------------------------------
 // Editor View
@@ -75,6 +76,14 @@ export function EditorView({
   // so users can retag a template as e.g. "Level" without recreating
   // it. Empty string is the "— No default —" option (writes null).
   const [headerForm, setHeaderForm] = useState({ name: '', code: '', description: '', defaultZoneType: '' });
+
+  // ZT-1 · the "Default Zone Type" dropdown is sourced from the admin-
+  // managed `/admin/config/zone-types` catalog (replacing the previously
+  // hardcoded `ZONE_TYPES` list). Pass the saved value so a legacy code
+  // that admin has since removed from the catalog is still rendered as
+  // a selectable option (otherwise re-saving the template would silently
+  // drop it).
+  const { options: zoneTypeOptions } = useZoneTypeOptions(headerForm.defaultZoneType);
 
   const updateTemplateMutation = useMutation({
     mutationFn: (data: Record<string, any>) =>
@@ -187,9 +196,9 @@ export function EditorView({
                 aria-label="Default zone type for this template"
               >
                 <option value="">— No default —</option>
-                {ZONE_TYPES.map((zt) => (
-                  <option key={zt} value={zt}>
-                    {ZONE_DISPLAY[zt]?.label ?? zt}
+                {zoneTypeOptions.map((zt) => (
+                  <option key={zt.code} value={zt.code}>
+                    {zt.label}
                   </option>
                 ))}
               </select>

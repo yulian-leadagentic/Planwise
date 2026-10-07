@@ -7,8 +7,9 @@ import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
-import { inputClass, btnPrimary, btnSecondary, ZONE_TYPES, ZONE_DISPLAY } from './zone-templates/constants';
+import { inputClass, btnPrimary, btnSecondary, ZONE_DISPLAY } from './zone-templates/constants';
 import { EditorView } from './zone-templates/editor-view';
+import { useZoneTypeOptions } from './zone-templates/use-zone-type-options';
 
 // ---------------------------------------------------------------------------
 // Main Page (List View)
@@ -28,6 +29,13 @@ export function ZoneTemplatesPage() {
   // string = "no default" (the template stays untyped and its
   // references fall back to 'zone', same as historical behavior).
   const [defaultZoneType, setDefaultZoneType] = useState<string>('');
+
+  // ZT-1 · the "Default Zone Type" dropdown is sourced from the admin-
+  // managed `/admin/config/zone-types` catalog (replacing the previously
+  // hardcoded `ZONE_TYPES` list). No saved-value guard needed on the
+  // Create form — this is a brand-new template, so there is no legacy
+  // value to preserve.
+  const { options: zoneTypeOptions } = useZoneTypeOptions();
 
   const { data: templates, isLoading } = useQuery({
     queryKey: ['templates', 'zone'],
@@ -121,9 +129,9 @@ export function ZoneTemplatesPage() {
                 aria-label="Default zone type for this template"
               >
                 <option value="">— No default —</option>
-                {ZONE_TYPES.map((zt) => (
-                  <option key={zt} value={zt}>
-                    {ZONE_DISPLAY[zt]?.label ?? zt}
+                {zoneTypeOptions.map((zt) => (
+                  <option key={zt.code} value={zt.code}>
+                    {zt.label}
                   </option>
                 ))}
               </select>
