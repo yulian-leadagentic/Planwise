@@ -238,6 +238,22 @@ export function ProjectDetailPage() {
               </>
             )}
 
+            {/* QA5 UI-11: Authoring Tool relocated from the brief tiles
+                block (removed by UI-8) to this Timeline row. Rendered
+                with the same label-colon-value shape as "Timeline:" so
+                the row reads uniformly. Hidden when not set, matching
+                how Leader/Timeline optional items behave. */}
+            {((project as any).authoringToolVersion ?? null) && (
+              <>
+                <span className="text-slate-300 dark:text-slate-600">|</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-500 dark:text-slate-400 text-xs">Authoring Tool:</span>
+                  <span className="text-xs text-slate-700 dark:text-slate-200">
+                    {(project as any).authoringToolVersion}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Project brief tiles (DN-2) — tile row: CONTRACT ·
