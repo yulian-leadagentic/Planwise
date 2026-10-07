@@ -1,7 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { ChevronRight, Home } from 'lucide-react';
-import { useQueryClient } from '@tanstack/react-query';
-import { queryKeys } from '@/lib/query-keys';
+import { useProject } from '@/hooks/use-projects';
+import { useTask } from '@/hooks/use-tasks';
 
 /**
  * Static slug → display-name map. Every path segment that isn't a
@@ -90,67 +90,69 @@ const ROUTE_LABELS: Record<string, string> = {
 };
 
 /**
- * Cache-first resolver for numeric id segments. Reads the entity name
- * out of the react-query cache when its detail query is already loaded
- * (usually true — the drawer/detail page pre-fetches on open). Never
- * makes a new request; falls back to `#123` otherwise so the breadcrumb
- * never blocks the page or triggers a spinner.
+ * BC-2 (QA4 · 2026-10-07) — subscribing id-crumb.
  *
- * `parentSegment` disambiguates which cache to read from — `/projects/42`
- * looks up `queryKeys.projects.detail(42)` while `/tasks/42` looks up
- * `queryKeys.tasks.detail(42)`. Anything unrecognised falls through to
- * the id-only default.
+ * The previous `resolveIdLabel` helper read the react-query cache via
+ * `qc.getQueryData(['projects', id])` during the Breadcrumbs render.
+ * That lookup does NOT subscribe to the cache, so when the detail page
+ * (which lives UNDER the layout that renders this breadcrumb) finished
+ * loading its `useProject(id)` query, Breadcrumbs never re-rendered and
+ * the `#id` fallback stuck forever.
+ *
+ * This child component subscribes by calling the SAME hook (`useProject`
+ * / `useTask`) that the detail page uses. React-query dedupes by query
+ * key, so no extra network request is issued — this just hooks into the
+ * cache the detail page is already populating. Returns the resolved
+ * name as soon as the shared cache entry has data; falls back to
+ * `#<id>` while it is still fetching.
  */
-function resolveIdLabel(qc: ReturnType<typeof useQueryClient>, parentSegment: string, id: number): string {
-  if (parentSegment === 'projects') {
-    // BC-1 (QA4 Wave-2 · 2026-09-29): `useProject(id)` caches under
-    // `['projects', id]` (see project-detail-page.tsx), NOT
-    // `queryKeys.projects.detail(id)` = `['projects','detail',id]`.
-    // The old lookup missed and the breadcrumb rendered `#id`. Prefer
-    // the key `useProject` actually populates; keep the queryKeys
-    // form as a secondary fallback so any code that DID cache under
-    // that key still hits.
-    const cachedPrimary = qc.getQueryData<{ name?: string; displayName?: string }>(['projects', id]);
-    const namePrimary = cachedPrimary?.name ?? cachedPrimary?.displayName;
-    if (namePrimary) return namePrimary;
-    const cachedFallback = qc.getQueryData<{ name?: string; displayName?: string }>(queryKeys.projects.detail(id));
-    const nameFallback = cachedFallback?.name ?? cachedFallback?.displayName;
-    if (nameFallback) return nameFallback;
-  } else if (parentSegment === 'tasks') {
-    const cached = qc.getQueryData<{ name?: string; code?: string }>(queryKeys.tasks.detail(id));
-    const name = cached?.name ?? cached?.code;
-    if (name) return name;
-  }
-  return `#${id}`;
+function ProjectIdCrumb({ id }: { id: number }) {
+  const { data } = useProject(id);
+  return <>{data?.name ?? `#${id}`}</>;
 }
+
+function TaskIdCrumb({ id }: { id: number }) {
+  const { data } = useTask(id);
+  return <>{data?.name ?? `#${id}`}</>;
+}
+
+function IdCrumbLabel({ parent, id }: { parent: string; id: number }) {
+  if (parent === 'projects') return <ProjectIdCrumb id={id} />;
+  if (parent === 'tasks') return <TaskIdCrumb id={id} />;
+  // Unknown parent — no subscribing hook; fall back to the raw id.
+  return <>{`#${id}`}</>;
+}
+
+type Crumb =
+  | { kind: 'static'; path: string; label: string; isLast: boolean }
+  | { kind: 'id'; path: string; parent: string; id: number; isLast: boolean };
 
 export function Breadcrumbs() {
   const location = useLocation();
-  const qc = useQueryClient();
   const segments = location.pathname.split('/').filter(Boolean);
 
-  const crumbs = segments.map((segment, index) => {
+  const crumbs: Crumb[] = segments.map((segment, index) => {
     const path = '/' + segments.slice(0, index + 1).join('/');
     const isLast = index === segments.length - 1;
 
     // Static label first.
     if (ROUTE_LABELS[segment] != null) {
-      return { path, label: ROUTE_LABELS[segment], isLast };
+      return { kind: 'static', path, label: ROUTE_LABELS[segment], isLast };
     }
 
-    // Numeric id — look up a friendly name from the cache. The parent
-    // segment tells us WHICH cache to consult.
+    // Numeric id — subscribe to the parent entity's detail query so the
+    // breadcrumb re-renders when the name becomes available.
     const asNumber = Number(segment);
     if (!Number.isNaN(asNumber) && String(asNumber) === segment) {
       const parent = segments[index - 1] ?? '';
-      return { path, label: resolveIdLabel(qc, parent, asNumber), isLast };
+      return { kind: 'id', path, parent, id: asNumber, isLast };
     }
 
     // Unknown slug — render as-is (fallback for the rare route that
-    // slipped past ROUTE_LABELS. Preferable to a `#` when the slug is
+    // slipped past ROUTE_LABELS). Preferable to a `#` when the slug is
     // human-readable, and it flags a missing label in the map to whoever
-    // sees the breadcrumb).
-    return { path, label: segment, isLast };
+    // sees the breadcrumb.
+    return { kind: 'static', path, label: segment, isLast };
   });
 
   return (
@@ -158,18 +160,24 @@ export function Breadcrumbs() {
       <Link to="/" className="hover:text-foreground" aria-label="Dashboard">
         <Home className="h-4 w-4" aria-hidden="true" />
       </Link>
-      {crumbs.map((crumb) => (
-        <span key={crumb.path} className="flex items-center gap-1">
-          <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
-          {crumb.isLast ? (
-            <span className="font-medium text-foreground" aria-current="page">{crumb.label}</span>
-          ) : (
-            <Link to={crumb.path} className="hover:text-foreground">
-              {crumb.label}
-            </Link>
-          )}
-        </span>
-      ))}
+      {crumbs.map((crumb) => {
+        const labelNode =
+          crumb.kind === 'id'
+            ? <IdCrumbLabel parent={crumb.parent} id={crumb.id} />
+            : crumb.label;
+        return (
+          <span key={crumb.path} className="flex items-center gap-1">
+            <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+            {crumb.isLast ? (
+              <span className="font-medium text-foreground" aria-current="page">{labelNode}</span>
+            ) : (
+              <Link to={crumb.path} className="hover:text-foreground">
+                {labelNode}
+              </Link>
+            )}
+          </span>
+        );
+      })}
     </nav>
   );
 }
