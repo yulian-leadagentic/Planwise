@@ -756,7 +756,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                       <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">{t.taskName}</span>
                     </div>
                     <div className="mt-1 flex items-center gap-2 flex-wrap text-[11px] text-slate-500 dark:text-slate-400">
-                      <span>{t.zoneName} · {t.deliverableName}</span>
+                      <span>{t.deliverableName} · {t.zoneName}</span>
                       <span className="text-slate-300 dark:text-slate-600">·</span>
                       <span>current due <span className="font-mono tabular-nums font-semibold text-slate-700 dark:text-slate-200">{t.endDate}</span></span>
                       <span className="text-slate-300 dark:text-slate-600">→ new target</span>
@@ -1974,7 +1974,7 @@ function GanttView({
       <div className="grid grid-cols-[260px_1fr]">
         {/* Header row spanning both columns */}
         <div className="px-4 py-2 text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 border-r border-b border-slate-200 dark:border-slate-700 bg-[#FAFBFC] flex items-end">
-          Zone · Deliverable
+          Deliverable · Zone
         </div>
         <div
           className="overflow-hidden border-b border-slate-200 dark:border-slate-700 bg-[#FAFBFC]"
