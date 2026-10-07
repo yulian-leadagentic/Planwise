@@ -19,7 +19,7 @@ import { DroppableColumn } from './my-tasks-kanban/droppable-column';
 import { UpcomingTab } from './my-tasks-kanban/upcoming-tab';
 import { TimeReportingTab } from './my-tasks-kanban/time-reporting-tab';
 import { PersonalTaskDialog } from './my-tasks-kanban/personal-task-dialog';
-import { DUE_WINDOW_OPTIONS, matchesDueWindow, type DueWindow } from '@/lib/due-window';
+import { PERIOD_OPTIONS, matchesPeriod, type MyTasksPeriod } from '@/lib/period-filter';
 
 // ─── Kanban Board ──────────────────────────────────────────────────────────
 
@@ -44,27 +44,26 @@ export function MyTasksKanbanPage() {
   const [filterPriority, setFilterPriority] = useState<string>('');
   const [filterDueFrom, setFilterDueFrom] = useState<string>('');
   const [filterDueTo, setFilterDueTo] = useState<string>('');
-  // QA3 Wave-3 Commit 9 (PR-033 · also Tzlil My-Tasks note #5).
-  // Forward-looking window: Day = end-of-today, Week = +7d, Month = +30d.
-  // Overdue open tasks are ALWAYS included so this list stays a real
-  // "act now" queue. Composed on top of dueFrom/dueTo, not a
-  // replacement — the range inputs stay for explicit slices.
-  const [dueWindow, setDueWindow] = useState<DueWindow>('all');
+  // UI-6 (QA5 Wave 2) — single consolidated Date/period control.
+  // CALENDAR semantics (Day=today, Week=Sun–Fri, Month=current calendar
+  // month) with always-pass overlays for in_progress + overdue tasks.
+  // Default = 'week' (matches the "this week + overdue + in-progress"
+  // starter view the client wants on first load); `custom` reveals the
+  // explicit dd/mm/yyyy range inputs. This REPLACES the forward-rolling
+  // `due-window.ts` control AND the "Include future tasks" checkbox;
+  // both are gone (behavior preserved via the week overlay).
+  const [period, setPeriod] = useState<MyTasksPeriod>('week');
   // Tier D #1 (personal-tasks) + #6a+b filters — personal task cut and
   // has-due-date cut. Both default to 'any' so the initial view is
   // unfiltered.
   const [filterKind, setFilterKind] = useState<'' | 'personal' | 'project'>('');
   const [filterHasDue, setFilterHasDue] = useState<'' | 'yes' | 'no'>('');
-  // "Upcoming/future tasks" toggle (client feedback 2026-08-02 item
-  // 5). By default the Kanban hides tasks whose estStart is more
-  // than a week away (server sends `isReady=false` for those). Users
-  // can opt back in to see the full pipeline.
-  const [showFutureTasks, setShowFutureTasks] = useState(false);
-  // Reveal tasks the two Kanban-mandatory rules would otherwise hide
-  // (no-due-date, future-start). One-click "Reveal hidden" chip
-  // flips this and clears any user-controlled has-due filter that's
-  // also excluding them. Without this, an all-undated board would
-  // show "No tasks assigned to you" even though tasks exist.
+  // Reveal tasks the Kanban-mandatory rules would otherwise hide
+  // (no-due-date rows that the overlay didn't rescue). One-click
+  // "Reveal hidden" chip flips this and clears any user-controlled
+  // has-due filter that's also excluding them. Without this, an
+  // all-undated board could show "No tasks assigned to you" even
+  // though tasks exist.
   const [revealHiddenKanban, setRevealHiddenKanban] = useState(false);
 
   const { data: tasksData, isLoading } = useQuery({
@@ -108,15 +107,29 @@ export function MyTasksKanbanPage() {
     return Array.from(names).sort();
   }, [allTasks]);
 
-  // Apply filters. Kanban view enforces "must have due date" as a
-  // hard rule (client feedback 2026-08-02 item 7 — kanban should
-  // only show tasks that have a DUE DATE; other task-display
-  // surfaces follow the same rule except the Planning grid which
-  // stays exhaustive so PMs can still see uncommitted work).
+  // Apply filters. UI-6 — the period filter supplies CALENDAR-based
+  // Day/Week/Month windows plus always-pass overlays for in_progress
+  // and overdue tasks (the "this week + in-progress + overdue" default
+  // view the client wants on first load). The old "no due date" and
+  // "future-start" mandatory kanban cuts are gone — the period's
+  // overlay already surfaces in-progress / overdue tasks without a
+  // date, and the "Reveal hidden" chip stays as the escape hatch for
+  // the one remaining mandatory rule: hide tasks that neither have a
+  // due date NOR are in_progress/overdue on the Kanban tab (there's
+  // nowhere real for them to sit on a deadline-ordered board).
   const now = Date.now();
+  const kanbanBoardShouldShow = (t: any): boolean => {
+    // Match the period-filter's always-pass overlays so a Kanban row
+    // without a dueDate still renders when its status is in_progress
+    // or it is overdue (which would only be true with a dueDate, but
+    // check both for completeness).
+    if (t.status === 'in_progress') return true;
+    if (t.endDate) return true;
+    return false;
+  };
   const tasks = useMemo(() => {
     return allTasks.filter((t) => {
-      if (!matchesDueWindow(t, dueWindow, now)) return false;
+      if (!matchesPeriod(t, period, now, filterDueFrom, filterDueTo)) return false;
       if (filterProjectId && t.project?.id !== filterProjectId) return false;
       if (filterServiceId && t.phaseId !== filterServiceId) return false;
       if (filterPhaseName) {
@@ -124,44 +137,37 @@ export function MyTasksKanbanPage() {
         if (n !== filterPhaseName) return false;
       }
       if (filterPriority && t.priority !== filterPriority) return false;
-      if (filterDueFrom || filterDueTo) {
-        if (!t.endDate) return false;
-        const d = String(t.endDate).slice(0, 10);
-        if (filterDueFrom && d < filterDueFrom) return false;
-        if (filterDueTo && d > filterDueTo) return false;
-      }
+      // Custom range is now handled inside matchesPeriod (period ===
+      // 'custom'); when period isn't 'custom' the raw dueFrom/dueTo
+      // inputs are hidden so they can't shadow the strict/blended
+      // calendar windows above.
       // Personal-task cut (Tier D #1).
       if (filterKind === 'personal' && !t.isPersonal) return false;
       if (filterKind === 'project' && t.isPersonal) return false;
       // Has-due-date cut (Tier D #6b) — user-controlled tri-state.
       if (filterHasDue === 'yes' && !t.endDate) return false;
       if (filterHasDue === 'no' && t.endDate) return false;
-      // Kanban view: default-hide tasks without a due date (2026-08-02
-      // item 7) — a task without one has nowhere real to sit on a
-      // deadline-ordered board. `revealHiddenKanban` bypasses this
-      // so the user can see them via the "N hidden" chip.
-      if (activeTab === 'kanban' && !revealHiddenKanban && !t.endDate) return false;
-      // Kanban view: default-hide future-start tasks unless the user
-      // opts in (2026-08-02 item 5). `isReady` is server-computed
-      // from estimatedStartDate + a 7-day lead window.
-      if (activeTab === 'kanban' && !revealHiddenKanban && !showFutureTasks && t.isReady === false) return false;
+      // Kanban view: hide tasks that neither have a due date nor an
+      // active in_progress status (nothing for them on a deadline-
+      // ordered board). `revealHiddenKanban` bypasses this so the
+      // user can see them via the "N hidden" chip.
+      if (activeTab === 'kanban' && !revealHiddenKanban && !kanbanBoardShouldShow(t)) return false;
       return true;
     });
-  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, showFutureTasks, revealHiddenKanban, dueWindow, now]);
+  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, revealHiddenKanban, period, now]);
 
-  const hasActiveFilter = !!(filterProjectId || filterServiceId || filterPhaseName || filterPriority || filterDueFrom || filterDueTo || filterKind || filterHasDue || dueWindow !== 'all');
+  const hasActiveFilter = !!(filterProjectId || filterServiceId || filterPhaseName || filterPriority || filterDueFrom || filterDueTo || filterKind || filterHasDue || period !== 'week');
 
-  // Count of tasks the two Kanban-only rules are excluding right
-  // now — feeds the "N hidden — no due date / not started" chip.
-  // We re-run the user-controlled filters (all EXCEPT the mandatory
-  // Kanban ones), then count what the mandatory rules would drop.
-  // Only meaningful on the Kanban tab; other tabs render every task.
+  // Count of tasks the Kanban-only "needs due date or in_progress"
+  // rule is excluding right now — feeds the "N hidden — no due date
+  // / not started" chip. Only meaningful on the Kanban tab; other
+  // tabs render every task that passed the user filters.
   const kanbanHiddenCount = useMemo(() => {
     if (activeTab !== 'kanban') return 0;
     if (revealHiddenKanban) return 0;
     let count = 0;
     for (const t of allTasks) {
-      if (!matchesDueWindow(t, dueWindow, now)) continue;
+      if (!matchesPeriod(t, period, now, filterDueFrom, filterDueTo)) continue;
       if (filterProjectId && t.project?.id !== filterProjectId) continue;
       if (filterServiceId && t.phaseId !== filterServiceId) continue;
       if (filterPhaseName) {
@@ -169,23 +175,14 @@ export function MyTasksKanbanPage() {
         if (n !== filterPhaseName) continue;
       }
       if (filterPriority && t.priority !== filterPriority) continue;
-      if (filterDueFrom || filterDueTo) {
-        if (!t.endDate) continue;
-        const d = String(t.endDate).slice(0, 10);
-        if (filterDueFrom && d < filterDueFrom) continue;
-        if (filterDueTo && d > filterDueTo) continue;
-      }
       if (filterKind === 'personal' && !t.isPersonal) continue;
       if (filterKind === 'project' && t.isPersonal) continue;
       if (filterHasDue === 'yes' && !t.endDate) continue;
       if (filterHasDue === 'no' && t.endDate) continue;
-      // Now: WOULD the mandatory Kanban rules drop this one?
-      const droppedByNoDueDate = !t.endDate;
-      const droppedByFutureStart = !showFutureTasks && t.isReady === false;
-      if (droppedByNoDueDate || droppedByFutureStart) count++;
+      if (!kanbanBoardShouldShow(t)) count++;
     }
     return count;
-  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, showFutureTasks, revealHiddenKanban, dueWindow, now]);
+  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, revealHiddenKanban, period, now]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -332,12 +329,17 @@ export function MyTasksKanbanPage() {
         </div>
       </div>
 
-      {/* Filters */}
+      {/* UI-6 — Redesigned filter bar: cleaner single row.
+          All Projects · All Deliverables · Any Priority · Any kind
+          · Date/period · Due range (only when period='custom').
+          Spacing/alignment per the design system; no duplicate
+          period controls, no "Include future tasks" checkbox (both
+          folded into the one `period` state). */}
       <div className="flex flex-wrap items-center gap-2">
         <select
           value={filterProjectId ?? ''}
           onChange={(e) => setFilterProjectId(e.target.value ? +e.target.value : null)}
-          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] text-slate-700 dark:text-slate-200 hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
         >
           <option value="">All Projects</option>
           {projectOptions.map((p) => (
@@ -347,7 +349,7 @@ export function MyTasksKanbanPage() {
         <select
           value={filterServiceId ?? ''}
           onChange={(e) => setFilterServiceId(e.target.value ? +e.target.value : null)}
-          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] text-slate-700 dark:text-slate-200 hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
         >
           <option value="">All Services</option>
           {services.map((s: any) => (
@@ -357,7 +359,7 @@ export function MyTasksKanbanPage() {
         <select
           value={filterPhaseName ?? ''}
           onChange={(e) => setFilterPhaseName(e.target.value || null)}
-          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] text-slate-700 dark:text-slate-200 hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
         >
           <option value="">All Deliverables</option>
           {phaseOptions.map((name) => (
@@ -369,7 +371,7 @@ export function MyTasksKanbanPage() {
         <select
           value={filterPriority}
           onChange={(e) => setFilterPriority(e.target.value)}
-          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] text-slate-700 dark:text-slate-200 hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
         >
           <option value="">Any Priority</option>
           <option value="critical">Critical</option>
@@ -381,7 +383,7 @@ export function MyTasksKanbanPage() {
         <select
           value={filterKind}
           onChange={(e) => setFilterKind(e.target.value as '' | 'personal' | 'project')}
-          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] text-slate-700 dark:text-slate-200 hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
           title="Personal-task filter"
         >
           <option value="">Any kind</option>
@@ -391,77 +393,54 @@ export function MyTasksKanbanPage() {
         <select
           value={filterHasDue}
           onChange={(e) => setFilterHasDue(e.target.value as '' | 'yes' | 'no')}
-          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] text-slate-700 dark:text-slate-200 hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
           title="Has due date"
         >
           <option value="">Due date: any</option>
           <option value="yes">Has due date</option>
           <option value="no">Missing due date</option>
         </select>
-        {/* Show future-start tasks on the Kanban (client 2026-08-02
-            item 5). Off by default — Kanban shows what to work on
-            NOW; tasks whose estStart is >7 days out live in the
-            underlying pipeline until they get close. */}
-        {activeTab === 'kanban' && (
-          <label className="flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showFutureTasks}
-              onChange={(e) => setShowFutureTasks(e.target.checked)}
-              className="rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
-            />
-            Include future tasks
-          </label>
-        )}
-        {/* QA3 Wave-3 Commit 9 (PR-033) · shared with Execution Review.
-            Forward-looking window: Day=end of today, Week=+7d,
-            Month=+30d. Overdue open tasks always pass regardless of
-            the window. Composed on top of the explicit Due date range
-            below, not a replacement. */}
-        <div
-          className="inline-flex items-center gap-0 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-0.5 text-[11px]"
-          role="tablist"
-          aria-label="Due window"
+        {/* UI-6 · Date/period — single calendar-based control.
+            Day = today, Week = this calendar week Sun–Fri (Israeli),
+            Month = this calendar month, Any = no filter, Custom =
+            reveal the dd/mm/yyyy range inputs. Day/Week/Month also
+            always include in_progress + overdue tasks (the "act now"
+            overlay) so the default view shows what the user has to
+            touch this week even when a dueDate falls outside. */}
+        <select
+          value={period}
+          onChange={(e) => setPeriod(e.target.value as MyTasksPeriod)}
+          className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] text-slate-700 dark:text-slate-200 hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
+          title="Date / period"
+          aria-label="Date / period"
         >
-          {DUE_WINDOW_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => setDueWindow(opt.value)}
-              title={opt.title}
-              role="tab"
-              aria-selected={dueWindow === opt.value}
-              className={cn(
-                'px-2 py-1 rounded font-semibold transition-colors',
-                dueWindow === opt.value
-                  ? 'bg-blue-600 text-white'
-                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/60',
-              )}
-            >
-              {opt.label}
-            </button>
+          {PERIOD_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value} title={opt.title}>{opt.label}</option>
           ))}
-        </div>
-        {/* Due-date range — same control set as the Execution board's
-            date filter. Either side optional. */}
-        <div className="flex items-center gap-1 text-[12px] text-slate-500 dark:text-slate-400">
-          <span className="text-[11px]">Due:</span>
-          <input
-            type="date"
-            value={filterDueFrom}
-            onChange={(e) => setFilterDueFrom(e.target.value)}
-            className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
-            aria-label="Due date from"
-          />
-          <span className="text-slate-400 dark:text-slate-500">→</span>
-          <input
-            type="date"
-            value={filterDueTo}
-            onChange={(e) => setFilterDueTo(e.target.value)}
-            className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-[12px] hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
-            aria-label="Due date to"
-          />
-        </div>
+        </select>
+        {/* Due-date range — only visible when period='custom'. The
+            period select above IS the primary period filter now; the
+            range inputs are the escape hatch for a specific slice. */}
+        {period === 'custom' && (
+          <div className="flex items-center gap-1 text-[12px] text-slate-500 dark:text-slate-400">
+            <span className="text-[11px]">Due range:</span>
+            <input
+              type="date"
+              value={filterDueFrom}
+              onChange={(e) => setFilterDueFrom(e.target.value)}
+              className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-[12px] text-slate-700 dark:text-slate-200 hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
+              aria-label="Due date from"
+            />
+            <span className="text-slate-400 dark:text-slate-500">→</span>
+            <input
+              type="date"
+              value={filterDueTo}
+              onChange={(e) => setFilterDueTo(e.target.value)}
+              className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-[12px] text-slate-700 dark:text-slate-200 hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
+              aria-label="Due date to"
+            />
+          </div>
+        )}
         {hasActiveFilter && (
           <button
             onClick={() => {
@@ -473,7 +452,10 @@ export function MyTasksKanbanPage() {
               setFilterDueTo('');
               setFilterKind('');
               setFilterHasDue('');
-              setDueWindow('all');
+              // Clearing restores the UI-6 default view (week + status
+              // overrides), not "any" — that's what the user lands on
+              // when they first open the page.
+              setPeriod('week');
             }}
             className="text-[12px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 underline"
           >
