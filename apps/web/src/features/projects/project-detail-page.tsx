@@ -237,18 +237,22 @@ export function ProjectDetailPage() {
                 </div>
               </>
             )}
+
           </div>
 
-          {/* Project brief tiles (DN-2) — 5-tile row: CONTRACT ·
-              EST. AMOUNT · LOGGED COST · PROGRESS · AUTHORING TOOL.
-              Finance gate applied inside the component; PROGRESS +
-              AUTHORING TOOL stay visible to everyone. */}
+          {/* Project brief tiles (DN-2) — tile row: CONTRACT ·
+              EST. AMOUNT · LOGGED COST · PROGRESS. QA5 UI-8:
+              the entire block is collapsible AND finance-gated —
+              non-finance users don't see financial figures OR
+              Progress; finance users get the block open by default
+              with a collapse toggle (persisted in localStorage).
+              The AUTHORING TOOL tile was removed and the authoring
+              tool value now shows on the Timeline row above (UI-11). */}
           <div className="pb-4">
             <ProjectBriefTiles
               projectId={projectId}
               contract={project.budget ?? null}
               actualCost={(project as any).actualCost}
-              authoringToolVersion={(project as any).authoringToolVersion ?? null}
               showFinance={showFinance}
             />
           </div>
