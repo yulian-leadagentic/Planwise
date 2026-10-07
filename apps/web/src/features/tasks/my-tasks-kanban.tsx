@@ -19,7 +19,44 @@ import { DroppableColumn } from './my-tasks-kanban/droppable-column';
 import { UpcomingTab } from './my-tasks-kanban/upcoming-tab';
 import { TimeReportingTab } from './my-tasks-kanban/time-reporting-tab';
 import { PersonalTaskDialog } from './my-tasks-kanban/personal-task-dialog';
-import { PERIOD_OPTIONS, matchesPeriod, type MyTasksPeriod } from '@/lib/period-filter';
+import { PERIOD_OPTIONS, matchesPeriod, weekRangeSunFri, monthRangeToday, type MyTasksPeriod } from '@/lib/period-filter';
+
+// UI-7 — The Done column auto-clears every Sunday to a this-week-only
+// view, with a "Show all" dropdown for peeking at earlier closed
+// tasks. Four window options; `thisWeek` is the default and the one
+// the column rolls over to automatically.
+type DoneWindow = 'thisWeek' | 'prevWeek' | 'prevMonth' | 'monthToDate';
+const DONE_WINDOW_LABEL: Record<DoneWindow, string> = {
+  thisWeek: 'This week',
+  prevWeek: 'Previous week',
+  prevMonth: 'Previous month',
+  monthToDate: 'Month to date',
+};
+
+/**
+ * The timestamp range (local time) that a given Done window covers,
+ * using the same Sun–Fri calendar-week semantics as the period
+ * filter. Task.completedAt doesn't exist on the Task model (grep of
+ * prisma/schema.prisma 2026-10-07) so we fall back to `updatedAt`
+ * when the task is already in status='completed' — same proxy the
+ * pre-UI-7 "last 7 days" cutoff used.
+ */
+function doneWindowRange(window: DoneWindow, now: number = Date.now()): { startMs: number; endMs: number } {
+  if (window === 'thisWeek') return weekRangeSunFri(now);
+  if (window === 'prevWeek') {
+    // One week back: shift `now` by 7 days before resolving Sun–Fri.
+    return weekRangeSunFri(now - 7 * 24 * 60 * 60 * 1000);
+  }
+  if (window === 'monthToDate') {
+    const r = monthRangeToday(now);
+    return { startMs: r.startMs, endMs: now };
+  }
+  // prevMonth — previous calendar month, 1st 00:00 → last day 23:59.
+  const d = new Date(now);
+  const start = new Date(d.getFullYear(), d.getMonth() - 1, 1, 0, 0, 0, 0);
+  const end = new Date(d.getFullYear(), d.getMonth(), 0, 23, 59, 59, 999);
+  return { startMs: start.getTime(), endMs: end.getTime() };
+}
 
 // ─── Kanban Board ──────────────────────────────────────────────────────────
 
@@ -65,6 +102,22 @@ export function MyTasksKanbanPage() {
   // all-undated board could show "No tasks assigned to you" even
   // though tasks exist.
   const [revealHiddenKanban, setRevealHiddenKanban] = useState(false);
+  // UI-7 — Done column window. Default `thisWeek` effectively clears
+  // the column every Sunday (the Sun–Fri range rolls forward). The
+  // user's pick persists per-browser so a shift supervisor who always
+  // wants to see "Month to date" doesn't have to re-pick each session.
+  const DONE_WINDOW_KEY = 'my-tasks.done.window';
+  const [doneWindow, setDoneWindow] = useState<DoneWindow>(() => {
+    try {
+      const raw = localStorage.getItem(DONE_WINDOW_KEY);
+      if (raw === 'thisWeek' || raw === 'prevWeek' || raw === 'prevMonth' || raw === 'monthToDate') return raw;
+    } catch { /* ignore — private mode / blocked storage */ }
+    return 'thisWeek';
+  });
+  const setDoneWindowAndPersist = (w: DoneWindow) => {
+    setDoneWindow(w);
+    try { localStorage.setItem(DONE_WINDOW_KEY, w); } catch { /* ignore */ }
+  };
 
   const { data: tasksData, isLoading } = useQuery({
     queryKey: queryKeys.tasks.mine(),
@@ -198,16 +251,21 @@ export function MyTasksKanbanPage() {
     // that column would then silently overwrite their real status
     // (on_hold → not_started, cancelled → not_started, etc.).
     const other: Record<string, any[]> = {};
-    // Cutoff for the "Done" column — only show tasks marked completed
-    // (proxy: updatedAt) within the last 7 days so the column doesn't
-    // become an ever-growing archive. Older completions are still in
-    // the DB and reachable via reports; the kanban is for current work.
-    const oneWeekAgo = Date.now() - 7 * 86_400_000;
+    // UI-7 — Done column auto-clears weekly. Default `doneWindow` is
+    // 'thisWeek' (Sun–Fri), so on Sunday the column effectively
+    // empties as the range rolls forward. Older completions are still
+    // in the DB; the "Show all" dropdown on the Done column header
+    // lets the user widen to the previous week, previous calendar
+    // month, or month-to-date. `Task.completedAt` doesn't exist on
+    // the Prisma model (checked schema.prisma 2026-10-07) so we fall
+    // back to `updatedAt` while `status === 'completed'` — same
+    // proxy the old 7-day cutoff used.
+    const doneRange = doneWindowRange(doneWindow, now);
     for (const task of tasks) {
       const status = task.status || 'not_started';
       if (status === 'completed') {
         const upd = task.updatedAt ? new Date(task.updatedAt).getTime() : 0;
-        if (upd < oneWeekAgo) continue; // hide stale completions
+        if (upd < doneRange.startMs || upd > doneRange.endMs) continue;
       }
       if (map[status]) map[status].push(task);
       else {
@@ -230,7 +288,7 @@ export function MyTasksKanbanPage() {
       return bu - au;
     });
     return { columnMap: map, otherByStatus: other };
-  }, [tasks]);
+  }, [tasks, doneWindow, now]);
 
   // Keep the original name so existing consumers below still work.
   const columnTasks = columnMap;
@@ -526,9 +584,32 @@ export function MyTasksKanbanPage() {
             onDragEnd={handleDragEnd}>
             <div className="grid grid-cols-4 gap-3">
               {columns.map((col) => (
-                <DroppableColumn key={col.id} column={col} tasks={columnTasks[col.id] ?? []}
+                <DroppableColumn
+                  key={col.id}
+                  column={col}
+                  tasks={columnTasks[col.id] ?? []}
                   onOpenDrawer={(id) => setDrawerTaskId(id)}
-                  onStatusChange={(taskId, status) => moveTask(taskId, status)} />
+                  onStatusChange={(taskId, status) => moveTask(taskId, status)}
+                  // UI-7 — Done column header gets a Show-all window
+                  // picker. Rendered via the shared `headerExtras`
+                  // slot so the picker sits inline with the title/
+                  // count and doesn't trip the collapse-toggle button.
+                  headerExtras={col.id === 'completed' ? (
+                    <select
+                      value={doneWindow}
+                      onChange={(e) => setDoneWindowAndPersist(e.target.value as DoneWindow)}
+                      className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-[11px] text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
+                      title="Show all — pick a window of earlier closed tasks"
+                      aria-label="Done column window"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {(Object.keys(DONE_WINDOW_LABEL) as DoneWindow[]).map((w) => (
+                        <option key={w} value={w}>{DONE_WINDOW_LABEL[w]}</option>
+                      ))}
+                    </select>
+                  ) : undefined}
+                  emptyMessage={col.id === 'completed' ? `No tasks completed ${DONE_WINDOW_LABEL[doneWindow].toLowerCase()}` : undefined}
+                />
               ))}
             </div>
             <DragOverlay>
