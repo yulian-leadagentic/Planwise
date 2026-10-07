@@ -1,8 +1,10 @@
+import { AlertCircle, MessageSquare } from 'lucide-react';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { PriorityBadge } from '@/components/shared/priority-badge';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { formatDate } from '@/lib/date-utils';
 import { minutesToDisplay } from '@/types';
+import { cn } from '@/lib/utils';
 import type { Task } from '@/types';
 
 interface TaskCardProps {
@@ -10,16 +12,57 @@ interface TaskCardProps {
 }
 
 export function TaskCard({ task }: TaskCardProps) {
+  // QA5 UI-1: red due date when overdue (open tasks only). This matches
+  // the shared TaskCardBody behavior so every task-display surface
+  // signals overdue the same way.
+  const isDone = task.status === 'completed' || (task.status as string) === 'done' || (task.status as string) === 'cancelled';
+  const isOverdue = !!task.endDate && !isDone && new Date(task.endDate) < new Date();
+
+  // QA5 UI-2: personal-task suffix. Rendered as muted inline text so
+  // the task name stays the primary focus.
+  const isPersonal = !!(task as unknown as { isPersonal?: boolean }).isPersonal;
+
+  // QA5 UI-4: comment indicator. Prefer the explicit commentCount
+  // surfaced by the API; fall back to _count.comments on raw payloads.
+  const commentCount = Number(
+    (task as unknown as { commentCount?: number })?.commentCount
+    ?? (task as unknown as { _count?: { comments?: number } })?._count?.comments
+    ?? 0,
+  );
+
+  // QA5 UI-5: assignee count stays as avatar stack — this card never
+  // showed a count chip, so there's nothing to hide for 0/1. Avatars
+  // continue to show for every assignee.
   return (
     <div className="rounded-lg border border-border bg-background p-4 transition-colors hover:bg-muted/50">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-medium">{task.name}</h3>
+          <h3 className="truncate text-sm font-medium">
+            {task.name}
+            {isPersonal && (
+              <span className="ml-1 text-muted-foreground font-normal">(Personal)</span>
+            )}
+          </h3>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {task.label?.projectName} / {task.label?.name}
           </p>
         </div>
-        <PriorityBadge priority={task.priority} />
+        {/* QA5 UI-3: priority chip stays on the top-right of the name
+            row, which is already where it was — matches the shared
+            TaskCardBody rendering. */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {commentCount > 0 && (
+            <span
+              className="inline-flex items-center gap-0.5 text-green-600 dark:text-green-400"
+              aria-label={`${commentCount} comment${commentCount === 1 ? '' : 's'}`}
+              title={`${commentCount} comment${commentCount === 1 ? '' : 's'}`}
+            >
+              <MessageSquare className="h-3 w-3" />
+              <span className="text-[10px] font-bold tabular-nums leading-none">{commentCount}</span>
+            </span>
+          )}
+          <PriorityBadge priority={task.priority} />
+        </div>
       </div>
 
       <div className="mt-3 flex items-center gap-2">
@@ -30,8 +73,15 @@ export function TaskCard({ task }: TaskCardProps) {
           </span>
         )}
         {task.endDate && (
-          <span className="ml-auto text-xs text-muted-foreground">
+          <span
+            className={cn(
+              'ml-auto inline-flex items-center gap-1 text-xs',
+              isOverdue ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-muted-foreground',
+            )}
+            title={isOverdue ? 'Overdue' : undefined}
+          >
             Due {formatDate(task.endDate)}
+            {isOverdue && <AlertCircle className="h-3 w-3" aria-hidden="true" />}
           </span>
         )}
       </div>

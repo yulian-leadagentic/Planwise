@@ -98,6 +98,9 @@ export class PlanningService {
           where: { deletedAt: null },
           include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } },
         },
+        // QA5 UI-4: expose task comment counts so the project Kanban
+        // card can render the comment bubble + count on every task.
+        _count: { select: { comments: true } },
       },
       orderBy: [{ zoneId: 'asc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
@@ -310,6 +313,9 @@ export class PlanningService {
           deliverableTargetDate = deliverableTargetById.get(t.projectDeliverableId) ?? null;
         }
       }
+      // QA5 UI-4: expose a flat `commentCount` the FE card can read
+      // without depending on Prisma's `_count` shape.
+      const commentCount = (t as any)._count?.comments ?? 0;
       return {
         ...t,
         loggedMinutes: loggedByTask.get(t.id) ?? 0,
@@ -321,6 +327,7 @@ export class PlanningService {
         // own fallback chain because the server has the marker→template
         // JOIN available in one place. Nullable when nothing resolves.
         service: resolveTaskService(t),
+        commentCount,
       };
     });
 

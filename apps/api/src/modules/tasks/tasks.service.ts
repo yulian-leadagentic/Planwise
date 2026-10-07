@@ -348,6 +348,11 @@ export class TasksService {
             user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
           },
         },
+        // QA5 UI-4: comment count surfaces the "N comments" bubble on
+        // the task card. The drawer already loads the full thread so
+        // the count stays in sync (invalidated on the same mutation
+        // paths that touch comments).
+        _count: { select: { comments: true } },
       },
     });
 
@@ -482,6 +487,10 @@ export class TasksService {
       const isReady = t.estimatedStartDate == null
         ? true
         : new Date(t.estimatedStartDate) <= readyThreshold;
+      // QA5 UI-4: flatten _count.comments to commentCount for a stable
+      // FE contract — the bubble indicator reads task.commentCount and
+      // we don't want callers to depend on Prisma's _count shape.
+      const commentCount = (t as any)._count?.comments ?? 0;
       return {
         ...t,
         loggedMinutes: agg?.minutes ?? 0,
@@ -489,6 +498,7 @@ export class TasksService {
         zoneBreadcrumb,
         project: t.project ? { ...t.project, bimLeader } : t.project,
         isReady,
+        commentCount,
       };
     });
   }

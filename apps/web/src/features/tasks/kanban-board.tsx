@@ -84,7 +84,10 @@ function KanbanCard({ task, onOpen }: { task: any; onOpen: (id: number) => void 
         isDragging && 'opacity-50 shadow-lg ring-2 ring-blue-300',
       )}
     >
-      {/* Header — grip, code, status pill, health/priority marks. */}
+      {/* Header — grip, code, status pill, health marks. QA5 UI-3: the
+          inline "Crit"/"High" priority chip was removed — priority now
+          renders inside TaskCardBody on the task-name row (one shared
+          surface across My Tasks / Project Kanban / drawer). */}
       <div className="flex items-center gap-2 px-3.5 pt-3 pb-1.5">
         <button
           type="button"
@@ -99,21 +102,28 @@ function KanbanCard({ task, onOpen }: { task: any; onOpen: (id: number) => void 
         <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider shrink-0', STATUS_PILL[task.status] ?? STATUS_PILL.not_started)}>
           {STATUS_LABEL[task.status] ?? task.status}
         </span>
-        {task.priority === 'critical' && <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-bold text-red-600 shrink-0">Crit</span>}
-        {task.priority === 'high' && <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-600 shrink-0">High</span>}
         <div className="ml-auto flex items-center gap-1">
           {health.level === 'critical' && <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />}
           {health.level === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />}
         </div>
       </div>
 
-      {/* Body — shared labeled-field layout. Clicking opens the drawer. */}
+      {/* Body — shared labeled-field layout. Clicking opens the drawer.
+          UI-1: at-risk/overdue signal is now in the due-date pill's
+          red + "!" + tooltip inside TaskCardBody (replaces the old
+          bottom-of-card red reasons banner). */}
       <button
         type="button"
         onClick={() => onOpen(task.id)}
         className="w-full text-left cursor-pointer hover:bg-slate-50/50 dark:hover:bg-slate-800/50 focus:outline-none focus:ring-2 focus:ring-blue-300"
       >
-        <TaskCardBody task={task} isOverdue={health.isOverdue} hideProject />
+        <TaskCardBody
+          task={task}
+          isOverdue={health.isOverdue}
+          isAtRisk={health.level === 'critical' || health.isOverdue}
+          dueReason={health.reasons[0]}
+          hideProject
+        />
       </button>
 
       {/* Footer — hours pill + zone breadcrumb (if any) + assignee avatars. */}
@@ -151,14 +161,10 @@ function KanbanCard({ task, onOpen }: { task: any; onOpen: (id: number) => void 
           </div>
         )}
       </div>
-      {health.reasons.length > 0 && (
-        <div className={cn(
-          'mx-3.5 mb-3 rounded px-1.5 py-1 text-[10px]',
-          health.level === 'critical' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700',
-        )}>
-          {health.reasons[0]}
-        </div>
-      )}
+      {/* QA5 UI-1: the standalone health-reasons banner was removed —
+          the first reason now shows as a tooltip on the (red + "!")
+          due-date pill inside TaskCardBody, matching every other
+          task-display surface. */}
     </div>
   );
 }
