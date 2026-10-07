@@ -87,8 +87,24 @@ export class ExecutionPlanningService {
       tasks: Array<{ taskId: number; taskName: string; hours: number }>;
     }> = [];
 
+    // FEAS-1 — guard against far-future endDates (e.g. project.endDate = year
+    // 9999) wedging the event loop. The caller's `to` string is passed through
+    // to this iterator; clamp the loop bound to startDate + 10 years for the
+    // scan only (we do NOT mutate the stored project value — the clamp lives
+    // in local scope). The user is logged a warning so monitoring can see it.
+    const WORKLOAD_MAX_SPAN_MS = 10 * 365 * 86400000;
+    const clampedLoopEnd =
+      endDate.getTime() - startDate.getTime() > WORKLOAD_MAX_SPAN_MS
+        ? new Date(startDate.getTime() + WORKLOAD_MAX_SPAN_MS)
+        : endDate;
+    if (clampedLoopEnd.getTime() !== endDate.getTime()) {
+      this.logger.warn(
+        `[feasibility clamp] getUserWorkload: userId=${userId} window ${from}..${to} > 10y; clamping loop to ${clampedLoopEnd.toISOString().split('T')[0]}`,
+      );
+    }
+
     const current = new Date(startDate);
-    while (current <= endDate) {
+    while (current <= clampedLoopEnd) {
       const dateStr = current.toISOString().split('T')[0];
       const dayOfWeek = current.getDay();
       const isHoliday = holidayDates.has(dateStr);
@@ -184,6 +200,39 @@ export class ExecutionPlanningService {
   // ─── FEASIBILITY ENGINE ─────────────────────────────────────────────────
 
   async calculateFeasibility(projectId: number, targetDate?: string) {
+    // FEAS-1 (incident 2026-10-07) — belt around the whole computation.
+    // The real fix is the loop + DFS bounding below; this catch exists
+    // for any OTHER sync throw that could escape (e.g. a future helper
+    // regression). A CPU-bound hang is NOT caught by this — don't rely
+    // on it as a shield; the bounding is the shield.
+    try {
+      return await this.calculateFeasibilityInner(projectId, targetDate);
+    } catch (err: any) {
+      this.logger.error(
+        `[feasibility] projectId=${projectId} threw: ${err?.message ?? err}`,
+      );
+      return {
+        status: 'OK' as const,
+        isComputable: false,
+        error: {
+          kind: 'computation-failed',
+          message: String(err?.message ?? err ?? 'unknown'),
+        },
+        details: {
+          overloadedAssignees: [],
+          hoursDeficit: 0,
+          criticalPathDays: 0,
+          daysRemaining: 0,
+          bottleneckTasks: [],
+          unassignedTasks: [],
+          blockedTasks: [],
+        },
+        warnings: [] as Array<{ kind: string; taskIds?: number[]; detail?: string }>,
+      };
+    }
+  }
+
+  private async calculateFeasibilityInner(projectId: number, targetDate?: string) {
     const project = await this.prisma.project.findUniqueOrThrow({
       where: { id: projectId },
       select: { id: true, name: true, endDate: true, budget: true },
@@ -210,7 +259,19 @@ export class ExecutionPlanningService {
     });
 
     if (tasks.length === 0) {
-      return { status: 'OK' as const, details: { overloadedAssignees: [], hoursDeficit: 0, criticalPathDays: 0, daysRemaining: target ? this.daysBetween(now, target) : 0, bottleneckTasks: [], unassignedTasks: [], blockedTasks: [] } };
+      return {
+        status: 'OK' as const,
+        details: {
+          overloadedAssignees: [],
+          hoursDeficit: 0,
+          criticalPathDays: 0,
+          daysRemaining: target ? this.daysBetween(now, target) : 0,
+          bottleneckTasks: [],
+          unassignedTasks: [],
+          blockedTasks: [],
+        },
+        warnings: [] as Array<{ kind: string; taskIds?: number[]; detail?: string }>,
+      };
     }
 
     const daysRemaining = target ? this.daysBetween(now, target) : 365;
@@ -284,8 +345,19 @@ export class ExecutionPlanningService {
     const totalCapacity = [...assigneeLoad.values()].reduce((s, l) => s + l.capacity, 0);
     const hoursDeficit = Math.max(0, totalRequired - totalCapacity);
 
-    // Calculate critical path (longest chain of dependencies in days)
-    const criticalPathDays = this.calculateCriticalPath(tasks);
+    // Calculate critical path (longest chain of dependencies in days).
+    // FEAS-1 — the DFS now has gray/black cycle detection. If a cycle
+    // was found, we surface a soft warning on the response instead of
+    // throwing — the user still needs their feasibility number.
+    const cp = this.calculateCriticalPath(tasks);
+    const criticalPathDays = cp.days;
+    const warnings: Array<{ kind: string; taskIds?: number[]; detail?: string }> = [];
+    if (cp.cycleIds.length > 0) {
+      this.logger.warn(
+        `[feasibility cycle] projectId=${projectId} task dependency cycle member ids: ${cp.cycleIds.join(',')}`,
+      );
+      warnings.push({ kind: 'cycle', taskIds: cp.cycleIds });
+    }
 
     // Determine status
     let status: 'OK' | 'AT_RISK' | 'IMPOSSIBLE' = 'OK';
@@ -314,6 +386,7 @@ export class ExecutionPlanningService {
         unassignedTasks,
         blockedTasks,
       },
+      warnings,
     };
   }
 
@@ -1400,34 +1473,113 @@ export class ExecutionPlanningService {
 
   // ─── HELPERS ────────────────────────────────────────────────────────────
 
+  /**
+   * FEAS-1 (incident 2026-10-07) — closed-form working-day count.
+   *
+   * Weekend convention follows the rest of this service: Friday (5) +
+   * Saturday (6) off (Israeli week).
+   *
+   * The previous implementation stepped one day at a time with a
+   * `toISOString()` call per iteration. For a project with
+   * `endDate = Dec 9999` this walked ~2.9M synchronous iterations and
+   * wedged the event loop → Railway SIGKILL loop on
+   * `/projects/:id/feasibility`.
+   *
+   * Closed-form math:
+   *   • `totalDays   = floor((to - from) / 86400000) + 1`           (inclusive)
+   *   • `fullWeeks   = floor(totalDays / 7)` × 5 working days each.
+   *   • Remainder: step from `from + fullWeeks*7` for `remainder`
+   *     days (<= 6 iterations, bounded by week length).
+   *   • Holidays: iterate the holidays array (bounded by holiday
+   *     count, NOT by date range), subtracting any that fall inside
+   *     [from, to] on a weekday. A Fri/Sat holiday is already excluded
+   *     by the weekend check — it doesn't double-count.
+   */
   private countWorkingDays(from: Date, to: Date, holidays: Set<string>): number {
-    let count = 0;
-    const current = new Date(from);
-    while (current <= to) {
-      const day = current.getDay();
-      const dateStr = current.toISOString().split('T')[0];
-      if (day !== 5 && day !== 6 && !holidays.has(dateStr)) count++;
-      current.setDate(current.getDate() + 1);
+    const dayMs = 86400000;
+    const totalDays = Math.max(0, Math.floor((to.getTime() - from.getTime()) / dayMs) + 1);
+    if (totalDays === 0) return 0;
+
+    // 1. Working days from the whole-week part.
+    const fullWeeks = Math.floor(totalDays / 7);
+    let working = fullWeeks * 5;
+
+    // 2. Remainder — step at most 6 days from the first day AFTER the
+    //    whole-week block, counting non-weekend days.
+    const remainder = totalDays - fullWeeks * 7;
+    if (remainder > 0) {
+      const remStart = new Date(from.getTime() + fullWeeks * 7 * dayMs);
+      for (let i = 0; i < remainder; i++) {
+        const d = (remStart.getDay() + i) % 7;
+        if (d !== 5 && d !== 6) working++;
+      }
     }
-    return count;
+
+    // 3. Subtract holidays inside [from, to] that land on a weekday.
+    //    Iterate the holidays array — size is bounded by the catalog,
+    //    not by the span of the date range. A Fri/Sat holiday is a
+    //    no-op because the day was already not counted.
+    const fromStr = from.toISOString().split('T')[0];
+    const toStr = to.toISOString().split('T')[0];
+    for (const h of holidays) {
+      if (h < fromStr || h > toStr) continue;
+      // Parse YYYY-MM-DD as UTC to avoid timezone drift on getDay()
+      const [y, m, d] = h.split('-').map(Number);
+      if (!y || !m || !d) continue;
+      const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+      if (dow !== 5 && dow !== 6) working--;
+    }
+
+    return Math.max(0, working);
   }
 
   private daysBetween(from: Date, to: Date): number {
-    return Math.max(0, Math.ceil((to.getTime() - from.getTime()) / 86400000));
+    // FEAS-1 — clamp to 100 years. Any date beyond that is a data-entry
+    // error (e.g. project.endDate = year 9999); downstream feasibility
+    // math stays finite instead of propagating absurd values into the
+    // AT_RISK threshold calculation.
+    const DAYS_CAP = 365 * 100;
+    const raw = Math.max(0, Math.ceil((to.getTime() - from.getTime()) / 86400000));
+    return Math.min(raw, DAYS_CAP);
   }
 
-  private calculateCriticalPath(tasks: any[]): number {
-    // Build adjacency list from dependencies
+  /**
+   * FEAS-1 (incident 2026-10-07) — DFS with cycle detection.
+   *
+   * The previous version memoized completed nodes (black) but had no
+   * "visiting" guard (gray). A dependency cycle A→B→A caused infinite
+   * recursion → `Maximum call stack size exceeded`, which Nest
+   * surfaced as a sync throw that still spiked CPU during the climb +
+   * contributed to the Railway SIGKILL loop on
+   * `/projects/:id/feasibility`.
+   *
+   * Fix: standard tri-color DFS. On re-entry of a gray node we record
+   * the task id in `detectedCycleIds`, return 0 for that edge, and let
+   * the top-level recursion unwind. The caller surfaces the detected
+   * ids as a soft warning on the feasibility response — the user
+   * still gets a result.
+   */
+  private calculateCriticalPath(tasks: any[]): { days: number; cycleIds: number[] } {
     const taskMap = new Map<number, any>();
     for (const t of tasks) taskMap.set(t.id, t);
 
-    // Find longest path using DFS with memoization
-    const memo = new Map<number, number>();
+    const memo = new Map<number, number>();   // black — completed
+    const visiting = new Set<number>();         // gray  — on current path
+    const detectedCycleIds = new Set<number>();
 
     const dfs = (taskId: number): number => {
       if (memo.has(taskId)) return memo.get(taskId)!;
+      if (visiting.has(taskId)) {
+        // Cycle — stop recursing, record, return 0 for this edge so the
+        // longest-path math still terminates. The caller surfaces the
+        // id as a warning.
+        detectedCycleIds.add(taskId);
+        return 0;
+      }
       const task = taskMap.get(taskId);
       if (!task) return 0;
+
+      visiting.add(taskId);
 
       const hours = Number(task.budgetHours || 0);
       const days = hours / 8; // 8h per working day
@@ -1439,6 +1591,7 @@ export class ExecutionPlanningService {
         }
       }
 
+      visiting.delete(taskId);
       const total = days + maxDep;
       memo.set(taskId, total);
       return total;
@@ -1449,6 +1602,6 @@ export class ExecutionPlanningService {
       maxPath = Math.max(maxPath, dfs(t.id));
     }
 
-    return Math.ceil(maxPath);
+    return { days: Math.ceil(maxPath), cycleIds: [...detectedCycleIds] };
   }
 }
