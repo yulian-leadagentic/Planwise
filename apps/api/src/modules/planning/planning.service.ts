@@ -1,11 +1,29 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { withQueryTimeout } from '../../common/query-timeout';
 import { extractServiceMarker, resolvePhasesByMarkerNames } from './marker-phase-resolver';
 
+/**
+ * QA5 UI-15 — identity key for the typical-rank cache. Tasks don't
+ * carry a template-task FK so a normalized name is the only stable
+ * handle. Lowercase + trim + collapse internal whitespace so trivial
+ * differences (double space / trailing space / Hebrew niqqud spacing)
+ * all collapse to the same bucket.
+ */
+export function taskIdentityKey(name: string | null | undefined): string {
+  if (!name) return 'name:';
+  const normalized = name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  return `name:${normalized}`;
+}
+
 @Injectable()
 export class PlanningService {
+  private readonly logger = new Logger(PlanningService.name);
+
   constructor(private prisma: PrismaService) {}
 
   /**
@@ -284,6 +302,49 @@ export class PlanningService {
       return null;
     };
 
+    // QA5 UI-15 — typical-rank lookup for the Planning tab's
+    // learned-order secondary sort. One batched read of the
+    // pre-computed `TaskTypicalRank` table (populated by
+    // `recomputeTaskTypicalRanks` — never in a request path). We only
+    // ask for the identities actually in this project's task set, so
+    // this is bounded by the project size and does not scan the whole
+    // table. Missing rows just produce a null `typicalRank` — the FE
+    // falls back to stable sortOrder for those.
+    const typicalRankLookup = await (async () => {
+      const map = new Map<string, number>();
+      const identities = new Set<string>();
+      for (const t of tasks) {
+        if (t.deliverableTemplateId == null) continue;
+        identities.add(`${t.deliverableTemplateId}|${taskIdentityKey(t.name)}`);
+      }
+      if (identities.size === 0) return map;
+      // Group identities by deliverableTemplateId so we send one
+      // compact query per template rather than a huge OR chain.
+      const byTemplate = new Map<number, string[]>();
+      for (const key of identities) {
+        const sep = key.indexOf('|');
+        const tplId = Number(key.slice(0, sep));
+        const identity = key.slice(sep + 1);
+        if (!byTemplate.has(tplId)) byTemplate.set(tplId, []);
+        byTemplate.get(tplId)!.push(identity);
+      }
+      // Prisma doesn't support tuple-IN on MySQL, so we fan out one
+      // query per template. Template counts per project are small
+      // (ten-ish at the extreme), so this stays cheap.
+      await Promise.all(
+        Array.from(byTemplate.entries()).map(async ([tplId, ids]) => {
+          const rows = await this.prisma.taskTypicalRank.findMany({
+            where: { deliverableTemplateId: tplId, taskIdentity: { in: ids } },
+            select: { taskIdentity: true, medianRank: true },
+          });
+          for (const r of rows) {
+            map.set(`${tplId}|${r.taskIdentity}`, r.medianRank);
+          }
+        }),
+      );
+      return map;
+    })();
+
     // Attach loggedMinutes + zoneBreadcrumb to each task. Breadcrumb
     // walks the zone.path (a slash-separated list of zone ids from
     // root → leaf). Falls back to an empty array for tasks at the
@@ -316,6 +377,13 @@ export class PlanningService {
       // QA5 UI-4: expose a flat `commentCount` the FE card can read
       // without depending on Prisma's `_count` shape.
       const commentCount = (t as any)._count?.comments ?? 0;
+      // QA5 UI-15 — the median relative rank learned from dated
+      // occurrences of this (deliverableTemplate, name) across all
+      // projects. Null when no history exists; the FE falls back to
+      // stable sortOrder/name for those.
+      const typicalRank = t.deliverableTemplateId == null
+        ? null
+        : typicalRankLookup.get(`${t.deliverableTemplateId}|${taskIdentityKey(t.name)}`) ?? null;
       return {
         ...t,
         loggedMinutes: loggedByTask.get(t.id) ?? 0,
@@ -328,6 +396,7 @@ export class PlanningService {
         // JOIN available in one place. Nullable when nothing resolves.
         service: resolveTaskService(t),
         commentCount,
+        typicalRank,
       };
     });
 
@@ -355,4 +424,200 @@ export class PlanningService {
       },
     };
   }
+
+  // ─── QA5 UI-15 — TaskTypicalRank recompute ────────────────────────
+  //
+  // Learn the typical ordering of each task-identity inside its
+  // Deliverable Template from the DATED occurrences across the whole
+  // database. Idempotent, bounded, and NEVER called in a request
+  // path — the admin endpoint on this controller invokes it, and the
+  // Planning read-path only reads from the cached table.
+  //
+  // Algorithm per `(deliverableTemplateId, identity)` bucket:
+  //   • For each project that has ≥1 dated task under this
+  //     deliverableTemplate, compute each dated task's `relRank` =
+  //     `(0-based index among the project's dated tasks for that
+  //      deliverable) / (count of dated tasks in that group)`.
+  //   • Collect `relRank` for every dated occurrence of the identity.
+  //   • `medianRank` = median of that collection; `sampleSize` = its
+  //     length.
+  //
+  // Ordering inside a project uses `endDate` ASC (the Due Date). Ties
+  // break on `sortOrder` then `createdAt` to match what the planning
+  // read-path returns.
+  //
+  // Timebox: the whole thing is a single-pass over dated tasks, so the
+  // cost is O(N log N) where N = dated tasks across the DB. Staging
+  // sits at ~hundreds; prod at ~thousands. We log a warning when it
+  // takes >30s so a regression that bloats the aggregate shows up in
+  // Sentry breadcrumbs.
+  async recomputeTaskTypicalRanks(): Promise<{
+    updatedBuckets: number;
+    datedTasks: number;
+    skippedNoDeliverable: number;
+    tookMs: number;
+  }> {
+    const startedAt = Date.now();
+    // Pull only the fields the aggregate needs. Dated AND linked to a
+    // deliverableTemplate — undated or template-less tasks can't
+    // teach us an order within a deliverable.
+    const dated = await this.prisma.task.findMany({
+      where: {
+        endDate: { not: null },
+        deliverableTemplateId: { not: null },
+        deletedAt: null,
+        isArchived: false,
+      },
+      select: {
+        id: true,
+        projectId: true,
+        deliverableTemplateId: true,
+        name: true,
+        endDate: true,
+        sortOrder: true,
+        createdAt: true,
+      },
+    });
+
+    // Also pick up the project tasks that are template-less but
+    // belong to a project-owned ProjectDeliverable that itself has a
+    // sourceTemplateId — resolving the deliverable template through
+    // that link keeps the identity space consistent across the two
+    // deliverable shapes. For simplicity + bounded scope here, we
+    // skip them; UI-15's primary benefit comes from the template-
+    // linked path. If/when staging has >1k template-less dated tasks
+    // we add that second pass in a follow-up.
+
+    // Group dated tasks by (project, deliverableTemplate) and compute
+    // each task's relative rank within the group.
+    type DatedTask = (typeof dated)[number];
+    const groups = new Map<string, DatedTask[]>();
+    for (const t of dated) {
+      if (t.projectId == null) continue;
+      const key = `${t.projectId}|${t.deliverableTemplateId}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(t);
+    }
+
+    // bucket = (deliverableTemplateId, identity) → list of relRanks
+    const buckets = new Map<string, number[]>();
+    for (const [, list] of groups) {
+      // Sort by endDate ASC, then sortOrder, then createdAt — the
+      // same deterministic order the planning read-path returns.
+      list.sort((a, b) => {
+        const ad = a.endDate ? a.endDate.getTime() : 0;
+        const bd = b.endDate ? b.endDate.getTime() : 0;
+        if (ad !== bd) return ad - bd;
+        if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+        return a.createdAt.getTime() - b.createdAt.getTime();
+      });
+      const n = list.length;
+      if (n === 0) continue;
+      // Dedupe multiple occurrences of the same identity INSIDE one
+      // project (same task name under the same deliverable, used in
+      // multiple zones) — otherwise a single project with 10 zones
+      // would skew the median toward whatever rank that one project
+      // chose. Keep the FIRST occurrence's rank per identity so each
+      // project contributes one data point per identity.
+      const seenIdentities = new Set<string>();
+      for (let i = 0; i < n; i++) {
+        const t = list[i];
+        const identity = taskIdentityKey(t.name);
+        if (seenIdentities.has(identity)) continue;
+        seenIdentities.add(identity);
+        // relRank in [0, 1). Divide by n (not n-1) so a single-task
+        // group still produces a 0 (first = earliest).
+        const relRank = i / n;
+        const bucketKey = `${t.deliverableTemplateId}|${identity}`;
+        if (!buckets.has(bucketKey)) buckets.set(bucketKey, []);
+        buckets.get(bucketKey)!.push(relRank);
+      }
+    }
+
+    // Compute median per bucket and upsert into TaskTypicalRank.
+    // Serial upserts keep the write pressure gentle (and bounded to
+    // one connection) — the table is small so this is fast enough.
+    let updated = 0;
+    for (const [bucketKey, ranks] of buckets) {
+      const sep = bucketKey.indexOf('|');
+      const deliverableTemplateId = Number(bucketKey.slice(0, sep));
+      const identity = bucketKey.slice(sep + 1);
+      const median = medianOf(ranks);
+      await this.prisma.taskTypicalRank.upsert({
+        where: {
+          deliverableTemplateId_taskIdentity: {
+            deliverableTemplateId,
+            taskIdentity: identity,
+          },
+        },
+        create: {
+          deliverableTemplateId,
+          taskIdentity: identity,
+          medianRank: median,
+          sampleSize: ranks.length,
+        },
+        update: {
+          medianRank: median,
+          sampleSize: ranks.length,
+          computedAt: new Date(),
+        },
+      });
+      updated++;
+    }
+
+    const tookMs = Date.now() - startedAt;
+    if (tookMs > 30_000) {
+      this.logger.warn(
+        `recomputeTaskTypicalRanks took ${tookMs}ms over ${dated.length} dated tasks → ${updated} buckets`,
+      );
+    } else {
+      this.logger.log(
+        `recomputeTaskTypicalRanks: ${dated.length} dated tasks → ${updated} buckets in ${tookMs}ms`,
+      );
+    }
+
+    return {
+      updatedBuckets: updated,
+      datedTasks: dated.length,
+      skippedNoDeliverable: 0,
+      tookMs,
+    };
+  }
+
+  /**
+   * Debug helper for the handoff report — surface the biggest
+   * learned buckets so Yulian can sanity-check the aggregate without
+   * SELECT-ing the table. Called by the admin probe endpoint. Joins
+   * the deliverable-template name on the side (no FK relation
+   * declared, by design — soft coupling only).
+   */
+  async listTopTypicalRanks(limit = 10) {
+    const take = Math.max(1, Math.min(100, limit));
+    const rows = await this.prisma.taskTypicalRank.findMany({
+      orderBy: [{ sampleSize: 'desc' }, { deliverableTemplateId: 'asc' }],
+      take,
+    });
+    const tplIds = Array.from(new Set(rows.map((r) => r.deliverableTemplateId)));
+    const templates = tplIds.length === 0
+      ? []
+      : await this.prisma.template.findMany({
+          where: { id: { in: tplIds } },
+          select: { id: true, name: true },
+        });
+    const nameByTpl = new Map<number, string>();
+    for (const t of templates) nameByTpl.set(t.id, t.name);
+    return rows.map((r) => ({
+      ...r,
+      deliverableTemplateName: nameByTpl.get(r.deliverableTemplateId) ?? null,
+    }));
+  }
+}
+
+/** Median of a numeric list. Mutates in place via sort for brevity. */
+function medianOf(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) return (sorted[mid - 1] + sorted[mid]) / 2;
+  return sorted[mid];
 }
