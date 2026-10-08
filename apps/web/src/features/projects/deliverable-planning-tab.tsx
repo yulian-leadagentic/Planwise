@@ -902,15 +902,21 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         </div>
       )}
 
-      {/* Header controls */}
-      <div className="flex items-end gap-3 flex-wrap">
+      {/* Header controls — UI-16 · title/description on top, toolbar
+          starts at the page's left gutter on its own row (same left
+          edge as the grid header below). Previously the toolbar lived
+          on the right of the title row via `ml-auto`, which offset it
+          from the grid gutter; split into two rows so the controls
+          now align with the grid. Inter-control spacing (gap-2) stays
+          as-is. */}
+      <div className="space-y-3">
         <div>
           <h2 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Deliverable Planning</h2>
           <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">
             Set a target date per (zone × deliverable) as "N months from the base date". Dates snap forward to the next Sunday.
           </p>
         </div>
-        <div className="ml-auto flex items-end gap-2">
+        <div className="flex items-end gap-2 flex-wrap">
           {/* UI-14 · Group + sub-group — same control the Planning tab
               uses. Default primary=Deliverable, sub=Zone preserves the
               DP-DISP-1 ordering (Gantt label column reads "Deliverable
