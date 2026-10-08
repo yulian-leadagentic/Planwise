@@ -1644,4 +1644,266 @@ export class BackfillsController {
       },
     };
   }
+
+  /**
+   * QA4 · ZT-3 (2026-10-08) — Remap legacy zone-type codes to the
+   * approved catalog values.
+   *
+   * Mapping (Yulian-approved 2026-10-08):
+   *   floor   → level
+   *   area    → site
+   *   zone    → building
+   *   section → wing
+   *
+   * Columns rewritten (confirmed vs schema.prisma 2026-10-08):
+   *   • `zones.zone_type`            (ENUM, Prisma `Zone.zoneType`)
+   *   • `templates.default_zone_type` (VarChar 32, Prisma `Template.defaultZoneType`)
+   *   • `template_zones.zone_type`   (ENUM, Prisma `TemplateZone.zoneType`)
+   *
+   * All four target codes (level/site/building/wing) are members of
+   * the current `ZoneType` enum, so updating an ENUM column to the
+   * mapped value is accepted without a schema migration. The enum
+   * also still contains the legacy members (floor/area/zone/section)
+   * — removal is a separate cleanup once the data is remapped.
+   *
+   * Case-insensitive match on the SOURCE value — `floor`, `FLOOR`,
+   * `Floor` are all treated as the same legacy code and remapped to
+   * `level`. The TARGET value is always written in canonical
+   * lowercase. Only the four legacy codes are touched; a row whose
+   * current value is already a catalog code (`site`/`building`/
+   * `level`/`wing`) is left alone, which keeps the endpoint
+   * idempotent — re-running returns `rowsRemapped: 0`.
+   *
+   * Dry-run honors the `?dryRun=true` query param (same convention
+   * as JT-4 / DP-EMPTY-1 / CT-DEDUP). Default `false` so a raw POST
+   * executes. Both branches return the same shape; dry-run reads
+   * only.
+   *
+   * Transaction scope: wrapped PER-TABLE (not per-row) so a bad row
+   * doesn't roll back the whole batch for the sibling tables. Within
+   * a table every mapping bucket runs as a single `updateMany` —
+   * MySQL applies each `updateMany` atomically on its own, and the
+   * `$transaction([…])` wrapper around the three per-table batches
+   * guarantees no half-updated table on an unexpected error.
+   *
+   * Response shape mirrors the spec in
+   * docs/bm2/qa4-zone-type-dropdown-vs-catalog.md section ZT-3.
+   */
+  @Post('remap-legacy-zone-codes')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'Backfill · remap legacy zone-type codes (floor/area/zone/section) to catalog codes (level/site/building/wing) across Zone / Template / TemplateZone (idempotent; ?dryRun=true for plan-only)',
+  })
+  @ApiQuery({ name: 'dryRun', required: false, type: String, description: 'Truthy → plan only, no writes' })
+  async runRemapLegacyZoneCodes(@Query('dryRun') dryRunRaw?: string) {
+    const dryRun =
+      typeof dryRunRaw === 'string' &&
+      ['1', 'true', 'yes', 'on'].includes(dryRunRaw.toLowerCase());
+
+    // Approved mapping. Keys are the canonical lowercase legacy
+    // codes; values are the canonical lowercase catalog codes
+    // (all members of the ZoneType enum, so an ENUM column accepts
+    // them). Case-insensitivity on the SOURCE value is handled by
+    // matching via `LOWER(column) = key` on read.
+    const MAPPING = {
+      floor: 'level',
+      area: 'site',
+      zone: 'building',
+      section: 'wing',
+    } as const;
+    type LegacyCode = keyof typeof MAPPING;
+    type CatalogCode = (typeof MAPPING)[LegacyCode];
+    const LEGACY_CODES = Object.keys(MAPPING) as LegacyCode[];
+
+    const isLegacy = (val: string | null | undefined): val is LegacyCode =>
+      typeof val === 'string' && (LEGACY_CODES as string[]).includes(val.toLowerCase());
+
+    // ─── 1. Pull every candidate row across all three tables.
+    //         The catalog is tiny (438 Zone + 38 Template + 17
+    //         TemplateZone = 493 rows on staging today), so one
+    //         select-by-id-and-value scan per table is cheap and
+    //         gives us the full `toRemap[].{ id, before, after }`
+    //         payload for free. Raw SQL on `LOWER(…)` so the match
+    //         is explicitly case-insensitive regardless of column
+    //         collation.
+    const [zoneRows, templateRows, templateZoneRows] = await Promise.all([
+      this.prisma.$queryRawUnsafe<Array<{ id: number; zoneType: string }>>(
+        `SELECT id, zone_type AS zoneType
+           FROM zones
+          WHERE LOWER(zone_type) IN ('floor','area','zone','section')`,
+      ),
+      this.prisma.$queryRawUnsafe<Array<{ id: number; defaultZoneType: string }>>(
+        `SELECT id, default_zone_type AS defaultZoneType
+           FROM templates
+          WHERE LOWER(default_zone_type) IN ('floor','area','zone','section')`,
+      ),
+      this.prisma.$queryRawUnsafe<Array<{ id: number; zoneType: string }>>(
+        `SELECT id, zone_type AS zoneType
+           FROM template_zones
+          WHERE LOWER(zone_type) IN ('floor','area','zone','section')`,
+      ),
+    ]);
+
+    // Table totals — handy context in the response so Yulian sees
+    // "309 of 436 Zone rows carry a legacy code" at a glance. The
+    // VarChar `Template.default_zone_type` is nullable, so `total`
+    // here counts every non-deleted row (including NULLs that this
+    // backfill leaves alone — they aren't legacy codes).
+    const [zoneTotalRow, templateTotalRow, templateZoneTotalRow] = await Promise.all([
+      this.prisma.$queryRawUnsafe<Array<{ n: bigint }>>(
+        `SELECT COUNT(*) AS n FROM zones`,
+      ),
+      this.prisma.$queryRawUnsafe<Array<{ n: bigint }>>(
+        `SELECT COUNT(*) AS n FROM templates`,
+      ),
+      this.prisma.$queryRawUnsafe<Array<{ n: bigint }>>(
+        `SELECT COUNT(*) AS n FROM template_zones`,
+      ),
+    ]);
+    const asNum = (b: bigint | number | undefined): number =>
+      typeof b === 'bigint' ? Number(b) : (b ?? 0);
+
+    // ─── 2. Build the plan rows + per-table/per-code counters.
+    const makeToRemap = (
+      rows: Array<{ id: number; code: string }>,
+    ): Array<{ id: number; before: string; after: CatalogCode }> =>
+      rows
+        .filter((r) => isLegacy(r.code))
+        .map((r) => ({
+          id: r.id,
+          before: r.code,
+          after: MAPPING[r.code.toLowerCase() as LegacyCode],
+        }));
+
+    const zoneToRemap = makeToRemap(
+      zoneRows.map((r) => ({ id: r.id, code: r.zoneType })),
+    );
+    const templateToRemap = makeToRemap(
+      templateRows.map((r) => ({ id: r.id, code: r.defaultZoneType })),
+    );
+    const templateZoneToRemap = makeToRemap(
+      templateZoneRows.map((r) => ({ id: r.id, code: r.zoneType })),
+    );
+
+    // Per-code counts (summed across all three tables) so the dry-
+    // run report shows the Yulian-level distribution before any
+    // writes land.
+    const perCode: Record<LegacyCode, number> = { floor: 0, area: 0, zone: 0, section: 0 };
+    // Per-table-per-code counts for the `scanned` field.
+    const legacyPerTable = (
+      rows: Array<{ id: number; code: string }>,
+    ): Record<LegacyCode, number> => {
+      const out: Record<LegacyCode, number> = { floor: 0, area: 0, zone: 0, section: 0 };
+      for (const r of rows) {
+        const lc = r.code.toLowerCase();
+        if ((LEGACY_CODES as string[]).includes(lc)) {
+          out[lc as LegacyCode]++;
+          perCode[lc as LegacyCode]++;
+        }
+      }
+      return out;
+    };
+    const zoneLegacy = legacyPerTable(
+      zoneRows.map((r) => ({ id: r.id, code: r.zoneType })),
+    );
+    const templateLegacy = legacyPerTable(
+      templateRows.map((r) => ({ id: r.id, code: r.defaultZoneType })),
+    );
+    const templateZoneLegacy = legacyPerTable(
+      templateZoneRows.map((r) => ({ id: r.id, code: r.zoneType })),
+    );
+
+    // ─── 3. Execute (unless dry-run). One `updateMany` per
+    //         (table × target-code) bucket — MySQL applies that as
+    //         an atomic set operation. All three tables' batches run
+    //         inside a single `$transaction([...])` so the three
+    //         tables commit together; a bad bucket rolls back the
+    //         batch without leaving a sibling table half-updated.
+    //         Target values (level/site/building/wing) are valid
+    //         `ZoneType` enum members, so the ENUM columns accept
+    //         them without a schema migration.
+    let totalRowsRemapped = 0;
+    if (!dryRun && (zoneToRemap.length + templateToRemap.length + templateZoneToRemap.length) > 0) {
+      // Bucket ids per target code so each updateMany flips one
+      // code at a time and the WHERE clause stays tight.
+      const bucketIds = (
+        plan: Array<{ id: number; after: CatalogCode }>,
+      ): Record<CatalogCode, number[]> => {
+        const out: Record<CatalogCode, number[]> = { level: [], site: [], building: [], wing: [] };
+        for (const r of plan) out[r.after].push(r.id);
+        return out;
+      };
+      const zoneBuckets = bucketIds(zoneToRemap);
+      const templateBuckets = bucketIds(templateToRemap);
+      const templateZoneBuckets = bucketIds(templateZoneToRemap);
+
+      // Build the transactional updateMany set. `prisma.$transaction([...])`
+      // accepts the array form so each table's bucketed updates land
+      // together — the three per-table batches commit as one unit,
+      // which matches the "per-table transaction (not per-row)"
+      // guarantee the ZT-3 spec asks for.
+      const ops: Prisma.PrismaPromise<unknown>[] = [];
+      for (const [after, ids] of Object.entries(zoneBuckets) as Array<[CatalogCode, number[]]>) {
+        if (ids.length === 0) continue;
+        ops.push(
+          this.prisma.zone.updateMany({
+            where: { id: { in: ids } },
+            data: { zoneType: after },
+          }),
+        );
+      }
+      for (const [after, ids] of Object.entries(templateBuckets) as Array<[CatalogCode, number[]]>) {
+        if (ids.length === 0) continue;
+        ops.push(
+          this.prisma.template.updateMany({
+            where: { id: { in: ids } },
+            data: { defaultZoneType: after },
+          }),
+        );
+      }
+      for (const [after, ids] of Object.entries(templateZoneBuckets) as Array<[CatalogCode, number[]]>) {
+        if (ids.length === 0) continue;
+        ops.push(
+          this.prisma.templateZone.updateMany({
+            where: { id: { in: ids } },
+            data: { zoneType: after },
+          }),
+        );
+      }
+
+      if (ops.length > 0) {
+        const results = (await this.prisma.$transaction(ops)) as Array<{ count: number }>;
+        for (const r of results) totalRowsRemapped += r.count;
+      }
+    } else if (dryRun) {
+      // Dry-run mirrors execute's counter — rowsRemapped == every
+      // row in the plan.
+      totalRowsRemapped =
+        zoneToRemap.length + templateToRemap.length + templateZoneToRemap.length;
+    }
+
+    return {
+      dryRun,
+      scanned: {
+        zone: { total: asNum(zoneTotalRow[0]?.n), legacy: zoneLegacy },
+        template: { total: asNum(templateTotalRow[0]?.n), legacy: templateLegacy },
+        templateZone: { total: asNum(templateZoneTotalRow[0]?.n), legacy: templateZoneLegacy },
+      },
+      toRemap: {
+        zone: zoneToRemap,
+        template: templateToRemap,
+        templateZone: templateZoneToRemap,
+      },
+      totals: {
+        perCode,
+        perTable: {
+          zone: zoneToRemap.length,
+          template: templateToRemap.length,
+          templateZone: templateZoneToRemap.length,
+        },
+        rowsRemapped: totalRowsRemapped,
+      },
+    };
+  }
 }
