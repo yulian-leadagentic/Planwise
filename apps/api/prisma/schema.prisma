@@ -157,11 +157,7 @@ enum ZoneType {
   site
   building
   level
-  zone
-  area
-  section
   wing
-  floor
 }
 
 // Editable presentation metadata for the ZoneType enum. The enum itself is
