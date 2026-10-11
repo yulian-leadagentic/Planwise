@@ -406,7 +406,7 @@ export class TemplatesService {
       data: {
         templateId,
         parentId: body.parentId || null,
-        zoneType: body.zoneType || 'zone',
+        zoneType: body.zoneType || 'building',
         name: body.name,
         code: body.code || null,
         isTypical: body.isTypical || false,

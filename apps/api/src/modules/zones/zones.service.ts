@@ -460,7 +460,7 @@ export class ZonesService {
           data: {
             projectId: sourceZone.projectId,
             parentId,
-            zoneType: sourceZone.zoneType || 'zone',
+            zoneType: sourceZone.zoneType || 'building',
             name: `${sourceZone.name} (copy)`,
             code: sourceZone.code ? `${sourceZone.code}-copy` : null,
             areaSqm: sourceZone.areaSqm,
@@ -513,7 +513,7 @@ export class ZonesService {
           data: {
             projectId: zone.projectId,
             parentId: zone.parentId,
-            zoneType: zone.zoneType || 'zone',
+            zoneType: zone.zoneType || 'building',
             name: `${zone.name} ${i}`,
             code: zone.code ? `${zone.code}-${i}` : null,
             areaSqm: zone.areaSqm,
@@ -801,7 +801,7 @@ export class ZonesService {
           data: {
             projectId,
             parentId,
-            zoneType: tz.zoneType || 'zone',
+            zoneType: tz.zoneType || 'building',
             name: instanceName,
             code: tz.code,
             isTypical: tz.isTypical || false,
@@ -923,7 +923,7 @@ export class ZonesService {
 
       // Create a main project zone with user's chosen name (or template name as fallback)
       const mainZone = await tx.zone.create({
-        data: { projectId, zoneType: 'zone', name: zoneName?.trim() || template.name, code: template.code, path: '', depth: 0 },
+        data: { projectId, zoneType: 'building', name: zoneName?.trim() || template.name, code: template.code, path: '', depth: 0 },
       });
       const mainPath = `${mainZone.id}`;
       await tx.zone.update({ where: { id: mainZone.id }, data: { path: mainPath } });
