@@ -1,7 +1,14 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Plus, Home, Building2, Clock, Pencil, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Clock, Pencil, Trash2 } from 'lucide-react';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
+import {
+  LocationToggle,
+  TimeLocationIcon,
+  TIME_LOCATION_EMOJI,
+  normalizeTimeLocation,
+  type TimeLocation,
+} from './location-toggle';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { PageHeader } from '@/components/shared/page-header';
 import { cn } from '@/lib/utils';
@@ -62,7 +69,7 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
   const [taskId, setTaskId] = useState<string>(entry?.taskId != null ? String(entry.taskId) : '');
   const [start, setStart] = useState(entry?.startTime ?? startTime);
   const [end, setEnd] = useState(entry?.endTime ?? endTime);
-  const [location, setLocation] = useState<'office' | 'home'>(entry?.location === 'home' ? 'home' : 'office');
+  const [location, setLocation] = useState<TimeLocation>(normalizeTimeLocation(entry?.location));
   const [note, setNote] = useState(entry?.note ?? '');
   const [isBillable, setIsBillable] = useState(entry?.isBillable ?? true);
   const [showQuickTask, setShowQuickTask] = useState(false);
@@ -274,15 +281,10 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
             <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">{isEditing ? 'Edit Timesheet Entry' : 'Add Timesheet Entry'}</h3>
             <p className="text-[11px] text-slate-400 dark:text-slate-500">{new Date(date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
           </div>
-          <div className="flex items-center gap-1">
-            {/* Location toggle */}
-            <button onClick={() => setLocation('home')} className={cn('flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-semibold', location === 'home' ? 'bg-blue-100 text-blue-700' : 'text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50')}>
-              <Home className="h-3.5 w-3.5" /> Home
-            </button>
-            <button onClick={() => setLocation('office')} className={cn('flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-semibold', location === 'office' ? 'bg-blue-100 text-blue-700' : 'text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50')}>
-              <Building2 className="h-3.5 w-3.5" /> Office
-            </button>
-          </div>
+          {/* Location toggle — 3-way (Home / Office / Site). Historical pre-site
+              behaviour (binary home/office) is preserved via normalizeTimeLocation
+              on the seed value above. */}
+          <LocationToggle value={location} onChange={setLocation} size="md" />
         </div>
 
         <div className="p-5 space-y-4">
@@ -496,7 +498,7 @@ function TimeBlock({ entry }: { entry: any }) {
       {height > 45 && <p className="truncate opacity-60">{taskName}</p>}
       {entry.location && (
         <span className="inline-flex items-center gap-0.5 mt-0.5">
-          {entry.location === 'home' ? <Home className="h-2.5 w-2.5" /> : <Building2 className="h-2.5 w-2.5" />}
+          <TimeLocationIcon value={normalizeTimeLocation(entry.location)} className="h-2.5 w-2.5" />
         </span>
       )}
     </div>
@@ -1097,7 +1099,7 @@ function WeekView() {
                   <span className="text-slate-500 dark:text-slate-400 w-16">{e.startTime ?? '-'} - {e.endTime ?? '-'}</span>
                   <span className="font-medium text-slate-700 dark:text-slate-200">{minutesToDisplay(e.minutes)}</span>
                   <span className="text-slate-600 dark:text-slate-300 flex-1 truncate">{e.project?.name ?? ''} {e.task?.name ? `/ ${e.task.name}` : ''}</span>
-                  {e.location && <span className="text-[10px] text-slate-400 dark:text-slate-500">{e.location === 'home' ? '🏠' : '🏢'}</span>}
+                  {e.location && <span className="text-[10px] text-slate-400 dark:text-slate-500">{TIME_LOCATION_EMOJI[normalizeTimeLocation(e.location)]}</span>}
                   {/* QA4 B5: pencil beside trash — same hover reveal so the
                       row stays clean but the affordance is discoverable on
                       hover. Pencil opens the edit popup, trash keeps the

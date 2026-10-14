@@ -10,6 +10,7 @@ import { format } from '@/lib/date-utils';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 import { useQuery } from '@tanstack/react-query';
+import { LocationToggle, type TimeLocation } from './location-toggle';
 
 interface LogTimeDialogProps {
   open: boolean;
@@ -32,6 +33,10 @@ export function LogTimeDialog({
   const [minutes, setMinutes] = useState(0);
   const [note, setNote] = useState('');
   const [isBillable, setIsBillable] = useState(true);
+  // Default to `office` for a brand-new entry — matches the historical
+  // default (binary office/home with office as the fallback). The three
+  // valid values are home / office / site; see `location-toggle.tsx`.
+  const [location, setLocation] = useState<TimeLocation>('office');
   const [projectSearch, setProjectSearch] = useState('');
   const [taskSearch, setTaskSearch] = useState('');
 
@@ -49,6 +54,7 @@ export function LogTimeDialog({
       setMinutes(0);
       setNote('');
       setIsBillable(true);
+      setLocation('office');
       setProjectSearch('');
       setTaskSearch('');
     }
@@ -93,6 +99,7 @@ export function LogTimeDialog({
         minutes,
         note: note.trim() || undefined,
         isBillable,
+        location,
       },
       {
         onSuccess: () => {
@@ -275,6 +282,14 @@ export function LogTimeDialog({
             <p className="mt-1 text-xs text-muted-foreground">
               Enter as hours and minutes (e.g. 2h 30m, 1.5h, 90m)
             </p>
+          </div>
+
+          {/* Location — Home / Office / Site. Lands in TimeEntry.location
+              as a free string on save; the backend has no enum/migration
+              gating these values. */}
+          <div>
+            <label className="mb-1 block text-sm font-medium">Location</label>
+            <LocationToggle value={location} onChange={setLocation} size="md" />
           </div>
 
           {/* Note + preset phrase picker */}

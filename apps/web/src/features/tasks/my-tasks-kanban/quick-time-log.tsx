@@ -7,6 +7,7 @@ import { formatShortDate } from '@/lib/task-constants';
 import { queryKeys } from '@/lib/query-keys';
 import { useOverlapConfirm } from '@/features/time/overlap-confirm';
 import { invalidateAfterTimeEntry } from '@/features/time/invalidate-after-time-entry';
+import { LocationToggle, type TimeLocation } from '@/features/time/location-toggle';
 import { TimeDropdown } from './time-dropdown';
 
 /**
@@ -33,6 +34,9 @@ export function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskPr
   const [start, setStart] = useState('09:00');
   const [end, setEnd] = useState('10:00');
   const [note, setNote] = useState('');
+  // Default to `office` — the three valid values are home / office / site;
+  // see features/time/location-toggle.tsx.
+  const [location, setLocation] = useState<TimeLocation>('office');
   const queryClient = useQueryClient();
 
   const [sh, sm] = start.split(':').map(Number);
@@ -77,6 +81,7 @@ export function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskPr
         minutes: totalMinutes,
         note: note.trim() || undefined,
         isBillable: true,
+        location,
         confirmOverlap,
       }),
       {
@@ -183,6 +188,12 @@ export function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskPr
               {totalHours}h
             </div>
           </div>
+        </div>
+        {/* Location — Home / Office / Site. Compact `sm` variant to fit
+            the kanban-card density. */}
+        <div>
+          <label className="text-[10px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">Location</label>
+          <LocationToggle value={location} onChange={setLocation} size="sm" />
         </div>
         <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
           placeholder="Description (optional)…"

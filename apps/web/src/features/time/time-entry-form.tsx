@@ -6,6 +6,7 @@ import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useOverlapConfirm } from './overlap-confirm';
 import { invalidateAfterTimeEntry } from './invalidate-after-time-entry';
+import { LocationToggle, type TimeLocation } from './location-toggle';
 
 interface TimeEntryFormProps {
   taskId: number;
@@ -42,6 +43,11 @@ export function TimeEntryForm({
   const [start, setStart] = useState(initialStart);
   const [end, setEnd] = useState(initialEnd);
   const [note, setNote] = useState('');
+  // Default to `office` — matches historical behaviour across the time-
+  // reporting surfaces (the TimeEntry.location column pre-dates this UI
+  // and legacy rows either carry 'office'/'home' or null; null here
+  // normalises to 'office').
+  const [location, setLocation] = useState<TimeLocation>('office');
   const queryClient = useQueryClient();
 
   const [sh, sm] = start.split(':').map(Number);
@@ -70,6 +76,7 @@ export function TimeEntryForm({
           minutes: totalMinutes,
           note: note.trim() || undefined,
           isBillable: true,
+          location,
           confirmOverlap,
         }),
       {
@@ -150,6 +157,13 @@ export function TimeEntryForm({
             {totalHours}h
           </div>
         </div>
+      </div>
+
+      {/* Location — Home / Office / Site. Sent as a free string to the
+          API; existing TimeEntry.location column accepts any value. */}
+      <div>
+        <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block mb-1">Location</label>
+        <LocationToggle value={location} onChange={setLocation} size={compact ? 'sm' : 'md'} />
       </div>
 
       <input
