@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { Suspense, lazy } from 'react';
 import { PrivateRoute } from './private-route';
 import { RoutePermissionGuard } from './route-permission-guard';
@@ -70,6 +70,14 @@ const SsoPage = lazy(() => import('@/features/admin/sso-page').then(m => ({ defa
 const DrivePage = lazy(() => import('@/features/admin/drive-page').then(m => ({ default: m.DrivePage })));
 const ProfilePage = lazy(() => import('@/features/misc/profile-page').then(m => ({ default: m.ProfilePage })));
 const NotFoundPage = lazy(() => import('@/features/misc/not-found-page').then(m => ({ default: m.NotFoundPage })));
+
+// HR Phase A4 (2026-10-15) — HrLayout owns `/hr/*`; HrEmployeesPage is
+// the only tab wired today, the other 3 share PlaceholderTab wrappers.
+const HrLayout = lazy(() => import('@/features/hr/hr-layout').then(m => ({ default: m.HrLayout })));
+const HrEmployeesPage = lazy(() => import('@/features/hr/employees-page').then(m => ({ default: m.HrEmployeesPage })));
+const HrMonthlyReviewPlaceholder = lazy(() => import('@/features/hr/placeholder-tab').then(m => ({ default: m.HrMonthlyReviewPlaceholder })));
+const HrReportsPlaceholder = lazy(() => import('@/features/hr/placeholder-tab').then(m => ({ default: m.HrReportsPlaceholder })));
+const HrSettingsPlaceholder = lazy(() => import('@/features/hr/placeholder-tab').then(m => ({ default: m.HrSettingsPlaceholder })));
 
 // DnD-heavy (kept lazy to avoid @dnd-kit React version conflicts)
 const MyTasksKanbanPage = lazy(() => import('@/features/tasks/my-tasks-kanban').then(m => ({ default: m.MyTasksKanbanPage })));
@@ -190,6 +198,24 @@ export function AppRouter() {
           <Route path="sso" element={<L><SsoPage /></L>} />
           <Route path="drive" element={<L><DrivePage /></L>} />
           <Route path="employees" element={<L><PeoplePage /></L>} />
+        </Route>
+
+        {/* HR (Phase A4, 2026-10-15) — nested under HrLayout for the
+            persistent 4-tab sub-nav. RoutePermissionGuard checks
+            `/hr` → `hr:read` before this subtree renders. Only
+            Employees is wired today; the other three tabs render a
+            Coming-soon placeholder so the sub-nav shape stays stable
+            through Phase B/C. */}
+        <Route path="hr" element={<L><HrLayout /></L>}>
+          {/* /hr → /hr/employees (there is no separate hub page today;
+              the Employees tab is the default landing). The sub-nav
+              still shows "Overview" linked to /hr for consistency with
+              Admin/Templates; a Phase B hub page replaces this redirect. */}
+          <Route index element={<Navigate to="/hr/employees" replace />} />
+          <Route path="employees" element={<L><HrEmployeesPage /></L>} />
+          <Route path="review" element={<L><HrMonthlyReviewPlaceholder /></L>} />
+          <Route path="reports" element={<L><HrReportsPlaceholder /></L>} />
+          <Route path="settings" element={<L><HrSettingsPlaceholder /></L>} />
         </Route>
 
         {/* Account */}

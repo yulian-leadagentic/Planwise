@@ -58,6 +58,12 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
   '/messages': 'tasks',
   '/people': 'partners',
   '/admin/employees': 'partners',
+  // HR Phase A4 (2026-10-15) — the whole /hr/* subtree checks `hr:read`.
+  // RolesGuard's NO_ADMIN_BYPASS (A1) blocks the admin shortcut on the
+  // API side; this guard mirrors the same rule on the client so a role
+  // without the HR grant gets bounced to the dashboard instead of a
+  // 403 drawer.
+  '/hr': 'hr',
   // Was defined twice — an earlier "Business Partners (uses existing
   // 'people' permission)" entry mapped '/partners' → 'people', and
   // the later '/partners' → 'partners' below silently overrode it

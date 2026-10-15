@@ -14,6 +14,30 @@ import { UpdateEligibilityDto } from './dto/update-eligibility.dto';
 export class HrService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // ─── SpecialHourBucket catalog ──────────────────────────────────────
+
+  /**
+   * List the SpecialHourBucket catalog so the FE "add eligibility"
+   * dialog can offer a picker. Opt-in filters for the "B-behaviour,
+   * active" case the HR drawer needs today. Phase B/C UI (admin
+   * settings on the catalog itself) will surface the full list.
+   */
+  async listBuckets(opts: { behavior?: 'A' | 'B' | 'C'; activeOnly?: boolean } = {}) {
+    const rows = await this.prisma.specialHourBucket.findMany({
+      where: {
+        ...(opts.behavior ? { behavior: opts.behavior } : {}),
+        ...(opts.activeOnly ? { active: true } : {}),
+      },
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+    });
+    return rows.map((b) => ({
+      ...b,
+      dailyAmount: b.dailyAmount != null ? Number(b.dailyAmount) : null,
+      maxPerYear: b.maxPerYear != null ? Number(b.maxPerYear) : null,
+      minDailyStandard: b.minDailyStandard != null ? Number(b.minDailyStandard) : null,
+    }));
+  }
+
   // ─── Employee roster ────────────────────────────────────────────────
 
   /**

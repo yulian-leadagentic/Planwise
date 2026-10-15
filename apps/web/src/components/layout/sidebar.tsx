@@ -22,6 +22,10 @@ const NAV_MODULE_MAP: Record<string, string> = {
   '/contracts': 'contracts',
   '/partners': 'partners',
   '/contacts': 'partners',
+  // HR Phase A4 (2026-10-15) — the HR module hides personal / medical /
+  // payroll data; `hr` is the matching permission key (see
+  // ROUTE_MODULE_MAP in route-permission-guard.tsx + the Phase A2 seed).
+  '/hr': 'hr',
   '/reports': 'reports',
   '/templates': 'templates',
   '/admin': 'admin',

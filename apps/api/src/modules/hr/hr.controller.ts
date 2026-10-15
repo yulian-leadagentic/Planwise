@@ -6,10 +6,11 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   ParseIntPipe,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 
 import { HrService } from './hr.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -33,6 +34,27 @@ import { UpdateEligibilityDto } from './dto/update-eligibility.dto';
 @Controller('hr')
 export class HrController {
   constructor(private readonly hr: HrService) {}
+
+  // ─── SpecialHourBucket catalog ──────────────────────────────────────
+  @Get('buckets')
+  @RequirePermissions({ module: 'hr', action: 'read' })
+  @ApiOperation({ summary: 'List SpecialHourBucket catalog (optional behavior + active filters)' })
+  @ApiQuery({ name: 'behavior', required: false, enum: ['A', 'B', 'C'] })
+  @ApiQuery({ name: 'activeOnly', required: false, type: Boolean })
+  listBuckets(
+    @Query('behavior') behavior?: 'A' | 'B' | 'C',
+    @Query('activeOnly') activeOnlyRaw?: string,
+  ) {
+    // Query strings arrive as `"true"` / `"false"` strings — coerce
+    // explicitly so a stray `?activeOnly=0` doesn't become truthy.
+    const activeOnly =
+      activeOnlyRaw === 'true' || activeOnlyRaw === '1'
+        ? true
+        : activeOnlyRaw === 'false' || activeOnlyRaw === '0'
+          ? false
+          : undefined;
+    return this.hr.listBuckets({ behavior, activeOnly });
+  }
 
   @Get('employees')
   @RequirePermissions({ module: 'hr', action: 'read' })

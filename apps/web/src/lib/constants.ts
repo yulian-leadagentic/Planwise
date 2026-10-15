@@ -13,6 +13,7 @@ import {
   Grid3X3,
   ListChecks,
   UserCircle2,
+  ClipboardList,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -98,6 +99,10 @@ export const NAV_SECTIONS: NavSection[] = [
       // page with view toggles (List · By Project · By Customer), filters,
       // and project enrichment.
       { label: 'Contacts', href: '/contacts', icon: UserCircle2 },
+      // HR Phase A (2026-10-15) — personal/medical/payroll data lives
+      // behind the `hr` module. Gated by `NAV_MODULE_MAP['/hr'] = 'hr'`
+      // in sidebar.tsx and the backend RolesGuard's NO_ADMIN_BYPASS.
+      { label: 'HR', href: '/hr', icon: ClipboardList },
     ],
   },
   {
