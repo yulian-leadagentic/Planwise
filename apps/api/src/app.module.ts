@@ -48,6 +48,7 @@ import { SsoAdminModule } from './modules/sso-admin/sso-admin.module';
 import { DriveAdminModule } from './modules/drive-admin/drive-admin.module';
 import { DriveModule } from './modules/drive/drive.module';
 import { UserPreferencesModule } from './modules/user-preferences/user-preferences.module';
+import { HrModule } from './modules/hr/hr.module';
 
 @Module({
   imports: [
@@ -131,6 +132,7 @@ import { UserPreferencesModule } from './modules/user-preferences/user-preferenc
     DriveAdminModule,
     DriveModule,
     UserPreferencesModule,
+    HrModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
