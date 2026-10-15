@@ -62,6 +62,13 @@ export interface TimeEntry {
   minutes: number;
   note: string | null;
   isBillable: boolean;
+  /**
+   * HR Phase B4 (2026-10-15) — SpecialHourBucket id this entry tags.
+   * Nullable: regular project/task time stays null; A/C-behavior
+   * buckets accept the tag; B-behavior buckets are auto-credit and
+   * the server rejects them.
+   */
+  specialHourBucketId?: number | null;
   createdAt: string;
   task?: {
     id: number;

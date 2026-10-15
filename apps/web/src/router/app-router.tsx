@@ -77,7 +77,8 @@ const HrLayout = lazy(() => import('@/features/hr/hr-layout').then(m => ({ defau
 const HrEmployeesPage = lazy(() => import('@/features/hr/employees-page').then(m => ({ default: m.HrEmployeesPage })));
 const HrMonthlyReviewPlaceholder = lazy(() => import('@/features/hr/placeholder-tab').then(m => ({ default: m.HrMonthlyReviewPlaceholder })));
 const HrReportsPlaceholder = lazy(() => import('@/features/hr/placeholder-tab').then(m => ({ default: m.HrReportsPlaceholder })));
-const HrSettingsPlaceholder = lazy(() => import('@/features/hr/placeholder-tab').then(m => ({ default: m.HrSettingsPlaceholder })));
+// HR Phase B4 (2026-10-15) — real Settings page replaces the A4 placeholder.
+const HrSettingsPage = lazy(() => import('@/features/hr/settings-page').then(m => ({ default: m.HrSettingsPage })));
 
 // DnD-heavy (kept lazy to avoid @dnd-kit React version conflicts)
 const MyTasksKanbanPage = lazy(() => import('@/features/tasks/my-tasks-kanban').then(m => ({ default: m.MyTasksKanbanPage })));
@@ -215,7 +216,7 @@ export function AppRouter() {
           <Route path="employees" element={<L><HrEmployeesPage /></L>} />
           <Route path="review" element={<L><HrMonthlyReviewPlaceholder /></L>} />
           <Route path="reports" element={<L><HrReportsPlaceholder /></L>} />
-          <Route path="settings" element={<L><HrSettingsPlaceholder /></L>} />
+          <Route path="settings" element={<L><HrSettingsPage /></L>} />
         </Route>
 
         {/* Account */}

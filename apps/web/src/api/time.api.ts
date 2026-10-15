@@ -33,6 +33,13 @@ export interface TimeEntryPayload {
   location?: string;
   completionPct?: number;
   /**
+   * HR Phase B4 (2026-10-15) — optional SpecialHourBucket this entry
+   * tags for the HR engine. Behavior A or C only; behavior B is
+   * auto-credit and the server rejects it. `null` on update clears
+   * the field; omit to leave untouched.
+   */
+  specialHourBucketId?: number | null;
+  /**
    * Acknowledges a cross-task overlap and allows the entry to save. Sent
    * by `useOverlapConfirm` after the user clicks "Save anyway" in the
    * confirm dialog. No effect for same-task overlaps (always rejected).

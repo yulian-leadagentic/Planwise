@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import client from '@/api/client';
 import { useQuery } from '@tanstack/react-query';
 import { LocationToggle, type TimeLocation } from './location-toggle';
+import { BucketPicker } from './bucket-picker';
 
 interface LogTimeDialogProps {
   open: boolean;
@@ -37,6 +38,8 @@ export function LogTimeDialog({
   // default (binary office/home with office as the fallback). The three
   // valid values are home / office / site; see `location-toggle.tsx`.
   const [location, setLocation] = useState<TimeLocation>('office');
+  // HR Phase B4: optional SpecialHourBucket tag.
+  const [specialHourBucketId, setSpecialHourBucketId] = useState<number | null>(null);
   const [projectSearch, setProjectSearch] = useState('');
   const [taskSearch, setTaskSearch] = useState('');
 
@@ -55,6 +58,7 @@ export function LogTimeDialog({
       setNote('');
       setIsBillable(true);
       setLocation('office');
+      setSpecialHourBucketId(null);
       setProjectSearch('');
       setTaskSearch('');
     }
@@ -100,6 +104,7 @@ export function LogTimeDialog({
         note: note.trim() || undefined,
         isBillable,
         location,
+        specialHourBucketId: specialHourBucketId ?? undefined,
       },
       {
         onSuccess: () => {
@@ -308,6 +313,9 @@ export function LogTimeDialog({
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
+
+          {/* HR Phase B4 — optional SpecialHourBucket tag (A/C only). */}
+          <BucketPicker value={specialHourBucketId} onChange={setSpecialHourBucketId} />
 
           {/* Billable toggle hidden per user feedback 2026-06-22 — the
               column stays in the DB so historical entries keep their flag,

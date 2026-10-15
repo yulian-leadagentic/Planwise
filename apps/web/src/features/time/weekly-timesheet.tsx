@@ -17,6 +17,7 @@ import { timeApi, type TimeEntryPayload } from '@/api/time.api';
 import { useClockStatus, useClockIn, useClockOut, useWeeklyGrid, useDeleteTimeEntry } from '@/hooks/use-time';
 import { useOverlapConfirm } from './overlap-confirm';
 import { invalidateAfterTimeEntry } from './invalidate-after-time-entry';
+import { BucketPicker } from './bucket-picker';
 import { format, addDays, startOfWeek } from '@/lib/date-utils';
 import { minutesToDisplay } from '@/types';
 import client from '@/api/client';
@@ -60,6 +61,7 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
     location?: string | null;
     note?: string | null;
     isBillable?: boolean | null;
+    specialHourBucketId?: number | null;
   } | null;
   onClose: () => void;
   onSaved: () => void;
@@ -72,6 +74,11 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
   const [location, setLocation] = useState<TimeLocation>(normalizeTimeLocation(entry?.location));
   const [note, setNote] = useState(entry?.note ?? '');
   const [isBillable, setIsBillable] = useState(entry?.isBillable ?? true);
+  // HR Phase B4: optional SpecialHourBucket tag. Pre-filled from the
+  // edited entry so the picker opens expanded with the current value.
+  const [specialHourBucketId, setSpecialHourBucketId] = useState<number | null>(
+    entry?.specialHourBucketId ?? null,
+  );
   const [showQuickTask, setShowQuickTask] = useState(false);
   const [quickTaskName, setQuickTaskName] = useState('');
   // Task being edited in the drawer. The "+ Quick Task" button creates a
@@ -153,6 +160,9 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
       note: note.trim() || undefined,
       isBillable,
       location,
+      // HR Phase B4: null on edit explicitly clears the field; omit when
+      // creating a fresh entry with no bucket chosen.
+      specialHourBucketId: isEditing ? specialHourBucketId : (specialHourBucketId ?? undefined),
     };
 
     setSubmitting(true);
@@ -442,6 +452,14 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
               placeholder="What did you work on?"
               className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none resize-none" />
           </div>
+
+          {/* HR Phase B4 — optional SpecialHourBucket tag (A/C only).
+              Pre-opened in edit mode when the entry already carries one. */}
+          <BucketPicker
+            value={specialHourBucketId}
+            onChange={setSpecialHourBucketId}
+            defaultOpen={isEditing && specialHourBucketId != null}
+          />
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-slate-200 dark:border-slate-700 px-5 py-4">
