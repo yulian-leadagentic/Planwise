@@ -365,6 +365,44 @@ async function main() {
   }
   console.log('  Seeded HR Manager + HR Clerk role grants');
 
+  // ───────────────────────────────────────────────────────────────────
+  // HR Phase B2 (2026-10-15) — AbsenceType catalog. 9 Yulian-approved
+  // rows per spec §3.4. Idempotent: upsert on `code` with update:{} so
+  // re-running the seed never clobbers a hand-edited admin label
+  // (nameHe / maxPerYear / sortOrder stay authoritative to whatever
+  // the HR UI last saved; initial values below are the create-only
+  // defaults). "לידה / maternity" is deliberately absent per §3.4.
+  // ───────────────────────────────────────────────────────────────────
+  const absenceTypes: Array<{
+    code: string;
+    nameHe: string;
+    unit: 'DAY' | 'HOUR';
+    requiresDocument: boolean;
+    deductsFromSick: boolean;
+    maxPerYear: number | null;
+    halfDay: boolean;
+    sortOrder: number;
+    isSystem: boolean;
+  }> = [
+    { code: 'holiday_full',           nameHe: 'חג',                                 unit: 'DAY',  requiresDocument: false, deductsFromSick: false, maxPerYear: null, halfDay: false, sortOrder:  1, isSystem: true },
+    { code: 'holiday_eve_leave',      nameHe: 'חופש בערב חג',                        unit: 'DAY',  requiresDocument: false, deductsFromSick: false, maxPerYear: null, halfDay: true,  sortOrder: 10, isSystem: true },
+    { code: 'chol_hamoed_leave',      nameHe: 'חופש בחוה"מ',                         unit: 'DAY',  requiresDocument: false, deductsFromSick: false, maxPerYear: null, halfDay: true,  sortOrder: 20, isSystem: true },
+    { code: 'vacation',               nameHe: 'חופשה',                               unit: 'DAY',  requiresDocument: false, deductsFromSick: false, maxPerYear: null, halfDay: false, sortOrder: 30, isSystem: true },
+    { code: 'sick',                   nameHe: 'מחלה',                                unit: 'DAY',  requiresDocument: true,  deductsFromSick: false, maxPerYear: null, halfDay: false, sortOrder: 40, isSystem: true },
+    { code: 'reserve_duty',           nameHe: 'מילואים',                             unit: 'DAY',  requiresDocument: true,  deductsFromSick: false, maxPerYear: null, halfDay: false, sortOrder: 50, isSystem: true },
+    { code: 'special_child_care_day', nameHe: 'טיפול בילד צרכים מיוחדים',           unit: 'DAY',  requiresDocument: true,  deductsFromSick: true,  maxPerYear: 18,   halfDay: false, sortOrder: 60, isSystem: true },
+    { code: 'reservist_spouse',       nameHe: 'נשות מילואים',                        unit: 'DAY',  requiresDocument: true,  deductsFromSick: false, maxPerYear: null, halfDay: false, sortOrder: 70, isSystem: true },
+    { code: 'bereavement_1st_degree', nameHe: 'פטירת קרוב דרגה ראשונה',             unit: 'DAY',  requiresDocument: false, deductsFromSick: false, maxPerYear: null, halfDay: false, sortOrder: 80, isSystem: true },
+  ];
+  for (const t of absenceTypes) {
+    await prisma.absenceType.upsert({
+      where: { code: t.code },
+      update: {},
+      create: t,
+    });
+  }
+  console.log(`  Seeded ${absenceTypes.length} absence_types`);
+
   // Admin User
   const adminExists = await prisma.user.findUnique({ where: { email: 'admin@amec.com' } });
   if (!adminExists) {
