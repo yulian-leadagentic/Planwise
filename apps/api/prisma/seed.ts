@@ -28,6 +28,19 @@ async function main() {
     modules.push(mod);
   }
 
+  // HR module (Phase A2, 2026-10-15) — new top-level module. Upserts on
+  // `route` (unique) so re-running is a no-op and avoids clashing with
+  // the id = sortOrder convention above (ids 1-9 are already taken by
+  // the baseline modules). The default role-module permissions loop
+  // below picks this up via `modules.push(hrMod)`; the HR-specific role
+  // grants (HR Manager / HR Clerk) land further down in this seeder.
+  const hrMod = await prisma.module.upsert({
+    where: { route: '/hr' },
+    update: { name: 'HR', icon: 'ClipboardList', sortOrder: 10 },
+    create: { name: 'HR', route: '/hr', icon: 'ClipboardList', sortOrder: 10 },
+  });
+  modules.push(hrMod);
+
   // Sub-modules (must be created AFTER top-level modules to reference parentId)
   const projectsMod = modules.find((m: any) => m.name === 'Projects');
   const tasksMod = modules.find((m: any) => m.name === 'Tasks');
@@ -111,9 +124,15 @@ async function main() {
   // Role-module permissions (upsert to avoid duplicates)
   //
   // Admin-only defaults: 'Organization' (the org-tree admin surface)
-  // is gated by `org:manage` and is admin-only in the seed. Other
-  // modules follow the standard four-role default matrix.
-  const ADMIN_ONLY_MODULES = new Set(['Organization']);
+  // is gated by `org:manage` and is admin-only in the seed. 'HR' is
+  // added here (Phase A2, 2026-10-15) so the default Manager/Employee
+  // rows DON'T get canRead on HR — HR Manager + HR Clerk are the two
+  // seeded roles that may see employee personal/medical data, and the
+  // guard's NO_ADMIN_BYPASS blocks admins from inheriting read via the
+  // role-name shortcut. Admins still get a full-permission row below;
+  // they just need to hold it explicitly. Other modules follow the
+  // standard four-role default matrix.
+  const ADMIN_ONLY_MODULES = new Set(['Organization', 'HR']);
   for (const mod of modules) {
     const isAdminOnly = ADMIN_ONLY_MODULES.has(mod.name);
     const perms = [
@@ -199,6 +218,152 @@ async function main() {
     });
   }
   console.log(`  Seeded ${projectTypes.length} project types`);
+
+  // ───────────────────────────────────────────────────────────────────
+  // HR Phase A2 (2026-10-15) — HR module catalog + role seeding.
+  // Idempotent (upsert-only); the admin runs `prisma db seed` on Railway
+  // after the Phase-A1 migration applies.
+  // ───────────────────────────────────────────────────────────────────
+
+  // HrSettings — singleton row (id=1). update:{} means re-running the
+  // seed NEVER overwrites admin-set values.
+  await prisma.hrSettings.upsert({
+    where: { id: 1 },
+    update: {},
+    create: { id: 1 }, // schema defaults (5/5/5) kick in
+  });
+  console.log('  Seeded hr_settings singleton');
+
+  // SpecialHourBucket — 9 Yulian-approved rows per §3.6 of the spec. All
+  // seeded with isSystem=true + defaultCreditMode=REPORTED. Phase B/C
+  // flips individual rows to AUTO as the behavior ships.
+  type BucketSeed = {
+    code: string;
+    nameHe: string;
+    behavior: 'A' | 'B' | 'C';
+    unit: 'DAY' | 'HOUR';
+    requiresDocument: boolean;
+    dailyAmount: number | null;
+    maxPerYear: number | null;
+    minDailyStandard: number | null;
+    sortOrder: number;
+  };
+  const bucketSeeds: BucketSeed[] = [
+    { code: 'nursing_parenting',       nameHe: 'הנקה / הורות',               behavior: 'B', unit: 'HOUR', requiresDocument: true,  dailyAmount: 1,    maxPerYear: null, minDailyStandard: 8, sortOrder: 10 },
+    { code: 'reservist_spouse_bucket', nameHe: 'נשות מילואים (זכאות B)',     behavior: 'B', unit: 'HOUR', requiresDocument: true,  dailyAmount: 1,    maxPerYear: null, minDailyStandard: 8, sortOrder: 20 },
+    { code: 'pregnancy',               nameHe: 'הריון',                       behavior: 'C', unit: 'HOUR', requiresDocument: true,  dailyAmount: null, maxPerYear: 40,   minDailyStandard: null, sortOrder: 30 },
+    { code: 'fertility',               nameHe: 'פוריות',                      behavior: 'C', unit: 'HOUR', requiresDocument: true,  dailyAmount: null, maxPerYear: 40,   minDailyStandard: null, sortOrder: 40 },
+    { code: 'special_child_care',      nameHe: 'טיפול בילד',                  behavior: 'C', unit: 'HOUR', requiresDocument: true,  dailyAmount: null, maxPerYear: 52,   minDailyStandard: null, sortOrder: 50 },
+    { code: 'training',                nameHe: 'השתלמות',                     behavior: 'A', unit: 'HOUR', requiresDocument: false, dailyAmount: null, maxPerYear: null, minDailyStandard: null, sortOrder: 60 },
+    { code: 'cross_project',           nameHe: 'רוחב',                        behavior: 'A', unit: 'HOUR', requiresDocument: false, dailyAmount: null, maxPerYear: null, minDailyStandard: null, sortOrder: 70 },
+    { code: 'meetings',                nameHe: 'ישיבות',                      behavior: 'A', unit: 'HOUR', requiresDocument: false, dailyAmount: null, maxPerYear: null, minDailyStandard: null, sortOrder: 80 },
+    { code: 'culture',                 nameHe: 'תרבות',                       behavior: 'A', unit: 'HOUR', requiresDocument: false, dailyAmount: null, maxPerYear: null, minDailyStandard: null, sortOrder: 90 },
+  ];
+  for (const b of bucketSeeds) {
+    await prisma.specialHourBucket.upsert({
+      where: { code: b.code },
+      // Keep schema-controlled catalog values authoritative on re-run,
+      // but DON'T re-flip defaultCreditMode or active — an HR admin
+      // may have changed those by hand after the first seed.
+      update: {
+        nameHe: b.nameHe,
+        behavior: b.behavior,
+        unit: b.unit,
+        requiresDocument: b.requiresDocument,
+        dailyAmount: b.dailyAmount ?? null,
+        maxPerYear: b.maxPerYear ?? null,
+        minDailyStandard: b.minDailyStandard ?? null,
+        sortOrder: b.sortOrder,
+        isSystem: true,
+      },
+      create: {
+        code: b.code,
+        nameHe: b.nameHe,
+        behavior: b.behavior,
+        unit: b.unit,
+        requiresDocument: b.requiresDocument,
+        dailyAmount: b.dailyAmount ?? null,
+        maxPerYear: b.maxPerYear ?? null,
+        minDailyStandard: b.minDailyStandard ?? null,
+        defaultCreditMode: 'REPORTED',
+        sortOrder: b.sortOrder,
+        isSystem: true,
+        active: true,
+      },
+    });
+  }
+  console.log(`  Seeded ${bucketSeeds.length} special_hour_buckets`);
+
+  // HR Manager + HR Clerk roles — upsert-by-name so a seed re-run is a
+  // no-op. Keep the existing row's description when present to avoid
+  // overwriting a hand-edited admin label.
+  let hrManagerRole = await prisma.role.findFirst({ where: { name: 'HR Manager' } });
+  if (!hrManagerRole) {
+    hrManagerRole = await prisma.role.create({
+      data: { name: 'HR Manager', description: 'HR admin — manage employees, buckets, approvals (HR Phase A)' },
+    });
+  }
+  let hrClerkRole = await prisma.role.findFirst({ where: { name: 'HR Clerk' } });
+  if (!hrClerkRole) {
+    hrClerkRole = await prisma.role.create({
+      data: { name: 'HR Clerk', description: 'HR read-only — browse + export HR data (HR Phase A)' },
+    });
+  }
+
+  // Role-module grants for the two HR roles. Keyed on (roleId, moduleId)
+  // so re-running is idempotent (findFirst-then-upsert matches the
+  // pattern used by the default role-module loop above).
+  // NB: a `timeMod` variable is already declared earlier in this seeder
+  // (sub-module parent lookup). Reusing that name here would shadow it
+  // and TSC blocks a redeclaration — pick a fresh name.
+  const hrTimeMod = modules.find((m: any) => m.name === 'Time');
+  const hrModule = modules.find((m: any) => m.name === 'HR');
+  if (!hrModule) {
+    // Defensive: the HR module was pushed into `modules` above. If this
+    // ever fires something upstream broke; log loudly rather than silently
+    // skip the role grants and leave HR Manager/Clerk without access.
+    throw new Error('HR module missing from `modules` array during seed');
+  }
+
+  // Grants per spec §1.4:
+  //   HR Manager × hr    : read + write + approve + export (no delete)
+  //   HR Manager × time  : read only (so they can approve timesheets)
+  //   HR Clerk   × hr    : read + export
+  const hrGrants: Array<{
+    roleId: number;
+    moduleId: number;
+    canRead: boolean;
+    canWrite: boolean;
+    canDelete: boolean;
+    canApprove: boolean;
+    canExport: boolean;
+  }> = [
+    { roleId: hrManagerRole.id, moduleId: hrModule.id, canRead: true, canWrite: true, canDelete: false, canApprove: true,  canExport: true },
+    ...(hrTimeMod
+      ? [{ roleId: hrManagerRole.id, moduleId: hrTimeMod.id, canRead: true, canWrite: false, canDelete: false, canApprove: false, canExport: false }]
+      : []),
+    { roleId: hrClerkRole.id, moduleId: hrModule.id, canRead: true, canWrite: false, canDelete: false, canApprove: false, canExport: true },
+  ];
+  for (const g of hrGrants) {
+    const existing = await prisma.roleModule.findFirst({
+      where: { roleId: g.roleId, moduleId: g.moduleId },
+    });
+    if (existing) {
+      await prisma.roleModule.update({
+        where: { id: existing.id },
+        data: {
+          canRead: g.canRead,
+          canWrite: g.canWrite,
+          canDelete: g.canDelete,
+          canApprove: g.canApprove,
+          canExport: g.canExport,
+        },
+      });
+    } else {
+      await prisma.roleModule.create({ data: g });
+    }
+  }
+  console.log('  Seeded HR Manager + HR Clerk role grants');
 
   // Admin User
   const adminExists = await prisma.user.findUnique({ where: { email: 'admin@amec.com' } });
