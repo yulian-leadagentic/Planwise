@@ -173,6 +173,13 @@ export class TimeEntriesService {
       taskId: dto.taskId ?? null,
     });
 
+    // HR Phase B3: validate SpecialHourBucket link if provided.
+    // Behavior B is auto-credit per spec §3.6; the user can't tag an
+    // entry with a B bucket (the HR engine credits it automatically).
+    if (dto.specialHourBucketId != null) {
+      await this.assertUsableBucket(dto.specialHourBucketId);
+    }
+
     const entry = await this.prisma.timeEntry.create({
       data: {
         userId,
@@ -187,6 +194,7 @@ export class TimeEntriesService {
         isBillable: dto.isBillable ?? true,
         location: dto.location ?? null,
         completionPct: dto.completionPct ?? null,
+        specialHourBucketId: dto.specialHourBucketId ?? null,
       },
       include: {
         project: { select: { id: true, name: true } },
@@ -395,6 +403,13 @@ export class TimeEntriesService {
       excludeId: id,
     });
 
+    // HR Phase B3: validate SpecialHourBucket link if changed. Pass
+    // null to clear, a bucket id to attach. B-behavior buckets are
+    // rejected (auto-credit per spec §3.6).
+    if ('specialHourBucketId' in dto && dto.specialHourBucketId != null) {
+      await this.assertUsableBucket(dto.specialHourBucketId);
+    }
+
     // Explicit column whitelist (mirrors create() ~176). Spreading
     // ...dto pulls the non-column control flag `confirmOverlap` into
     // Prisma's update input, which trips the *checked* variant where
@@ -416,6 +431,10 @@ export class TimeEntriesService {
         isBillable: dto.isBillable,
         location: dto.location,
         completionPct: dto.completionPct,
+        // Nullable: `specialHourBucketId: null` in the PATCH payload
+        // clears the field; absence of the key leaves it untouched.
+        specialHourBucketId:
+          'specialHourBucketId' in dto ? (dto.specialHourBucketId ?? null) : undefined,
       },
       include: {
         project: { select: { id: true, name: true } },
@@ -583,5 +602,40 @@ export class TimeEntriesService {
       dailyTotals,
       weeklyTotal: entries.reduce((sum, e) => sum + e.minutes, 0),
     };
+  }
+
+  /**
+   * HR Phase B3 (2026-10-15) — shared validator for the
+   * `specialHourBucketId` field on create/update. Rejects:
+   *   • unknown ids (404 would be loud; this is a user action so we
+   *     return 400 with a clear code the FE can key off);
+   *   • inactive buckets (admin flipped `active=false`);
+   *   • behavior === 'B' buckets — the HR engine auto-credits these
+   *     per spec §3.6, so a user-reported row would double-count.
+   */
+  private async assertUsableBucket(bucketId: number) {
+    const bucket = await this.prisma.specialHourBucket.findUnique({
+      where: { id: bucketId },
+      select: { id: true, code: true, active: true, behavior: true },
+    });
+    if (!bucket) {
+      throw new BadRequestException({
+        message: `Special-hour bucket ${bucketId} not found.`,
+        code: 'TIME_ENTRY_BUCKET_NOT_FOUND',
+      });
+    }
+    if (!bucket.active) {
+      throw new BadRequestException({
+        message: `Special-hour bucket "${bucket.code}" is inactive.`,
+        code: 'TIME_ENTRY_BUCKET_INACTIVE',
+      });
+    }
+    if (bucket.behavior === 'B') {
+      throw new BadRequestException({
+        message:
+          `Bucket "${bucket.code}" is behavior B (auto-credit) — the HR engine credits it automatically, so time entries cannot tag it.`,
+        code: 'TIME_ENTRY_BUCKET_AUTO_CREDIT',
+      });
+    }
   }
 }

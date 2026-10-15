@@ -57,6 +57,22 @@ export class CreateTimeEntryDto {
   completionPct?: number;
 
   /**
+   * HR Phase B3 (2026-10-15) — optional SpecialHourBucket this time
+   * entry should accrue against (behavior A or C only; B is auto-
+   * credit per spec §3.6 and is rejected by the service). `null` from
+   * the FE clears the field on update; omitting the key leaves it
+   * untouched.
+   */
+  @ApiPropertyOptional({
+    description:
+      'SpecialHourBucket.id — tags the entry for the HR engine. Behavior-B buckets are rejected (auto-credit).',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsInt()
+  specialHourBucketId?: number | null;
+
+  /**
    * @deprecated 2026-06-14 — no-overlap policy is now hard. Cross-task and
    * same-task overlaps both reject with 409 and no flag bypasses them.
    * Field kept on the DTO so existing clients sending it don't get a

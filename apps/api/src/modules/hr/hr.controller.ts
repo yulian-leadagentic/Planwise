@@ -9,8 +9,19 @@ import {
   Query,
   ParseIntPipe,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiConsumes,
+  ApiBody,
+} from '@nestjs/swagger';
 
 import { HrService } from './hr.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -20,13 +31,38 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UpdateHrEmployeeDto } from './dto/update-employee.dto';
 import { CreateEligibilityDto } from './dto/create-eligibility.dto';
 import { UpdateEligibilityDto } from './dto/update-eligibility.dto';
+import { UpdateHrSettingsDto } from './dto/update-hr-settings.dto';
+import { CreateHrCalendarDayDto } from './dto/create-calendar-day.dto';
+import { UpdateHrCalendarDayDto } from './dto/update-calendar-day.dto';
+import {
+  CreateAbsenceTypeDto,
+  UpdateAbsenceTypeDto,
+} from './dto/absence-type.dto';
+import {
+  CreateAbsenceRecordDto,
+  UpdateAbsenceRecordDto,
+} from './dto/absence-record.dto';
+import {
+  CreateSpecialHourBucketDto,
+  UpdateSpecialHourBucketDto,
+} from './dto/bucket.dto';
 
 /**
- * HR Phase A3 (2026-10-15) — `/hr/*` surface. Every route is gated by
- * the `hr` module permission; `NO_ADMIN_BYPASS` on the guard blocks
+ * HR Phase A3+B3 (2026-10-15) — `/hr/*` surface. Every route is gated
+ * by the `hr` module permission; `NO_ADMIN_BYPASS` on the guard blocks
  * the standard admin shortcut, so only roles with an explicit HR grant
  * (HR Manager + HR Clerk by default per the Phase A2 seed; plus any
  * other role an admin wires up) can call these endpoints.
+ *
+ * Permission convention (matches eligibility CRUD from A3):
+ *   • GET on the catalog (buckets, absence types, calendar days,
+ *     settings) → `hr:read` — HR Clerk may browse.
+ *   • Any write (POST/PATCH/DELETE) on the catalog → `hr:write`.
+ *   • GET on another employee's personal HR data (absences,
+ *     attachments) → `hr:write` to match the eligibility route's
+ *     stance in A3. Rationale: anyone who can list a worker's
+ *     medical notes should also be able to edit them; otherwise we'd
+ *     need two drawers.
  */
 @ApiTags('HR')
 @ApiBearerAuth()
@@ -35,7 +71,112 @@ import { UpdateEligibilityDto } from './dto/update-eligibility.dto';
 export class HrController {
   constructor(private readonly hr: HrService) {}
 
+  // ─── HR settings (singleton) ────────────────────────────────────────
+
+  @Get('settings')
+  @RequirePermissions({ module: 'hr', action: 'read' })
+  @ApiOperation({ summary: 'Get the HrSettings singleton (create on first read).' })
+  getSettings() {
+    return this.hr.getSettings();
+  }
+
+  @Patch('settings')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({ summary: 'Patch the HrSettings singleton.' })
+  updateSettings(@CurrentUser() user: any, @Body() dto: UpdateHrSettingsDto) {
+    return this.hr.updateSettings(dto, user.id);
+  }
+
+  // ─── CalendarDay admin CRUD ─────────────────────────────────────────
+
+  @Get('calendar-days')
+  @RequirePermissions({ module: 'hr', action: 'read' })
+  @ApiOperation({ summary: 'List calendar exceptions for a year.' })
+  @ApiQuery({ name: 'year', required: true, type: Number })
+  listCalendarDays(@Query('year') yearRaw: string) {
+    const year = Number(yearRaw);
+    if (!Number.isFinite(year)) {
+      throw new BadRequestException('year is required (yyyy)');
+    }
+    return this.hr.listCalendarDays(year);
+  }
+
+  @Post('calendar-days')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({ summary: 'Create a calendar exception (REGULAR days are never materialised).' })
+  createCalendarDay(
+    @CurrentUser() user: any,
+    @Body() dto: CreateHrCalendarDayDto,
+  ) {
+    return this.hr.createCalendarDay(dto, user.id);
+  }
+
+  @Patch('calendar-days/:id')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({ summary: 'Patch a calendar exception.' })
+  updateCalendarDay(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateHrCalendarDayDto,
+  ) {
+    return this.hr.updateCalendarDay(id, dto, user.id);
+  }
+
+  @Delete('calendar-days/:id')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({ summary: 'Hard-delete a calendar exception.' })
+  deleteCalendarDay(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.hr.deleteCalendarDay(id, user.id);
+  }
+
+  // ─── AbsenceType admin CRUD ─────────────────────────────────────────
+
+  @Get('absence-types')
+  @RequirePermissions({ module: 'hr', action: 'read' })
+  @ApiOperation({ summary: 'List the AbsenceType catalog.' })
+  @ApiQuery({ name: 'activeOnly', required: false, type: Boolean })
+  listAbsenceTypes(@Query('activeOnly') activeOnlyRaw?: string) {
+    const activeOnly =
+      activeOnlyRaw === 'true' || activeOnlyRaw === '1' ? true : undefined;
+    return this.hr.listAbsenceTypes({ activeOnly });
+  }
+
+  @Post('absence-types')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({ summary: 'Create a non-system absence type.' })
+  createAbsenceType(
+    @CurrentUser() user: any,
+    @Body() dto: CreateAbsenceTypeDto,
+  ) {
+    return this.hr.createAbsenceType(dto, user.id);
+  }
+
+  @Patch('absence-types/:id')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({ summary: 'Patch an absence type (system rows: partial-locked per Q10).' })
+  updateAbsenceType(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateAbsenceTypeDto,
+  ) {
+    return this.hr.updateAbsenceType(id, dto, user.id);
+  }
+
+  @Delete('absence-types/:id')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({ summary: 'Soft-delete via active=false (system rows blocked with 409).' })
+  deleteAbsenceType(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.hr.deleteAbsenceType(id, user.id);
+  }
+
   // ─── SpecialHourBucket catalog ──────────────────────────────────────
+
   @Get('buckets')
   @RequirePermissions({ module: 'hr', action: 'read' })
   @ApiOperation({ summary: 'List SpecialHourBucket catalog (optional behavior + active filters)' })
@@ -45,8 +186,6 @@ export class HrController {
     @Query('behavior') behavior?: 'A' | 'B' | 'C',
     @Query('activeOnly') activeOnlyRaw?: string,
   ) {
-    // Query strings arrive as `"true"` / `"false"` strings — coerce
-    // explicitly so a stray `?activeOnly=0` doesn't become truthy.
     const activeOnly =
       activeOnlyRaw === 'true' || activeOnlyRaw === '1'
         ? true
@@ -55,6 +194,39 @@ export class HrController {
           : undefined;
     return this.hr.listBuckets({ behavior, activeOnly });
   }
+
+  @Post('buckets')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({ summary: 'Create a non-system special-hour bucket.' })
+  createBucket(
+    @CurrentUser() user: any,
+    @Body() dto: CreateSpecialHourBucketDto,
+  ) {
+    return this.hr.createBucket(dto, user.id);
+  }
+
+  @Patch('buckets/:id')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({ summary: 'Patch a bucket (system rows: partial-locked per Q10).' })
+  updateBucket(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateSpecialHourBucketDto,
+  ) {
+    return this.hr.updateBucket(id, dto, user.id);
+  }
+
+  @Delete('buckets/:id')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({ summary: 'Soft-delete a bucket (system rows blocked with 409).' })
+  deleteBucket(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.hr.deleteBucket(id, user.id);
+  }
+
+  // ─── Employee roster ────────────────────────────────────────────────
 
   @Get('employees')
   @RequirePermissions({ module: 'hr', action: 'read' })
@@ -81,10 +253,6 @@ export class HrController {
   }
 
   // ─── Eligibility CRUD ───────────────────────────────────────────────
-  // Per spec §7, the "list eligibilities" endpoint lives under the
-  // employee resource and is gated on hr:write — anyone who can see
-  // the list is implicitly allowed to add/remove rows. HR Clerk gets
-  // read-only via /hr/employees/:id (bucketEligibilities embedded).
 
   @Get('employees/:id/eligibilities')
   @RequirePermissions({ module: 'hr', action: 'write' })
@@ -123,5 +291,100 @@ export class HrController {
     @Param('eligibilityId', ParseIntPipe) eligibilityId: number,
   ) {
     return this.hr.deactivateEligibility(userId, eligibilityId);
+  }
+
+  // ─── Absences on an employee ────────────────────────────────────────
+
+  @Get('employees/:id/absences')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({ summary: 'List absences for an employee (optional year + typeId filter).' })
+  @ApiQuery({ name: 'year', required: false, type: Number })
+  @ApiQuery({ name: 'typeId', required: false, type: Number })
+  listAbsences(
+    @Param('id', ParseIntPipe) userId: number,
+    @Query('year') yearRaw?: string,
+    @Query('typeId') typeIdRaw?: string,
+  ) {
+    const year = yearRaw ? Number(yearRaw) : undefined;
+    const typeId = typeIdRaw ? Number(typeIdRaw) : undefined;
+    return this.hr.listAbsencesForEmployee(userId, {
+      year: Number.isFinite(year) ? year : undefined,
+      typeId: Number.isFinite(typeId) ? typeId : undefined,
+    });
+  }
+
+  @Post('employees/:id/absences')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({ summary: 'Create an absence record (bereavement auto-expands to 7 days).' })
+  createAbsence(
+    @Param('id', ParseIntPipe) userId: number,
+    @CurrentUser() user: any,
+    @Body() dto: CreateAbsenceRecordDto,
+  ) {
+    return this.hr.createAbsence(userId, dto, user.id);
+  }
+
+  @Patch('employees/:id/absences/:recordId')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({ summary: 'Patch an absence record.' })
+  updateAbsence(
+    @Param('id', ParseIntPipe) userId: number,
+    @Param('recordId', ParseIntPipe) recordId: number,
+    @CurrentUser() user: any,
+    @Body() dto: UpdateAbsenceRecordDto,
+  ) {
+    return this.hr.updateAbsence(userId, recordId, dto, user.id);
+  }
+
+  @Delete('employees/:id/absences/:recordId')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({ summary: 'Hard-delete an absence record (event-sourced; audit log retains).' })
+  deleteAbsence(
+    @Param('id', ParseIntPipe) userId: number,
+    @Param('recordId', ParseIntPipe) recordId: number,
+    @CurrentUser() user: any,
+  ) {
+    return this.hr.deleteAbsence(userId, recordId, user.id);
+  }
+
+  // ─── EmployeeAttachment upload ──────────────────────────────────────
+
+  @Get('employees/:id/attachments')
+  @RequirePermissions({ module: 'hr', action: 'read' })
+  @ApiOperation({ summary: 'List HR attachments for an employee.' })
+  listAttachments(@Param('id', ParseIntPipe) userId: number) {
+    return this.hr.listEmployeeAttachments(userId);
+  }
+
+  @Post('employees/:id/attachments')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+    },
+  })
+  @ApiOperation({ summary: 'Upload an HR document for an employee.' })
+  uploadAttachment(
+    @Param('id', ParseIntPipe) userId: number,
+    @CurrentUser() user: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.hr.uploadEmployeeAttachment(userId, user.id, file);
+  }
+
+  @Delete('employees/:id/attachments/:attachmentId')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({ summary: 'Delete an HR attachment (ON DELETE SET NULL unlinks absences/eligibilities).' })
+  deleteAttachment(
+    @Param('id', ParseIntPipe) userId: number,
+    @Param('attachmentId', ParseIntPipe) attachmentId: number,
+    @CurrentUser() user: any,
+  ) {
+    return this.hr.deleteEmployeeAttachment(userId, attachmentId, user.id);
   }
 }

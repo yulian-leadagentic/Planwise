@@ -1,27 +1,62 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+  Logger,
+} from '@nestjs/common';
+import { Prisma, CalendarDayType } from '@prisma/client';
+import * as Sentry from '@sentry/node';
+
 import { PrismaService } from '../../prisma/prisma.service';
+import { FilesService } from '../files/files.service';
+import { ActivityLogService } from '../../common/services/activity-log.service';
 import { UpdateHrEmployeeDto } from './dto/update-employee.dto';
 import { CreateEligibilityDto } from './dto/create-eligibility.dto';
 import { UpdateEligibilityDto } from './dto/update-eligibility.dto';
+import { UpdateHrSettingsDto } from './dto/update-hr-settings.dto';
+import {
+  CreateHrCalendarDayDto,
+} from './dto/create-calendar-day.dto';
+import { UpdateHrCalendarDayDto } from './dto/update-calendar-day.dto';
+import {
+  CreateAbsenceTypeDto,
+  UpdateAbsenceTypeDto,
+} from './dto/absence-type.dto';
+import {
+  CreateAbsenceRecordDto,
+  UpdateAbsenceRecordDto,
+} from './dto/absence-record.dto';
+import {
+  CreateSpecialHourBucketDto,
+  UpdateSpecialHourBucketDto,
+} from './dto/bucket.dto';
 
 /**
- * HR Phase A3 (2026-10-15) — business logic for the /hr/* surface.
- * Scope A: employee roster + per-employee SpecialHourBucket eligibility
- * CRUD. Everything else from the spec (monthly review, reports,
- * approvals, auto-credit math) ships in Phase B/C.
+ * HR Phase A3+B3 (2026-10-15) — business logic for the /hr/* surface.
+ *
+ * Growing but still one domain — kept in a single service so the
+ * cross-resource invariants (an attachment's user id must match the
+ * route param, bucket.isSystem partial-locks, bereavement 7-day
+ * span) sit next to each other.
+ *
+ * Audit: HR writes feed ActivityLogService under category='admin'
+ * with entityType identifying the resource (hr_settings, calendar_day,
+ * absence_type, absence_record, bucket, hr_attachment). An audit-log
+ * failure never breaks the business write.
  */
 @Injectable()
 export class HrService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly log = new Logger(HrService.name);
 
-  // ─── SpecialHourBucket catalog ──────────────────────────────────────
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly files: FilesService,
+    private readonly activityLog: ActivityLogService,
+  ) {}
 
-  /**
-   * List the SpecialHourBucket catalog so the FE "add eligibility"
-   * dialog can offer a picker. Opt-in filters for the "B-behaviour,
-   * active" case the HR drawer needs today. Phase B/C UI (admin
-   * settings on the catalog itself) will surface the full list.
-   */
+  // ═══ SpecialHourBucket catalog ══════════════════════════════════════
+
   async listBuckets(opts: { behavior?: 'A' | 'B' | 'C'; activeOnly?: boolean } = {}) {
     const rows = await this.prisma.specialHourBucket.findMany({
       where: {
@@ -30,27 +65,711 @@ export class HrService {
       },
       orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
     });
-    return rows.map((b) => ({
+    return rows.map((b) => this.decimalBucket(b));
+  }
+
+  private decimalBucket<T extends { dailyAmount: any; maxPerYear: any; minDailyStandard: any }>(b: T) {
+    return {
       ...b,
       dailyAmount: b.dailyAmount != null ? Number(b.dailyAmount) : null,
       maxPerYear: b.maxPerYear != null ? Number(b.maxPerYear) : null,
       minDailyStandard: b.minDailyStandard != null ? Number(b.minDailyStandard) : null,
+    };
+  }
+
+  async createBucket(dto: CreateSpecialHourBucketDto, actorId: number) {
+    const dup = await this.prisma.specialHourBucket.findUnique({ where: { code: dto.code } });
+    if (dup) throw new ConflictException(`Bucket code "${dto.code}" already exists`);
+
+    const created = await this.prisma.specialHourBucket.create({
+      data: {
+        code: dto.code,
+        nameHe: dto.nameHe,
+        behavior: dto.behavior,
+        unit: dto.unit,
+        requiresDocument: dto.requiresDocument ?? false,
+        dailyAmount: dto.dailyAmount ?? null,
+        maxPerYear: dto.maxPerYear ?? null,
+        minDailyStandard: dto.minDailyStandard ?? null,
+        defaultCreditMode: dto.defaultCreditMode ?? 'REPORTED',
+        active: dto.active ?? true,
+        sortOrder: dto.sortOrder ?? 0,
+        // Explicit: user-created rows are never system — the Q10 lock
+        // on PATCH/DELETE keys off `isSystem`, so trusting the client
+        // would open the admin UI to permanent-row injection.
+        isSystem: false,
+      },
+    });
+    this.writeAudit({
+      actorId,
+      action: 'hr.bucket.created',
+      entityType: 'special_hour_bucket',
+      entityId: created.id,
+      entityName: created.nameHe,
+      description: `Created special-hour bucket "${created.nameHe}" (${created.code})`,
+    });
+    return this.decimalBucket(created);
+  }
+
+  async updateBucket(id: number, dto: UpdateSpecialHourBucketDto, actorId: number) {
+    const existing = await this.prisma.specialHourBucket.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException(`Bucket ${id} not found`);
+
+    const data: Prisma.SpecialHourBucketUpdateInput = {};
+    const stripped: string[] = [];
+
+    const applyField = <K extends keyof UpdateSpecialHourBucketDto>(
+      key: K,
+      value: UpdateSpecialHourBucketDto[K],
+    ) => {
+      (data as any)[key] = value;
+    };
+
+    // Q10 partial lock on `isSystem=true`. Strip code/behavior/unit/
+    // requiresDocument/isSystem from the payload; nameHe + dailyAmount
+    // + maxPerYear + minDailyStandard + defaultCreditMode + active +
+    // sortOrder all flow. Match AbsenceType's semantics so the admin UI
+    // doesn't surface two different lock sets.
+    const SYSTEM_LOCKED = new Set(['code', 'behavior', 'unit', 'requiresDocument']);
+
+    for (const k of Object.keys(dto) as (keyof UpdateSpecialHourBucketDto)[]) {
+      if (existing.isSystem && SYSTEM_LOCKED.has(k as string)) {
+        stripped.push(k as string);
+        continue;
+      }
+      applyField(k, dto[k]);
+    }
+
+    if (stripped.length > 0) {
+      this.log.warn(
+        `[hr/buckets] isSystem row ${id} — stripped locked fields: ${stripped.join(', ')}`,
+      );
+    }
+
+    const updated = await this.prisma.specialHourBucket.update({ where: { id }, data });
+    this.writeAudit({
+      actorId,
+      action: 'hr.bucket.updated',
+      entityType: 'special_hour_bucket',
+      entityId: id,
+      entityName: updated.nameHe,
+      description: `Updated bucket "${updated.nameHe}"` +
+        (stripped.length ? ` (locked: ${stripped.join(', ')})` : ''),
+    });
+    return this.decimalBucket(updated);
+  }
+
+  async deleteBucket(id: number, actorId: number) {
+    const existing = await this.prisma.specialHourBucket.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException(`Bucket ${id} not found`);
+    if (existing.isSystem) {
+      throw new ConflictException(
+        `Bucket "${existing.code}" is a system row — soft-deactivate it via PATCH { active: false } instead.`,
+      );
+    }
+    await this.prisma.specialHourBucket.update({ where: { id }, data: { active: false } });
+    this.writeAudit({
+      actorId,
+      action: 'hr.bucket.deactivated',
+      entityType: 'special_hour_bucket',
+      entityId: id,
+      entityName: existing.nameHe,
+      description: `Deactivated bucket "${existing.nameHe}" (${existing.code})`,
+    });
+    return { ok: true, id };
+  }
+
+  // ═══ HR settings (singleton row id=1) ════════════════════════════════
+
+  async getSettings() {
+    // Create on first read so admin never sees a 404 before the seed
+    // has run. The migration already seeds the singleton, but staging
+    // may wipe + reseed, and tests spin up blank DBs.
+    let row = await this.prisma.hrSettings.findUnique({ where: { id: 1 } });
+    if (!row) {
+      row = await this.prisma.hrSettings.create({
+        data: { id: 1 },
+      });
+    }
+    return {
+      id: row.id,
+      shortDayHoursHolidayEve: Number(row.shortDayHoursHolidayEve),
+      shortDayHoursCholHamoed: Number(row.shortDayHoursCholHamoed),
+      minHoursPerDay: Number(row.minHoursPerDay),
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  async updateSettings(dto: UpdateHrSettingsDto, actorId: number) {
+    // Ensure row exists first (shares the create-on-read path).
+    await this.getSettings();
+    const data: Prisma.HrSettingsUpdateInput = {};
+    const changed: string[] = [];
+    if (dto.shortDayHoursHolidayEve != null) {
+      data.shortDayHoursHolidayEve = dto.shortDayHoursHolidayEve;
+      changed.push('holidayEve');
+    }
+    if (dto.shortDayHoursCholHamoed != null) {
+      data.shortDayHoursCholHamoed = dto.shortDayHoursCholHamoed;
+      changed.push('cholHamoed');
+    }
+    if (dto.minHoursPerDay != null) {
+      data.minHoursPerDay = dto.minHoursPerDay;
+      changed.push('minHours');
+    }
+    const row = await this.prisma.hrSettings.update({ where: { id: 1 }, data });
+    this.writeAudit({
+      actorId,
+      action: 'hr.settings.updated',
+      entityType: 'hr_settings',
+      entityId: 1,
+      description: `Updated HR settings — ${changed.join(', ') || 'no fields'}`,
+    });
+    return {
+      id: row.id,
+      shortDayHoursHolidayEve: Number(row.shortDayHoursHolidayEve),
+      shortDayHoursCholHamoed: Number(row.shortDayHoursCholHamoed),
+      minHoursPerDay: Number(row.minHoursPerDay),
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  // ═══ CalendarDay admin CRUD ═════════════════════════════════════════
+
+  async listCalendarDays(year: number) {
+    if (!Number.isFinite(year) || year < 1900 || year > 3000) {
+      throw new BadRequestException('year must be a 4-digit calendar year');
+    }
+    const start = new Date(year, 0, 1);
+    const end = new Date(year + 1, 0, 1);
+    const rows = await this.prisma.calendarDay.findMany({
+      where: { date: { gte: start, lt: end } },
+      orderBy: { date: 'asc' },
+      include: {
+        creator: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
+    return rows;
+  }
+
+  async createCalendarDay(dto: CreateHrCalendarDayDto, actorId: number) {
+    // Guard against REGULAR days — the engine implicitly defaults
+    // missing dates to REGULAR; materialising a row would be a lie.
+    if ((dto.type as CalendarDayType) === 'REGULAR') {
+      throw new BadRequestException('REGULAR days are never materialised; omit the row.');
+    }
+    const dateStr = dto.date;
+    const dateParts = dateStr.split('-').map(Number);
+    const date = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+    const existing = await this.prisma.calendarDay.findFirst({ where: { date } });
+    if (existing) {
+      throw new ConflictException(`Calendar day for ${dateStr} already exists`);
+    }
+    const created = await this.prisma.calendarDay.create({
+      data: {
+        date,
+        name: dto.name,
+        type: dto.type as CalendarDayType,
+        halfDayUntil: dto.halfDayUntil ?? null,
+        appliesTo: dto.appliesTo ?? 'all',
+        isRecurring: dto.isRecurring ?? false,
+        notes: dto.notes ?? null,
+        createdBy: actorId,
+      },
+      include: { creator: { select: { id: true, firstName: true, lastName: true } } },
+    });
+    this.writeAudit({
+      actorId,
+      action: 'hr.calendar_day.created',
+      entityType: 'calendar_day',
+      entityId: created.id,
+      entityName: created.name,
+      description: `Added calendar exception "${created.name}" on ${dateStr} (${created.type})`,
+    });
+    return created;
+  }
+
+  async updateCalendarDay(id: number, dto: UpdateHrCalendarDayDto, actorId: number) {
+    const existing = await this.prisma.calendarDay.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException(`Calendar day ${id} not found`);
+
+    if (dto.type && (dto.type as CalendarDayType) === 'REGULAR') {
+      throw new BadRequestException('REGULAR days are never materialised; delete the row instead.');
+    }
+
+    const data: Prisma.CalendarDayUpdateInput = {};
+    if (dto.date) {
+      const parts = dto.date.split('-').map(Number);
+      data.date = new Date(parts[0], parts[1] - 1, parts[2]);
+    }
+    if (dto.type) data.type = dto.type as CalendarDayType;
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.halfDayUntil !== undefined) data.halfDayUntil = dto.halfDayUntil ?? null;
+    if (dto.appliesTo !== undefined) data.appliesTo = dto.appliesTo;
+    if (dto.isRecurring !== undefined) data.isRecurring = dto.isRecurring;
+    if (dto.notes !== undefined) data.notes = dto.notes ?? null;
+
+    const updated = await this.prisma.calendarDay.update({
+      where: { id },
+      data,
+      include: { creator: { select: { id: true, firstName: true, lastName: true } } },
+    });
+    this.writeAudit({
+      actorId,
+      action: 'hr.calendar_day.updated',
+      entityType: 'calendar_day',
+      entityId: id,
+      entityName: updated.name,
+      description: `Updated calendar exception "${updated.name}"`,
+    });
+    return updated;
+  }
+
+  async deleteCalendarDay(id: number, actorId: number) {
+    const existing = await this.prisma.calendarDay.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException(`Calendar day ${id} not found`);
+    await this.prisma.calendarDay.delete({ where: { id } });
+    this.writeAudit({
+      actorId,
+      action: 'hr.calendar_day.deleted',
+      entityType: 'calendar_day',
+      entityId: id,
+      entityName: existing.name,
+      severity: 'warn',
+      description: `Deleted calendar exception "${existing.name}" on ${existing.date.toISOString().slice(0, 10)}`,
+    });
+    return { ok: true, id };
+  }
+
+  // ═══ AbsenceType admin CRUD ═════════════════════════════════════════
+
+  async listAbsenceTypes(opts: { activeOnly?: boolean } = {}) {
+    return this.prisma.absenceType.findMany({
+      where: {
+        ...(opts.activeOnly ? { active: true } : {}),
+      },
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+    });
+  }
+
+  async createAbsenceType(dto: CreateAbsenceTypeDto, actorId: number) {
+    const dup = await this.prisma.absenceType.findUnique({ where: { code: dto.code } });
+    if (dup) throw new ConflictException(`Absence type code "${dto.code}" already exists`);
+
+    const created = await this.prisma.absenceType.create({
+      data: {
+        code: dto.code,
+        nameHe: dto.nameHe,
+        unit: dto.unit,
+        requiresDocument: dto.requiresDocument ?? false,
+        deductsFromSick: dto.deductsFromSick ?? false,
+        maxPerYear: dto.maxPerYear ?? null,
+        halfDay: dto.halfDay ?? false,
+        active: dto.active ?? true,
+        sortOrder: dto.sortOrder ?? 0,
+        isSystem: false,
+      },
+    });
+    this.writeAudit({
+      actorId,
+      action: 'hr.absence_type.created',
+      entityType: 'absence_type',
+      entityId: created.id,
+      entityName: created.nameHe,
+      description: `Created absence type "${created.nameHe}" (${created.code})`,
+    });
+    return created;
+  }
+
+  async updateAbsenceType(id: number, dto: UpdateAbsenceTypeDto, actorId: number) {
+    const existing = await this.prisma.absenceType.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException(`Absence type ${id} not found`);
+
+    const SYSTEM_LOCKED = new Set([
+      'code',
+      'unit',
+      'requiresDocument',
+      'deductsFromSick',
+      'halfDay',
+    ]);
+
+    const data: Prisma.AbsenceTypeUpdateInput = {};
+    const stripped: string[] = [];
+    for (const k of Object.keys(dto) as (keyof UpdateAbsenceTypeDto)[]) {
+      if (existing.isSystem && SYSTEM_LOCKED.has(k as string)) {
+        stripped.push(k as string);
+        continue;
+      }
+      (data as any)[k] = dto[k];
+    }
+    if (stripped.length > 0) {
+      this.log.warn(
+        `[hr/absence-types] isSystem row ${id} — stripped locked fields: ${stripped.join(', ')}`,
+      );
+    }
+    const updated = await this.prisma.absenceType.update({ where: { id }, data });
+    this.writeAudit({
+      actorId,
+      action: 'hr.absence_type.updated',
+      entityType: 'absence_type',
+      entityId: id,
+      entityName: updated.nameHe,
+      description: `Updated absence type "${updated.nameHe}"` +
+        (stripped.length ? ` (locked: ${stripped.join(', ')})` : ''),
+    });
+    return updated;
+  }
+
+  async deleteAbsenceType(id: number, actorId: number) {
+    const existing = await this.prisma.absenceType.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException(`Absence type ${id} not found`);
+    if (existing.isSystem) {
+      throw new ConflictException(
+        `Absence type "${existing.code}" is a system row — soft-deactivate it via PATCH { active: false }.`,
+      );
+    }
+    await this.prisma.absenceType.update({ where: { id }, data: { active: false } });
+    this.writeAudit({
+      actorId,
+      action: 'hr.absence_type.deactivated',
+      entityType: 'absence_type',
+      entityId: id,
+      entityName: existing.nameHe,
+      description: `Deactivated absence type "${existing.nameHe}" (${existing.code})`,
+    });
+    return { ok: true, id };
+  }
+
+  // ═══ AbsenceRecord — per-employee CRUD ══════════════════════════════
+
+  /**
+   * Bereavement 1st-degree carries a 7-day span (per spec §3.4). The
+   * seeded `code` on AbsenceType is `bereavement_1st_degree`.
+   */
+  private static readonly BEREAVEMENT_CODE = 'bereavement_1st_degree';
+
+  async listAbsencesForEmployee(
+    userId: number,
+    opts: { year?: number; typeId?: number } = {},
+  ) {
+    await this.assertEmployee(userId);
+    const where: Prisma.AbsenceRecordWhereInput = { userId };
+    if (opts.year != null && Number.isFinite(opts.year)) {
+      const start = new Date(opts.year, 0, 1);
+      const end = new Date(opts.year + 1, 0, 1);
+      where.dateFrom = { gte: start, lt: end };
+    }
+    if (opts.typeId != null && Number.isFinite(opts.typeId)) {
+      where.absenceTypeId = opts.typeId;
+    }
+    const rows = await this.prisma.absenceRecord.findMany({
+      where,
+      orderBy: { dateFrom: 'asc' },
+      include: {
+        absenceType: {
+          select: {
+            id: true,
+            code: true,
+            nameHe: true,
+            unit: true,
+            requiresDocument: true,
+            halfDay: true,
+          },
+        },
+        createdBy: { select: { id: true, firstName: true, lastName: true } },
+        document: { select: { id: true, fileName: true, fileUrl: true, mimeType: true, fileSize: true } },
+      },
+    });
+    return rows.map((r) => ({
+      ...r,
+      amount: Number(r.amount),
     }));
   }
 
-  // ─── Employee roster ────────────────────────────────────────────────
+  async createAbsence(userId: number, dto: CreateAbsenceRecordDto, actorId: number) {
+    await this.assertEmployee(userId);
+    const type = await this.prisma.absenceType.findUnique({
+      where: { id: dto.absenceTypeId },
+    });
+    if (!type) throw new NotFoundException(`Absence type ${dto.absenceTypeId} not found`);
+    if (!type.active) {
+      throw new BadRequestException(`Absence type "${type.code}" is inactive`);
+    }
 
-  /**
-   * HR roster — all users whose `userType` is 'employee'. Internal
-   * staff only; external partners live under /partners. We DON'T hide
-   * inactive rows here: HR needs to see every ex-employee in the
-   * payroll month until the final paycheck lands.
-   *
-   * Returns the fields the FE table displays:
-   *   id · firstName · lastName · orgUnit (as "department") ·
-   *   dailyStandardHours · employmentType · accountingEmployeeNumber ·
-   *   employmentDate · employmentEndDate · isActive
-   */
+    if (type.requiresDocument && dto.documentFileId == null) {
+      throw new BadRequestException({
+        message: `Absence type "${type.nameHe}" requires an uploaded document.`,
+        code: 'HR_ABSENCE_DOCUMENT_REQUIRED',
+      });
+    }
+
+    const [fy, fm, fd] = dto.dateFrom.split('-').map(Number);
+    const dateFrom = new Date(fy, fm - 1, fd);
+    let dateTo: Date;
+
+    if (dto.dateTo) {
+      const [ty, tm, td] = dto.dateTo.split('-').map(Number);
+      dateTo = new Date(ty, tm - 1, td);
+    } else {
+      dateTo = dateFrom;
+    }
+
+    // Bereavement 7-day auto-span (spec §3.4): a missing-or-equal dateTo
+    // expands to dateFrom + 6 days (contiguous calendar days inclusive).
+    const isSingleDayPayload =
+      dateTo.getTime() === dateFrom.getTime();
+    if (type.code === HrService.BEREAVEMENT_CODE && isSingleDayPayload) {
+      dateTo = new Date(dateFrom);
+      dateTo.setDate(dateFrom.getDate() + 6);
+    }
+
+    if (dateTo < dateFrom) {
+      throw new BadRequestException('dateTo must be on or after dateFrom');
+    }
+
+    if (dto.documentFileId != null) {
+      await this.assertAttachmentOwnedBy(userId, dto.documentFileId);
+    }
+
+    const created = await this.prisma.absenceRecord.create({
+      data: {
+        userId,
+        absenceTypeId: dto.absenceTypeId,
+        dateFrom,
+        dateTo,
+        amount: dto.amount,
+        documentFileId: dto.documentFileId ?? null,
+        note: dto.note ?? null,
+        createdById: actorId,
+      },
+      include: {
+        absenceType: {
+          select: { id: true, code: true, nameHe: true, unit: true, requiresDocument: true, halfDay: true },
+        },
+        document: { select: { id: true, fileName: true, fileUrl: true, mimeType: true, fileSize: true } },
+      },
+    });
+
+    this.writeAudit({
+      actorId,
+      action: 'hr.absence.created',
+      entityType: 'absence_record',
+      entityId: created.id,
+      entityName: `${type.nameHe}`,
+      description:
+        `Logged absence "${type.nameHe}" ${dto.dateFrom}` +
+        (dto.dateTo && dto.dateTo !== dto.dateFrom ? ` → ${dto.dateTo}` : '') +
+        ` (${dto.amount}${type.unit === 'DAY' ? 'd' : 'h'})` +
+        ` for employee ${userId}`,
+    });
+
+    return { ...created, amount: Number(created.amount) };
+  }
+
+  async updateAbsence(
+    userId: number,
+    recordId: number,
+    dto: UpdateAbsenceRecordDto,
+    actorId: number,
+  ) {
+    const existing = await this.prisma.absenceRecord.findFirst({
+      where: { id: recordId, userId },
+      include: { absenceType: true },
+    });
+    if (!existing) throw new NotFoundException(`Absence ${recordId} not found for employee ${userId}`);
+
+    // Resolve absence type: either the override on the patch, or the
+    // existing one. We only re-validate requiresDocument against the
+    // final (new or kept) type.
+    const nextTypeId = dto.absenceTypeId ?? existing.absenceTypeId;
+    const nextType =
+      dto.absenceTypeId && dto.absenceTypeId !== existing.absenceTypeId
+        ? await this.prisma.absenceType.findUnique({ where: { id: nextTypeId } })
+        : existing.absenceType;
+    if (!nextType) throw new NotFoundException(`Absence type ${nextTypeId} not found`);
+    if (!nextType.active) {
+      throw new BadRequestException(`Absence type "${nextType.code}" is inactive`);
+    }
+
+    const data: Prisma.AbsenceRecordUpdateInput = {};
+    if (dto.absenceTypeId) data.absenceType = { connect: { id: dto.absenceTypeId } };
+    if (dto.dateFrom) {
+      const [y, m, d] = dto.dateFrom.split('-').map(Number);
+      data.dateFrom = new Date(y, m - 1, d);
+    }
+    if (dto.dateTo) {
+      const [y, m, d] = dto.dateTo.split('-').map(Number);
+      data.dateTo = new Date(y, m - 1, d);
+    }
+    if (dto.amount != null) data.amount = dto.amount;
+    if (dto.note !== undefined) data.note = dto.note ?? null;
+
+    if (dto.documentFileId !== undefined) {
+      if (dto.documentFileId == null) {
+        if (nextType.requiresDocument) {
+          throw new BadRequestException({
+            message: `Absence type "${nextType.nameHe}" requires an uploaded document.`,
+            code: 'HR_ABSENCE_DOCUMENT_REQUIRED',
+          });
+        }
+        data.document = { disconnect: true };
+      } else {
+        await this.assertAttachmentOwnedBy(userId, dto.documentFileId);
+        data.document = { connect: { id: dto.documentFileId } };
+      }
+    } else if (
+      dto.absenceTypeId &&
+      nextType.requiresDocument &&
+      existing.documentFileId == null
+    ) {
+      // Type changed to one that requires a doc, but patch didn't
+      // supply one and existing had none — reject so UI prompts.
+      throw new BadRequestException({
+        message: `Absence type "${nextType.nameHe}" requires an uploaded document.`,
+        code: 'HR_ABSENCE_DOCUMENT_REQUIRED',
+      });
+    }
+
+    const nextStart = (data.dateFrom as Date | undefined) ?? existing.dateFrom;
+    const nextEnd = (data.dateTo as Date | undefined) ?? existing.dateTo;
+    if (nextEnd < nextStart) {
+      throw new BadRequestException('dateTo must be on or after dateFrom');
+    }
+
+    const updated = await this.prisma.absenceRecord.update({
+      where: { id: recordId },
+      data,
+      include: {
+        absenceType: {
+          select: { id: true, code: true, nameHe: true, unit: true, requiresDocument: true, halfDay: true },
+        },
+        document: { select: { id: true, fileName: true, fileUrl: true, mimeType: true, fileSize: true } },
+      },
+    });
+
+    this.writeAudit({
+      actorId,
+      action: 'hr.absence.updated',
+      entityType: 'absence_record',
+      entityId: recordId,
+      entityName: nextType.nameHe,
+      description: `Updated absence #${recordId} for employee ${userId}`,
+    });
+
+    return { ...updated, amount: Number(updated.amount) };
+  }
+
+  async deleteAbsence(userId: number, recordId: number, actorId: number) {
+    const existing = await this.prisma.absenceRecord.findFirst({
+      where: { id: recordId, userId },
+      include: { absenceType: { select: { nameHe: true } } },
+    });
+    if (!existing) {
+      throw new NotFoundException(`Absence ${recordId} not found for employee ${userId}`);
+    }
+    await this.prisma.absenceRecord.delete({ where: { id: recordId } });
+    this.writeAudit({
+      actorId,
+      action: 'hr.absence.deleted',
+      entityType: 'absence_record',
+      entityId: recordId,
+      entityName: existing.absenceType.nameHe,
+      severity: 'warn',
+      description:
+        `Deleted absence "${existing.absenceType.nameHe}"` +
+        ` from ${existing.dateFrom.toISOString().slice(0, 10)}` +
+        ` for employee ${userId}`,
+    });
+    return { ok: true, id: recordId };
+  }
+
+  // ═══ EmployeeAttachment — HR document store ═════════════════════════
+
+  async uploadEmployeeAttachment(
+    userId: number,
+    actorId: number,
+    file: Express.Multer.File,
+  ) {
+    await this.assertEmployee(userId);
+    if (!file) throw new BadRequestException('No file provided');
+
+    // Reuse the central FilesService — the 'hr' folder was allow-
+    // listed in A1 so the whitelist check passes.
+    const { url, originalName } = await this.files.uploadFile(file, 'hr');
+
+    const created = await this.prisma.employeeAttachment.create({
+      data: {
+        userId,
+        fileName: originalName,
+        fileUrl: url,
+        fileSize: file.size ?? null,
+        mimeType: file.mimetype ?? null,
+        uploadedBy: actorId,
+      },
+    });
+    this.writeAudit({
+      actorId,
+      action: 'hr.attachment.uploaded',
+      entityType: 'employee_attachment',
+      entityId: created.id,
+      entityName: originalName,
+      description: `Uploaded HR document "${originalName}" for employee ${userId}`,
+    });
+    return {
+      id: created.id,
+      url: created.fileUrl,
+      fileName: created.fileName,
+      fileSize: created.fileSize,
+      mimeType: created.mimeType,
+      createdAt: created.createdAt,
+    };
+  }
+
+  async listEmployeeAttachments(userId: number) {
+    await this.assertEmployee(userId);
+    return this.prisma.employeeAttachment.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        uploader: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
+  }
+
+  async deleteEmployeeAttachment(
+    userId: number,
+    attachmentId: number,
+    actorId: number,
+  ) {
+    const row = await this.prisma.employeeAttachment.findFirst({
+      where: { id: attachmentId, userId },
+    });
+    if (!row) {
+      throw new NotFoundException(
+        `Attachment ${attachmentId} not found for employee ${userId}`,
+      );
+    }
+    // Nullable FKs on `absence_records.document_file_id` +
+    // `employee_bucket_eligibilities.document_file_id` set NULL
+    // automatically via `ON DELETE SET NULL` from B1 — nothing extra.
+    // TODO: when FilesService adds a `deleteFile(url)` helper, unlink
+    // the on-disk blob too; today we leave the file in place
+    // (orphaned) and only drop the DB row.
+    await this.prisma.employeeAttachment.delete({ where: { id: attachmentId } });
+    this.writeAudit({
+      actorId,
+      action: 'hr.attachment.deleted',
+      entityType: 'employee_attachment',
+      entityId: attachmentId,
+      entityName: row.fileName,
+      severity: 'warn',
+      description: `Deleted HR document "${row.fileName}" for employee ${userId}`,
+    });
+    return { ok: true, id: attachmentId };
+  }
+
+  // ═══ Employee roster (A3, unchanged shape) ═══════════════════════════
+
   async listEmployees() {
     const rows = await this.prisma.user.findMany({
       where: {
@@ -74,7 +793,6 @@ export class HrService {
         orgUnit: { select: { id: true, name: true } },
       },
     });
-    // Decimal → number so the FE doesn't have to .toString() every cell.
     return rows.map((r) => ({
       ...r,
       dailyStandardHours:
@@ -170,7 +888,7 @@ export class HrService {
     return this.getEmployee(id);
   }
 
-  // ─── Per-employee bucket eligibilities ──────────────────────────────
+  // ═══ Eligibilities (A3, unchanged) ══════════════════════════════════
 
   async listEligibilities(userId: number) {
     const user = await this.prisma.user.findFirst({
@@ -234,7 +952,6 @@ export class HrService {
     });
     if (!bucket) throw new NotFoundException(`Bucket ${dto.bucketId} not found`);
 
-    // Default start = today; default end = Dec 31 of current year.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const startDate = dto.startDate ? new Date(dto.startDate) : today;
@@ -245,9 +962,6 @@ export class HrService {
       throw new BadRequestException('endDate must be on or after startDate');
     }
 
-    // Daily amount: use the supplied value or inherit from the bucket.
-    // Bucket may be a behavior-A (null) bucket; require a numeric daily
-    // amount since the row is NOT NULL on the DB.
     const amount =
       dto.dailyAmount ?? (bucket.dailyAmount != null ? Number(bucket.dailyAmount) : null);
     if (amount == null || amount <= 0) {
@@ -256,8 +970,6 @@ export class HrService {
       );
     }
 
-    // Soft warning (per spec §7.1): if bucket demands a minimum daily
-    // standard the employee doesn't meet, warn but DO NOT reject.
     const warnings: string[] = [];
     if (
       bucket.minDailyStandard != null &&
@@ -271,6 +983,10 @@ export class HrService {
           user.dailyStandardHours,
         )}h/day.`,
       );
+    }
+
+    if (dto.documentFileId != null) {
+      await this.assertAttachmentOwnedBy(userId, dto.documentFileId);
     }
 
     const created = await this.prisma.employeeBucketEligibility.create({
@@ -348,10 +1064,14 @@ export class HrService {
     if ('endDate' in dto && dto.endDate)
       data.endDate = new Date(dto.endDate);
     if ('creditMode' in dto) data.creditMode = dto.creditMode ?? null;
-    if ('documentFileId' in dto) data.documentFileId = dto.documentFileId ?? null;
+    if ('documentFileId' in dto) {
+      if (dto.documentFileId != null) {
+        await this.assertAttachmentOwnedBy(userId, dto.documentFileId);
+      }
+      data.documentFileId = dto.documentFileId ?? null;
+    }
     if ('active' in dto && dto.active != null) data.active = dto.active;
 
-    // Overlap guard: endDate must be >= startDate after the patch.
     const nextStart = (data.startDate as Date | undefined) ?? existing.startDate;
     const nextEnd = (data.endDate as Date | undefined) ?? existing.endDate;
     if (nextEnd < nextStart) {
@@ -366,10 +1086,6 @@ export class HrService {
     return list.find((e) => e.id === eligibilityId) ?? null;
   }
 
-  /**
-   * Soft-delete via `active=false`. Preserving the row keeps the audit
-   * trail (who granted the bucket + when) intact for future reports.
-   */
   async deactivateEligibility(userId: number, eligibilityId: number) {
     const existing = await this.prisma.employeeBucketEligibility.findFirst({
       where: { id: eligibilityId, userId },
@@ -381,5 +1097,62 @@ export class HrService {
       data: { active: false },
     });
     return { ok: true };
+  }
+
+  // ═══ Internal helpers ═══════════════════════════════════════════════
+
+  private async assertEmployee(userId: number) {
+    const u = await this.prisma.user.findFirst({
+      where: { id: userId, userType: 'employee', deletedAt: null },
+      select: { id: true },
+    });
+    if (!u) throw new NotFoundException(`Employee ${userId} not found`);
+  }
+
+  /**
+   * Guards: an eligibility / absence can only link to a document that
+   * was uploaded for the SAME employee. Prevents mis-linking across
+   * users (the FE just hands us a numeric id).
+   */
+  private async assertAttachmentOwnedBy(userId: number, attachmentId: number) {
+    const att = await this.prisma.employeeAttachment.findUnique({
+      where: { id: attachmentId },
+      select: { id: true, userId: true },
+    });
+    if (!att) {
+      throw new NotFoundException(`Attachment ${attachmentId} not found`);
+    }
+    if (att.userId !== userId) {
+      throw new BadRequestException(
+        `Attachment ${attachmentId} does not belong to employee ${userId}`,
+      );
+    }
+  }
+
+  /**
+   * Fire-and-forget audit write. Shares ActivityLogService with every
+   * other domain so /admin/activity-logs sees HR events too.
+   */
+  private writeAudit(params: {
+    actorId: number | null;
+    action: string;
+    entityType: string;
+    entityId?: number | null;
+    entityName?: string | null;
+    description: string;
+    severity?: 'info' | 'warn' | 'error' | 'critical';
+  }) {
+    this.activityLog
+      .write({
+        category: 'admin',
+        action: params.action,
+        description: params.description,
+        actorUserId: params.actorId ?? null,
+        entityType: params.entityType,
+        entityId: params.entityId ?? null,
+        entityName: params.entityName ?? null,
+        severity: params.severity ?? 'info',
+      })
+      .catch((e) => Sentry.captureException(e));
   }
 }
