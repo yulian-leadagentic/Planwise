@@ -11,6 +11,11 @@ const ALLOWED_FOLDERS = new Set([
   'projects',
   'tasks',
   'documents',
+  // HR Phase A1 (2026-10-15) — HR module may store employee attachments
+  // (contracts, medical notes, bucket-eligibility docs). The upload UI
+  // ships in Phase B; the folder is allow-listed up front so the FE's
+  // multipart POST passes the whitelist check as soon as A ships.
+  'hr',
 ]);
 
 const ALLOWED_MIME_TYPES = new Set([

@@ -38,10 +38,16 @@ export class RolesGuard implements CanActivate {
     //   • 'data-import/*'     — bulk imports can corrupt thousands of
     //                           rows; permission must be deliberately
     //                           granted, not inherited from Admin
+    //   • 'hr'                — HR Phase A (2026-10-15). Employee
+    //                           personal/medical data lives behind the
+    //                           HR module; even system admins must hold
+    //                           the explicit HR grant to see it. The
+    //                           seed grants HR Manager/HR Clerk by name.
     // Admins can deny themselves access just by unchecking the row in
     // /admin/roles.
     const NO_ADMIN_BYPASS = new Set([
       'finance',
+      'hr',
       'data-import',
       'data-import/users',
       'data-import/partners',

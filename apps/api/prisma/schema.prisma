@@ -196,6 +196,34 @@ enum MessageType {
   system
 }
 
+// ─── HR module enums (Phase A1, 2026-10-15) ────────────────────────────────
+// Added for the HR module Phase A per docs/bm2/planwise-hr-module-spec.md.
+// EmploymentType / BucketBehavior / AbsenceUnit / BucketCreditMode drive
+// the new HR surfaces (special-hour buckets, employee eligibilities). Only
+// the enums + columns land in Phase A — the behavior (reported vs. auto-
+// credited absence hours) is Phase B/C.
+
+enum EmploymentType {
+  GLOBAL
+  HOURLY
+}
+
+enum BucketBehavior {
+  A
+  B
+  C
+}
+
+enum AbsenceUnit {
+  DAY
+  HOUR
+}
+
+enum BucketCreditMode {
+  REPORTED
+  AUTO
+}
+
 // ─── Models ─────────────────────────────────────────────────────────────────
 
 model User {
@@ -238,6 +266,16 @@ model User {
   employmentDate     DateTime?       @map("employment_date") @db.Date
   employmentEndDate  DateTime?       @map("employment_end_date") @db.Date
   employeeCategory   String?         @map("employee_category")
+  /// HR Phase A1 (2026-10-15) — Yulian-approved employment-type picker on
+  /// the HR module's employee drawer. Nullable + additive: existing rows
+  /// stay untouched until an HR user flips the row to GLOBAL/HOURLY. The
+  /// behavior that reads this field (reported vs. auto-credited special
+  /// hours, overtime calc tweaks) lands in Phase B/C.
+  employmentType     EmploymentType? @map("employment_type")
+  /// HR Phase A1 (2026-10-15) — free-form accounting payroll id. Not
+  /// unique: AMEC's accounting system allows duplicates during handovers.
+  /// Shown on the HR roster + editable in the drawer.
+  accountingEmployeeNumber String?   @map("accounting_employee_number") @db.VarChar(50)
   /// Employee seniority level. Used to look up the default hourly cost
   /// for project labor calculations. Nullable for backward compat and for
   /// non-employee users who have no cost concept.
@@ -352,6 +390,18 @@ model User {
   /// generic so future "remember this view" settings don't need a new
   /// table per feature. Cascade-delete on user removal.
   preferences UserPreference[]
+
+  /// HR Phase A1 (2026-10-15) — reverse relations for the new HR module
+  /// tables. Eligibilities live on the User (as the subject); created-by
+  /// is tracked for audit. Attachments mirror the same pattern: a user is
+  /// the subject (CASCADE on delete) OR the uploader (restrict). The
+  /// surfaces that consume these ship in Phase A3/A4 (BE module + /hr
+  /// FE), but the relations must land in A1 so Prisma generates the
+  /// correct `User`-side includes.
+  bucketEligibilities        EmployeeBucketEligibility[] @relation("EmployeeEligibilities")
+  bucketEligibilitiesCreated EmployeeBucketEligibility[] @relation("EligibilityCreatedBy")
+  hrAttachments              EmployeeAttachment[]        @relation("EmployeeHrAttachments")
+  hrAttachmentsUploaded      EmployeeAttachment[]        @relation("HrAttachmentUploader")
 
   @@index([roleId])
   @@index([email])
@@ -3068,4 +3118,113 @@ model DriveFolderLink {
 
   @@unique([entityType, entityId])
   @@map("drive_folder_links")
+}
+
+// ─── HR Module (Phase A1, 2026-10-15) ──────────────────────────────────────
+// Added for the HR Phase A roll-out per docs/bm2/planwise-hr-module-spec.md.
+// Phase A ships only the tables + columns; the behavior that reads them
+// (overtime/short-day math, auto-credit buckets, approval screens) lands
+// in Phase B/C. See seed.ts for the SpecialHourBucket catalog and the
+// HR Manager / HR Clerk role seeding.
+
+/// Singleton row holding the organisation-wide HR knobs. Admin edits
+/// via /hr/settings in a later phase; until then the schema defaults
+/// cover AMEC's current practice (holiday-eve = chol hamoed = 5h, min
+/// working day = 5h). Updates NEVER overwrite admin-set values from
+/// seed — the seeder uses `update: {}`.
+model HrSettings {
+  id                       Int      @id @default(autoincrement())
+  shortDayHoursHolidayEve  Decimal  @default(5) @map("short_day_hours_holiday_eve") @db.Decimal(4, 2)
+  shortDayHoursCholHamoed  Decimal  @default(5) @map("short_day_hours_chol_hamoed") @db.Decimal(4, 2)
+  minHoursPerDay           Decimal  @default(5) @map("min_hours_per_day")           @db.Decimal(4, 2)
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  @@map("hr_settings")
+}
+
+/// Catalog of special-hour buckets (A/B/C per §3.6 of the spec). Behavior
+/// A = management overhead (training, meetings, cross-project), B = daily
+/// amount per working day (nursing, reservist spouse), C = annual pool
+/// (pregnancy, fertility, special child-care). The 9 seeded rows carry
+/// `isSystem=true` so the admin UI can hide the "delete" affordance; nothing
+/// in the DB layer enforces it today.
+model SpecialHourBucket {
+  id                 Int              @id @default(autoincrement())
+  code               String           @unique @db.VarChar(64)
+  nameHe             String           @map("name_he") @db.VarChar(100)
+  behavior           BucketBehavior
+  unit               AbsenceUnit
+  requiresDocument   Boolean          @default(false) @map("requires_document")
+  dailyAmount        Decimal?         @map("daily_amount") @db.Decimal(4, 2)
+  maxPerYear         Decimal?         @map("max_per_year") @db.Decimal(6, 2)
+  minDailyStandard   Decimal?         @map("min_daily_standard") @db.Decimal(4, 2)
+  /// Default accrual mode when a new EmployeeBucketEligibility is created
+  /// without an explicit override. REPORTED = the employee books the hours
+  /// via the time log (Phase B wiring). AUTO = the system credits the
+  /// daily amount automatically (Phase C). All seeded buckets land as
+  /// REPORTED — Phase B/C switches them as the behaviour ships.
+  defaultCreditMode  BucketCreditMode @default(REPORTED) @map("default_credit_mode")
+  active             Boolean          @default(true)
+  sortOrder          Int              @default(0) @map("sort_order")
+  isSystem           Boolean          @default(false) @map("is_system")
+  createdAt          DateTime         @default(now()) @map("created_at")
+
+  eligibilities EmployeeBucketEligibility[]
+
+  @@map("special_hour_buckets")
+}
+
+/// Per-employee grant of a SpecialHourBucket for a validity window. HR
+/// creates these from the employee drawer (Phase A4); the daily amount is
+/// seeded from the bucket but editable. `documentFileId` is a nullable INT
+/// WITHOUT an FK today — Phase B adds the FK to `employee_attachments`
+/// once that table carries the real HR document store. `creditMode` is a
+/// nullable override of `SpecialHourBucket.defaultCreditMode` (null →
+/// inherit the bucket default).
+model EmployeeBucketEligibility {
+  id              Int               @id @default(autoincrement())
+  userId          Int               @map("user_id")
+  bucketId        Int               @map("bucket_id")
+  dailyAmount     Decimal           @map("daily_amount") @db.Decimal(4, 2)
+  startDate       DateTime          @map("start_date") @db.Date
+  endDate         DateTime          @map("end_date") @db.Date
+  /// Phase A1: nullable INT, NO FK. Phase B lands the FK to
+  /// employee_attachments. Keeping it as a plain integer avoids a stale
+  /// FK during the one-release gap.
+  documentFileId  Int?              @map("document_file_id")
+  /// Per-row override of the bucket's defaultCreditMode. null = inherit
+  /// the bucket default. The read path for behavior (Phase B/C) resolves
+  /// `creditMode ?? bucket.defaultCreditMode`.
+  creditMode      BucketCreditMode? @map("credit_mode")
+  active          Boolean           @default(true)
+  createdById     Int               @map("created_by_id")
+  createdAt       DateTime          @default(now()) @map("created_at")
+
+  user      User              @relation("EmployeeEligibilities", fields: [userId], references: [id], onDelete: Cascade)
+  bucket    SpecialHourBucket @relation(fields: [bucketId], references: [id])
+  createdBy User              @relation("EligibilityCreatedBy", fields: [createdById], references: [id])
+
+  @@index([userId])
+  @@index([bucketId])
+  @@map("employee_bucket_eligibilities")
+}
+
+/// Per-employee HR attachments (medical notes, bucket-eligibility docs,
+/// contracts, …). Phase A1 ships the table shape only; the upload UI +
+/// FK from `employee_bucket_eligibilities.document_file_id` land in Phase B.
+model EmployeeAttachment {
+  id         Int      @id @default(autoincrement())
+  userId     Int      @map("user_id")
+  fileName   String   @map("file_name") @db.VarChar(255)
+  fileUrl    String   @map("file_url")  @db.VarChar(500)
+  fileSize   Int?     @map("file_size")
+  mimeType   String?  @map("mime_type") @db.VarChar(100)
+  uploadedBy Int      @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user     User @relation("EmployeeHrAttachments", fields: [userId], references: [id], onDelete: Cascade)
+  uploader User @relation("HrAttachmentUploader", fields: [uploadedBy], references: [id])
+
+  @@index([userId])
+  @@map("employee_attachments")
 }
