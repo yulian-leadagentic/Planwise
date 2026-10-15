@@ -9,11 +9,29 @@ import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 
+// HR Phase B1 (2026-10-15) — CalendarDayType enum remapped per spec §3.2.
+// Keys here mirror the Prisma enum exactly (UPPERCASE). REGULAR is listed
+// for completeness but rows never land as REGULAR in the DB (the engine
+// defaults missing dates to REGULAR implicitly) — keeping a style for it
+// avoids a visual regression if someone writes one by hand later.
 const TYPE_STYLES: Record<string, { bg: string; text: string; dot: string }> = {
-  holiday: { bg: 'bg-red-100', text: 'text-red-700', dot: 'bg-red-500' },
-  company_day_off: { bg: 'bg-amber-100', text: 'text-amber-700', dot: 'bg-amber-500' },
-  half_day: { bg: 'bg-blue-100', text: 'text-blue-700', dot: 'bg-blue-500' },
-  special: { bg: 'bg-purple-100', text: 'text-purple-700', dot: 'bg-purple-500' },
+  HOLIDAY:     { bg: 'bg-red-100',    text: 'text-red-700',    dot: 'bg-red-500' },
+  REST:        { bg: 'bg-amber-100',  text: 'text-amber-700',  dot: 'bg-amber-500' },
+  HOLIDAY_EVE: { bg: 'bg-blue-100',   text: 'text-blue-700',   dot: 'bg-blue-500' },
+  CHOL_HAMOED: { bg: 'bg-purple-100', text: 'text-purple-700', dot: 'bg-purple-500' },
+  REGULAR:     { bg: 'bg-slate-100',  text: 'text-slate-700',  dot: 'bg-slate-500' },
+};
+
+// Human-readable label for a CalendarDayType enum value (new UPPERCASE
+// signature). Keeps the "Holiday", "Company Day Off", "Half Day",
+// "Special" wording the UI shipped with so the enum remap is invisible
+// to users on the Calendar page.
+const TYPE_LABEL: Record<string, string> = {
+  HOLIDAY:     'Holiday',
+  REST:        'Company Day Off',
+  HOLIDAY_EVE: 'Half Day',
+  CHOL_HAMOED: 'Special',
+  REGULAR:     'Regular',
 };
 
 // Israeli national holidays — generates dates for any given year
@@ -131,7 +149,7 @@ export function CalendarDaysPage() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [formName, setFormName] = useState('');
-  const [formType, setFormType] = useState('company_day_off');
+  const [formType, setFormType] = useState('REST');
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin', 'calendar'],
@@ -151,7 +169,7 @@ export function CalendarDaysPage() {
       setShowAddForm(false);
       setSelectedDate(null);
       setFormName('');
-      setFormType('company_day_off');
+      setFormType('REST');
     },
     onError: (err: any) => notify.apiError(err, 'Failed to add calendar day'),
   });
@@ -203,7 +221,7 @@ export function CalendarDaysPage() {
     setSelectedDate(dateKey);
     setShowAddForm(true);
     setFormName('');
-    setFormType('company_day_off');
+    setFormType('REST');
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -223,7 +241,7 @@ export function CalendarDaysPage() {
   const importedYears = useMemo(() => {
     const years = new Set<number>();
     for (const d of (data ?? [])) {
-      if (d.type === 'holiday' && d.date) {
+      if (d.type === 'HOLIDAY' && d.date) {
         const yr = new Date(d.date).getFullYear();
         years.add(yr);
       }
@@ -242,7 +260,7 @@ export function CalendarDaysPage() {
     for (const h of holidays) {
       if (existingDates.has(h.date)) continue;
       try {
-        await client.post('/calendar', { date: h.date, name: `${h.nameHe} (${h.name})`, type: 'holiday' });
+        await client.post('/calendar', { date: h.date, name: `${h.nameHe} (${h.name})`, type: 'HOLIDAY' });
         added++;
       } catch { /* skip duplicates */ }
     }
@@ -408,8 +426,8 @@ export function CalendarDaysPage() {
                       {weekend && inMonth && <span className="text-[9px] text-slate-400 dark:text-slate-500 font-medium">Weekend</span>}
                     </div>
                     {entries.map((entry: any) => {
-                      const style = TYPE_STYLES[entry.type] ?? TYPE_STYLES.special;
-                      const isHoliday = entry.type === 'holiday';
+                      const style = TYPE_STYLES[entry.type] ?? TYPE_STYLES.CHOL_HAMOED;
+                      const isHoliday = entry.type === 'HOLIDAY';
                       const hasWorkingHours = isHoliday && entry.halfDayUntil;
                       return (
                         <div key={entry.id} className={cn('mt-1 rounded px-1.5 py-0.5 text-[10px] font-medium flex items-center justify-between group', style.bg, style.text)} onClick={(e) => e.stopPropagation()}>
@@ -503,7 +521,7 @@ export function CalendarDaysPage() {
                   {m.holidayList.length > 0 && (
                     <div className="space-y-0.5">
                       {m.holidayList.slice(0, 3).map((h: any, i: number) => {
-                        const style = TYPE_STYLES[h.type] ?? TYPE_STYLES.special;
+                        const style = TYPE_STYLES[h.type] ?? TYPE_STYLES.CHOL_HAMOED;
                         return (
                           <div key={i} className="flex items-center gap-1.5">
                             <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', style.dot)} />
@@ -587,10 +605,10 @@ export function CalendarDaysPage() {
               <label className="block text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1">Type</label>
               <select value={formType} onChange={(e) => setFormType(e.target.value)}
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
-                <option value="holiday">Holiday</option>
-                <option value="company_day_off">Company Day Off</option>
-                <option value="half_day">Half Day</option>
-                <option value="special">Special</option>
+                <option value="HOLIDAY">Holiday</option>
+                <option value="REST">Company Day Off</option>
+                <option value="HOLIDAY_EVE">Half Day</option>
+                <option value="CHOL_HAMOED">Special</option>
               </select>
             </div>
             <button type="submit" disabled={!formName.trim() || createMutation.isPending}
@@ -656,9 +674,9 @@ export function CalendarDaysPage() {
           <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-3">All Non-Working Days</h3>
           <div className="space-y-1.5">
             {(data as any[]).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime()).map((d: any) => {
-              const style = TYPE_STYLES[d.type] ?? TYPE_STYLES.special;
+              const style = TYPE_STYLES[d.type] ?? TYPE_STYLES.CHOL_HAMOED;
               const isPast = new Date(d.date) < today;
-              const isHoliday = d.type === 'holiday';
+              const isHoliday = d.type === 'HOLIDAY';
               const hasWorkingHours = isHoliday && d.halfDayUntil;
               return (
                 <div key={d.id} className={cn('flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50', isPast && 'opacity-50')}>
@@ -670,7 +688,7 @@ export function CalendarDaysPage() {
                       <span className="ml-2 text-[11px] font-bold text-blue-600 bg-blue-50 rounded px-1.5 py-0.5">+{d.halfDayUntil}h working</span>
                     )}
                   </span>
-                  <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold', style.bg, style.text)}>{d.type?.replace(/_/g, ' ')}</span>
+                  <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold', style.bg, style.text)}>{TYPE_LABEL[d.type] ?? d.type}</span>
                   {isHoliday ? (
                     <button onClick={() => handleSetWorkingDay(d)}
                       className="rounded px-2 py-1 text-[11px] font-semibold text-blue-600 hover:bg-blue-50 transition-colors"

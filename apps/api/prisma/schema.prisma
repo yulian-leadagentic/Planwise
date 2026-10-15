@@ -59,11 +59,23 @@ enum TaskPriority {
   critical
 }
 
+// HR Phase B (2026-10-15) — remapped per spec §3.2 so the enum aligns
+// with the HR module's absence/eligibility surfaces. Migration
+// `20261015010000_hr_phase_b` rewrites existing rows:
+//   holiday         → HOLIDAY
+//   half_day        → HOLIDAY_EVE
+//   company_day_off → REST
+//   special         → CHOL_HAMOED
+// REGULAR is a legal value for completeness (so the day-type picker can
+// reset a row back to "regular"), but we never materialize REGULAR rows
+// in `calendar_days` — the time/attendance engine defaults missing dates
+// to REGULAR implicitly.
 enum CalendarDayType {
-  holiday
-  company_day_off
-  half_day
-  special
+  REGULAR
+  HOLIDAY
+  HOLIDAY_EVE
+  CHOL_HAMOED
+  REST
 }
 
 enum CalendarDayAppliesTo {
@@ -402,6 +414,13 @@ model User {
   bucketEligibilitiesCreated EmployeeBucketEligibility[] @relation("EligibilityCreatedBy")
   hrAttachments              EmployeeAttachment[]        @relation("EmployeeHrAttachments")
   hrAttachmentsUploaded      EmployeeAttachment[]        @relation("HrAttachmentUploader")
+
+  /// HR Phase B1 (2026-10-15) — AbsenceRecord reverse relations: user as
+  /// the absence subject (cascade on delete to clean up booked days) and
+  /// user as the creator of the row (audit; restricted — a deleted admin
+  /// doesn't retroactively nuke the records they created).
+  absenceRecords        AbsenceRecord[] @relation("UserAbsenceRecords")
+  absenceRecordsCreated AbsenceRecord[] @relation("AbsenceCreatedBy")
 
   @@index([roleId])
   @@index([email])
@@ -905,6 +924,14 @@ model TimeEntry {
   isBillable    Boolean   @default(true) @map("is_billable")
   location      String?   @db.VarChar(20)
   completionPct Int?      @map("completion_pct")
+  /// HR Phase B1 (2026-10-15) — when the entry is REPORTED hours against a
+  /// SpecialHourBucket (behavior A/B), the row carries the bucket id so the
+  /// HR engine can accrue against the right bucket. Nullable: regular
+  /// project/task time keeps bucketId=NULL. `ON DELETE SET NULL` — removing
+  /// a bucket catalog row should NOT nuke the historical time rows that
+  /// pointed at it.
+  specialHourBucketId Int?               @map("special_hour_bucket_id")
+  specialHourBucket   SpecialHourBucket? @relation("TimeEntryBucket", fields: [specialHourBucketId], references: [id])
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
   deletedAt     DateTime? @map("deleted_at")
@@ -920,6 +947,7 @@ model TimeEntry {
   @@index([taskId])
   @@index([date])
   @@index([deletedAt])
+  @@index([specialHourBucketId])
   @@map("time_entries")
 }
 
@@ -3170,6 +3198,9 @@ model SpecialHourBucket {
   createdAt          DateTime         @default(now()) @map("created_at")
 
   eligibilities EmployeeBucketEligibility[]
+  /// HR Phase B1 (2026-10-15) — reverse of TimeEntry.specialHourBucketId.
+  /// Time rows reported against this bucket (behavior A/B).
+  timeEntries   TimeEntry[]                @relation("TimeEntryBucket")
 
   @@map("special_hour_buckets")
 }
@@ -3188,10 +3219,12 @@ model EmployeeBucketEligibility {
   dailyAmount     Decimal           @map("daily_amount") @db.Decimal(4, 2)
   startDate       DateTime          @map("start_date") @db.Date
   endDate         DateTime          @map("end_date") @db.Date
-  /// Phase A1: nullable INT, NO FK. Phase B lands the FK to
-  /// employee_attachments. Keeping it as a plain integer avoids a stale
-  /// FK during the one-release gap.
-  documentFileId  Int?              @map("document_file_id")
+  /// HR Phase B1 (2026-10-15) — promoted from a plain nullable INT to a
+  /// real FK to `employee_attachments`. `ON DELETE SET NULL` means
+  /// deleting the attachment unlinks the eligibility rather than nuking
+  /// the grant itself (an HR admin can re-upload a replacement doc).
+  documentFileId  Int?                @map("document_file_id")
+  document        EmployeeAttachment? @relation("EligibilityDocument", fields: [documentFileId], references: [id], onDelete: SetNull)
   /// Per-row override of the bucket's defaultCreditMode. null = inherit
   /// the bucket default. The read path for behavior (Phase B/C) resolves
   /// `creditMode ?? bucket.defaultCreditMode`.
@@ -3225,6 +3258,70 @@ model EmployeeAttachment {
   user     User @relation("EmployeeHrAttachments", fields: [userId], references: [id], onDelete: Cascade)
   uploader User @relation("HrAttachmentUploader", fields: [uploadedBy], references: [id])
 
+  /// HR Phase B1 (2026-10-15) — reverse relations for AbsenceRecord and
+  /// EmployeeBucketEligibility documents. Both edges SET NULL on delete:
+  /// an attachment removal leaves the absence/eligibility row intact so
+  /// HR history isn't lost.
+  absenceDocuments     AbsenceRecord[]             @relation("AbsenceDocument")
+  eligibilityDocuments EmployeeBucketEligibility[] @relation("EligibilityDocument")
+
   @@index([userId])
   @@map("employee_attachments")
+}
+
+/// HR Phase B1 (2026-10-15) — catalog of absence/leave types per spec §3.4.
+/// Seeded in Phase B2 with 9 Yulian-approved rows (vacation, sick, reserve
+/// duty, bereavement 1st degree, chol-hamoed/holiday-eve leave, special
+/// child-care day, reservist-spouse, …). AbsenceRecord instances point here.
+/// Pure event-sourcing — there is NO per-user balance table in Phase B;
+/// consumed/remaining is computed on read from the record stream.
+model AbsenceType {
+  id                 Int         @id @default(autoincrement())
+  code               String      @unique @db.VarChar(64)
+  nameHe             String      @map("name_he") @db.VarChar(100)
+  unit               AbsenceUnit
+  requiresDocument   Boolean     @default(false) @map("requires_document")
+  /// Flag only — Phase B does not compute "this absence consumed sick
+  /// balance" live. Phase C's engine reads this to roll certain types
+  /// (e.g. special-child-care) into the sick ledger.
+  deductsFromSick    Boolean     @default(false) @map("deducts_from_sick")
+  maxPerYear         Int?        @map("max_per_year")
+  halfDay            Boolean     @default(false) @map("half_day")
+  active             Boolean     @default(true)
+  sortOrder          Int         @default(0) @map("sort_order")
+  isSystem           Boolean     @default(false) @map("is_system")
+  createdAt          DateTime    @default(now()) @map("created_at")
+
+  records AbsenceRecord[]
+
+  @@map("absence_types")
+}
+
+/// HR Phase B1 (2026-10-15) — one row per booked absence day-span per spec
+/// §3.4. Event-sourced: no balance snapshots. `amount` is the number of
+/// units (days or hours per the AbsenceType.unit) consumed; the engine
+/// reads it directly for ledgers. Bereavement 7-day grants are stored as
+/// a plain single row with dateTo = dateFrom + 6 (handled by the B3 BE
+/// service, not here). `documentFileId` SET NULL on attachment delete
+/// so audit history survives.
+model AbsenceRecord {
+  id              Int                 @id @default(autoincrement())
+  userId          Int                 @map("user_id")
+  absenceTypeId   Int                 @map("absence_type_id")
+  dateFrom        DateTime            @map("date_from") @db.Date
+  dateTo          DateTime            @map("date_to")   @db.Date
+  amount          Decimal             @db.Decimal(5, 2)
+  documentFileId  Int?                @map("document_file_id")
+  note            String?             @db.VarChar(500)
+  createdById     Int                 @map("created_by_id")
+  createdAt       DateTime            @default(now()) @map("created_at")
+
+  user         User                @relation("UserAbsenceRecords",   fields: [userId],         references: [id], onDelete: Cascade)
+  absenceType  AbsenceType         @relation(fields: [absenceTypeId], references: [id])
+  createdBy    User                @relation("AbsenceCreatedBy",     fields: [createdById],    references: [id])
+  document     EmployeeAttachment? @relation("AbsenceDocument",      fields: [documentFileId], references: [id], onDelete: SetNull)
+
+  @@index([userId, dateFrom])
+  @@index([absenceTypeId])
+  @@map("absence_records")
 }

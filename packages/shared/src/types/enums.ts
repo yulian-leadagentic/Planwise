@@ -50,7 +50,11 @@ export type ClockStatus = (typeof CLOCK_STATUSES)[number];
 export const CLOCK_TYPES = ['regular', 'overtime', 'remote', 'field'] as const;
 export type ClockType = (typeof CLOCK_TYPES)[number];
 
-export const CALENDAR_DAY_TYPES = ['holiday', 'company_day_off', 'half_day', 'special'] as const;
+// HR Phase B1 (2026-10-15) — remapped per spec §3.2. Prisma enum stays
+// in sync (`enum CalendarDayType` in schema.prisma). REGULAR is a legal
+// value but we never materialize REGULAR rows in `calendar_days` — the
+// time/attendance engine defaults missing dates to REGULAR implicitly.
+export const CALENDAR_DAY_TYPES = ['REGULAR', 'HOLIDAY', 'HOLIDAY_EVE', 'CHOL_HAMOED', 'REST'] as const;
 export type CalendarDayType = (typeof CALENDAR_DAY_TYPES)[number];
 
 export const ACTIVITY_CATEGORIES = [
