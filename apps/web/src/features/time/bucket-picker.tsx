@@ -2,24 +2,32 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Sparkles, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { hrApi, type SpecialHourBucket } from '@/features/hr/api/hr.api';
+import { hrApi, type PickableBucket } from '@/features/hr/api/hr.api';
 
 /**
- * HR Phase B4 (2026-10-15) — optional bucket picker shared by the
- * time-reporting surfaces (weekly timesheet, log-time dialog, task-
+ * HR Phase B4 + §9.1 (2026-10-16) — optional bucket picker shared by
+ * the time-reporting surfaces (weekly timesheet, log-time dialog, task-
  * drawer form, kanban quick-log).
  *
- * Behavior:
- *   • fetches active buckets (hr:read NOT required — the server-side
- *     guard is only on /hr/*; the FE call just succeeds for anyone
- *     authenticated);
- *   • filters to behavior A or C (B is auto-credit per spec §3.6, so
- *     any user-reported row would double-count and the server
- *     rejects it anyway);
- *   • collapsed by default — a small "+ קטגוריה מיוחדת" link that
- *     expands into a grouped <select>;
- *   • `defaultBucketId` keeps edit-mode entries pre-selected and
- *     opens the picker visible.
+ * Data source: `GET /hr/me/pickable-buckets` — the caller-scoped
+ * endpoint any authenticated user can call. The server returns:
+ *   • A + C buckets (active) → everyone can report meetings / culture
+ *     / breadth / training (A) and pregnancy / fertility / childcare
+ *     (C). Showing these to all employees is the whole point of
+ *     "שעות שאינן על פרויקט" (spec §9.1 Option A).
+ *   • B buckets only when the caller has an active REPORTED
+ *     eligibility covering today. A non-eligible user sees no B
+ *     options at all; a B·AUTO eligibility stays server-side.
+ *
+ * The admin catalog at `GET /hr/buckets` stays `hr:read` — that's
+ * what the employee drawer + HR settings panel use. This picker never
+ * calls it.
+ *
+ * This is UX only. The real gate is server-side on `TimeEntry`
+ * create/update (`TIME_ENTRY_BUCKET_INACTIVE`,
+ * `TIME_ENTRY_BUCKET_B_NO_ELIGIBILITY`,
+ * `TIME_ENTRY_BUCKET_B_AUTO_NOT_REPORTABLE`), so a stale cached list
+ * can never let a user slip past.
  */
 export interface BucketPickerProps {
   value: number | null;
@@ -32,27 +40,25 @@ export interface BucketPickerProps {
 }
 
 export function BucketPicker({ value, onChange, compact, defaultOpen }: BucketPickerProps) {
-  const { data: buckets = [] } = useQuery<SpecialHourBucket[]>({
-    queryKey: ['hr', 'buckets', 'activeOnly'],
-    queryFn: () => hrApi.listBuckets({ activeOnly: true }),
+  const { data: buckets = [] } = useQuery<PickableBucket[]>({
+    queryKey: ['hr', 'me', 'pickable-buckets'],
+    queryFn: () => hrApi.listMyPickableBuckets(),
     staleTime: 10 * 60 * 1000,
     // Fail silently — the picker's absence is better than a loud 403
-    // for users who happen not to be employees.
+    // for users who happen not to be employees. The caller-scoped
+    // endpoint should return [] for most "non-HR" users, but a 401
+    // from an expired session would surface here too; still safe to
+    // swallow because the picker is optional.
     retry: false,
     gcTime: 10 * 60 * 1000,
   });
 
-  // Behavior A + C only. B is auto-credit (spec §3.6) and the
-  // server rejects user-reported entries against it.
-  const usable = useMemo(
-    () => buckets.filter((b) => b.behavior === 'A' || b.behavior === 'C'),
-    [buckets],
-  );
   const groups = useMemo(() => {
-    const a = usable.filter((b) => b.behavior === 'A');
-    const c = usable.filter((b) => b.behavior === 'C');
-    return { a, c };
-  }, [usable]);
+    const a = buckets.filter((b) => b.behavior === 'A');
+    const b = buckets.filter((b) => b.behavior === 'B');
+    const c = buckets.filter((b) => b.behavior === 'C');
+    return { a, b, c };
+  }, [buckets]);
 
   const [open, setOpen] = useState<boolean>(!!defaultOpen || value != null);
   const picked = useMemo(
@@ -60,7 +66,7 @@ export function BucketPicker({ value, onChange, compact, defaultOpen }: BucketPi
     [value, buckets],
   );
 
-  if (usable.length === 0) {
+  if (buckets.length === 0) {
     // No buckets visible — don't take up space.
     return null;
   }
@@ -129,6 +135,18 @@ export function BucketPicker({ value, onChange, compact, defaultOpen }: BucketPi
             ))}
           </optgroup>
         )}
+        {groups.b.length > 0 && (
+          // B appears only when the server deemed the caller eligible
+          // in REPORTED mode. Group header explains why it's here so
+          // the user doesn't wonder.
+          <optgroup label="B — מדווחת · זכאות אישית">
+            {groups.b.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.nameHe} ({b.code})
+              </option>
+            ))}
+          </optgroup>
+        )}
         {groups.c.length > 0 && (
           <optgroup label="C — הריון / פוריות / טיפול בילד">
             {groups.c.map((b) => (
@@ -141,8 +159,12 @@ export function BucketPicker({ value, onChange, compact, defaultOpen }: BucketPi
       </select>
       {picked && (
         <p className={cn('mt-1 text-slate-400 dark:text-slate-500', compact ? 'text-[9px]' : 'text-[10px]')}>
-          {picked.behavior === 'A' ? 'A · ניהול' : 'C · שנתי'} ·{' '}
-          {picked.unit === 'DAY' ? 'days' : 'hours'}
+          {picked.behavior === 'A'
+            ? 'A · ניהול'
+            : picked.behavior === 'B'
+              ? 'B · זכאות'
+              : 'C · שנתי'}{' '}
+          · {picked.unit === 'DAY' ? 'days' : 'hours'}
         </p>
       )}
     </div>

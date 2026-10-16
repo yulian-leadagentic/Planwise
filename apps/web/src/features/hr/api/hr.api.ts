@@ -33,6 +33,26 @@ export interface SpecialHourBucket extends SpecialHourBucketLite {
   createdAt: string;
 }
 
+/**
+ * HR §9.1 (2026-10-16) — minimal shape returned by the caller-scoped
+ * `/hr/me/pickable-buckets` endpoint. Deliberately narrower than
+ * `SpecialHourBucket`: no `isSystem`, no `active` (both implicit from
+ * the filter), no eligibility metadata. Only what the picker renders.
+ */
+export interface PickableBucket {
+  id: number;
+  code: string;
+  nameHe: string;
+  behavior: BucketBehavior;
+  unit: AbsenceUnit;
+  requiresDocument: boolean;
+  dailyAmount: number | null;
+  maxPerYear: number | null;
+  minDailyStandard: number | null;
+  defaultCreditMode: BucketCreditMode;
+  sortOrder: number;
+}
+
 export interface HrEligibility {
   id: number;
   userId: number;
@@ -249,6 +269,16 @@ function unwrap<T>(data: any): T {
 }
 
 export const hrApi = {
+  /**
+   * HR §9.1 (2026-10-16) — the picker's data source. Any authenticated
+   * user can call this; the server returns A + C active + B only when
+   * the caller holds an active REPORTED eligibility covering today.
+   * The admin catalog (`listBuckets` below) stays `hr:read` for the
+   * HR module surfaces (`/hr/settings`, employee drawer).
+   */
+  listMyPickableBuckets: () =>
+    client.get('/hr/me/pickable-buckets').then((r) => unwrap<PickableBucket[]>(r.data)),
+
   // Buckets
   listBuckets: (opts: { behavior?: BucketBehavior; activeOnly?: boolean } = {}) =>
     client
