@@ -226,6 +226,23 @@ export class HrController {
     return this.hr.deleteBucket(id, user.id);
   }
 
+  // ─── Caller-scoped pickable buckets (§9.1) ──────────────────────────
+  // Intentionally NO `@RequirePermissions` — this endpoint is the one
+  // route on the HR controller any authenticated user can call. The
+  // admin catalog at `GET /hr/buckets` stays `hr:read`; this returns
+  // only "the buckets *I* can report against" (A + C active + B when I
+  // have an active REPORTED eligibility covering today). The real
+  // server-side enforcement lives on `TimeEntry` create/update — this
+  // route is UX only. See HrService.listPickableBucketsForCaller.
+  @Get('me/pickable-buckets')
+  @ApiOperation({
+    summary:
+      'Caller-scoped pickable SpecialHourBuckets: A + C active + B only when the caller has an active REPORTED eligibility covering today.',
+  })
+  listMyPickableBuckets(@CurrentUser() user: any) {
+    return this.hr.listPickableBucketsForCaller(user.id);
+  }
+
   // ─── Employee roster ────────────────────────────────────────────────
 
   @Get('employees')

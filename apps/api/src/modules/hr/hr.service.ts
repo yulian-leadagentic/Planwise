@@ -33,6 +33,17 @@ import {
 } from './dto/bucket.dto';
 
 /**
+ * Date-only "today" marker for picker eligibility windows. Matches
+ * how `@db.Date` columns (CalendarDay, EmployeeBucketEligibility) are
+ * compared in the engine — UTC midnight for the local calendar day.
+ * See `listPickableBucketsForCaller` for rationale.
+ */
+function todayDateOnly(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+}
+
+/**
  * HR Phase A3+B3 (2026-10-15) — business logic for the /hr/* surface.
  *
  * Growing but still one domain — kept in a single service so the
@@ -177,6 +188,100 @@ export class HrService {
       description: `Deactivated bucket "${existing.nameHe}" (${existing.code})`,
     });
     return { ok: true, id };
+  }
+
+  /**
+   * HR §9.1 (2026-10-16) — caller-scoped pickable buckets.
+   *
+   * Returned to **any authenticated user** (no `hr:*` guard). The
+   * admin catalog at `GET /hr/buckets` stays `hr:read`; this endpoint
+   * is intentionally narrower: it leaks nothing beyond the bucket's
+   * category labels (which the picker needs to render A/C/B groups)
+   * and never surfaces `isSystem` or the `active` flag — both are
+   * implicit in the filter.
+   *
+   * Visibility rules:
+   *   • A + C buckets with `active=true` → shown to everyone, because
+   *     "שעות שאינן על פרויקט" (meetings/culture/breadth/training
+   *     for A, pregnancy/fertility/childcare for C) must be reportable
+   *     by the employee themselves. Hiding the whole picker from
+   *     non-HR users would break the core "time outside projects"
+   *     flow (Yulian 2026-10-15 §9.1 Option A).
+   *   • B buckets only when the caller holds an active
+   *     `EmployeeBucketEligibility` row whose window brackets *today*
+   *     (`active=true AND start_date <= today <= end_date`) AND the
+   *     resolved credit mode is `REPORTED`. Resolved mode is
+   *     `eligibility.creditMode ?? bucket.defaultCreditMode` — a
+   *     B·AUTO bucket is server-credited and never shown to the user
+   *     (would double-count). A non-eligible user never sees B at all.
+   *
+   * Order: `(behavior ASC, sortOrder ASC)` — A first, then B, then C,
+   * so the picker's grouped render has A on top.
+   *
+   * Server-side enforcement on `TimeEntry` writes (B eligibility and
+   * B·AUTO rejection) lives in `TimeEntriesService.assertUsableBucket`;
+   * this picker is UX only. See `planwise-hr-module-spec.md` §9.1.
+   */
+  async listPickableBucketsForCaller(userId: number) {
+    const [activeBuckets, eligibilities] = await Promise.all([
+      this.prisma.specialHourBucket.findMany({
+        where: { active: true },
+        orderBy: [{ behavior: 'asc' }, { sortOrder: 'asc' }, { id: 'asc' }],
+      }),
+      // Date-only comparison. Prisma stores @db.Date as midnight UTC;
+      // comparing against `new Date()` at the server's local midnight
+      // can skew by a day near 00:00. Build the "today" date-only
+      // marker in UTC to match how calendarDay / eligibility rows are
+      // persisted (migration backfill wrote `DATE 'YYYY-MM-DD'`).
+      this.prisma.employeeBucketEligibility.findMany({
+        where: {
+          userId,
+          active: true,
+          startDate: { lte: todayDateOnly() },
+          endDate: { gte: todayDateOnly() },
+        },
+        select: {
+          bucketId: true,
+          creditMode: true,
+        },
+      }),
+    ]);
+
+    // Resolve the caller's B-eligibility map: bucketId → resolved mode.
+    // Multiple active eligibilities for the same bucket on the same day
+    // are not expected (createEligibility rejects overlaps) but we take
+    // the first encountered to stay deterministic if the DB ever drifts.
+    const callerBEligibility = new Map<number, 'REPORTED' | 'AUTO'>();
+    for (const e of eligibilities) {
+      if (callerBEligibility.has(e.bucketId)) continue;
+      const bucket = activeBuckets.find((b) => b.id === e.bucketId);
+      if (!bucket || bucket.behavior !== 'B') continue;
+      const mode = (e.creditMode ?? bucket.defaultCreditMode) as 'REPORTED' | 'AUTO';
+      callerBEligibility.set(e.bucketId, mode);
+    }
+
+    const pickable = activeBuckets.filter((b) => {
+      if (b.behavior === 'A' || b.behavior === 'C') return true;
+      // behavior B: only when caller has eligibility AND resolved
+      // mode is REPORTED. A B·AUTO eligibility stays server-side.
+      return callerBEligibility.get(b.id) === 'REPORTED';
+    });
+
+    // Minimal projection — no isSystem, no active, no eligibility
+    // metadata. The caller only needs what the picker renders.
+    return pickable.map((b) => ({
+      id: b.id,
+      code: b.code,
+      nameHe: b.nameHe,
+      behavior: b.behavior,
+      unit: b.unit,
+      requiresDocument: b.requiresDocument,
+      dailyAmount: b.dailyAmount != null ? Number(b.dailyAmount) : null,
+      maxPerYear: b.maxPerYear != null ? Number(b.maxPerYear) : null,
+      minDailyStandard: b.minDailyStandard != null ? Number(b.minDailyStandard) : null,
+      defaultCreditMode: b.defaultCreditMode,
+      sortOrder: b.sortOrder,
+    }));
   }
 
   // ═══ HR settings (singleton row id=1) ════════════════════════════════

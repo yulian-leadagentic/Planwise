@@ -173,11 +173,13 @@ export class TimeEntriesService {
       taskId: dto.taskId ?? null,
     });
 
-    // HR Phase B3: validate SpecialHourBucket link if provided.
-    // Behavior B is auto-credit per spec §3.6; the user can't tag an
-    // entry with a B bucket (the HR engine credits it automatically).
+    // HR §9.1 (2026-10-16): server-side bucket gate. The picker is UX
+    // only; this is the real guard. Passes the authenticated userId
+    // and the entry's local date so the eligibility check keys off the
+    // actual work date (not "today") — a user retroactively logging a
+    // B·REPORTED hour must still have been eligible on that day.
     if (dto.specialHourBucketId != null) {
-      await this.assertUsableBucket(dto.specialHourBucketId);
+      await this.assertUsableBucket(dto.specialHourBucketId, userId, localDate);
     }
 
     const entry = await this.prisma.timeEntry.create({
@@ -403,11 +405,36 @@ export class TimeEntriesService {
       excludeId: id,
     });
 
-    // HR Phase B3: validate SpecialHourBucket link if changed. Pass
-    // null to clear, a bucket id to attach. B-behavior buckets are
-    // rejected (auto-credit per spec §3.6).
+    // HR §9.1 (2026-10-16): server-side bucket gate on PATCH. The
+    // eligibility check keys off the ENTRY's owner, not the actor —
+    // today the TimeEntries controller passes `user.id` from
+    // `@CurrentUser()` so the caller is always the owner (@OwnData),
+    // but if a future HR-Manager route starts editing on behalf of
+    // another user, the eligibility window must still match the
+    // employee the row belongs to.
+    //
+    // TODO (spec §9.1): once an HR-Manager "edit on behalf of" route
+    // exists, pass the actor id separately so we can audit the gap
+    // between actor and owner. For now the sanity check below trips
+    // loudly if a route ever hands us a userId that doesn't match the
+    // entry owner.
+    if (userId != null && userId !== existing.userId) {
+      // Defensive — the current controller never hits this branch
+      // (@OwnData + user.id). If it ever does, fail closed rather
+      // than silently use the wrong identity for eligibility.
+      throw new BadRequestException({
+        message:
+          'Time entry update invoked with a different actor than the entry owner — eligibility check cannot proceed.',
+        code: 'TIME_ENTRY_ACTOR_MISMATCH',
+      });
+    }
     if ('specialHourBucketId' in dto && dto.specialHourBucketId != null) {
-      await this.assertUsableBucket(dto.specialHourBucketId);
+      const mergedDateForBucket = dto.date ? mergedDate : existing.date;
+      await this.assertUsableBucket(
+        dto.specialHourBucketId,
+        existing.userId,
+        mergedDateForBucket,
+      );
     }
 
     // Explicit column whitelist (mirrors create() ~176). Spreading
@@ -605,36 +632,95 @@ export class TimeEntriesService {
   }
 
   /**
-   * HR Phase B3 (2026-10-15) — shared validator for the
-   * `specialHourBucketId` field on create/update. Rejects:
-   *   • unknown ids (404 would be loud; this is a user action so we
-   *     return 400 with a clear code the FE can key off);
-   *   • inactive buckets (admin flipped `active=false`);
-   *   • behavior === 'B' buckets — the HR engine auto-credits these
-   *     per spec §3.6, so a user-reported row would double-count.
+   * HR §9.1 (2026-10-16) — shared validator for the
+   * `specialHourBucketId` field on create/update.
+   *
+   * The picker (`GET /hr/me/pickable-buckets`) is UX only. This is the
+   * real gate — any client that reaches the write path (API client,
+   * curl, legacy app) still has to clear it.
+   *
+   * Rejects:
+   *   • unknown ids / inactive buckets (admin flipped `active=false`
+   *     after a client cached the list) → `TIME_ENTRY_BUCKET_INACTIVE`
+   *     (merged with NOT_FOUND — both mean "pick another bucket");
+   *   • B·AUTO buckets — the HR engine credits these automatically
+   *     per spec §3.6, so a user-reported row would double-count →
+   *     `TIME_ENTRY_BUCKET_B_AUTO_NOT_REPORTABLE`;
+   *   • B·REPORTED buckets reported by a user who has no active
+   *     eligibility covering the entry's date →
+   *     `TIME_ENTRY_BUCKET_B_NO_ELIGIBILITY`.
+   *
+   * Resolved mode for a B bucket = `eligibility.creditMode ??
+   * bucket.defaultCreditMode`. Date comparison is inclusive on both
+   * ends (`startDate <= entryDate <= endDate`).
+   *
+   * The error messages are in Hebrew to match this file's existing
+   * conflict messaging (`SAME_TASK_OVERLAP`, `CROSS_TASK_OVERLAP`
+   * remain English — those predate HR; new HR-shaped errors go HE to
+   * match the HR module's existing voice).
    */
-  private async assertUsableBucket(bucketId: number) {
+  private async assertUsableBucket(
+    bucketId: number,
+    userId: number,
+    entryDate: Date,
+  ) {
     const bucket = await this.prisma.specialHourBucket.findUnique({
       where: { id: bucketId },
-      select: { id: true, code: true, active: true, behavior: true },
+      select: {
+        id: true,
+        code: true,
+        active: true,
+        behavior: true,
+        defaultCreditMode: true,
+      },
     });
-    if (!bucket) {
+    if (!bucket || !bucket.active) {
       throw new BadRequestException({
-        message: `Special-hour bucket ${bucketId} not found.`,
-        code: 'TIME_ENTRY_BUCKET_NOT_FOUND',
-      });
-    }
-    if (!bucket.active) {
-      throw new BadRequestException({
-        message: `Special-hour bucket "${bucket.code}" is inactive.`,
+        message: bucket
+          ? `הקטגוריה "${bucket.code}" אינה פעילה.`
+          : `הקטגוריה המיוחדת (${bucketId}) לא נמצאה.`,
         code: 'TIME_ENTRY_BUCKET_INACTIVE',
       });
     }
-    if (bucket.behavior === 'B') {
+    if (bucket.behavior !== 'B') {
+      // A + C: always allowed when active.
+      return;
+    }
+
+    // B behavior — eligibility required. We look up the caller's
+    // active eligibility whose window brackets the entry's date.
+    // `entryDate` carries a time component; the comparison still works
+    // because Prisma's @db.Date values come back as midnight UTC and
+    // the entry date was built as local midnight — both sides are
+    // compared as full timestamps and the usual-case staging TZ keeps
+    // local-midnight = UTC-midnight.
+    const eligibility = await this.prisma.employeeBucketEligibility.findFirst({
+      where: {
+        userId,
+        bucketId: bucket.id,
+        active: true,
+        startDate: { lte: entryDate },
+        endDate: { gte: entryDate },
+      },
+      select: { id: true, creditMode: true },
+    });
+
+    if (!eligibility) {
       throw new BadRequestException({
         message:
-          `Bucket "${bucket.code}" is behavior B (auto-credit) — the HR engine credits it automatically, so time entries cannot tag it.`,
-        code: 'TIME_ENTRY_BUCKET_AUTO_CREDIT',
+          `אין לך זכאות פעילה לקטגוריה "${bucket.code}" בתאריך זה — פנה/י ל-HR לפתיחת זכאות.`,
+        code: 'TIME_ENTRY_BUCKET_B_NO_ELIGIBILITY',
+      });
+    }
+
+    const resolvedMode = eligibility.creditMode ?? bucket.defaultCreditMode;
+    if (resolvedMode === 'AUTO') {
+      // B·AUTO is auto-credited by the HR monthly engine (spec §3.6).
+      // Reporting it manually would double-count.
+      throw new BadRequestException({
+        message:
+          `הקטגוריה "${bucket.code}" מזוכה אוטומטית ע"י המערכת ולא ניתן לדווח עליה ידנית.`,
+        code: 'TIME_ENTRY_BUCKET_B_AUTO_NOT_REPORTABLE',
       });
     }
   }
