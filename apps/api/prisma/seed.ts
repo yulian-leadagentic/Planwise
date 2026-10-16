@@ -416,7 +416,6 @@ async function main() {
         roleId: adminRole.id,
         userType: 'employee',
         position: 'System Administrator',
-        department: 'IT',
         isActive: true,
       },
     });
