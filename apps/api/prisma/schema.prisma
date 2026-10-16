@@ -236,6 +236,18 @@ enum BucketCreditMode {
   AUTO
 }
 
+// HR Phase C1 (2026-10-16) — MonthlyAttendance.status lifecycle.
+// OPEN = recomputable (overwrite on next recompute).
+// APPROVED = HR has signed off; recompute is blocked (service returns a
+// skip marker to the caller, not an exception).
+// LOCKED = future state for the Phase D consolidated accounting export.
+// Deliberately NOT wired to a cron / batch job in Phase C.
+enum MonthlyStatus {
+  OPEN
+  APPROVED
+  LOCKED
+}
+
 // ─── Models ─────────────────────────────────────────────────────────────────
 
 model User {
@@ -421,6 +433,16 @@ model User {
   /// doesn't retroactively nuke the records they created).
   absenceRecords        AbsenceRecord[] @relation("UserAbsenceRecords")
   absenceRecordsCreated AbsenceRecord[] @relation("AbsenceCreatedBy")
+
+  /// HR Phase C1 (2026-10-16) — MonthlyAttendance reverse relations.
+  /// `monthlyAttendance` is the user as the subject of the row (one row
+  /// per (user, year, month); CASCADE on delete so a de-provisioned
+  /// employee's attendance history is removed with the user record).
+  /// `monthlyApprovals` tracks who signed off — nullable; SET NULL on
+  /// the approver's delete so a historical approval survives their
+  /// deactivation.
+  monthlyAttendance MonthlyAttendance[] @relation("UserMonthlyAttendance")
+  monthlyApprovals  MonthlyAttendance[] @relation("MonthlyApprovedBy")
 
   @@index([roleId])
   @@index([email])
@@ -3324,4 +3346,48 @@ model AbsenceRecord {
   @@index([userId, dateFrom])
   @@index([absenceTypeId])
   @@map("absence_records")
+}
+
+/// HR Phase C1 (2026-10-16) — monthly attendance roll-up per spec §10.
+/// One row per (userId, year, month) carries the deterministic engine's
+/// output: standard vs actual vs weighted hours + deviation + sick /
+/// vacation day tallies + per-location work-day counters.
+///
+/// Lifecycle: OPEN → APPROVED → LOCKED. OPEN rows are overwritten by
+/// `HrMonthlyService.computeMonth`; APPROVED and LOCKED block the
+/// recompute (service returns a skip marker, not an exception, so a
+/// batch recompute doesn't blow up on one approved user). Reopen flips
+/// APPROVED → OPEN and clears `approvedBy*` so the next recompute may
+/// write. LOCKED is reserved for the Phase D consolidated accounting
+/// export — Phase C never writes LOCKED.
+///
+/// `approvedById` is nullable + SET NULL on the approver's delete so
+/// historical approvals survive a de-provisioned HR user. `userId` is
+/// CASCADE: wiping an employee wipes their attendance history with
+/// them (matches the AbsenceRecord cascade pattern from Phase B).
+model MonthlyAttendance {
+  id              Int           @id @default(autoincrement())
+  userId          Int           @map("user_id")
+  year            Int
+  month           Int
+  monthlyStandard Decimal       @map("monthly_standard") @db.Decimal(7, 2)
+  actualHours     Decimal       @map("actual_hours")     @db.Decimal(7, 2)
+  weightedHours   Decimal       @map("weighted_hours")   @db.Decimal(7, 2)
+  deviation       Decimal       @db.Decimal(7, 2)
+  sickDays        Decimal       @map("sick_days")        @db.Decimal(5, 2)
+  vacationDays    Decimal       @map("vacation_days")    @db.Decimal(5, 2)
+  daysOffice      Int           @default(0) @map("days_office")
+  daysHome        Int           @default(0) @map("days_home")
+  daysSite        Int           @default(0) @map("days_site")
+  status          MonthlyStatus @default(OPEN)
+  approvedById    Int?          @map("approved_by_id")
+  approvedAt      DateTime?     @map("approved_at")
+  computedAt      DateTime      @default(now()) @map("computed_at")
+
+  user       User  @relation("UserMonthlyAttendance", fields: [userId], references: [id], onDelete: Cascade)
+  approvedBy User? @relation("MonthlyApprovedBy", fields: [approvedById], references: [id])
+
+  @@unique([userId, year, month])
+  @@index([year, month])
+  @@map("monthly_attendance")
 }
