@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -10,9 +11,10 @@ import {
   ParseIntPipe,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 
 import { TimeEntriesService } from './time-entries.service';
+import { HrMonthlyService } from '../hr/hr-monthly.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions, OwnData } from '../../common/decorators/roles.decorator';
@@ -24,7 +26,10 @@ import { CreateTimeEntryDto } from './dto/create-time-entry.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('time-entries')
 export class TimeEntriesController {
-  constructor(private readonly timeEntriesService: TimeEntriesService) {}
+  constructor(
+    private readonly timeEntriesService: TimeEntriesService,
+    private readonly monthly: HrMonthlyService,
+  ) {}
 
   @Post()
   @OwnData()
@@ -70,6 +75,34 @@ export class TimeEntriesController {
       projectId: Number.isFinite(projectIdNum) ? projectIdNum : undefined,
       date,
     });
+  }
+
+  /**
+   * HR Phase C3 — self-service monthly summary. Authenticated only
+   * (NO `hr:*` guard — this is the caller's own numbers). Scopes to
+   * `user.id` server-side; a query param can't broaden the scope.
+   * Returns:
+   *   • row: computed MonthlyAttendance snapshot (DRAFT if no row has
+   *     been written yet — the endpoint never writes).
+   *   • dailyBreakdown: day-by-day engine output.
+   *   • monthlyAbsences: the caller's absences in-month.
+   *   • cBucketUsage: per C-bucket YTD used / maxPerYear for the bars.
+   */
+  @Get('my-monthly-summary')
+  @ApiOperation({ summary: 'Caller-scoped monthly summary (DRAFT if not yet recomputed).' })
+  @ApiQuery({ name: 'year', required: true, type: Number })
+  @ApiQuery({ name: 'month', required: true, type: Number })
+  getMyMonthlySummary(
+    @CurrentUser() user: any,
+    @Query('year') yearRaw: string,
+    @Query('month') monthRaw: string,
+  ) {
+    const year = Number(yearRaw);
+    const month = Number(monthRaw);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+      throw new BadRequestException('year and month are required integers (month 1-12)');
+    }
+    return this.monthly.getMySummary(user.id, year, month);
   }
 
   @Get('daily')

@@ -1,4 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   AbsenceUnit,
   BucketCreditMode,
@@ -183,6 +188,245 @@ export class HrMonthlyService {
   ): Promise<DailyBreakdownRow[]> {
     const inputs = await this.loadInputs(userId, year, month);
     return this.buildDailyRows(inputs);
+  }
+
+  // ─── List + fetch ───────────────────────────────────────────────────
+
+  /**
+   * HR Phase C3 roster list. Returns every row for the (year, month)
+   * joined with the display fields the review table needs
+   * (name + accountingEmployeeNumber). Does NOT recompute; callers hit
+   * `/hr/monthly/recompute` first.
+   */
+  async listMonth(year: number, month: number) {
+    const rows = await this.prisma.monthlyAttendance.findMany({
+      where: { year, month },
+      orderBy: [{ user: { lastName: 'asc' } }, { user: { firstName: 'asc' } }],
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            firstNameHe: true,
+            lastNameHe: true,
+            accountingEmployeeNumber: true,
+          },
+        },
+        approvedBy: {
+          select: { id: true, firstName: true, lastName: true },
+        },
+      },
+    });
+    return rows.map((r) => ({ ...decimalRow(r), user: r.user, approvedBy: r.approvedBy }));
+  }
+
+  /**
+   * Row + day-by-day breakdown for the review drawer. If no row has
+   * been computed yet, we still return a DRAFT compute so the drawer
+   * can render; no row is written.
+   */
+  async getMonthForUser(userId: number, year: number, month: number) {
+    const existing = await this.prisma.monthlyAttendance.findUnique({
+      where: { userId_year_month: { userId, year, month } },
+      include: {
+        approvedBy: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
+    const dailyBreakdown = await this.getDailyBreakdown(userId, year, month);
+
+    if (existing) {
+      return {
+        row: { ...decimalRow(existing), approvedBy: existing.approvedBy },
+        dailyBreakdown,
+      };
+    }
+
+    // DRAFT: compute the aggregate in-memory without a write — lets
+    // the drawer render immediately for a user whose month hasn't
+    // been recomputed yet.
+    const inputs = await this.loadInputs(userId, year, month);
+    const totals = this.aggregateMonth(inputs);
+    return {
+      row: {
+        id: 0,
+        userId,
+        year,
+        month,
+        ...totals,
+        status: 'DRAFT' as const,
+        approvedById: null,
+        approvedBy: null,
+        approvedAt: null,
+        computedAt: null,
+      },
+      dailyBreakdown,
+    };
+  }
+
+  // ─── Approve + reopen ───────────────────────────────────────────────
+
+  async approve(args: {
+    userId: number;
+    year: number;
+    month: number;
+    approverId: number;
+  }) {
+    const row = await this.prisma.monthlyAttendance.findUnique({
+      where: {
+        userId_year_month: {
+          userId: args.userId,
+          year: args.year,
+          month: args.month,
+        },
+      },
+    });
+    if (!row) {
+      throw new BadRequestException({
+        message:
+          'Monthly row not computed yet — click "חישוב מחדש" before approving.',
+        code: 'MONTHLY_NOT_YET_COMPUTED',
+      });
+    }
+    if (row.status === 'LOCKED') {
+      throw new BadRequestException(
+        'Row is LOCKED (post-export) — a locked row cannot be approved.',
+      );
+    }
+    if (row.status === 'APPROVED') {
+      // Idempotent — surface the existing row so the FE can refresh.
+      return decimalRow(row);
+    }
+    const updated = await this.prisma.monthlyAttendance.update({
+      where: { id: row.id },
+      data: {
+        status: MonthlyStatus.APPROVED,
+        approvedById: args.approverId,
+        approvedAt: new Date(),
+      },
+    });
+    return decimalRow(updated);
+  }
+
+  async reopen(args: { userId: number; year: number; month: number }) {
+    const row = await this.prisma.monthlyAttendance.findUnique({
+      where: {
+        userId_year_month: {
+          userId: args.userId,
+          year: args.year,
+          month: args.month,
+        },
+      },
+    });
+    if (!row) {
+      throw new NotFoundException('No MonthlyAttendance row to reopen');
+    }
+    if (row.status === 'LOCKED') {
+      throw new BadRequestException(
+        'Row is LOCKED — a locked row cannot be reopened without a Phase D export rollback.',
+      );
+    }
+    if (row.status === 'OPEN') return decimalRow(row);
+    const updated = await this.prisma.monthlyAttendance.update({
+      where: { id: row.id },
+      data: {
+        status: MonthlyStatus.OPEN,
+        approvedById: null,
+        approvedAt: null,
+      },
+    });
+    return decimalRow(updated);
+  }
+
+  // ─── Self-service summary (/time/my-monthly-summary) ────────────────
+
+  /**
+   * HR Phase C3 — self-service: caller's own month row + daily
+   * breakdown + their absences in-month + per-C-bucket YTD usage.
+   *
+   * No `hr:*` guard: this is "the view of my own numbers". Returns a
+   * DRAFT compute if no row has been written yet (we never write from
+   * this endpoint).
+   */
+  async getMySummary(userId: number, year: number, month: number) {
+    const [{ row, dailyBreakdown }, monthlyAbsences, cBuckets] = await Promise.all([
+      this.getMonthForUser(userId, year, month),
+      // Absences overlapping the month.
+      this.prisma.absenceRecord.findMany({
+        where: {
+          userId,
+          dateFrom: { lt: new Date(year, month, 1) },
+          dateTo: { gte: new Date(year, month - 1, 1) },
+        },
+        include: {
+          absenceType: {
+            select: { id: true, code: true, nameHe: true, unit: true },
+          },
+        },
+        orderBy: { dateFrom: 'asc' },
+      }),
+      // Caller-side C-bucket YTD usage: hours reported this YEAR per C-bucket.
+      // Aggregated server-side via groupBy so the FE just renders bars.
+      this.prisma.timeEntry.groupBy({
+        by: ['specialHourBucketId'],
+        where: {
+          userId,
+          deletedAt: null,
+          date: {
+            gte: new Date(year, 0, 1),
+            lt: new Date(year + 1, 0, 1),
+          },
+          specialHourBucketId: { not: null },
+          specialHourBucket: { behavior: 'C' },
+        },
+        _sum: { minutes: true },
+      }),
+    ]);
+
+    // Fetch the matching bucket catalog rows so the FE can show the
+    // bucket name + maxPerYear next to each counter.
+    const bucketIds = cBuckets
+      .map((r) => r.specialHourBucketId)
+      .filter((id): id is number => id != null);
+    const bucketRows = bucketIds.length
+      ? await this.prisma.specialHourBucket.findMany({
+          where: { id: { in: bucketIds } },
+          select: {
+            id: true,
+            code: true,
+            nameHe: true,
+            unit: true,
+            maxPerYear: true,
+            behavior: true,
+          },
+        })
+      : [];
+
+    const cBucketUsage = cBuckets.map((r) => {
+      const bucket = bucketRows.find((b) => b.id === r.specialHourBucketId);
+      const usedHours = (r._sum.minutes ?? 0) / 60;
+      const maxPerYear = bucket?.maxPerYear != null ? Number(bucket.maxPerYear) : null;
+      return {
+        bucketId: r.specialHourBucketId,
+        code: bucket?.code ?? null,
+        nameHe: bucket?.nameHe ?? null,
+        unit: bucket?.unit ?? null,
+        used: round2(usedHours),
+        maxPerYear,
+        // The UI colors the bar: orange ≥80%, red ≥100%. Server returns
+        // the raw used/max so the FE threshold stays in one place.
+      };
+    });
+
+    return {
+      row,
+      dailyBreakdown,
+      monthlyAbsences: monthlyAbsences.map((a) => ({
+        ...a,
+        amount: Number(a.amount),
+      })),
+      cBucketUsage,
+    };
   }
 
   // ─── Engine input loader ───────────────────────────────────────────

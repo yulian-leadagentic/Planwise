@@ -24,6 +24,8 @@ import {
 } from '@nestjs/swagger';
 
 import { HrService } from './hr.service';
+import { HrMonthlyService } from './hr-monthly.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
@@ -46,6 +48,7 @@ import {
   CreateSpecialHourBucketDto,
   UpdateSpecialHourBucketDto,
 } from './dto/bucket.dto';
+import { ApproveMonthDto, RecomputeMonthDto } from './dto/monthly.dto';
 
 /**
  * HR Phase A3+B3 (2026-10-15) — `/hr/*` surface. Every route is gated
@@ -69,7 +72,11 @@ import {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('hr')
 export class HrController {
-  constructor(private readonly hr: HrService) {}
+  constructor(
+    private readonly hr: HrService,
+    private readonly monthly: HrMonthlyService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   // ─── HR settings (singleton) ────────────────────────────────────────
 
@@ -403,5 +410,104 @@ export class HrController {
     @CurrentUser() user: any,
   ) {
     return this.hr.deleteEmployeeAttachment(userId, attachmentId, user.id);
+  }
+
+  // ─── Monthly Attendance (Phase C3) ──────────────────────────────────
+
+  /**
+   * HR Phase C3 — batch recompute. When `userIds` is omitted the
+   * controller resolves it to every active employee server-side so
+   * the FE never needs the roster upfront. Each user runs in its own
+   * try/catch inside the engine; one bad user never tanks the batch.
+   */
+  @Post('monthly/recompute')
+  @RequirePermissions({ module: 'hr', action: 'write' })
+  @ApiOperation({
+    summary:
+      'Recompute MonthlyAttendance for the given month (optionally scoped to a userIds list; defaults to all active employees).',
+  })
+  async recomputeMonthly(@Body() dto: RecomputeMonthDto) {
+    let userIds = dto.userIds;
+    if (!userIds || userIds.length === 0) {
+      const employees = await this.prisma.user.findMany({
+        where: { userType: 'employee', isActive: true, deletedAt: null },
+        select: { id: true },
+      });
+      userIds = employees.map((e) => e.id);
+    }
+    return this.monthly.computeMonthForMany({
+      userIds,
+      year: dto.year,
+      month: dto.month,
+    });
+  }
+
+  @Get('monthly')
+  @RequirePermissions({ module: 'hr', action: 'read' })
+  @ApiOperation({ summary: 'List MonthlyAttendance rows for the given month.' })
+  @ApiQuery({ name: 'year', required: true, type: Number })
+  @ApiQuery({ name: 'month', required: true, type: Number })
+  listMonthly(
+    @Query('year') yearRaw: string,
+    @Query('month') monthRaw: string,
+  ) {
+    const year = Number(yearRaw);
+    const month = Number(monthRaw);
+    if (!Number.isFinite(year) || !Number.isFinite(month)) {
+      throw new BadRequestException('year and month are required integers');
+    }
+    return this.monthly.listMonth(year, month);
+  }
+
+  @Get('monthly/:userId')
+  @RequirePermissions({ module: 'hr', action: 'read' })
+  @ApiOperation({
+    summary:
+      'Row + day-by-day breakdown for one employee. Returns a DRAFT compute if no row has been written yet.',
+  })
+  @ApiQuery({ name: 'year', required: true, type: Number })
+  @ApiQuery({ name: 'month', required: true, type: Number })
+  getMonthlyForUser(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query('year') yearRaw: string,
+    @Query('month') monthRaw: string,
+  ) {
+    const year = Number(yearRaw);
+    const month = Number(monthRaw);
+    if (!Number.isFinite(year) || !Number.isFinite(month)) {
+      throw new BadRequestException('year and month are required integers');
+    }
+    return this.monthly.getMonthForUser(userId, year, month);
+  }
+
+  @Post('monthly/:userId/approve')
+  @RequirePermissions({ module: 'hr', action: 'approve' })
+  @ApiOperation({
+    summary:
+      'Approve an employee\'s MonthlyAttendance row (idempotent on already-APPROVED).',
+  })
+  approveMonthly(
+    @Param('userId', ParseIntPipe) userId: number,
+    @CurrentUser() user: any,
+    @Body() dto: ApproveMonthDto,
+  ) {
+    return this.monthly.approve({
+      userId,
+      year: dto.year,
+      month: dto.month,
+      approverId: user.id,
+    });
+  }
+
+  @Post('monthly/:userId/reopen')
+  @RequirePermissions({ module: 'hr', action: 'approve' })
+  @ApiOperation({
+    summary: 'Reopen an APPROVED row (clears approvedBy*; LOCKED rows refuse).',
+  })
+  reopenMonthly(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body() dto: ApproveMonthDto,
+  ) {
+    return this.monthly.reopen({ userId, year: dto.year, month: dto.month });
   }
 }
