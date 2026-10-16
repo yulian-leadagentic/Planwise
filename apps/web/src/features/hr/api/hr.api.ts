@@ -247,6 +247,76 @@ export interface UploadAttachmentResponse {
   createdAt: string;
 }
 
+// ─── MonthlyAttendance (Phase C) ──────────────────────────────────────
+export type MonthlyStatus = 'OPEN' | 'APPROVED' | 'LOCKED' | 'DRAFT';
+
+export interface MonthlyAttendanceRow {
+  id: number;
+  userId: number;
+  year: number;
+  month: number;
+  monthlyStandard: number;
+  actualHours: number;
+  weightedHours: number;
+  deviation: number;
+  sickDays: number;
+  vacationDays: number;
+  daysOffice: number;
+  daysHome: number;
+  daysSite: number;
+  status: MonthlyStatus;
+  approvedById: number | null;
+  approvedAt: string | null;
+  computedAt: string | null;
+  user?: {
+    id: number;
+    firstName: string;
+    lastName: string;
+    firstNameHe: string | null;
+    lastNameHe: string | null;
+    accountingEmployeeNumber: string | null;
+  };
+  approvedBy?: { id: number; firstName: string; lastName: string } | null;
+}
+
+export interface DailyBreakdownRow {
+  date: string;
+  dayType: CalendarDayType;
+  dayStandard: number;
+  actualHours: number;
+  absenceCredit: number;
+  sickCredit: number;
+  vacationCredit: number;
+  locationBucket: 'office' | 'home' | 'site' | null;
+  autoDeduction: number;
+}
+
+export interface MonthlyUserDetail {
+  row: MonthlyAttendanceRow;
+  dailyBreakdown: DailyBreakdownRow[];
+}
+
+export interface RecomputeResponse {
+  computed: MonthlyAttendanceRow[];
+  skipped: Array<{ userId: number; reason: string }>;
+}
+
+export interface CBucketUsage {
+  bucketId: number | null;
+  code: string | null;
+  nameHe: string | null;
+  unit: AbsenceUnit | null;
+  used: number;
+  maxPerYear: number | null;
+}
+
+export interface MyMonthlySummary {
+  row: MonthlyAttendanceRow;
+  dailyBreakdown: DailyBreakdownRow[];
+  monthlyAbsences: AbsenceRecord[];
+  cBucketUsage: CBucketUsage[];
+}
+
 // Bucket admin CRUD ───────────────────────────────────────────────────
 export interface CreateBucketPayload {
   code: string;
@@ -397,4 +467,38 @@ export const hrApi = {
     client
       .delete(`/hr/employees/${userId}/attachments/${attachmentId}`)
       .then((r) => unwrap<{ ok: true; id: number }>(r.data)),
+
+  // ─── Monthly attendance (Phase C) ──────────────────────────────────
+  recomputeMonthly: (payload: { year: number; month: number; userIds?: number[] }) =>
+    client.post('/hr/monthly/recompute', payload).then((r) => unwrap<RecomputeResponse>(r.data)),
+
+  listMonthly: (year: number, month: number) =>
+    client
+      .get('/hr/monthly', { params: { year, month } })
+      .then((r) => unwrap<MonthlyAttendanceRow[]>(r.data)),
+
+  getMonthlyForUser: (userId: number, year: number, month: number) =>
+    client
+      .get(`/hr/monthly/${userId}`, { params: { year, month } })
+      .then((r) => unwrap<MonthlyUserDetail>(r.data)),
+
+  approveMonthly: (userId: number, year: number, month: number) =>
+    client
+      .post(`/hr/monthly/${userId}/approve`, { year, month })
+      .then((r) => unwrap<MonthlyAttendanceRow>(r.data)),
+
+  reopenMonthly: (userId: number, year: number, month: number) =>
+    client
+      .post(`/hr/monthly/${userId}/reopen`, { year, month })
+      .then((r) => unwrap<MonthlyAttendanceRow>(r.data)),
+
+  /**
+   * Caller-scoped — no `hr:*` guard. Mounted under `/time-entries/*`
+   * on the API side (keeps all per-user time surfaces under one
+   * controller); the FE calls it from the Time tab.
+   */
+  getMyMonthlySummary: (year: number, month: number) =>
+    client
+      .get('/time-entries/my-monthly-summary', { params: { year, month } })
+      .then((r) => unwrap<MyMonthlySummary>(r.data)),
 };

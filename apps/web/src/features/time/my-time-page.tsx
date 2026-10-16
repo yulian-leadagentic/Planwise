@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Clock, LogIn, LogOut, Grid3X3 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Clock, LogIn, LogOut, Grid3X3, CalendarRange } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/page-header';
 import { DailyBreakdownComponent } from './daily-breakdown';
@@ -66,6 +66,14 @@ export function MyTimePage() {
             >
               <Grid3X3 className="h-4 w-4" />
               Weekly Grid
+            </Link>
+            {/* HR Phase C4 (2026-10-16) — self-service monthly roll-up. */}
+            <Link
+              to="/time/monthly-summary"
+              className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm hover:bg-accent"
+            >
+              <CalendarRange className="h-4 w-4" />
+              סיכום חודשי
             </Link>
             <button
               onClick={handleClockToggle}

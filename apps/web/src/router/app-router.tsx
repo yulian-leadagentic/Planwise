@@ -71,14 +71,15 @@ const DrivePage = lazy(() => import('@/features/admin/drive-page').then(m => ({ 
 const ProfilePage = lazy(() => import('@/features/misc/profile-page').then(m => ({ default: m.ProfilePage })));
 const NotFoundPage = lazy(() => import('@/features/misc/not-found-page').then(m => ({ default: m.NotFoundPage })));
 
-// HR Phase A4 (2026-10-15) — HrLayout owns `/hr/*`; HrEmployeesPage is
-// the only tab wired today, the other 3 share PlaceholderTab wrappers.
+// HR Phase A4+B4+C4 — HrLayout owns `/hr/*`. Only Reports stays a
+// placeholder; Employees (A4), Settings (B4) and Monthly Review (C4)
+// all ship real pages.
 const HrLayout = lazy(() => import('@/features/hr/hr-layout').then(m => ({ default: m.HrLayout })));
 const HrEmployeesPage = lazy(() => import('@/features/hr/employees-page').then(m => ({ default: m.HrEmployeesPage })));
-const HrMonthlyReviewPlaceholder = lazy(() => import('@/features/hr/placeholder-tab').then(m => ({ default: m.HrMonthlyReviewPlaceholder })));
+const HrMonthlyReviewPage = lazy(() => import('@/features/hr/review-page').then(m => ({ default: m.HrMonthlyReviewPage })));
 const HrReportsPlaceholder = lazy(() => import('@/features/hr/placeholder-tab').then(m => ({ default: m.HrReportsPlaceholder })));
-// HR Phase B4 (2026-10-15) — real Settings page replaces the A4 placeholder.
 const HrSettingsPage = lazy(() => import('@/features/hr/settings-page').then(m => ({ default: m.HrSettingsPage })));
+const MonthlySummaryPage = lazy(() => import('@/features/time/monthly-summary-page').then(m => ({ default: m.MonthlySummaryPage })));
 
 // DnD-heavy (kept lazy to avoid @dnd-kit React version conflicts)
 const MyTasksKanbanPage = lazy(() => import('@/features/tasks/my-tasks-kanban').then(m => ({ default: m.MyTasksKanbanPage })));
@@ -127,6 +128,7 @@ export function AppRouter() {
         <Route path="messages/search" element={<L><MessageSearchPage /></L>} />
         <Route path="time" element={<L><WeeklyTimesheetPage /></L>} />
         <Route path="time/summary" element={<L><MyTimePage /></L>} />
+        <Route path="time/monthly-summary" element={<L><MonthlySummaryPage /></L>} />
         <Route path="time/grid" element={<L><TimeGridPage /></L>} />
         <Route path="time/clock-dashboard" element={<L><ClockDashboardPage /></L>} />
 
@@ -214,7 +216,7 @@ export function AppRouter() {
               Admin/Templates; a Phase B hub page replaces this redirect. */}
           <Route index element={<Navigate to="/hr/employees" replace />} />
           <Route path="employees" element={<L><HrEmployeesPage /></L>} />
-          <Route path="review" element={<L><HrMonthlyReviewPlaceholder /></L>} />
+          <Route path="review" element={<L><HrMonthlyReviewPage /></L>} />
           <Route path="reports" element={<L><HrReportsPlaceholder /></L>} />
           <Route path="settings" element={<L><HrSettingsPage /></L>} />
         </Route>
