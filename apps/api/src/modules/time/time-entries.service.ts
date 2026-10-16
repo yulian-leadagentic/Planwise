@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { startOfDay, endOfDay, addDays, parseISO, format } from 'date-fns';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -385,6 +385,19 @@ export class TimeEntriesService {
   async update(id: number, dto: Partial<CreateTimeEntryDto>, userId?: number) {
     const existing = await this.findOne(id);
 
+    // Ownership gate — a user with `time:write` must only PATCH their own
+    // entries. @OwnData routing on the controller handles the common
+    // path, but belt-and-suspenders at the service: fail-closed on any
+    // caller != entry.owner before overlap/bucket checks (both of which
+    // keyed off the row's owner and would silently leak another user's
+    // calendar state through 409 messaging).
+    if (userId != null && existing.userId !== userId) {
+      throw new ForbiddenException({
+        message: 'You can only edit your own time entries.',
+        code: 'TIME_ENTRY_NOT_OWNER',
+      });
+    }
+
     // Re-run the overlap check on the patched view (caller may have
     // updated only some fields — merge with what's in the DB before
     // checking). Excluding `id` so the entry doesn't overlap with itself.
@@ -406,28 +419,8 @@ export class TimeEntriesService {
     });
 
     // HR §9.1 (2026-10-16): server-side bucket gate on PATCH. The
-    // eligibility check keys off the ENTRY's owner, not the actor —
-    // today the TimeEntries controller passes `user.id` from
-    // `@CurrentUser()` so the caller is always the owner (@OwnData),
-    // but if a future HR-Manager route starts editing on behalf of
-    // another user, the eligibility window must still match the
-    // employee the row belongs to.
-    //
-    // TODO (spec §9.1): once an HR-Manager "edit on behalf of" route
-    // exists, pass the actor id separately so we can audit the gap
-    // between actor and owner. For now the sanity check below trips
-    // loudly if a route ever hands us a userId that doesn't match the
-    // entry owner.
-    if (userId != null && userId !== existing.userId) {
-      // Defensive — the current controller never hits this branch
-      // (@OwnData + user.id). If it ever does, fail closed rather
-      // than silently use the wrong identity for eligibility.
-      throw new BadRequestException({
-        message:
-          'Time entry update invoked with a different actor than the entry owner — eligibility check cannot proceed.',
-        code: 'TIME_ENTRY_ACTOR_MISMATCH',
-      });
-    }
+    // ownership gate at the top of update() guarantees caller == owner,
+    // so the eligibility check below keys off that single identity.
     if ('specialHourBucketId' in dto && dto.specialHourBucketId != null) {
       const mergedDateForBucket = dto.date ? mergedDate : existing.date;
       await this.assertUsableBucket(
@@ -490,6 +483,15 @@ export class TimeEntriesService {
 
   async remove(id: number, userId?: number) {
     const existing = await this.findOne(id);
+
+    // Ownership gate — same rule as update() (TIME_ENTRY_NOT_OWNER).
+    if (userId != null && existing.userId !== userId) {
+      throw new ForbiddenException({
+        message: 'You can only delete your own time entries.',
+        code: 'TIME_ENTRY_NOT_OWNER',
+      });
+    }
+
     await this.prisma.timeEntry.delete({ where: { id } });
 
     try {

@@ -267,14 +267,17 @@ describe('TasksService', () => {
     });
 
     it('still throws when a core field is being cleared on a non-personal task', async () => {
-      prisma.task.findFirst.mockResolvedValue(incompleteTask);
+      // Setup: non-personal task placed by zoneId (projectId null). The
+      // DTO clears zoneId → merged state has neither zoneId nor projectId
+      // on a non-personal task → missingCoreFields trips.
+      // (Post-2026-08-31 QA3 relaxation: Service / Deliverable / Review
+      // are optional; the only placement invariant is zoneId OR projectId
+      // for non-personal rows.)
+      const taskPlacedByZone = { ...incompleteTask, projectId: null, zoneId: 10 };
+      prisma.task.findFirst.mockResolvedValue(taskPlacedByZone);
 
-      // Explicit null = "clearing" — the DTO touches serviceTypeId, so
-      // the gate opens and the guardrail runs on the merged state.
-      // The merged state has no service (existing null + clearing), no
-      // template, so missingCoreFields returns entries → 400.
       await expect(
-        service.update(TASK_ID, { serviceTypeId: null } as any),
+        service.update(TASK_ID, { zoneId: null } as any),
       ).rejects.toBeInstanceOf(BadRequestException);
 
       expect(prisma.task.update).not.toHaveBeenCalled();
