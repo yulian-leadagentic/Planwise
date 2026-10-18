@@ -5,7 +5,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { TemplatesService } from './templates.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
@@ -20,7 +20,10 @@ type Action = 'read' | 'write' | 'delete' | 'approve' | 'export';
 
 function hasPerm(user: any, moduleKey: string, action: Action): boolean {
   if (!user?.roleModules) return false;
-  if (user.role?.name === 'Admin' || user.roleName === 'Admin') return true;
+  // §14 RBAC multi-role (2026-10-18) — defer to the shared helper so
+  // the admin bypass is the OR union across granted roles (same rule
+  // the main RolesGuard uses).
+  if (isAdminUser(user)) return true;
 
   const expand = (k: string): string[] => {
     const out = [k];

@@ -20,7 +20,7 @@ import type { Response } from 'express';
 import { DataImportMode, DataImportTarget } from '@prisma/client';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -300,7 +300,10 @@ export class DataImportController {
     // Admin (with the permission) sees everyone's history. Other roles
     // see only their own. We detect "admin" by role name — same
     // pattern as the rest of the app.
-    const isAdmin = user.role?.name === 'Admin' || user.roleName === 'Admin';
+    // §14 RBAC multi-role (2026-10-18) — isAdminUser reads the OR
+    // union set by jwt.strategy.ts' attachMergedPermissions; falls
+    // back to the legacy name check pre-handover.
+    const isAdmin = isAdminUser(user);
     return this.prisma.dataImport.findMany({
       where: {
         ...(isAdmin ? {} : { userId: user.id }),
@@ -318,7 +321,10 @@ export class DataImportController {
   async historyRows(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
     const imp = await this.prisma.dataImport.findUnique({ where: { id } });
     if (!imp) throw new NotFoundException('Import not found.');
-    const isAdmin = user.role?.name === 'Admin' || user.roleName === 'Admin';
+    // §14 RBAC multi-role (2026-10-18) — isAdminUser reads the OR
+    // union set by jwt.strategy.ts' attachMergedPermissions; falls
+    // back to the legacy name check pre-handover.
+    const isAdmin = isAdminUser(user);
     if (!isAdmin && imp.userId !== user.id) {
       throw new ForbiddenException('You can only view your own imports.');
     }
@@ -337,7 +343,10 @@ export class DataImportController {
     const imp = await this.prisma.dataImport.findUnique({ where: { id } });
     if (!imp) throw new NotFoundException('Import not found.');
 
-    const isAdmin = user.role?.name === 'Admin' || user.roleName === 'Admin';
+    // §14 RBAC multi-role (2026-10-18) — isAdminUser reads the OR
+    // union set by jwt.strategy.ts' attachMergedPermissions; falls
+    // back to the legacy name check pre-handover.
+    const isAdmin = isAdminUser(user);
     if (!isAdmin && imp.userId !== user.id) {
       throw new ForbiddenException('You can only roll back your own imports.');
     }

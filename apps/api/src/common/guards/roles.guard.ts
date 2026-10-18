@@ -54,7 +54,12 @@ export class RolesGuard implements CanActivate {
       'data-import/contacts',
     ]);
     const allBypassable = requiredPermissions.every((p) => !NO_ADMIN_BYPASS.has(p.module));
-    if (allBypassable && (user.role?.name === 'Admin' || user.roleName === 'Admin')) {
+    // §14 RBAC multi-role (2026-10-18) — `isAdminUser` reads
+    // `user.isAdmin` (set in jwt.strategy.ts' attachMergedPermissions);
+    // falls back to the legacy name check when upstream hasn't
+    // populated it, so a request minted from an older code path still
+    // works during the deploy handover window.
+    if (allBypassable && isAdminUser(user)) {
       return true;
     }
 
@@ -103,4 +108,25 @@ function expandModule(module: string): string[] {
     candidates.push(parts.slice(0, i).join('/'));
   }
   return candidates;
+}
+
+/**
+ * §14 RBAC multi-role (2026-10-18) — single source of truth for the
+ * "is this request's user an Admin?" check. Prefers the precomputed
+ * `user.isAdmin` set by `jwt.strategy.ts` (OR-union across granted
+ * roles; falls back to legacy `user.role.name` when `user_roles` is
+ * empty). Still accepts the legacy shape so a caller that forgot to
+ * run the merge (test fixtures, older code paths) keeps working.
+ *
+ * Exported so controllers that need an admin bypass (currently
+ * `templates.controller` + `data-import.controller`) can use the same
+ * rule the guard uses, instead of re-implementing `role?.name ===
+ * 'Admin'` with the user_roles short-circuit missing.
+ */
+export function isAdminUser(user: any): boolean {
+  if (user?.isAdmin === true) return true;
+  if (user?.isAdmin === false) return false;
+  // Legacy fallback — a request that never flowed through
+  // attachMergedPermissions still gets the pre-§14 behavior.
+  return user?.role?.name === 'Admin' || user?.roleName === 'Admin';
 }

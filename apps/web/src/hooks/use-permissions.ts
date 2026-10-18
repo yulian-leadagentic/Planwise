@@ -4,6 +4,11 @@ type PermAction = 'read' | 'write' | 'delete' | 'approve' | 'export';
 
 export function usePermissions() {
   const user = useAuthStore((s) => s.user) as any;
+  // §14 RBAC multi-role (2026-10-18) — `/auth/me` already returns the
+  // OR-union across every granted role as `roleModules` (merged by
+  // `attachMergedPermissions` in jwt.strategy.ts); legacy fallbacks
+  // kept for cached-user compatibility during the deploy handover
+  // window.
   const roleModules: any[] = user?.roleModules ?? user?.role?.roleModules ?? [];
 
   const findEntry = (key: string) => {
@@ -39,12 +44,19 @@ export function usePermissions() {
     return false;
   };
 
-  // isAdmin: case-insensitive name match OR roleId === 1 (the backend
-  // ProjectAccessService convention — the seed creates Admin as the first
-  // role, so id=1 is the durable signal even if the display name varies).
-  // Falling back to name-based match keeps any non-seeded admins working.
+  // §14 — Admin check:
+  //   1. Prefer the server-computed flag (`user.isAdmin`), which is
+  //      the OR union across granted roles.
+  //   2. Fallback: any of the `roles` chip list is named Admin.
+  //   3. Fallback (pre-handover window): legacy role.name / role.id.
+  // The order is `isAdmin` → `roles` → legacy so the moment the server
+  // sends the new shape the client stops honouring the stale
+  // single-role chip.
+  const rolesList: Array<{ id: number; name: string }> = Array.isArray(user?.roles) ? user.roles : [];
   const roleName = String(user?.role?.name ?? user?.roleName ?? '').toLowerCase();
   const isAdmin =
+    user?.isAdmin === true ||
+    rolesList.some((r) => String(r.name).toLowerCase() === 'admin') ||
     user?.roleId === 1 ||
     user?.role?.id === 1 ||
     roleName === 'admin' ||

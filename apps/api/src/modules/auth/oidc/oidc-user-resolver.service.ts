@@ -151,12 +151,23 @@ export class OidcUserResolverService {
 
   private userInclude() {
     // Match the shape AuthService.login expects — same includes as
-    // validateUser's second lookup.
+    // validateUser's second lookup. §14 (2026-10-18): also load
+    // `userRoles` + each role's `roleModules` so an OIDC login's
+    // response carries the OR-union, same as a password login.
     return {
       include: {
         role: {
           include: {
             roleModules: { include: { module: true } },
+          },
+        },
+        userRoles: {
+          include: {
+            role: {
+              include: {
+                roleModules: { include: { module: true } },
+              },
+            },
           },
         },
       },

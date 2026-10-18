@@ -26,6 +26,30 @@ export interface User {
   lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * §14 RBAC multi-role (2026-10-18) — every role granted to this
+   * user. Rendered as chips in the admin user-edit modal; permission
+   * reads use the merged `roleModules` array below (OR union across
+   * these roles). Legacy `roleId` is kept as the "primary (legacy)"
+   * display chip and never gates runtime permissions on its own.
+   */
+  roles?: Array<{ id: number; name: string }>;
+  /**
+   * §14 — merged OR-union of every granted role's `role_modules`.
+   * The permission hook reads this; pre-handover it still mirrors
+   * the single-role list the server used to send.
+   */
+  roleModules?: Array<{
+    moduleId: number;
+    canRead: boolean;
+    canWrite: boolean;
+    canDelete: boolean;
+    canApprove: boolean;
+    canExport: boolean;
+    module?: { id: number; name: string; route: string };
+  }>;
+  /** §14 — true when any granted role is named 'Admin'. */
+  isAdmin?: boolean;
 }
 
 export interface UserListItem {

@@ -12,6 +12,7 @@ import * as crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { attachMergedPermissions } from './strategies/jwt.strategy';
 
 function requireSecret(config: ConfigService, key: string): string {
   const value = config.get<string>(key);
@@ -79,13 +80,24 @@ export class AuthService {
       }
     }
 
-    // Only load full role graph after successful password check
+    // Only load full role graph after successful password check.
+    // §14 RBAC multi-role (2026-10-18) — also load `userRoles` so the
+    // response carries the OR-union `roleModules` the guard reads.
     const fullUser = await this.prisma.user.findFirst({
       where: { id: user.id },
       include: {
         role: {
           include: {
             roleModules: { include: { module: true } },
+          },
+        },
+        userRoles: {
+          include: {
+            role: {
+              include: {
+                roleModules: { include: { module: true } },
+              },
+            },
           },
         },
       },
@@ -108,6 +120,13 @@ export class AuthService {
       data: { lastLoginAt: new Date() },
     });
 
+    // §14 — merge the OR-union of every granted role's role_modules
+    // onto the response so the FE's permission hook reads the same
+    // shape the guard uses. `attachMergedPermissions` falls back to
+    // the legacy single-role list when `userRoles` is empty (zero-
+    // downtime handover window — pre-backfill).
+    const merged = attachMergedPermissions(user);
+
     return {
       accessToken,
       refreshToken,
@@ -121,6 +140,12 @@ export class AuthService {
         roleId: user.roleId,
         role: user.role,
         userType: user.userType,
+        // §14 — multi-role surface. Each entry: { id, name }.
+        roles: merged.roles,
+        // §14 — OR-union of module permissions. FE reads this.
+        roleModules: merged.roleModules,
+        // §14 — convenience flag; mirrors the server guard's check.
+        isAdmin: merged.isAdmin,
       },
     };
   }
@@ -231,6 +256,7 @@ export class AuthService {
         avatarUrl: true,
         userType: true,
         position: true,
+        roleId: true,
         // Retire-User.department Step 3/3 (2026-09-28) — free-text
         // `department` retired. OrgUnit is the sole source of truth
         // for org-tree membership on /auth/me.
@@ -242,6 +268,18 @@ export class AuthService {
             roleModules: { include: { module: true } },
           },
         },
+        // §14 RBAC multi-role (2026-10-18) — see jwt.strategy.ts for
+        // the OR-union logic. /auth/me is the FE's single source of
+        // truth for module permissions, so the merge happens here too.
+        userRoles: {
+          include: {
+            role: {
+              include: {
+                roleModules: { include: { module: true } },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -249,7 +287,13 @@ export class AuthService {
       throw new NotFoundException('User not found');
     }
 
-    return user;
+    const merged = attachMergedPermissions(user);
+    // Strip the raw `userRoles` tree from the response — the FE reads
+    // the merged `roleModules` + the `roles` chip list. Keeping the
+    // raw tree would ship ~10x more JSON per /auth/me call for no
+    // consumer benefit.
+    const { userRoles: _ur, ...rest } = merged;
+    return rest;
   }
 
   async updateProfile(userId: number, data: any) {
@@ -342,6 +386,18 @@ export class AuthService {
             roleModules: { include: { module: true } },
           },
         },
+        // §14 RBAC multi-role (2026-10-18) — load the target's granted
+        // roles so the impersonation session reads the SAME union the
+        // target would see on a real login.
+        userRoles: {
+          include: {
+            role: {
+              include: {
+                roleModules: { include: { module: true } },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -352,6 +408,7 @@ export class AuthService {
     const payload = { sub: targetUser.id, email: targetUser.email, roleId: targetUser.roleId, impersonatedBy: admin.id };
     const accessToken = this.jwtService.sign(payload, { expiresIn: '1h' });
 
+    const merged = attachMergedPermissions(targetUser);
     return {
       accessToken,
       user: {
@@ -360,6 +417,11 @@ export class AuthService {
         firstName: targetUser.firstName,
         lastName: targetUser.lastName,
         role: targetUser.role,
+        // §14 — expose the merged shape so an impersonation session
+        // renders the correct permission state in the FE immediately.
+        roles: merged.roles,
+        roleModules: merged.roleModules,
+        isAdmin: merged.isAdmin,
       },
     };
   }
