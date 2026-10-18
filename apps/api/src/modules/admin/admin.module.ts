@@ -5,6 +5,7 @@ import { EnumsController } from './enums.controller';
 import { ConfigController } from './config.controller';
 import { ReportsController } from './reports.controller';
 import { BackfillsController } from './backfills.controller';
+import { AdminUsersController } from './users.controller';
 import { AuthorizationModule } from '../../common/authorization.module';
 import { BusinessPartnersModule } from '../business-partners/business-partners.module';
 
@@ -20,6 +21,9 @@ import { BusinessPartnersModule } from '../business-partners/business-partners.m
     ConfigController,
     ReportsController,
     BackfillsController,
+    // §14 RBAC multi-role (2026-10-18) — PATCH /admin/users/:id/roles
+    // for the multi-select-chip UI on the user edit modal.
+    AdminUsersController,
   ],
 })
 export class AdminModule {}

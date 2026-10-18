@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef } from 'react';
-import { Coins } from 'lucide-react';
+import { Coins, Lock, Plus, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePermissions } from '@/hooks/use-permissions';
 import { notify } from '@/lib/notify';
@@ -243,7 +243,7 @@ export function EditPersonModal({
           />
           <div className="grid grid-cols-2 gap-4">
             <SelectField
-              label="Access Role"
+              label="Access Role (primary · legacy)"
               name="roleId"
               required
               value={form.roleId}
@@ -262,6 +262,19 @@ export function EditPersonModal({
               onChange={(e) => patch('phone', e.target.value)}
             />
           </div>
+          {/* §14 RBAC multi-role (2026-10-18) — multi-select chip picker
+              writes to `user_roles` via /admin/users/:id/roles. Runtime
+              permissions = OR union across every chip. "Access Role
+              (primary · legacy)" above is purely a display chip — it
+              never gates permissions on its own. Admin-only (admin:
+              write) — hidden entirely for other viewers. */}
+          {can('admin', 'write') && (
+            <RolesChipsField
+              userId={user.id}
+              allRoles={roles}
+              primaryRoleId={Number(form.roleId) || null}
+            />
+          )}
           <div className="grid grid-cols-2 gap-4">
             {/* JT-3 (QA4 · 2026-09-29): renamed "Job Title" → "Position"
                 and re-sourced the dropdown from the `positions` catalog
@@ -525,6 +538,142 @@ function QualificationsField({ bpId }: { bpId: number }) {
             </button>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * §14 RBAC multi-role (2026-10-18) — compact chip picker that writes
+ * to `user_roles` via /admin/users/:id/roles. Mounted beneath the
+ * legacy "Access Role (primary)" dropdown. Permission reads use the
+ * OR union across every chip (see jwt.strategy.ts/attachMergedPermissions);
+ * the primary dropdown stays strictly a display label.
+ *
+ * System roles render with a Lock icon and a "קבוצת מערכת" tooltip
+ * — they're still assignable to users, only their internal grid is
+ * read-only (that lives on the /admin/roles matrix page).
+ */
+function RolesChipsField({
+  userId,
+  allRoles,
+  primaryRoleId,
+}: {
+  userId: number;
+  allRoles: Array<{ id: number; name: string; isSystem?: boolean; description?: string | null }>;
+  primaryRoleId: number | null;
+}) {
+  const queryClient = useQueryClient();
+  const { data, isLoading } = useQuery({
+    queryKey: ['admin', 'users', userId, 'roles'],
+    queryFn: () =>
+      client.get(`/admin/users/${userId}/roles`).then((r) => {
+        const d = r.data?.data ?? r.data;
+        return (d ?? { roles: [] }) as {
+          userId: number;
+          primaryLegacyRoleId: number | null;
+          primaryLegacyRoleName: string | null;
+          roles: Array<{
+            id: number;
+            name: string;
+            isSystem: boolean;
+            description: string | null;
+            grantedAt: string;
+            grantedById: number | null;
+          }>;
+        };
+      }),
+  });
+
+  const grantedRoles = data?.roles ?? [];
+  const grantedIds = new Set(grantedRoles.map((r) => r.id));
+  const availableRoles = allRoles.filter((r) => !grantedIds.has(r.id));
+
+  const patchRoles = useMutation({
+    mutationFn: (vars: { addRoleIds?: number[]; removeRoleIds?: number[] }) =>
+      client.patch(`/admin/users/${userId}/roles`, vars).then((r) => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'users', userId, 'roles'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'roles'] });
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      notify.success('Roles updated', { code: 'USER-ROLES-200' });
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update roles'),
+  });
+
+  return (
+    <div>
+      <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
+        Roles
+      </label>
+      <p className="text-[11px] text-slate-400 dark:text-slate-500 mb-2">
+        תפקיד ראשי לתצוגה — ההרשאות נקבעות ע״י כל הקבוצות (union across every chip below).
+      </p>
+      {isLoading ? (
+        <p className="text-[11px] text-slate-400 dark:text-slate-500">Loading…</p>
+      ) : (
+        <>
+          {grantedRoles.length === 0 ? (
+            <p className="text-[12px] text-slate-400 dark:text-slate-500 italic mb-2">
+              No roles granted yet. Add one below.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {grantedRoles.map((r) => {
+                const isPrimary = r.id === primaryRoleId;
+                return (
+                  <span
+                    key={r.id}
+                    title={r.isSystem ? 'קבוצת מערכת — grants are managed by code' : r.description ?? undefined}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-full pl-2.5 pr-1 py-0.5 text-[12px] font-medium border',
+                      isPrimary
+                        ? 'border-blue-200 dark:border-blue-800/60 bg-blue-500/10 text-blue-700 dark:text-blue-300'
+                        : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-200',
+                    )}
+                  >
+                    {r.isSystem && (
+                      <Lock className="h-2.5 w-2.5 text-slate-400 dark:text-slate-500" aria-label="system group" />
+                    )}
+                    {r.name}
+                    {isPrimary && (
+                      <span className="ml-0.5 rounded-full bg-blue-500/15 px-1.5 text-[9px] font-bold uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                        primary
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => patchRoles.mutate({ removeRoleIds: [r.id] })}
+                      disabled={patchRoles.isPending}
+                      className="ml-1 rounded-full text-slate-400 dark:text-slate-500 hover:text-red-600 disabled:opacity-40"
+                      aria-label={`Remove role ${r.name}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+          {availableRoles.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {availableRoles.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => patchRoles.mutate({ addRoleIds: [r.id] })}
+                  disabled={patchRoles.isPending}
+                  title={r.isSystem ? 'קבוצת מערכת — grants are managed by code' : r.description ?? undefined}
+                  className="inline-flex items-center gap-1 rounded-full border border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-0.5 text-[12px] font-medium text-slate-500 dark:text-slate-400 hover:border-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-40"
+                >
+                  <Plus className="h-3 w-3" />
+                  {r.isSystem && <Lock className="h-2.5 w-2.5" aria-label="system group" />}
+                  {r.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

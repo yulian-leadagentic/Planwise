@@ -8,6 +8,7 @@ import {
   Param,
   ParseIntPipe,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
@@ -102,6 +103,22 @@ export class RolesController {
     @Param('id', ParseIntPipe) roleId: number,
     @Body() body: { moduleId: number; canRead: boolean; canWrite: boolean; canDelete: boolean; canApprove?: boolean; canExport?: boolean },
   ) {
+    // §14 RBAC multi-role (2026-10-18) — a role flagged `isSystem=true`
+    // is read-only via the matrix UI: its grid is re-asserted by the
+    // seed on every run, so any edits via /admin/roles would be
+    // silently reverted the next deploy. Explicit 403 so the admin
+    // (and the FE's locked-row rendering) see the intent clearly.
+    const role = await this.prisma.role.findUnique({
+      where: { id: roleId },
+      select: { id: true, name: true, isSystem: true },
+    });
+    if (!role) throw new ForbiddenException('Role not found');
+    if (role.isSystem) {
+      throw new ForbiddenException(
+        `ROLE_IS_SYSTEM: "${role.name}" is a system group — its permissions are managed by code (apps/api/prisma/seed.ts §14.1 grid). Create a non-system role or combine groups on the user instead.`,
+      );
+    }
+
     const existing = await this.prisma.roleModule.findFirst({
       where: { roleId, moduleId: body.moduleId },
     });
@@ -135,6 +152,18 @@ export class RolesController {
     @Param('id', ParseIntPipe) roleId: number,
     @Param('moduleId', ParseIntPipe) moduleId: number,
   ) {
+    // §14 — same system-role lock as POST above.
+    const role = await this.prisma.role.findUnique({
+      where: { id: roleId },
+      select: { id: true, name: true, isSystem: true },
+    });
+    if (!role) throw new ForbiddenException('Role not found');
+    if (role.isSystem) {
+      throw new ForbiddenException(
+        `ROLE_IS_SYSTEM: "${role.name}" is a system group — its permissions are managed by code (apps/api/prisma/seed.ts §14.1 grid).`,
+      );
+    }
+
     const existing = await this.prisma.roleModule.findFirst({
       where: { roleId, moduleId },
     });
