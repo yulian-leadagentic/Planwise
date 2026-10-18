@@ -444,6 +444,15 @@ model User {
   monthlyAttendance MonthlyAttendance[] @relation("UserMonthlyAttendance")
   monthlyApprovals  MonthlyAttendance[] @relation("MonthlyApprovedBy")
 
+  /// §14 RBAC multi-role (2026-10-18) — reverse relations for the new
+  /// `user_roles` M2M junction. `userRoles` = roles this user HOLDS
+  /// (CASCADE on user delete). `userRolesGranted` = user_role rows
+  /// this user issued (SET NULL on grantor delete to preserve the
+  /// grantee's row). Permission reads OR-union every row in
+  /// `userRoles.role.roleModules`; see `common/guards/roles.guard.ts`.
+  userRoles        UserRole[] @relation("UserToRoles")
+  userRolesGranted UserRole[] @relation("UserRoleGrantedBy")
+
   @@index([roleId])
   @@index([email])
   @@index([userType])
@@ -520,6 +529,13 @@ model Role {
   id          Int      @id @default(autoincrement())
   name        String
   description String?
+  /// §14 RBAC multi-role (2026-10-18). Marks a role as a seeded "default
+  /// group" whose grants are RE-ASSERTED by the seed on every run —
+  /// manual edits via /admin/roles are blocked (BE 403 on the role's
+  /// modules route; FE renders the row read-only). Legacy / admin-
+  /// created roles stay `isSystem=false` and are never touched by the
+  /// seed. The §14.1 grid lives in `apps/api/prisma/seed.ts`.
+  isSystem    Boolean  @default(false) @map("is_system")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -528,8 +544,42 @@ model Role {
   stageTransitions  RoleStageTransition[]
   resourceOverrides ResourceOverride[]
   orgAuthConfigs    OrgAuthConfig[]
+  /// §14 — reverse of the new M2M `user_roles` junction. A user may hold
+  /// several roles; permissions are the OR union of every granted
+  /// `RoleModule` flag across those roles. See UserRole below.
+  userRoles         UserRole[] @relation("RoleToUsers")
 
   @@map("roles")
+}
+
+/// §14 RBAC multi-role (2026-10-18) — user × role M2M junction. The
+/// legacy single `User.roleId` is kept writable (and surfaced as the
+/// "primary (legacy)" display chip), but the runtime permission read
+/// is the OR union of every row in this table for the current user.
+/// The permission guard falls back to the legacy roleId lookup only
+/// when `user_roles` is empty for that user — zero-downtime behavior
+/// during the backfill handover (`POST /admin/backfills/rbac-m1-seed-
+/// user-roles`).
+///
+/// Audit columns: `grantedAt` + `grantedById` so an admin can trace
+/// when a given role was granted and by whom (grantedById is nullable
+/// — a seed-created row has no human granter, and SET NULL keeps the
+/// row when the granter is later deleted).
+model UserRole {
+  id          Int      @id @default(autoincrement())
+  userId      Int      @map("user_id")
+  roleId      Int      @map("role_id")
+  grantedAt   DateTime @default(now()) @map("granted_at")
+  grantedById Int?     @map("granted_by_id")
+
+  user      User  @relation("UserToRoles",       fields: [userId],      references: [id], onDelete: Cascade)
+  role      Role  @relation("RoleToUsers",       fields: [roleId],      references: [id], onDelete: Cascade)
+  grantedBy User? @relation("UserRoleGrantedBy", fields: [grantedById], references: [id])
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("user_roles")
 }
 
 model Module {

@@ -1906,4 +1906,122 @@ export class BackfillsController {
       },
     };
   }
+
+  /**
+   * §14 RBAC multi-role · M1 handover backfill (2026-10-18).
+   *
+   * Seeds one row per user in `user_roles` from the legacy
+   * `users.role_id` so the new `UserRole`-based permission read has a
+   * row for every existing user before the admin UI starts letting
+   * admins add/remove roles via multi-select chips (M4). Zero-downtime:
+   * `common/guards/roles.guard.ts` falls back to the legacy `role_id`
+   * lookup when `user_roles` is empty for a user, so this endpoint
+   * can run before OR after the M1 code deploy without breaking live
+   * requests.
+   *
+   * Candidates: every non-deleted user with a non-null `role_id`
+   * (the current staging state: 123 users, all with role_id set).
+   *
+   * Idempotent: writes with `createMany({ skipDuplicates: true })` on
+   * `(userId, roleId)` so a re-run against a fully-seeded table
+   * returns `toInsert: 0` and leaves the table untouched. `?dryRun=
+   * true` returns the plan without writes; a plain POST executes.
+   */
+  @Post('rbac-m1-seed-user-roles')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      '§14 M1 · seed user_roles from users.role_id (idempotent; ?dryRun=true for plan-only)',
+  })
+  @ApiQuery({ name: 'dryRun', required: false, type: String, description: 'Truthy → plan only, no writes' })
+  async runRbacM1SeedUserRoles(@Query('dryRun') dryRunRaw?: string) {
+    const dryRun =
+      typeof dryRunRaw === 'string' &&
+      ['1', 'true', 'yes', 'on'].includes(dryRunRaw.toLowerCase());
+
+    // 1. Scan — every non-deleted user, joined to its role.
+    //    Explicit raw-SQL JOIN mirrors the spec's example query exactly
+    //    and keeps the result shape small (6 columns). role_id is
+    //    schema-non-null on `users`, but we still guard with
+    //    `role_id IS NOT NULL` so a future column loosening doesn't
+    //    silently crash the backfill.
+    const rows = await this.prisma.$queryRawUnsafe<
+      Array<{ id: number; first_name: string; last_name: string; role_id: number; role_name: string }>
+    >(
+      `SELECT u.id, u.first_name, u.last_name, u.role_id, r.name AS role_name
+         FROM users u
+         JOIN roles r ON r.id = u.role_id
+        WHERE u.deleted_at IS NULL
+          AND u.role_id IS NOT NULL
+        ORDER BY u.id ASC`,
+    );
+
+    const usersWithRole = rows.length;
+    // Second count — users with NULL role_id (should be 0 on staging
+    // today, kept for post-deploy audits).
+    const nullRoleCountRows = await this.prisma.$queryRawUnsafe<Array<{ n: bigint | number }>>(
+      `SELECT COUNT(*) AS n FROM users WHERE deleted_at IS NULL AND role_id IS NULL`,
+    );
+    const usersWithoutRole = Number(nullRoleCountRows[0]?.n ?? 0);
+
+    // 2. Which (userId, roleId) pairs already exist in user_roles?
+    //    One batched SELECT; the comparison runs locally. Only looks
+    //    for rows that match current candidates — a stale row (user
+    //    deleted but user_role surviving) is ignored.
+    const existing =
+      usersWithRole === 0
+        ? []
+        : await this.prisma.userRole.findMany({
+            where: {
+              userId: { in: rows.map((r) => r.id) },
+            },
+            select: { userId: true, roleId: true },
+          });
+    const existingKey = new Set(existing.map((e) => `${e.userId}:${e.roleId}`));
+
+    let alreadyPresent = 0;
+    const toInsert: Array<{ userId: number; roleId: number }> = [];
+    for (const r of rows) {
+      const key = `${r.id}:${r.role_id}`;
+      if (existingKey.has(key)) alreadyPresent++;
+      else toInsert.push({ userId: r.id, roleId: r.role_id });
+    }
+
+    // 3. Sample for the response (first 10 to-insert rows; falls back
+    //    to the first 10 scanned rows if everything is already present
+    //    so a re-run still shows what WOULD have been inserted).
+    const sampleSource = toInsert.length > 0
+      ? toInsert.map((p) => rows.find((r) => r.id === p.userId && r.role_id === p.roleId)).filter(Boolean) as typeof rows
+      : rows.slice(0, 10);
+    const sample = sampleSource.slice(0, 10).map((r) => ({
+      userId: r.id,
+      firstName: r.first_name,
+      lastName: r.last_name,
+      roleId: r.role_id,
+      roleName: r.role_name,
+    }));
+
+    // 4. Execute — createMany with skipDuplicates for defense in depth
+    //    (if two requests race, the second's skipDuplicates swallows
+    //    the (userId, roleId) unique-constraint collisions).
+    let insertedOrSkipped = 0;
+    if (!dryRun && toInsert.length > 0) {
+      const res = await this.prisma.userRole.createMany({
+        data: toInsert,
+        skipDuplicates: true,
+      });
+      insertedOrSkipped = res.count;
+    } else if (dryRun) {
+      insertedOrSkipped = toInsert.length;
+    }
+
+    return {
+      dryRun,
+      scanned: { usersWithRole, usersWithoutRole },
+      toInsert: toInsert.length,
+      alreadyPresent,
+      sample,
+      totals: { insertedOrSkipped },
+    };
+  }
 }
