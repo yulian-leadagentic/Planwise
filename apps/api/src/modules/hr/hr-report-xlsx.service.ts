@@ -1,22 +1,25 @@
 import { Injectable } from '@nestjs/common';
 
-import type { ReportPayload } from './hr-reports.service';
+import type { ReportPayload, ReportPayloadEmployee } from './hr-reports.service';
 
 /**
- * HR Phase D1 (2026-10-18) — XLSX writer for the consolidated
- * accounting report (§5). Produces a workbook with:
+ * HR Phase D1 rework (2026-10-18, §13) — XLSX writer for the
+ * consolidated accounting report. Produces:
  *
- *   • Sheet 00 "סיכום" — one row per employee with the header totals.
+ *   • Sheet 00 "סיכום" — one row per employee with header totals + status.
  *   • One sheet per employee named `<lastName> <firstName>` (truncated
- *     to Excel's 31-char limit), with KV header rows + the day-by-day
- *     table.
+ *     to Excel's 31-char limit), with KV header rows + day-by-day table.
  *
- * RTL: the workbook is marked `rightToLeft: true` so Hebrew content
- * reads correctly on open. ExcelJS supports this at the workbook view
- * level — no per-cell flipping needed.
+ * The report payload is now flat: `employee.header` carries userId +
+ * names + accountingEmployeeNumber + totals + status directly (no
+ * nested `user` object). The compute is on-the-fly so an employee with
+ * no data still appears with zero totals and `status: 'DRAFT'`; an
+ * employee whose compute errored carries `header.error` and lands with
+ * an "ERROR" row at the top of its own sheet so the Nahchas sees why.
  *
- * The uses here mirror the shape in `reports.service.ts` (the legacy
- * timesheet XLSX) so the two export surfaces share the same patterns.
+ * RTL: `rightToLeft: true` lives on the WORKSHEET view in exceljs — set
+ * on every sheet via `rtlView()`. Hebrew content reads correctly on
+ * open with no per-cell flipping.
  */
 @Injectable()
 export class HrReportXlsxService {
@@ -25,14 +28,13 @@ export class HrReportXlsxService {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'Planwise';
     workbook.created = new Date();
-    // RTL lives on the WORKSHEET view (not the workbook view) in
-    // exceljs; apply it to every sheet below via `rtlView()`.
 
     // ─── Sheet 00 — summary ────────────────────────────────────────
     const summary = workbook.addWorksheet('סיכום', { views: [rtlView()] });
     summary.columns = [
       { header: 'שם', key: 'name', width: 24 },
       { header: 'מס\' הנהח"ש', key: 'payroll', width: 14 },
+      { header: 'סטטוס', key: 'status', width: 12 },
       { header: 'תקן', key: 'standard', width: 10 },
       { header: 'בפועל', key: 'actual', width: 10 },
       { header: 'משוקלל', key: 'weighted', width: 10 },
@@ -42,7 +44,6 @@ export class HrReportXlsxService {
     ];
     styleHeaderRow(summary.getRow(1));
 
-    // Running totals
     const totals = {
       standard: 0,
       actual: 0,
@@ -54,8 +55,9 @@ export class HrReportXlsxService {
 
     for (const emp of payload.employees) {
       const row = summary.addRow({
-        name: displayName(emp.user),
-        payroll: emp.user.accountingEmployeeNumber ?? '',
+        name: displayName(emp.header),
+        payroll: emp.header.accountingEmployeeNumber ?? '',
+        status: statusLabel(emp.header.status),
         standard: emp.header.monthlyStandard,
         actual: emp.header.actualHours,
         weighted: emp.header.weightedHours,
@@ -73,10 +75,15 @@ export class HrReportXlsxService {
       if (emp.header.deviation < 0) {
         row.getCell('deviation').font = { color: { argb: 'FFDC2626' } };
       }
+      // Error rows get a red status cell so the Nahchas spots them fast.
+      if (emp.header.error) {
+        row.getCell('status').font = { color: { argb: 'FFDC2626' }, bold: true };
+      }
     }
     const sumRow = summary.addRow({
       name: 'סה"כ',
       payroll: '',
+      status: '',
       standard: round2(totals.standard),
       actual: round2(totals.actual),
       weighted: round2(totals.weighted),
@@ -90,7 +97,6 @@ export class HrReportXlsxService {
       pattern: 'solid',
       fgColor: { argb: 'FFE2E8F0' }, // slate-200
     };
-    // Number format with 2-decimal on hour columns.
     (['standard', 'actual', 'weighted', 'deviation', 'sick', 'vacation'] as const)
       .forEach((key) => {
         summary.getColumn(key).numFmt = '0.00';
@@ -98,17 +104,24 @@ export class HrReportXlsxService {
 
     // ─── One sheet per employee ────────────────────────────────────
     for (const emp of payload.employees) {
-      const name = displayName(emp.user);
-      // Excel sheet name max 31 chars; strip \[]*?/\\: (reserved).
+      const name = displayName(emp.header);
       const sheetName = sanitizeSheetName(
-        name.length > 0 ? name : `עובד ${emp.user.id}`,
+        name.length > 0 ? name : `עובד ${emp.header.userId}`,
       );
       const sheet = workbook.addWorksheet(sheetName, { views: [rtlView()] });
 
-      // KV header block.
+      // Compute failure gets a visible banner at the top so the person
+      // reading the sheet in Excel doesn't miss it.
+      if (emp.header.error) {
+        const errRow = sheet.addRow(['שגיאה בחישוב', emp.header.error]);
+        errRow.font = { bold: true, color: { argb: 'FFDC2626' } };
+      }
+
+      // KV header block (status included so a LOCKED/DRAFT sheet reads clearly).
       const kv: Array<[string, string | number]> = [
-        ['שם', displayName(emp.user)],
-        ['מס\' הנהח"ש', emp.user.accountingEmployeeNumber ?? ''],
+        ['שם', displayName(emp.header)],
+        ['מס\' הנהח"ש', emp.header.accountingEmployeeNumber ?? ''],
+        ['סטטוס', statusLabel(emp.header.status)],
         ['תקן חודשי', emp.header.monthlyStandard],
         ['בפועל', emp.header.actualHours],
         ['משוקלל', emp.header.weightedHours],
@@ -144,8 +157,6 @@ export class HrReportXlsxService {
       ];
       const headerRow = sheet.addRow(headerCells);
       styleHeaderRow(headerRow);
-      // Column widths after header is added (ExcelJS fills columns on
-      // sheet growth; this reaches past the KV block above).
       const tableColWidths = [12, 10, 10, 10, 10, 24];
       tableColWidths.forEach((w, i) => {
         const col = sheet.getColumn(i + 1);
@@ -153,16 +164,15 @@ export class HrReportXlsxService {
       });
 
       // Day rows.
-      for (const d of emp.days) {
+      for (const d of emp.rows) {
         const row = sheet.addRow([
           d.date,
-          d.dayOfWeek,
+          d.weekday,
           d.startTime ?? '',
           d.endTime ?? '',
           d.totalHours,
           d.dayType,
         ]);
-        // Hours as 2-decimal number.
         row.getCell(5).numFmt = '0.00';
       }
     }
@@ -174,20 +184,32 @@ export class HrReportXlsxService {
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-function displayName(u: {
-  firstName: string;
-  lastName: string;
-  firstNameHe: string | null;
-  lastNameHe: string | null;
-}): string {
+function displayName(h: ReportPayloadEmployee['header']): string {
   // Prefer Hebrew name when either half is present — the sheet is RTL
   // and that's what the Nahchas expects.
-  const heFirst = u.firstNameHe?.trim() || '';
-  const heLast = u.lastNameHe?.trim() || '';
+  const heFirst = h.firstNameHe?.trim() || '';
+  const heLast = h.lastNameHe?.trim() || '';
   if (heFirst || heLast) {
     return `${heLast} ${heFirst}`.trim();
   }
-  return `${u.lastName ?? ''} ${u.firstName ?? ''}`.trim();
+  return `${h.lastName ?? ''} ${h.firstName ?? ''}`.trim();
+}
+
+function statusLabel(
+  s: ReportPayloadEmployee['header']['status'],
+): string {
+  switch (s) {
+    case 'OPEN':
+      return 'פתוח';
+    case 'APPROVED':
+      return 'מאושר';
+    case 'LOCKED':
+      return 'נעול';
+    case 'DRAFT':
+      return 'טיוטה';
+    default:
+      return String(s);
+  }
 }
 
 function sanitizeSheetName(name: string): string {

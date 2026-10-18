@@ -2,12 +2,18 @@ import { Injectable, Logger } from '@nestjs/common';
 import { existsSync } from 'fs';
 import { join } from 'path';
 
-import type { ReportPayload } from './hr-reports.service';
+import type { ReportPayload, ReportPayloadEmployee } from './hr-reports.service';
 
 /**
- * HR Phase D1 (2026-10-18) — PDF writer for the consolidated
- * accounting report (§5). Page-per-employee with a bundled Hebrew
- * font (NotoSansHebrew-Regular + Bold).
+ * HR Phase D1 rework (2026-10-18, §13) — PDF writer for the
+ * consolidated accounting report. Page-per-employee with a bundled
+ * Hebrew font (NotoSansHebrew-Regular + Bold).
+ *
+ * The payload is now flat: `employee.header` carries userId + names +
+ * accountingEmployeeNumber + totals + status directly, and may carry an
+ * `error` string when the per-employee compute threw. We print the
+ * status next to the name on each page header; errors land as a red
+ * strip at the top of the page.
  *
  * Known limitation — pdfkit does NOT do Unicode bidirectional
  * reordering natively, so a Hebrew-only line renders in LOGICAL
@@ -68,6 +74,25 @@ export class HrReportPdfService {
 
         const monthLabel = `${payload.year}-${String(payload.month).padStart(2, '0')}`;
 
+        // Empty payload: still emit a one-page "no data" sheet so the
+        // response body is a valid PDF (never 500 on empty-state).
+        if (payload.employees.length === 0) {
+          doc.font(boldFont).fontSize(16);
+          doc.text(revHe('אין נתונים לחודש'), 50, 80, {
+            width: doc.page.width - 100,
+            align: 'right',
+          });
+          doc.font(regularFont).fontSize(10).fillColor('#64748B');
+          doc.moveDown(0.4);
+          doc.text(`${revHe('חודש')}: ${monthLabel}`, {
+            width: doc.page.width - 100,
+            align: 'right',
+          });
+          doc.fillColor('black');
+          doc.end();
+          return;
+        }
+
         payload.employees.forEach((emp, idx) => {
           if (idx > 0) doc.addPage();
 
@@ -75,8 +100,21 @@ export class HrReportPdfService {
           const left = 50;
           const right = pageWidth - 50;
 
-          // ─ Header: name + month in big bold on the right (RTL feel) ─
-          const name = displayName(emp.user);
+          // Error strip (if any) — red bar at the very top so a
+          // compute failure is impossible to miss.
+          if (emp.header.error) {
+            doc.font(boldFont).fontSize(10).fillColor('#DC2626');
+            doc.text(
+              `${revHe('שגיאה בחישוב')}: ${emp.header.error}`,
+              left,
+              40,
+              { width: right - left, align: 'right' },
+            );
+            doc.fillColor('black');
+          }
+
+          // ─ Header: name + status + month in big bold on the right (RTL feel) ─
+          const name = displayName(emp.header);
           doc.font(boldFont).fontSize(20);
           doc.text(revHe(name), left, 60, {
             width: right - left,
@@ -86,8 +124,8 @@ export class HrReportPdfService {
           doc.font(regularFont).fontSize(10).fillColor('#64748B'); // slate-500
           doc.text(
             `${revHe('חודש')}: ${monthLabel}  ·  ${revHe('מס\' הנהח"ש')}: ${
-              emp.user.accountingEmployeeNumber ?? '—'
-            }`,
+              emp.header.accountingEmployeeNumber ?? '—'
+            }  ·  ${revHe('סטטוס')}: ${revHe(statusLabel(emp.header.status))}`,
             { width: right - left, align: 'right' },
           );
           doc.fillColor('black');
@@ -153,10 +191,7 @@ export class HrReportPdfService {
           const rtlHeaders = [...headers].reverse();
 
           const tableTop = doc.y;
-          // Header fill
-          doc
-            .rect(left, tableTop, totalW, 20)
-            .fill('#E2E8F0'); // slate-200
+          doc.rect(left, tableTop, totalW, 20).fill('#E2E8F0'); // slate-200
           doc.fillColor('black').font(boldFont).fontSize(10);
           let xCursor = left;
           rtlHeaders.forEach((h, i) => {
@@ -174,7 +209,7 @@ export class HrReportPdfService {
           doc.font(regularFont).fontSize(9);
           const rowH = 16;
           const pageBottom = doc.page.height - 50;
-          for (const d of emp.days) {
+          for (const d of emp.rows) {
             // Page-break guard: new sheet for the SAME employee if we
             // run out of vertical space on a particularly long month.
             if (doc.y + rowH > pageBottom) {
@@ -185,7 +220,7 @@ export class HrReportPdfService {
               fmtHours(d.totalHours),
               d.endTime ?? '',
               d.startTime ?? '',
-              revHe(d.dayOfWeek),
+              revHe(d.weekday),
               d.date,
             ];
             xCursor = left;
@@ -198,7 +233,6 @@ export class HrReportPdfService {
               });
               xCursor += rtlColWidths[i];
             });
-            // Bottom rule.
             doc
               .strokeColor('#E2E8F0')
               .lineWidth(0.5)
@@ -256,16 +290,28 @@ function revHe(s: string): string {
   return s.split('').reverse().join('');
 }
 
-function displayName(u: {
-  firstName: string;
-  lastName: string;
-  firstNameHe: string | null;
-  lastNameHe: string | null;
-}): string {
-  const heFirst = u.firstNameHe?.trim() || '';
-  const heLast = u.lastNameHe?.trim() || '';
+function displayName(h: ReportPayloadEmployee['header']): string {
+  const heFirst = h.firstNameHe?.trim() || '';
+  const heLast = h.lastNameHe?.trim() || '';
   if (heFirst || heLast) return `${heLast} ${heFirst}`.trim();
-  return `${u.lastName ?? ''} ${u.firstName ?? ''}`.trim();
+  return `${h.lastName ?? ''} ${h.firstName ?? ''}`.trim();
+}
+
+function statusLabel(
+  s: ReportPayloadEmployee['header']['status'],
+): string {
+  switch (s) {
+    case 'OPEN':
+      return 'פתוח';
+    case 'APPROVED':
+      return 'מאושר';
+    case 'LOCKED':
+      return 'נעול';
+    case 'DRAFT':
+      return 'טיוטה';
+    default:
+      return String(s);
+  }
 }
 
 function fmtHours(n: number): string {

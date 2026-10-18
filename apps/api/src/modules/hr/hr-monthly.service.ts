@@ -308,6 +308,69 @@ export class HrMonthlyService {
     return decimalRow(updated);
   }
 
+  /**
+   * HR Phase D1 (2026-10-18, §13 optional lock) — flip a month to
+   * LOCKED after export. Semantics:
+   *   • no row yet → compute first (writes OPEN), then flip to LOCKED
+   *   • row APPROVED → lock directly (do NOT recompute; computeMonth
+   *     refuses APPROVED/LOCKED and would short-circuit)
+   *   • row LOCKED → no-op (idempotent)
+   *   • row OPEN → flip to LOCKED
+   *
+   * We repurpose `approvedBy*` as the locker record because the schema
+   * has no dedicated `lockedBy*` columns. This matches the Phase C
+   * approve path's audit trail.
+   */
+  async lockMonth(args: {
+    userId: number;
+    year: number;
+    month: number;
+    lockerId: number;
+  }): Promise<ComputedMonthlyAttendance> {
+    const { userId, year, month, lockerId } = args;
+
+    const existing = await this.prisma.monthlyAttendance.findUnique({
+      where: { userId_year_month: { userId, year, month } },
+    });
+
+    if (!existing) {
+      // No row yet — compute first. computeMonth writes an OPEN row;
+      // we then flip it to LOCKED below (two writes, but a fresh row
+      // is a rare case for the lock endpoint).
+      const r = await this.computeMonth({ userId, year, month });
+      if ('skipped' in r) {
+        // Shouldn't happen for a fresh row, but tolerate: fall through
+        // to a direct lock using the surfaced existing row.
+        return this.flipToLocked(r.skipped.existing.id, lockerId);
+      }
+      return this.flipToLocked(r.id, lockerId);
+    }
+
+    if (existing.status === 'LOCKED') {
+      // Idempotent: already locked.
+      return decimalRow(existing);
+    }
+
+    // APPROVED or OPEN — flip directly. computeMonth refuses APPROVED
+    // rows (returns `{ skipped }`), so we must NOT recompute here.
+    return this.flipToLocked(existing.id, lockerId);
+  }
+
+  private async flipToLocked(
+    id: number,
+    lockerId: number,
+  ): Promise<ComputedMonthlyAttendance> {
+    const updated = await this.prisma.monthlyAttendance.update({
+      where: { id },
+      data: {
+        status: MonthlyStatus.LOCKED,
+        approvedById: lockerId,
+        approvedAt: new Date(),
+      },
+    });
+    return decimalRow(updated);
+  }
+
   async reopen(args: { userId: number; year: number; month: number }) {
     const row = await this.prisma.monthlyAttendance.findUnique({
       where: {

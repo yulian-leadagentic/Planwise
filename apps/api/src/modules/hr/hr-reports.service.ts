@@ -1,35 +1,33 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { CalendarDayType } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { HrMonthlyService } from './hr-monthly.service';
-import type { ReportScope } from './dto/report.dto';
 
 /**
- * HR Phase D1 (2026-10-18) — consolidated accounting report assembler
- * (§5 of the HR spec). Pulls:
+ * HR Phase D1 rework (2026-10-18, §13) — consolidated accounting-report
+ * assembler. Yulian's 2026-10-16 principle: "הדוח נפתח ריק (empty-state)
+ * ועובד גם בלי נתונים… מחושב on-the-fly… status מוצג כ-badge בלבד."
  *
- *   • the (user × year × month) MonthlyAttendance header totals
- *     (gates on status === APPROVED; refuses any employee not approved)
- *   • a full calendar view (every day of the month, even "no activity")
- *     joining TimeEntry start/end/hours + AbsenceRecord + CalendarDay
- *
- * The result is a plain `ReportPayload` the format writers (XLSX /
- * PDF) consume. Shared by `/hr/reports/preview` too — the preview
- * endpoint hits the same APPROVED gate so the user is told BEFORE
- * they click "Export".
+ * No gate, no blockers, no 500 on empty. Every per-employee header is
+ * computed via `HrMonthlyService.getMonthForUser` (read-only — a DRAFT
+ * compute when the row hasn't been written yet). The FE shows OPEN /
+ * APPROVED / LOCKED / DRAFT as a badge; nothing is refused.
  *
  * Scope resolution:
- *   - all-active   → every active employee (userType=employee)
- *   - org-unit     → the unit AND its subtree (via materialised path)
- *   - manual       → explicit userIds, intersected with active employees
+ *   - userIds given → that intersection with active employees
+ *   - userIds omitted → every `userType IN (employee, both)` user that's
+ *     active and not soft-deleted
  *
- * Sort order:
- *   accountingEmployeeNumber ASC NULLS LAST, lastName, firstName.
- *   (Deterministic so the XLSX sheet-tabs + the PDF pages match the
- *   summary row order.)
+ * Sort: accountingEmployeeNumber ASC NULLS LAST (numeric compare when
+ * both halves parse as numbers, lexicographic fallback), then lastName,
+ * firstName — deterministic so XLSX sheet-tabs and PDF pages match the
+ * summary row order.
  *
- * No schema change / no migration / no backfill — pure read.
+ * Error isolation: one bad user's compute (bad DB row, missing calendar,
+ * etc.) MUST NOT tank the whole report. Each employee is wrapped — on
+ * throw we emit a stub row with `error`, `status: 'DRAFT'` and zero
+ * totals so the Nahchas still sees the person on the sheet.
  */
 @Injectable()
 export class HrReportsService {
@@ -45,230 +43,167 @@ export class HrReportsService {
   async buildReport(args: {
     year: number;
     month: number;
-    scope: ReportScope;
+    userIds?: number[];
   }): Promise<ReportPayload> {
-    const { year, month, scope } = args;
+    const { year, month, userIds } = args;
 
-    // 1) Resolve the user set.
-    const users = await this.resolveScope(scope);
+    // 1) Resolve the user set. Empty resolution → empty payload (never
+    //    a 500; the FE shows the empty-state card).
+    const users = await this.resolveUsers(userIds);
     if (users.length === 0) {
-      throw new BadRequestException({
-        message: 'No employees matched the selected scope.',
-        code: 'EMPTY_SCOPE',
-      });
+      return { year, month, employees: [] };
     }
 
-    // 2) APPROVED gate (critical). Reject the whole export if even
-    //    one user is missing / OPEN / LOCKED. The FE renders the
-    //    blocker list and links to /hr/review.
-    const headers = await this.prisma.monthlyAttendance.findMany({
-      where: {
-        year,
-        month,
-        userId: { in: users.map((u) => u.id) },
-      },
-    });
-    const headerByUser = new Map(headers.map((h) => [h.userId, h]));
-    const blockers: Array<{
-      userId: number;
-      firstName: string;
-      lastName: string;
-      status: 'OPEN' | 'LOCKED' | 'MISSING';
-    }> = [];
+    // 2) Per-employee compute. Each run in its own try/catch so one bad
+    //    user never pulls the rest down.
+    const employees: ReportPayloadEmployee[] = [];
     for (const u of users) {
-      const row = headerByUser.get(u.id);
-      if (!row) {
-        blockers.push({
-          userId: u.id,
-          firstName: u.firstName,
-          lastName: u.lastName,
-          status: 'MISSING',
-        });
-      } else if (row.status !== 'APPROVED') {
-        blockers.push({
-          userId: u.id,
-          firstName: u.firstName,
-          lastName: u.lastName,
-          // LOCKED here is a corner-case: once a row is locked (post-
-          // export in a future phase) it's immutable; we still block
-          // the export the same way as OPEN so the row isn't quietly
-          // bundled into a fresh file. If LOCKED should be re-exportable
-          // we can flip this check without changing the FE contract.
-          status: row.status as 'OPEN' | 'LOCKED',
-        });
-      }
-    }
-    if (blockers.length > 0) {
-      throw new BadRequestException({
-        error: 'MONTHLY_NOT_APPROVED',
-        message:
-          'All selected employees must have an APPROVED monthly review for this month. Approve from /hr/review first.',
-        blockers,
-      });
-    }
-
-    // 3) Build per-employee day rows. The engine's `getDailyBreakdown`
-    //    emits one row per calendar day already; we join start/end + a
-    //    Hebrew day-type label for the accounting sheet.
-    const employees: ReportPayload['employees'] = [];
-    for (const u of users) {
-      const header = headerByUser.get(u.id)!;
-      const [daily, timeEntries, absenceRecords] = await Promise.all([
-        this.monthly.getDailyBreakdown(u.id, year, month),
-        this.prisma.timeEntry.findMany({
-          where: {
-            userId: u.id,
-            deletedAt: null,
-            date: {
-              gte: new Date(year, month - 1, 1),
-              lt: new Date(year, month, 1),
-            },
-          },
-          select: {
-            id: true,
-            date: true,
-            startTime: true,
-            endTime: true,
-            minutes: true,
-          },
-          orderBy: [{ date: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
-        }),
-        this.prisma.absenceRecord.findMany({
-          where: {
-            userId: u.id,
-            dateFrom: { lt: new Date(year, month, 1) },
-            dateTo: { gte: new Date(year, month - 1, 1) },
-          },
-          include: {
-            absenceType: { select: { nameHe: true, code: true, unit: true } },
-          },
-        }),
-      ]);
-
-      // Index TimeEntries by YMD so the per-day join is O(1).
-      const entriesByYMD = new Map<string, typeof timeEntries>();
-      for (const t of timeEntries) {
-        const key = ymdKey(t.date);
-        const arr = entriesByYMD.get(key) ?? [];
-        arr.push(t);
-        entriesByYMD.set(key, arr);
-      }
-
-      const days: ReportPayloadDay[] = daily.map((d) => {
-        const key = ymdKey(d.date);
-        const sameDayEntries = (entriesByYMD.get(key) ?? [])
-          .slice()
-          .sort((a, b) =>
-            (a.startTime ?? '~').localeCompare(b.startTime ?? '~'),
-          );
-        const first = sameDayEntries[0] ?? null;
-        const last = sameDayEntries[sameDayEntries.length - 1] ?? null;
-        // Absence record covering the day (if any)
-        const absence = absenceRecords.find((a) =>
-          withinInclusive(d.date, a.dateFrom, a.dateTo),
+      try {
+        const emp = await this.buildOneEmployee(u, year, month);
+        employees.push(emp);
+      } catch (err: any) {
+        const msg = err?.message ?? String(err);
+        this.log.warn(
+          `[hr/reports] compute failed for userId=${u.id} ${year}-${month}: ${msg}`,
         );
-
-        return {
-          date: ymdKey(d.date),
-          dayOfWeek: HE_DOW_FULL[d.date.getDay()],
-          startTime: first?.startTime ?? null,
-          endTime: last?.endTime ?? null,
-          totalHours: round2(d.actualHours + d.absenceCredit),
-          dayType: dayTypeLabel(d.dayType, absence?.absenceType.nameHe ?? null),
-        };
-      });
-
-      employees.push({
-        user: {
-          id: u.id,
-          firstName: u.firstName,
-          lastName: u.lastName,
-          firstNameHe: u.firstNameHe,
-          lastNameHe: u.lastNameHe,
-          accountingEmployeeNumber: u.accountingEmployeeNumber,
-        },
-        header: {
-          monthlyStandard: Number(header.monthlyStandard),
-          actualHours: Number(header.actualHours),
-          weightedHours: Number(header.weightedHours),
-          deviation: Number(header.deviation),
-          sickDays: Number(header.sickDays),
-          vacationDays: Number(header.vacationDays),
-        },
-        days,
-      });
+        employees.push({
+          header: {
+            userId: u.id,
+            firstName: u.firstName,
+            lastName: u.lastName,
+            firstNameHe: u.firstNameHe,
+            lastNameHe: u.lastNameHe,
+            accountingEmployeeNumber: u.accountingEmployeeNumber,
+            monthlyStandard: 0,
+            actualHours: 0,
+            weightedHours: 0,
+            deviation: 0,
+            sickDays: 0,
+            vacationDays: 0,
+            status: 'DRAFT',
+            error: msg,
+          },
+          rows: [],
+        });
+      }
     }
 
     return { year, month, employees };
   }
 
-  // ─── Scope resolution ──────────────────────────────────────────────
+  // ─── Per-employee compute ──────────────────────────────────────────
 
-  private async resolveScope(scope: ReportScope): Promise<EmployeeRow[]> {
-    if (!scope || typeof scope !== 'object' || !('kind' in scope)) {
-      throw new BadRequestException(
-        'scope must be { kind: "all-active" | "org-unit" | "manual", ... }',
-      );
+  private async buildOneEmployee(
+    u: EmployeeRow,
+    year: number,
+    month: number,
+  ): Promise<ReportPayloadEmployee> {
+    // on-the-fly: `getMonthForUser` returns the real row when one
+    // exists (with its real status), or a DRAFT compute (no write)
+    // when it doesn't. Pure read.
+    const [{ row }, daily, timeEntries, absenceRecords] = await Promise.all([
+      this.monthly.getMonthForUser(u.id, year, month),
+      this.monthly.getDailyBreakdown(u.id, year, month),
+      this.prisma.timeEntry.findMany({
+        where: {
+          userId: u.id,
+          deletedAt: null,
+          date: {
+            gte: new Date(year, month - 1, 1),
+            lt: new Date(year, month, 1),
+          },
+        },
+        select: {
+          id: true,
+          date: true,
+          startTime: true,
+          endTime: true,
+          minutes: true,
+        },
+        orderBy: [{ date: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
+      }),
+      this.prisma.absenceRecord.findMany({
+        where: {
+          userId: u.id,
+          dateFrom: { lt: new Date(year, month, 1) },
+          dateTo: { gte: new Date(year, month - 1, 1) },
+        },
+        include: {
+          absenceType: { select: { nameHe: true, code: true, unit: true } },
+        },
+      }),
+    ]);
+
+    // Index TimeEntries by YMD so the per-day join is O(1).
+    const entriesByYMD = new Map<string, typeof timeEntries>();
+    for (const t of timeEntries) {
+      const key = ymdKey(t.date);
+      const arr = entriesByYMD.get(key) ?? [];
+      arr.push(t);
+      entriesByYMD.set(key, arr);
     }
 
-    if (scope.kind === 'all-active') {
-      return this.loadEmployees({
-        userType: 'employee',
-        isActive: true,
-        deletedAt: null,
-      });
-    }
-
-    if (scope.kind === 'org-unit') {
-      if (!Number.isInteger(scope.orgUnitId)) {
-        throw new BadRequestException(
-          'scope.orgUnitId is required when scope.kind=org-unit',
+    const rows: ReportPayloadRow[] = daily.map((d) => {
+      const key = ymdKey(d.date);
+      const sameDayEntries = (entriesByYMD.get(key) ?? [])
+        .slice()
+        .sort((a, b) =>
+          (a.startTime ?? '~').localeCompare(b.startTime ?? '~'),
         );
-      }
-      // OrgUnit.path is a materialised path "/1/5/12/" that includes
-      // the unit's own id. Members of the subtree are any user whose
-      // homeUnit's path startsWith the target unit's path — this
-      // picks up descendants without a recursive CTE.
-      const anchor = await this.prisma.orgUnit.findUnique({
-        where: { id: scope.orgUnitId! },
-        select: { id: true, path: true },
-      });
-      if (!anchor) {
-        throw new BadRequestException(
-          `OrgUnit ${scope.orgUnitId} not found`,
-        );
-      }
-      const unitIds = await this.prisma.orgUnit.findMany({
-        where: { path: { startsWith: anchor.path } },
-        select: { id: true },
-      });
-      return this.loadEmployees({
-        userType: 'employee',
-        isActive: true,
-        deletedAt: null,
-        orgUnitId: { in: unitIds.map((u) => u.id) },
-      });
-    }
-
-    // manual
-    if (
-      !Array.isArray(scope.userIds) ||
-      scope.userIds.length === 0 ||
-      scope.userIds.some((n) => !Number.isInteger(n))
-    ) {
-      throw new BadRequestException(
-        'scope.userIds must be a non-empty integer list when scope.kind=manual',
+      const first = sameDayEntries[0] ?? null;
+      const last = sameDayEntries[sameDayEntries.length - 1] ?? null;
+      // Absence record covering the day (if any) → its Hebrew label
+      // wins over the CalendarDay type in the "סוג יום" column.
+      const absence = absenceRecords.find((a) =>
+        withinInclusive(d.date, a.dateFrom, a.dateTo),
       );
-    }
-    return this.loadEmployees({
-      id: { in: scope.userIds },
-      userType: 'employee',
-      isActive: true,
-      deletedAt: null,
+      return {
+        date: ymdKey(d.date),
+        weekday: HE_DOW_FULL[d.date.getDay()],
+        startTime: first?.startTime ?? null,
+        endTime: last?.endTime ?? null,
+        totalHours: round2(d.actualHours + d.absenceCredit),
+        dayType: dayTypeLabel(d.dayType, absence?.absenceType.nameHe ?? null),
+      };
     });
+
+    return {
+      header: {
+        userId: u.id,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        firstNameHe: u.firstNameHe,
+        lastNameHe: u.lastNameHe,
+        accountingEmployeeNumber: u.accountingEmployeeNumber,
+        monthlyStandard: Number(row.monthlyStandard),
+        actualHours: Number(row.actualHours),
+        weightedHours: Number(row.weightedHours),
+        deviation: Number(row.deviation),
+        sickDays: Number(row.sickDays),
+        vacationDays: Number(row.vacationDays),
+        status: row.status,
+      },
+      rows,
+    };
   }
 
-  private async loadEmployees(where: any): Promise<EmployeeRow[]> {
+  // ─── Scope resolution ──────────────────────────────────────────────
+
+  /**
+   * Resolve the sorted employee set. If `userIds` is supplied we
+   * intersect with the active employee filter (same `userType IN
+   * (employee, both)` + active + not-deleted) so a stale id can't leak
+   * through. If missing, we return every active employee.
+   */
+  private async resolveUsers(userIds?: number[]): Promise<EmployeeRow[]> {
+    const where: any = {
+      userType: { in: ['employee', 'both'] },
+      isActive: true,
+      deletedAt: null,
+    };
+    if (userIds && userIds.length > 0) {
+      where.id = { in: userIds };
+    }
     const rows = await this.prisma.user.findMany({
       where,
       select: {
@@ -286,7 +221,7 @@ export class HrReportsService {
       const aNum = a.accountingEmployeeNumber;
       const bNum = b.accountingEmployeeNumber;
       if (aNum == null && bNum == null) {
-        // fall through
+        // fall through to name tiebreak
       } else if (aNum == null) {
         return 1; // nulls last
       } else if (bNum == null) {
@@ -318,37 +253,42 @@ interface EmployeeRow {
   accountingEmployeeNumber: string | null;
 }
 
-export interface ReportPayloadDay {
-  date: string; // yyyy-MM-dd
-  dayOfWeek: string; // Hebrew: ראשון/שני/.../שבת
+export interface ReportPayloadRow {
+  /** yyyy-MM-dd */
+  date: string;
+  /** Hebrew: ראשון/שני/.../שבת */
+  weekday: string;
   startTime: string | null;
   endTime: string | null;
   totalHours: number;
   dayType: string;
 }
 
+export interface ReportPayloadEmployee {
+  header: {
+    userId: number;
+    firstName: string;
+    lastName: string;
+    firstNameHe: string | null;
+    lastNameHe: string | null;
+    accountingEmployeeNumber: string | null;
+    monthlyStandard: number;
+    actualHours: number;
+    weightedHours: number;
+    deviation: number;
+    sickDays: number;
+    vacationDays: number;
+    status: 'OPEN' | 'APPROVED' | 'LOCKED' | 'DRAFT';
+    /** Set only when the per-employee compute threw. */
+    error?: string;
+  };
+  rows: ReportPayloadRow[];
+}
+
 export interface ReportPayload {
   year: number;
   month: number;
-  employees: Array<{
-    user: {
-      id: number;
-      firstName: string;
-      lastName: string;
-      firstNameHe: string | null;
-      lastNameHe: string | null;
-      accountingEmployeeNumber: string | null;
-    };
-    header: {
-      monthlyStandard: number;
-      actualHours: number;
-      weightedHours: number;
-      deviation: number;
-      sickDays: number;
-      vacationDays: number;
-    };
-    days: ReportPayloadDay[];
-  }>;
+  employees: ReportPayloadEmployee[];
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────

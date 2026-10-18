@@ -1,14 +1,13 @@
 import {
   BadRequestException,
-  Body,
   Controller,
-  HttpCode,
-  Post,
+  Get,
+  Query,
   Res,
   UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -16,28 +15,24 @@ import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { HrReportsService } from './hr-reports.service';
 import { HrReportXlsxService } from './hr-report-xlsx.service';
 import { HrReportPdfService } from './hr-report-pdf.service';
-import { BuildReportDto } from './dto/report.dto';
+import {
+  ConsolidatedReportExportQueryDto,
+  ConsolidatedReportQueryDto,
+} from './dto/report.dto';
 
 /**
- * HR Phase D1 (2026-10-18) — consolidated accounting report endpoints.
+ * HR Phase D1 rework (2026-10-18, §13) — consolidated accounting-report
+ * endpoints.
  *
- *   • POST /hr/reports/preview       (hr:export) — JSON payload for the
- *     FE's day-by-day preview panel.
- *   • POST /hr/reports/export/xlsx   (hr:export) — XLSX download.
- *   • POST /hr/reports/export/pdf    (hr:export) — PDF download.
+ *   • GET /hr/reports/consolidated           (hr:export) — JSON payload
+ *   • GET /hr/reports/consolidated/export    (hr:export) — XLSX / PDF blob
  *
- * All three gate on `hr:export`. HR Clerk + HR Manager hold it per the
- * Phase A seed; Employee does not (403); Admin without an explicit
- * `hr` grant is bounced by the hr-module NO_ADMIN_BYPASS rule.
+ * No APPROVED gate. The report is on-the-fly and empty-state friendly
+ * per Yulian's 2026-10-16 principle; status (OPEN/APPROVED/LOCKED/DRAFT)
+ * is surfaced as a badge, not a block.
  *
- * The service's `buildReport` is called by all three — it also
- * enforces the APPROVED-only gate and throws a 400 with a
- * `MONTHLY_NOT_APPROVED` payload listing every blocker so the FE can
- * render a "N employees not yet approved — approve from /hr/review"
- * banner before the user bothers with the download.
- *
- * Mounted on its own controller (not folded into the big HrController)
- * so the Phase D surface is isolated and easy to audit.
+ * Isolated on its own controller so the Phase D surface stays easy to
+ * audit against §13 of the HR spec.
  */
 @ApiTags('HR - Reports')
 @ApiBearerAuth()
@@ -50,121 +45,92 @@ export class HrReportsController {
     private readonly pdf: HrReportPdfService,
   ) {}
 
-  @Post('preview')
-  @HttpCode(200)
+  @Get('consolidated')
   @RequirePermissions({ module: 'hr', action: 'export' })
   @ApiOperation({
     summary:
-      'Preview the consolidated accounting report (same APPROVED gate as the export endpoints).',
+      'Consolidated accounting report (on-the-fly, no gate, empty-state friendly). ' +
+      'userIds is a CSV of user ids; omit for every active employee.',
   })
-  async preview(@Body() body: BuildReportDto) {
-    this.validate(body);
-    return this.reports.buildReport({
-      year: body.year,
-      month: body.month,
-      scope: body.scope,
-    });
+  @ApiQuery({ name: 'year', type: Number, required: true })
+  @ApiQuery({ name: 'month', type: Number, required: true })
+  @ApiQuery({ name: 'userIds', type: String, required: false })
+  async consolidated(@Query() q: ConsolidatedReportQueryDto) {
+    const userIds = parseUserIdsCsv(q.userIds);
+    return this.reports.buildReport({ year: q.year, month: q.month, userIds });
   }
 
-  @Post('export/xlsx')
-  @HttpCode(200)
+  @Get('consolidated/export')
   @RequirePermissions({ module: 'hr', action: 'export' })
   @ApiOperation({
     summary:
-      'Download the consolidated accounting report as XLSX (one sheet per employee + summary).',
+      'Download the consolidated report as XLSX (sheet-per-employee + summary) or PDF (page-per-employee). ' +
+      'Same on-the-fly compute as the JSON endpoint.',
   })
-  async exportXlsx(
-    @Body() body: BuildReportDto,
+  @ApiQuery({ name: 'year', type: Number, required: true })
+  @ApiQuery({ name: 'month', type: Number, required: true })
+  @ApiQuery({ name: 'userIds', type: String, required: false })
+  @ApiQuery({ name: 'format', enum: ['xlsx', 'pdf'], required: true })
+  async consolidatedExport(
+    @Query() q: ConsolidatedReportExportQueryDto,
     @Res() res: Response,
   ): Promise<void> {
-    this.validate(body);
+    if (q.format !== 'xlsx' && q.format !== 'pdf') {
+      throw new BadRequestException('format must be one of xlsx | pdf');
+    }
+    const userIds = parseUserIdsCsv(q.userIds);
     const payload = await this.reports.buildReport({
-      year: body.year,
-      month: body.month,
-      scope: body.scope,
+      year: q.year,
+      month: q.month,
+      userIds,
     });
-    const buf = await this.xlsx.write(payload);
-    const filename = `hr-report-${body.year}-${String(body.month).padStart(2, '0')}.xlsx`;
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    );
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${filename}"`,
-    );
-    res.setHeader('Content-Length', String(buf.length));
-    res.end(buf);
-  }
 
-  @Post('export/pdf')
-  @HttpCode(200)
-  @RequirePermissions({ module: 'hr', action: 'export' })
-  @ApiOperation({
-    summary:
-      'Download the consolidated accounting report as PDF (page per employee).',
-  })
-  async exportPdf(
-    @Body() body: BuildReportDto,
-    @Res() res: Response,
-  ): Promise<void> {
-    this.validate(body);
-    const payload = await this.reports.buildReport({
-      year: body.year,
-      month: body.month,
-      scope: body.scope,
-    });
+    const monthLabel = `${q.year}-${String(q.month).padStart(2, '0')}`;
+    const filename = `hr-report-${monthLabel}.${q.format}`;
+
+    if (q.format === 'xlsx') {
+      const buf = await this.xlsx.write(payload);
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${filename}"`,
+      );
+      res.setHeader('Content-Length', String(buf.length));
+      res.end(buf);
+      return;
+    }
+
     const buf = await this.pdf.write(payload);
-    const filename = `hr-report-${body.year}-${String(body.month).padStart(2, '0')}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${filename}"`,
-    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', String(buf.length));
     res.end(buf);
   }
+}
 
-  // ─── Local DTO sanity ──────────────────────────────────────────────
-
-  /**
-   * `scope` is a discriminated union — class-validator's shallow
-   * check can't walk `kind` without a transformer. Re-check here so
-   * the service layer gets a well-shaped object.
-   */
-  private validate(body: BuildReportDto): void {
-    const { year, month, scope } = body;
-    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
-      throw new BadRequestException('year must be an integer in [2000, 2100]');
-    }
-    if (!Number.isInteger(month) || month < 1 || month > 12) {
-      throw new BadRequestException('month must be an integer in [1, 12]');
-    }
-    if (!scope || typeof scope !== 'object') {
-      throw new BadRequestException('scope is required');
-    }
-    const kind = (scope as any).kind;
-    if (!['all-active', 'org-unit', 'manual'].includes(kind)) {
+/**
+ * Parse the `userIds` CSV query param into a number[]. Empty / missing
+ * → undefined (= "every active employee"). An entry that doesn't parse
+ * is a 400 — we'd rather fail loudly than quietly skip a stale id.
+ */
+function parseUserIdsCsv(raw: string | undefined): number[] | undefined {
+  if (raw == null) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed === '') return undefined;
+  const parts = trimmed.split(',').map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 0) return undefined;
+  const ids: number[] = [];
+  for (const p of parts) {
+    const n = Number(p);
+    if (!Number.isInteger(n) || n <= 0) {
       throw new BadRequestException(
-        'scope.kind must be one of all-active | org-unit | manual',
+        `userIds contains a non-integer value: "${p}"`,
       );
     }
-    if (kind === 'org-unit' && !Number.isInteger((scope as any).orgUnitId)) {
-      throw new BadRequestException(
-        'scope.orgUnitId is required for scope.kind=org-unit',
-      );
-    }
-    if (kind === 'manual') {
-      const ids = (scope as any).userIds;
-      if (
-        !Array.isArray(ids) ||
-        ids.length === 0 ||
-        ids.some((n: any) => !Number.isInteger(n))
-      ) {
-        throw new BadRequestException(
-          'scope.userIds must be a non-empty integer list for scope.kind=manual',
-        );
-      }
-    }
+    ids.push(n);
   }
+  return ids;
 }

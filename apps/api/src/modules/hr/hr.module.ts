@@ -10,23 +10,28 @@ import { HrReportPdfService } from './hr-report-pdf.service';
 import { FilesModule } from '../files/files.module';
 
 /**
- * HR Phase A3+B3+C2+D1 (2026-10-18) — mounts the `/hr/*` controllers +
- * their services (catalog/employee CRUD + monthly engine + consolidated
- * accounting-report writers).
+ * HR Phase A3+B3+C2+D1 (rework 2026-10-18, §13) — mounts the `/hr/*`
+ * controllers + their services (catalog/employee CRUD + monthly engine
+ * + consolidated accounting-report writers).
  *
  * FilesModule is imported so HrService can inject FilesService for the
  * EmployeeAttachment multipart upload path. ActivityLogService is
  * provided globally by ActivityLogModule.
  *
- * Phase D1 adds:
- *   • HrReportsController ← /hr/reports/{preview,export/xlsx,export/pdf}
- *   • HrReportsService    ← payload assembler + APPROVED gate
- *   • HrReportXlsxService ← exceljs writer (sheet-per-employee + summary)
+ * Phase D1 (post-rework) wires:
+ *   • HrReportsController ← GET /hr/reports/consolidated{,/export}
+ *     — on-the-fly, empty-state friendly, no APPROVED gate (status is a badge)
+ *   • HrReportsService    ← per-employee compute via HrMonthlyService
+ *   • HrReportXlsxService ← exceljs writer (sheet-per-employee + "סיכום")
  *   • HrReportPdfService  ← pdfkit writer (page-per-employee, bundled
  *                           NotoSansHebrew font)
  *
+ * The optional POST /hr/monthly/:userId/lock endpoint lives on
+ * HrController (not the reports controller) — HrMonthlyService already
+ * owns the row-level writes.
+ *
  * HrMonthlyService stays exported for any future module that wants to
- * reuse the engine (unchanged from Phase C2).
+ * reuse the engine.
  */
 @Module({
   imports: [FilesModule],

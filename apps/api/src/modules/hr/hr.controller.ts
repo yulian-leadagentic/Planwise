@@ -471,4 +471,30 @@ export class HrController {
   ) {
     return this.monthly.reopen({ userId, year: dto.year, month: dto.month });
   }
+
+  /**
+   * HR Phase D1 (2026-10-18, §13 optional lock) — flip a month to
+   * LOCKED after a consolidated export. Idempotent on already-locked
+   * rows; computes-then-locks if no row exists yet; locks APPROVED
+   * rows directly (no recompute, since computeMonth refuses APPROVED).
+   * Gated on `hr:export` so whoever can export can also lock.
+   */
+  @Post('monthly/:userId/lock')
+  @RequirePermissions({ module: 'hr', action: 'export' })
+  @ApiOperation({
+    summary:
+      "Lock an employee's MonthlyAttendance row (idempotent; computes-then-locks when no row exists).",
+  })
+  lockMonthly(
+    @Param('userId', ParseIntPipe) userId: number,
+    @CurrentUser() user: any,
+    @Body() dto: ApproveMonthDto,
+  ) {
+    return this.monthly.lockMonth({
+      userId,
+      year: dto.year,
+      month: dto.month,
+      lockerId: user.id,
+    });
+  }
 }
