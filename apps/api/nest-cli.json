@@ -5,6 +5,13 @@
   "compilerOptions": {
     "builder": "swc",
     "typeCheck": true,
-    "deleteOutDir": true
+    "deleteOutDir": true,
+    "assets": [
+      {
+        "include": "modules/hr/fonts/**/*",
+        "outDir": "dist",
+        "watchAssets": false
+      }
+    ]
   }
 }
