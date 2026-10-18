@@ -403,6 +403,160 @@ async function main() {
   }
   console.log(`  Seeded ${absenceTypes.length} absence_types`);
 
+  // ───────────────────────────────────────────────────────────────────
+  // §14 RBAC multi-role — default system role groups (2026-10-18).
+  // Idempotent: upserts each system role by name, marks it isSystem=true,
+  // then RE-ASSERTS its role_modules per the §14.1 LOCKED grid. The
+  // seed WIPES-AND-RECREATES the role_modules of every isSystem=true
+  // role on each run so manual drift via /admin/roles can never win
+  // against code. Legacy / admin-created roles (isSystem=false) are
+  // NEVER touched here — the seed re-creates the Admin / HR Manager /
+  // HR Clerk rows seeded above only if they already exist on the DB
+  // under those exact names (`upsert where: { name }` matches). The
+  // existing legacy "Admin" row on staging (id=1) therefore gets
+  // isSystem=true AND its grants re-asserted per the grid on first
+  // run. Approved by Yulian 2026-10-18.
+  // ───────────────────────────────────────────────────────────────────
+
+  type SystemRoleGrantFlag = { R?: boolean; W?: boolean; D?: boolean; A?: boolean; E?: boolean };
+  type SystemRoleSeed = {
+    name: string;
+    description: string;
+    grants: Record<string, SystemRoleGrantFlag>;
+  };
+  const SYSTEM_ROLES: SystemRoleSeed[] = [
+    {
+      name: 'Admin',
+      description: 'Full system access (excluding gated modules HR + Finance)',
+      grants: {
+        Dashboard: { R: true },
+        Tasks:     { R: true, W: true, D: true, A: true, E: true },
+        Time:      { R: true, W: true, D: true, A: true, E: true },
+        Projects:  { R: true, W: true, D: true, A: true, E: true },
+        Contracts: { R: true, W: true, D: true, A: true, E: true },
+        People:    { R: true, W: true, D: true, A: true, E: true },
+        Reports:   { R: true, E: true },
+        Templates: { R: true, W: true, D: true, A: true, E: true },
+        Admin:     { R: true, W: true, D: true, A: true, E: true },
+        // Module name here is "Data Import" (space), not the route
+        // ("data-import") — see migration 20260520000000_data_import_module
+        // which inserts the row with `name='Data Import'`.
+        'Data Import': { R: true, W: true },
+      },
+    },
+    {
+      name: 'HR Manager',
+      description: 'Full HR access + Time read',
+      grants: {
+        Dashboard: { R: true },
+        Time:      { R: true },
+        HR:        { R: true, W: true, A: true, E: true },
+      },
+    },
+    {
+      name: 'HR Clerk',
+      description: 'HR read + export',
+      grants: {
+        Dashboard: { R: true },
+        Time:      { R: true },
+        HR:        { R: true, E: true },
+      },
+    },
+    {
+      name: 'Finance',
+      description: 'Finance read + reports',
+      grants: {
+        Dashboard: { R: true },
+        Projects:  { R: true },
+        Contracts: { R: true },
+        Reports:   { R: true, E: true },
+        Finance:   { R: true },
+      },
+    },
+    {
+      name: 'Project Manager',
+      description: 'Project + task management',
+      grants: {
+        Dashboard: { R: true },
+        Tasks:     { R: true, W: true, A: true },
+        Time:      { R: true, A: true },
+        Projects:  { R: true, W: true, D: true },
+        Contracts: { R: true, W: true },
+        People:    { R: true },
+        Reports:   { R: true, E: true },
+        Templates: { R: true },
+      },
+    },
+    {
+      name: 'Employee',
+      description: 'Self-service time/tasks',
+      grants: {
+        Dashboard: { R: true },
+        // Self-scope on tasks/time is enforced via @OwnData in code.
+        Tasks:     { R: true, W: true },
+        Time:      { R: true, W: true },
+        Projects:  { R: true },
+      },
+    },
+    {
+      name: 'Viewer',
+      description: 'Read-only',
+      grants: {
+        Dashboard: { R: true },
+        Tasks:     { R: true },
+        Time:      { R: true },
+        Projects:  { R: true },
+        Contracts: { R: true },
+        People:    { R: true },
+        Reports:   { R: true },
+      },
+    },
+  ];
+
+  // Build a module-name → row map from the DATABASE, not the local
+  // `modules[]` array. §14.1 grants reference `Finance` and
+  // `Data-Import`, which are seeded by their own migrations
+  // (20260518010000_finance_module / 20260520000000_data_import_module)
+  // and are NOT in the local `modules[]` snapshot above. A missing
+  // name is a loud warning but non-fatal — other grants in that role
+  // still apply.
+  const allDbModules = await prisma.module.findMany({ select: { id: true, name: true } });
+  const moduleByName = new Map<string, { id: number }>();
+  for (const m of allDbModules) {
+    moduleByName.set(m.name, m);
+  }
+
+  for (const def of SYSTEM_ROLES) {
+    const role = await prisma.role.upsert({
+      where: { name: def.name },
+      update: { description: def.description, isSystem: true },
+      create: { name: def.name, description: def.description, isSystem: true },
+    });
+    // Re-assert grid: delete this role's existing module grants, re-
+    // create per the §14.1 locked table. Only wipes rows for this
+    // (isSystem=true) role — legacy / non-system roles are untouched.
+    await prisma.roleModule.deleteMany({ where: { roleId: role.id } });
+    for (const [moduleName, flags] of Object.entries(def.grants)) {
+      const mod = moduleByName.get(moduleName);
+      if (!mod) {
+        console.warn(`  [rbac seed] module not found for grant: ${moduleName} (role ${def.name})`);
+        continue;
+      }
+      await prisma.roleModule.create({
+        data: {
+          roleId: role.id,
+          moduleId: mod.id,
+          canRead:    flags.R ?? false,
+          canWrite:   flags.W ?? false,
+          canDelete:  flags.D ?? false,
+          canApprove: flags.A ?? false,
+          canExport:  flags.E ?? false,
+        },
+      });
+    }
+  }
+  console.log(`  Seeded ${SYSTEM_ROLES.length} system role groups (isSystem=true, grid re-asserted)`);
+
   // Admin User
   const adminExists = await prisma.user.findUnique({ where: { email: 'admin@amec.com' } });
   if (!adminExists) {
