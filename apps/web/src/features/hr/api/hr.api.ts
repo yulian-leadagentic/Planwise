@@ -318,15 +318,15 @@ export interface MyMonthlySummary {
 }
 
 // ─── Consolidated accounting report (Phase D) ─────────────────────────
-
-export type ReportScope =
-  | { kind: 'all-active' }
-  | { kind: 'org-unit'; orgUnitId: number }
-  | { kind: 'manual'; userIds: number[] };
+//
+// D2 §13 (2026-10-18) — the report is on-the-fly and ungated. Empty
+// scope / no data returns `{ year, month, employees: [] }`; status is
+// surfaced as a per-employee badge rather than a blocker. Scope is now
+// a plain `userIds?: number[]` (omit → all active).
 
 export interface ReportPayloadDay {
   date: string; // yyyy-MM-dd
-  dayOfWeek: string; // Hebrew: ראשון/שני/.../שבת
+  weekday: string; // Hebrew: ראשון/שני/.../שבת
   startTime: string | null;
   endTime: string | null;
   totalHours: number;
@@ -334,46 +334,29 @@ export interface ReportPayloadDay {
 }
 
 export interface ReportPayloadEmployee {
-  user: {
-    id: number;
+  header: {
+    userId: number;
     firstName: string;
     lastName: string;
     firstNameHe: string | null;
     lastNameHe: string | null;
     accountingEmployeeNumber: string | null;
-  };
-  header: {
     monthlyStandard: number;
     actualHours: number;
     weightedHours: number;
     deviation: number;
     sickDays: number;
     vacationDays: number;
+    status: MonthlyStatus;
+    error?: string;
   };
-  days: ReportPayloadDay[];
+  rows: ReportPayloadDay[];
 }
 
 export interface ReportPayload {
   year: number;
   month: number;
   employees: ReportPayloadEmployee[];
-}
-
-/**
- * MONTHLY_NOT_APPROVED error payload returned by any of the three
- * endpoints (preview, export/xlsx, export/pdf). The FE catches it on
- * the preview call and renders a blocker banner before letting the
- * user try to export.
- */
-export interface ReportBlockersError {
-  error: 'MONTHLY_NOT_APPROVED';
-  message: string;
-  blockers: Array<{
-    userId: number;
-    firstName: string;
-    lastName: string;
-    status: 'OPEN' | 'LOCKED' | 'MISSING';
-  }>;
 }
 
 // Bucket admin CRUD ───────────────────────────────────────────────────
@@ -557,32 +540,57 @@ export const hrApi = {
       .then((r) => unwrap<MyMonthlySummary>(r.data)),
 
   // ─── Consolidated accounting report (Phase D) ────────────────────
-  previewReport: (year: number, month: number, scope: ReportScope) =>
+  //
+  // D2 §13 (2026-10-18) — GET-based + on-the-fly. `userIds` is a CSV
+  // query param when scoped; omit it to let the server resolve "all
+  // active". Both the data endpoint and the export endpoint accept the
+  // same shape and never 500 on empty scope.
+  fetchConsolidatedReport: (
+    year: number,
+    month: number,
+    userIds?: number[],
+  ) =>
     client
-      .post('/hr/reports/preview', { year, month, scope })
+      .get('/hr/reports/consolidated', {
+        params: {
+          year,
+          month,
+          userIds: userIds?.length ? userIds.join(',') : undefined,
+        },
+      })
       .then((r) => unwrap<ReportPayload>(r.data)),
 
   /**
-   * Direct-download helper for the XLSX export. Returns the Blob so
-   * the caller can trigger an <a download> click. 400 responses carry
-   * a MONTHLY_NOT_APPROVED body — the FE translates that via the
-   * standard axios error path.
+   * Direct-download helper for the XLSX/PDF export. Returns the Blob
+   * so the caller can trigger an <a download> click. No APPROVED
+   * gate — fires straight through regardless of per-employee status.
    */
-  exportXlsx: (year: number, month: number, scope: ReportScope) =>
+  exportConsolidated: (
+    year: number,
+    month: number,
+    format: 'xlsx' | 'pdf',
+    userIds?: number[],
+  ) =>
     client
-      .post(
-        '/hr/reports/export/xlsx',
-        { year, month, scope },
-        { responseType: 'blob' },
-      )
+      .get('/hr/reports/consolidated/export', {
+        params: {
+          year,
+          month,
+          format,
+          userIds: userIds?.length ? userIds.join(',') : undefined,
+        },
+        responseType: 'blob',
+      })
       .then((r) => r.data as Blob),
 
-  exportPdf: (year: number, month: number, scope: ReportScope) =>
+  /**
+   * Lock a MonthlyAttendance row (status → LOCKED). Fired from the
+   * consolidated report's per-employee lock button; irreversible via
+   * the FE. Returns the updated row so the caller can patch state in
+   * place.
+   */
+  lockMonthly: (userId: number, year: number, month: number) =>
     client
-      .post(
-        '/hr/reports/export/pdf',
-        { year, month, scope },
-        { responseType: 'blob' },
-      )
-      .then((r) => r.data as Blob),
+      .post(`/hr/monthly/${userId}/lock`, { year, month })
+      .then((r) => unwrap<MonthlyAttendanceRow>(r.data)),
 };

@@ -1,12 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { AxiosError } from 'axios';
 import {
-  AlertTriangle,
   Download,
-  Eye,
   FileSpreadsheet,
   FileText,
+  Lock,
   Users,
 } from 'lucide-react';
 
@@ -20,26 +18,29 @@ import { usePermissions } from '@/hooks/use-permissions';
 import {
   hrApi,
   type HrEmployeeListRow,
+  type MonthlyStatus,
   type ReportPayload,
   type ReportPayloadEmployee,
-  type ReportScope,
-  type ReportBlockersError,
 } from './api/hr.api';
 
 /**
- * HR Phase D2 (2026-10-18) — `/hr/reports` consolidated accounting
- * report page per spec §5.
+ * HR Phase D2 §13 (2026-10-18) — `/hr/reports` consolidated accounting
+ * report page.
  *
- * Three scope modes drive the picker:
- *   • "כל העובדים הפעילים" — fire-and-forget
- *   • "לפי יחידת ארגון"   — pick one OrgUnit, server resolves subtree
- *   • "בחירה ידנית"       — multi-select employee picker
- *
- * Preview is a JSON round-trip against /hr/reports/preview and renders
- * the SAME day-by-day table the XLSX / PDF writer sees. If any
- * selected employee doesn't have an APPROVED MonthlyAttendance row,
- * the API returns 400 with a blocker list — the FE renders an amber
- * banner + a link to /hr/review.
+ * The page is a lazy, on-the-fly viewer:
+ *   • Opens empty — nothing fires until the user clicks "הפק דוח".
+ *   • Three scope modes build a `userIds?: number[]` for the API:
+ *       — "כל העובדים הפעילים" → undefined (server resolves all active)
+ *       — "לפי יחידת ארגון"   → ids of active employees in that unit
+ *       — "בחירה ידנית"       → ids from PeopleMultiSelect
+ *   • `fetchConsolidatedReport` never 500s and never gates on APPROVED;
+ *     empty scope / no data returns `{ employees: [] }` → empty state.
+ *   • Per-employee status is a badge (OPEN / APPROVED / LOCKED / DRAFT)
+ *     on the header card. A small lock button on OPEN/APPROVED/DRAFT
+ *     rows calls `POST /hr/monthly/:userId/lock`.
+ *   • Export XLSX / PDF are independent of the preview — they fire
+ *     the GET export endpoint directly whenever the user has
+ *     `hr:export` and the scope is ready.
  *
  * Design: slate palette, DM Sans + JetBrains Mono, text-[13px]/[11px]
  * uppercase 0.05em labels, no shadows on cards, rounded-[14px] /
@@ -71,6 +72,18 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+/** Prefer Hebrew name parts when present; fall back to English. */
+function displayName(h: {
+  firstName: string;
+  lastName: string;
+  firstNameHe: string | null;
+  lastNameHe: string | null;
+}) {
+  const first = h.firstNameHe?.trim() || h.firstName;
+  const last = h.lastNameHe?.trim() || h.lastName;
+  return [last, first].filter(Boolean).join(' ') || first || last || '';
+}
+
 export function HrReportsPage() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -81,7 +94,6 @@ export function HrReportsPage() {
   const [previewPayload, setPreviewPayload] = useState<ReportPayload | null>(
     null,
   );
-  const [blockers, setBlockers] = useState<ReportBlockersError | null>(null);
   const [previewEmpId, setPreviewEmpId] = useState<number | null>(null);
 
   const { can } = usePermissions();
@@ -100,14 +112,14 @@ export function HrReportsPage() {
       }),
   });
 
+  // Needed by both Manual (as picker source) and Org-unit (to resolve
+  // the chosen unit's members to userIds client-side). Cheap endpoint,
+  // 60s stale.
   const { data: employees = [] } = useQuery<HrEmployeeListRow[]>({
     queryKey: ['hr', 'employees'],
     queryFn: () => hrApi.listEmployees(),
     staleTime: 60 * 1000,
-    // Only needed for the Manual picker — but we also need "active"
-    // flag for the display subtitle. The list endpoint is cheap and
-    // already warm cache from /hr/employees.
-    enabled: scopeKind === 'manual',
+    enabled: scopeKind === 'manual' || scopeKind === 'org-unit',
   });
 
   const people: Person[] = useMemo(
@@ -124,68 +136,94 @@ export function HrReportsPage() {
     [employees],
   );
 
-  // ─── Build the ReportScope payload from UI state ─────────────────
-  const scope: ReportScope | null = useMemo(() => {
-    if (scopeKind === 'all-active') return { kind: 'all-active' };
+  // ─── Resolve the current scope to a `userIds?: number[]` the API
+  // takes. `undefined` means "all active" — the server resolves it.
+  // Returns `null` when the UI is in a mode that requires a selection
+  // the user hasn't made yet.
+  const resolvedUserIds: { userIds?: number[] } | null = useMemo(() => {
+    if (scopeKind === 'all-active') return { userIds: undefined };
     if (scopeKind === 'org-unit') {
       if (orgUnitId == null) return null;
-      return { kind: 'org-unit', orgUnitId };
+      const ids = employees
+        .filter((e) => e.isActive && e.orgUnit?.id === orgUnitId)
+        .map((e) => e.id);
+      return { userIds: ids };
     }
     if (manualUserIds.length === 0) return null;
-    return { kind: 'manual', userIds: manualUserIds };
-  }, [scopeKind, orgUnitId, manualUserIds]);
+    return { userIds: manualUserIds };
+  }, [scopeKind, orgUnitId, manualUserIds, employees]);
 
-  const scopeIsReady = scope !== null;
+  const scopeIsReady = resolvedUserIds !== null;
 
   // ─── Preview mutation ────────────────────────────────────────────
   const preview = useMutation({
-    mutationFn: () => hrApi.previewReport(year, month, scope!),
+    mutationFn: () =>
+      hrApi.fetchConsolidatedReport(year, month, resolvedUserIds!.userIds),
     onMutate: () => {
-      setBlockers(null);
       setPreviewPayload(null);
     },
     onSuccess: (data) => {
       setPreviewPayload(data);
-      // Auto-select the first employee's sheet
-      setPreviewEmpId(data.employees[0]?.user.id ?? null);
+      setPreviewEmpId(data.employees[0]?.header.userId ?? null);
     },
-    onError: (err: unknown) => {
-      const axiosErr = err as AxiosError<any>;
-      const body = axiosErr?.response?.data;
-      // The {data: ...} envelope wraps the body in some response flows.
-      const inner = body?.data ?? body;
-      if (inner?.error === 'MONTHLY_NOT_APPROVED') {
-        setBlockers(inner as ReportBlockersError);
-      } else {
-        notify.apiError(err, 'Failed to build preview');
-      }
-    },
+    onError: (err: unknown) => notify.apiError(err, 'Failed to build preview'),
   });
 
   // ─── Export mutations ────────────────────────────────────────────
   const stamp = `${year}-${String(month).padStart(2, '0')}`;
 
   const exportXlsx = useMutation({
-    mutationFn: () => hrApi.exportXlsx(year, month, scope!),
+    mutationFn: () =>
+      hrApi.exportConsolidated(year, month, 'xlsx', resolvedUserIds?.userIds),
     onSuccess: (blob) => downloadBlob(blob, `hr-report-${stamp}.xlsx`),
     onError: (err: unknown) => notify.apiError(err, 'XLSX export failed'),
   });
 
   const exportPdf = useMutation({
-    mutationFn: () => hrApi.exportPdf(year, month, scope!),
+    mutationFn: () =>
+      hrApi.exportConsolidated(year, month, 'pdf', resolvedUserIds?.userIds),
     onSuccess: (blob) => downloadBlob(blob, `hr-report-${stamp}.pdf`),
     onError: (err: unknown) => notify.apiError(err, 'PDF export failed'),
+  });
+
+  // ─── Lock button mutation ────────────────────────────────────────
+  const lockMonthly = useMutation({
+    mutationFn: (vars: { userId: number }) =>
+      hrApi.lockMonthly(vars.userId, year, month),
+    onSuccess: (_row, vars) => {
+      // Patch the preview in place so the badge flips to LOCKED and
+      // the lock button disappears, without a full refetch.
+      setPreviewPayload((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          employees: prev.employees.map((emp) =>
+            emp.header.userId === vars.userId
+              ? { ...emp, header: { ...emp.header, status: 'LOCKED' } }
+              : emp,
+          ),
+        };
+      });
+      notify.success('החודש ננעל · Month locked');
+    },
+    onError: (err: unknown) => notify.apiError(err, 'Lock failed'),
   });
 
   const activeEmp: ReportPayloadEmployee | null = useMemo(() => {
     if (!previewPayload || previewEmpId == null) return null;
     return (
-      previewPayload.employees.find((e) => e.user.id === previewEmpId) ?? null
+      previewPayload.employees.find(
+        (e) => e.header.userId === previewEmpId,
+      ) ?? null
     );
   }, [previewPayload, previewEmpId]);
 
+  // Export buttons: enabled whenever the user has the permission and
+  // the scope is ready (so Manual / Org-unit still require a pick).
+  const exportEnabled = canExport && scopeIsReady;
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" dir="rtl">
       <PageHeader
         title="Reports · דוחות"
         description="דוח מרוכז להנהלת חשבונות · consolidated accounting export"
@@ -251,7 +289,6 @@ export function HrReportsPage() {
                   onClick={() => {
                     setScopeKind(opt.k);
                     setPreviewPayload(null);
-                    setBlockers(null);
                   }}
                   className={cn(
                     'px-3 py-1.5 text-[13px] transition-colors border-l border-slate-300 dark:border-slate-600 first:border-l-0',
@@ -279,7 +316,6 @@ export function HrReportsPage() {
                 const v = e.target.value;
                 setOrgUnitId(v === '' ? null : Number(v));
                 setPreviewPayload(null);
-                setBlockers(null);
               }}
               className="rounded-[5px] border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1.5 text-[13px] text-slate-900 dark:text-slate-100 focus:outline-none"
             >
@@ -303,7 +339,6 @@ export function HrReportsPage() {
               onChange={(ids) => {
                 setManualUserIds(ids);
                 setPreviewPayload(null);
-                setBlockers(null);
               }}
               placeholder="בחר עובדים"
               triggerClassName="w-full"
@@ -324,58 +359,55 @@ export function HrReportsPage() {
                 : 'cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500',
             )}
           >
-            <Eye className="h-3.5 w-3.5" />
-            {preview.isPending ? 'טוען...' : 'תצוגה מקדימה'}
+            <FileText className="h-3.5 w-3.5" />
+            {preview.isPending ? 'טוען…' : 'הפק דוח'}
           </button>
 
           <div className="flex-1" />
 
           <button
             type="button"
-            disabled={!canExport || !scopeIsReady || exportXlsx.isPending}
+            disabled={!exportEnabled || exportXlsx.isPending}
             onClick={() => exportXlsx.mutate()}
             className={cn(
               'inline-flex items-center gap-1.5 rounded-[5px] border px-3 py-1.5 text-[13px] font-semibold transition-colors',
-              canExport && scopeIsReady
+              exportEnabled
                 ? 'border-emerald-200 dark:border-emerald-800/60 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40'
                 : 'cursor-not-allowed border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500',
             )}
           >
             <FileSpreadsheet className="h-3.5 w-3.5" />
-            {exportXlsx.isPending ? 'מייצא...' : 'ייצא XLSX'}
+            {exportXlsx.isPending ? 'מייצא…' : 'ייצא XLSX'}
           </button>
           <button
             type="button"
-            disabled={!canExport || !scopeIsReady || exportPdf.isPending}
+            disabled={!exportEnabled || exportPdf.isPending}
             onClick={() => exportPdf.mutate()}
             className={cn(
               'inline-flex items-center gap-1.5 rounded-[5px] border px-3 py-1.5 text-[13px] font-semibold transition-colors',
-              canExport && scopeIsReady
+              exportEnabled
                 ? 'border-rose-200 dark:border-rose-800/60 bg-rose-50 dark:bg-rose-900/20 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/40'
                 : 'cursor-not-allowed border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500',
             )}
           >
             <FileText className="h-3.5 w-3.5" />
-            {exportPdf.isPending ? 'מייצא...' : 'ייצא PDF'}
+            {exportPdf.isPending ? 'מייצא…' : 'ייצא PDF'}
           </button>
         </div>
       </div>
 
-      {/* ─── Blocker banner ─────────────────────────────────────── */}
-      {blockers && <BlockerBanner blockers={blockers} />}
-
-      {/* ─── Preview panel ──────────────────────────────────────── */}
-      {!previewPayload && !blockers && !preview.isPending && (
+      {/* ─── Empty landing / preview ────────────────────────────── */}
+      {!previewPayload && !preview.isPending && (
         <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10">
           <div className="flex flex-col items-center justify-center text-center">
             <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-[14px] bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500">
               <Download className="h-6 w-6" aria-hidden="true" />
             </div>
             <div className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">
-              בחר חודש ועובדים, לחץ "תצוגה מקדימה"
+              בחר/י חודש ועובדים ולחץ "הפק דוח"
             </div>
             <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 uppercase font-semibold tracking-[0.05em]">
-              Choose month + scope, click Preview to inspect before export
+              Choose month + scope, click Generate to inspect before export
             </div>
           </div>
         </div>
@@ -396,65 +428,70 @@ export function HrReportsPage() {
         </div>
       )}
 
-      {previewPayload && (
+      {previewPayload && previewPayload.employees.length === 0 && (
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10">
+          <div className="flex flex-col items-center justify-center text-center">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-[14px] bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500">
+              <Users className="h-6 w-6" aria-hidden="true" />
+            </div>
+            <div className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">
+              אין נתונים לחודש שנבחר
+            </div>
+            <div className="mt-1 text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">
+              No data for the selected month
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewPayload && previewPayload.employees.length > 0 && (
         <PreviewPanel
           payload={previewPayload}
           activeEmp={activeEmp}
           onSelectEmp={setPreviewEmpId}
+          onLock={(userId) => {
+            if (
+              window.confirm(
+                'לנעול את החודש לעובד זה? פעולה זו אינה הפיכה מהממשק.',
+              )
+            ) {
+              lockMonthly.mutate({ userId });
+            }
+          }}
+          lockPending={lockMonthly.isPending}
+          lockPendingUserId={
+            lockMonthly.isPending
+              ? (lockMonthly.variables as { userId: number } | undefined)
+                  ?.userId ?? null
+              : null
+          }
         />
       )}
     </div>
   );
 }
 
-// ─── Blocker banner ────────────────────────────────────────────────
+// ─── Status badge ──────────────────────────────────────────────────
 
-function BlockerBanner({ blockers }: { blockers: ReportBlockersError }) {
+const STATUS_PILL: Record<MonthlyStatus, string> = {
+  OPEN: 'bg-slate-100 dark:bg-slate-800/60 text-slate-700 dark:text-slate-200',
+  APPROVED:
+    'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300',
+  LOCKED:
+    'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300',
+  DRAFT: 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300',
+};
+
+function StatusBadge({ status }: { status: MonthlyStatus }) {
   return (
-    <div className="rounded-[14px] border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-900/20 p-4">
-      <div className="flex items-start gap-3">
-        <div className="shrink-0 rounded-[5px] bg-amber-100 dark:bg-amber-900/40 p-1.5">
-          <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-300" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-semibold text-amber-800 dark:text-amber-200">
-            {blockers.blockers.length} עובדים טרם אושרו לחודש זה
-          </div>
-          <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300 uppercase font-semibold tracking-[0.05em]">
-            Approve from <a href="/hr/review" className="underline">/hr/review</a> before export
-          </div>
-          <ul className="mt-3 space-y-1">
-            {blockers.blockers.slice(0, 10).map((b) => (
-              <li
-                key={b.userId}
-                className="flex items-center gap-2 text-[13px] text-amber-900 dark:text-amber-100"
-              >
-                <span className="truncate">
-                  {b.lastName} {b.firstName}
-                </span>
-                <span
-                  className={cn(
-                    'inline-flex items-center rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-[0.05em]',
-                    b.status === 'MISSING'
-                      ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-                      : b.status === 'LOCKED'
-                        ? 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
-                        : 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-200',
-                  )}
-                >
-                  {b.status}
-                </span>
-              </li>
-            ))}
-            {blockers.blockers.length > 10 && (
-              <li className="text-[11px] text-amber-700 dark:text-amber-300">
-                + {blockers.blockers.length - 10} more
-              </li>
-            )}
-          </ul>
-        </div>
-      </div>
-    </div>
+    <span
+      className={cn(
+        'inline-flex items-center text-[11px] font-bold tracking-wide uppercase rounded-[5px] px-1.5 py-0.5',
+        STATUS_PILL[status],
+      )}
+    >
+      {status}
+    </span>
   );
 }
 
@@ -464,10 +501,16 @@ function PreviewPanel({
   payload,
   activeEmp,
   onSelectEmp,
+  onLock,
+  lockPending,
+  lockPendingUserId,
 }: {
   payload: ReportPayload;
   activeEmp: ReportPayloadEmployee | null;
   onSelectEmp: (id: number) => void;
+  onLock: (userId: number) => void;
+  lockPending: boolean;
+  lockPendingUserId: number | null;
 }) {
   return (
     <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
@@ -482,28 +525,45 @@ function PreviewPanel({
         </div>
         <div className="flex-1" />
         <select
-          value={activeEmp?.user.id ?? ''}
+          value={activeEmp?.header.userId ?? ''}
           onChange={(e) => onSelectEmp(Number(e.target.value))}
           className="rounded-[5px] border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1 text-[13px] text-slate-900 dark:text-slate-100 focus:outline-none min-w-[220px]"
           aria-label="Employee sheet"
         >
-          {payload.employees.map((e) => (
-            <option key={e.user.id} value={e.user.id}>
-              {e.user.lastName} {e.user.firstName}
-              {e.user.accountingEmployeeNumber
-                ? ` (${e.user.accountingEmployeeNumber})`
-                : ''}
-            </option>
-          ))}
+          {payload.employees.map((e) => {
+            const name = displayName(e.header);
+            return (
+              <option key={e.header.userId} value={e.header.userId}>
+                {name}
+                {e.header.accountingEmployeeNumber
+                  ? ` (${e.header.accountingEmployeeNumber})`
+                  : ''}
+              </option>
+            );
+          })}
         </select>
       </div>
 
-      {activeEmp && <EmployeeSheet emp={activeEmp} />}
+      {activeEmp && (
+        <EmployeeSheet
+          emp={activeEmp}
+          onLock={onLock}
+          lockPending={lockPending && lockPendingUserId === activeEmp.header.userId}
+        />
+      )}
     </div>
   );
 }
 
-function EmployeeSheet({ emp }: { emp: ReportPayloadEmployee }) {
+function EmployeeSheet({
+  emp,
+  onLock,
+  lockPending,
+}: {
+  emp: ReportPayloadEmployee;
+  onLock: (userId: number) => void;
+  lockPending: boolean;
+}) {
   const kv: Array<[string, string, boolean]> = [
     ['תקן חודשי', `${emp.header.monthlyStandard.toFixed(2)}h`, false],
     ['בפועל', `${emp.header.actualHours.toFixed(2)}h`, false],
@@ -516,17 +576,44 @@ function EmployeeSheet({ emp }: { emp: ReportPayloadEmployee }) {
     ['סך ימי מחלה', String(emp.header.sickDays), false],
     ['סך ימי חופש', String(emp.header.vacationDays), false],
   ];
+  const name = displayName(emp.header);
+  const canLock = emp.header.status !== 'LOCKED';
 
   return (
     <div className="p-4 space-y-4">
       {/* KV header */}
-      <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-4">
-        <div className="text-[13px] font-semibold text-slate-900 dark:text-slate-100">
-          {emp.user.lastName} {emp.user.firstName}
+      <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-4 relative">
+        {canLock && (
+          <button
+            type="button"
+            disabled={lockPending}
+            onClick={() => onLock(emp.header.userId)}
+            title="נעל חודש · Lock month"
+            className={cn(
+              'absolute top-3 left-3 inline-flex items-center gap-1 rounded-[5px] border px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-colors',
+              lockPending
+                ? 'cursor-not-allowed border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500'
+                : 'border-indigo-200 dark:border-indigo-800/60 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/40',
+            )}
+          >
+            <Lock className="h-3 w-3" />
+            {lockPending ? 'נועל…' : 'נעל'}
+          </button>
+        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[13px] font-semibold text-slate-900 dark:text-slate-100">
+            {name}
+          </span>
+          <StatusBadge status={emp.header.status} />
         </div>
-        {emp.user.accountingEmployeeNumber && (
+        {emp.header.accountingEmployeeNumber && (
           <div className="font-mono text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-            {emp.user.accountingEmployeeNumber}
+            {emp.header.accountingEmployeeNumber}
+          </div>
+        )}
+        {emp.header.error && (
+          <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+            {emp.header.error}
           </div>
         )}
         <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -573,7 +660,7 @@ function EmployeeSheet({ emp }: { emp: ReportPayloadEmployee }) {
             </tr>
           </thead>
           <tbody>
-            {emp.days.map((d) => {
+            {emp.rows.map((d) => {
               const hasActivity =
                 d.totalHours > 0 || d.startTime != null || d.endTime != null;
               return (
@@ -590,7 +677,7 @@ function EmployeeSheet({ emp }: { emp: ReportPayloadEmployee }) {
                     {d.date}
                   </td>
                   <td className="px-3 py-1.5 text-[13px] text-slate-700 dark:text-slate-200">
-                    {d.dayOfWeek}
+                    {d.weekday}
                   </td>
                   <td className="px-3 py-1.5 font-mono text-[11px] tabular-nums">
                     {d.startTime ?? '—'}
