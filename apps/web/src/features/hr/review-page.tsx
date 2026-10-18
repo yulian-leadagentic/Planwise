@@ -245,8 +245,8 @@ export function HrMonthlyReviewPage() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Monthly Review"
-        description="סקירת חודשית · engine roll-up per employee"
+        title="נוכחות חודשית"
+        description="חישוב ואישור פר-עובד"
         actions={
           <div className="flex items-center gap-2">
             <MonthPicker
