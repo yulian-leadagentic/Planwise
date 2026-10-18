@@ -1,17 +1,19 @@
 import { useState } from 'react';
-import { CalendarDays, Clock, FileClock, Boxes } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Clock, FileClock, Boxes, CalendarDays, ArrowUpRight } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { Tabs, type TabItem } from '@/components/shared/tabs';
-import { CalendarSection } from './settings/calendar-section';
 import { ShortDaySection } from './settings/short-day-section';
 import { AbsenceTypesSection } from './settings/absence-types-section';
 import { BucketsSection } from './settings/buckets-section';
 
 /**
- * HR Phase B4 (2026-10-15) — the /hr/settings page body. Replaces the
- * A4 placeholder with the real 4-section layout from the spec. The
- * four sections are rendered as pill-style tabs so a user can jump
- * directly to the one they need without scrolling the whole page.
+ * HR Phase B4 (2026-10-15) · §15 R2+R3 (2026-10-18) — the /hr/settings
+ * page. The Calendar section was folded into Admin → Calendar so the
+ * organisation has one calendar source of truth; what remains is the
+ * three HR-only knobs: short-day hours, absence types, special
+ * buckets. A read-only "ימי לוח שנה מנוהלים ב-Admin → Calendar" note
+ * replaces the former Calendar card, with a jump link.
  *
  * Permissions:
  *   • Route gated by hr:read (RoutePermissionGuard enforces).
@@ -23,24 +25,22 @@ import { BucketsSection } from './settings/buckets-section';
  * cards, no shadows, border-only. Full dark: light + dark branch per
  * the design system.
  */
-type SettingsTab = 'calendar' | 'short-day' | 'absence-types' | 'buckets';
+type SettingsTab = 'short-day' | 'absence-types' | 'buckets';
 
 const TABS: TabItem<SettingsTab>[] = [
-  { value: 'calendar', label: 'Calendar · לוח שנה' },
   { value: 'short-day', label: 'Short day · יום מקוצר' },
   { value: 'absence-types', label: 'Absence types · סוגי היעדרויות' },
   { value: 'buckets', label: 'Special buckets · קופות מיוחדות' },
 ];
 
 const TAB_ICON: Record<SettingsTab, React.ElementType> = {
-  calendar: CalendarDays,
   'short-day': Clock,
   'absence-types': FileClock,
   buckets: Boxes,
 };
 
 export function HrSettingsPage() {
-  const [tab, setTab] = useState<SettingsTab>('calendar');
+  const [tab, setTab] = useState<SettingsTab>('short-day');
   const Icon = TAB_ICON[tab];
 
   return (
@@ -49,6 +49,27 @@ export function HrSettingsPage() {
         title="HR Settings"
         description="הגדרות משאבי אנוש · Organisation-wide HR knobs"
       />
+
+      {/* §15 R2 — calendar lives at Admin → Calendar now. Keep a
+          one-line signpost so an HR user who used to find it here
+          isn't left searching. */}
+      <Link
+        to="/admin/calendar"
+        className="group flex items-center gap-3 rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 hover:border-blue-400 dark:hover:border-blue-500"
+      >
+        <div className="w-[22px] h-[22px] rounded-[5px] bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500 dark:text-slate-400 group-hover:text-blue-600 dark:group-hover:text-blue-400">
+          <CalendarDays className="h-3.5 w-3.5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">
+            לוח שנה · Calendar days
+          </div>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            ימי לוח שנה מנוהלים ב-Admin → Calendar · Managed under Admin → Calendar
+          </p>
+        </div>
+        <ArrowUpRight className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500 group-hover:text-blue-600 dark:group-hover:text-blue-400" aria-hidden="true" />
+      </Link>
 
       <Tabs<SettingsTab>
         items={TABS}
@@ -72,7 +93,6 @@ export function HrSettingsPage() {
           </h2>
         </div>
         <div className="p-5">
-          {tab === 'calendar' && <CalendarSection />}
           {tab === 'short-day' && <ShortDaySection />}
           {tab === 'absence-types' && <AbsenceTypesSection />}
           {tab === 'buckets' && <BucketsSection />}

@@ -458,18 +458,13 @@ export const hrApi = {
   updateSettings: (payload: UpdateHrSettingsPayload) =>
     client.patch('/hr/settings', payload).then((r) => unwrap<HrSettings>(r.data)),
 
-  // Calendar days
-  listCalendarDays: (year: number) =>
-    client.get('/hr/calendar-days', { params: { year } }).then((r) => unwrap<HrCalendarDay[]>(r.data)),
-
-  createCalendarDay: (payload: CreateHrCalendarDayPayload) =>
-    client.post('/hr/calendar-days', payload).then((r) => unwrap<HrCalendarDay>(r.data)),
-
-  updateCalendarDay: (id: number, payload: UpdateHrCalendarDayPayload) =>
-    client.patch(`/hr/calendar-days/${id}`, payload).then((r) => unwrap<HrCalendarDay>(r.data)),
-
-  deleteCalendarDay: (id: number) =>
-    client.delete(`/hr/calendar-days/${id}`).then((r) => unwrap<{ ok: true; id: number }>(r.data)),
+  // §15 R2 (2026-10-18) — Calendar CRUD endpoints removed. Calendar
+  // days are managed solely via Admin → Calendar now (`/calendar/*`
+  // endpoints on the API; see admin/calendar-page.tsx on the FE).
+  // Types `HrCalendarDay` / `CreateHrCalendarDayPayload` /
+  // `UpdateHrCalendarDayPayload` stay exported because the
+  // CalendarDayType shape is still needed by MonthlyAttendance
+  // breakdown rows (`DailyBreakdownRow.dayType`).
 
   // Absence types
   listAbsenceTypes: (opts: { activeOnly?: boolean } = {}) =>

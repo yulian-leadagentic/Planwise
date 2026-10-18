@@ -5,7 +5,7 @@ import {
   ConflictException,
   Logger,
 } from '@nestjs/common';
-import { Prisma, CalendarDayType } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import * as Sentry from '@sentry/node';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -15,10 +15,9 @@ import { UpdateHrEmployeeDto } from './dto/update-employee.dto';
 import { CreateEligibilityDto } from './dto/create-eligibility.dto';
 import { UpdateEligibilityDto } from './dto/update-eligibility.dto';
 import { UpdateHrSettingsDto } from './dto/update-hr-settings.dto';
-import {
-  CreateHrCalendarDayDto,
-} from './dto/create-calendar-day.dto';
-import { UpdateHrCalendarDayDto } from './dto/update-calendar-day.dto';
+// §15 R2 (2026-10-18) — CalendarDay CRUD moved out of /hr; Admin →
+// Calendar is the single source of truth now, so the related DTOs
+// no longer have a caller inside this service.
 import {
   CreateAbsenceTypeDto,
   UpdateAbsenceTypeDto,
@@ -339,112 +338,11 @@ export class HrService {
     };
   }
 
-  // ═══ CalendarDay admin CRUD ═════════════════════════════════════════
-
-  async listCalendarDays(year: number) {
-    if (!Number.isFinite(year) || year < 1900 || year > 3000) {
-      throw new BadRequestException('year must be a 4-digit calendar year');
-    }
-    const start = new Date(year, 0, 1);
-    const end = new Date(year + 1, 0, 1);
-    const rows = await this.prisma.calendarDay.findMany({
-      where: { date: { gte: start, lt: end } },
-      orderBy: { date: 'asc' },
-      include: {
-        creator: { select: { id: true, firstName: true, lastName: true } },
-      },
-    });
-    return rows;
-  }
-
-  async createCalendarDay(dto: CreateHrCalendarDayDto, actorId: number) {
-    // Guard against REGULAR days — the engine implicitly defaults
-    // missing dates to REGULAR; materialising a row would be a lie.
-    if ((dto.type as CalendarDayType) === 'REGULAR') {
-      throw new BadRequestException('REGULAR days are never materialised; omit the row.');
-    }
-    const dateStr = dto.date;
-    const dateParts = dateStr.split('-').map(Number);
-    const date = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
-    const existing = await this.prisma.calendarDay.findFirst({ where: { date } });
-    if (existing) {
-      throw new ConflictException(`Calendar day for ${dateStr} already exists`);
-    }
-    const created = await this.prisma.calendarDay.create({
-      data: {
-        date,
-        name: dto.name,
-        type: dto.type as CalendarDayType,
-        halfDayUntil: dto.halfDayUntil ?? null,
-        appliesTo: dto.appliesTo ?? 'all',
-        isRecurring: dto.isRecurring ?? false,
-        notes: dto.notes ?? null,
-        createdBy: actorId,
-      },
-      include: { creator: { select: { id: true, firstName: true, lastName: true } } },
-    });
-    this.writeAudit({
-      actorId,
-      action: 'hr.calendar_day.created',
-      entityType: 'calendar_day',
-      entityId: created.id,
-      entityName: created.name,
-      description: `Added calendar exception "${created.name}" on ${dateStr} (${created.type})`,
-    });
-    return created;
-  }
-
-  async updateCalendarDay(id: number, dto: UpdateHrCalendarDayDto, actorId: number) {
-    const existing = await this.prisma.calendarDay.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException(`Calendar day ${id} not found`);
-
-    if (dto.type && (dto.type as CalendarDayType) === 'REGULAR') {
-      throw new BadRequestException('REGULAR days are never materialised; delete the row instead.');
-    }
-
-    const data: Prisma.CalendarDayUpdateInput = {};
-    if (dto.date) {
-      const parts = dto.date.split('-').map(Number);
-      data.date = new Date(parts[0], parts[1] - 1, parts[2]);
-    }
-    if (dto.type) data.type = dto.type as CalendarDayType;
-    if (dto.name !== undefined) data.name = dto.name;
-    if (dto.halfDayUntil !== undefined) data.halfDayUntil = dto.halfDayUntil ?? null;
-    if (dto.appliesTo !== undefined) data.appliesTo = dto.appliesTo;
-    if (dto.isRecurring !== undefined) data.isRecurring = dto.isRecurring;
-    if (dto.notes !== undefined) data.notes = dto.notes ?? null;
-
-    const updated = await this.prisma.calendarDay.update({
-      where: { id },
-      data,
-      include: { creator: { select: { id: true, firstName: true, lastName: true } } },
-    });
-    this.writeAudit({
-      actorId,
-      action: 'hr.calendar_day.updated',
-      entityType: 'calendar_day',
-      entityId: id,
-      entityName: updated.name,
-      description: `Updated calendar exception "${updated.name}"`,
-    });
-    return updated;
-  }
-
-  async deleteCalendarDay(id: number, actorId: number) {
-    const existing = await this.prisma.calendarDay.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException(`Calendar day ${id} not found`);
-    await this.prisma.calendarDay.delete({ where: { id } });
-    this.writeAudit({
-      actorId,
-      action: 'hr.calendar_day.deleted',
-      entityType: 'calendar_day',
-      entityId: id,
-      entityName: existing.name,
-      severity: 'warn',
-      description: `Deleted calendar exception "${existing.name}" on ${existing.date.toISOString().slice(0, 10)}`,
-    });
-    return { ok: true, id };
-  }
+  // §15 R2 (2026-10-18) — CalendarDay CRUD under /hr/* was removed.
+  // Admin → Calendar (`/calendar/*`) is now the single source of truth
+  // for calendar exceptions. The HR monthly engine still reads the
+  // same `CalendarDay` table via PrismaService, so the enum remap
+  // (HOLIDAY / HOLIDAY_EVE / CHOL_HAMOED / REST) stays intact.
 
   // ═══ AbsenceType admin CRUD ═════════════════════════════════════════
 

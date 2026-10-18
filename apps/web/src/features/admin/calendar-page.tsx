@@ -22,16 +22,18 @@ const TYPE_STYLES: Record<string, { bg: string; text: string; dot: string }> = {
   REGULAR:     { bg: 'bg-slate-100',  text: 'text-slate-700',  dot: 'bg-slate-500' },
 };
 
-// Human-readable label for a CalendarDayType enum value (new UPPERCASE
-// signature). Keeps the "Holiday", "Company Day Off", "Half Day",
-// "Special" wording the UI shipped with so the enum remap is invisible
-// to users on the Calendar page.
+// §15 R2 (2026-10-18) — Hebrew labels per Yulian's spec, mirroring
+// the HR engine's day-type names. The HR module reads the same
+// CalendarDay table, so a Hebrew-first label here keeps the admin and
+// HR surfaces talking about the same thing. REGULAR is listed only as
+// a defensive styling fallback — the engine never materialises
+// REGULAR rows (missing dates default to REGULAR implicitly).
 const TYPE_LABEL: Record<string, string> = {
-  HOLIDAY:     'Holiday',
-  REST:        'Company Day Off',
-  HOLIDAY_EVE: 'Half Day',
-  CHOL_HAMOED: 'Special',
-  REGULAR:     'Regular',
+  HOLIDAY:     'חג',
+  REST:        'יום מנוחה',
+  HOLIDAY_EVE: 'ערב חג',
+  CHOL_HAMOED: 'חוה״מ',
+  REGULAR:     'רגיל',
 };
 
 // Israeli national holidays — generates dates for any given year
@@ -389,13 +391,14 @@ export function CalendarDaysPage() {
             <button onClick={nextMonth} className="rounded-md p-2 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Next"><ChevronRight className="h-5 w-5"  aria-hidden="true" /></button>
           </div>
 
-          {/* Legend */}
-          <div className="flex items-center gap-4 text-[11px]">
-            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500" /> Holiday</div>
-            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-500" /> Company Day Off</div>
-            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-blue-500" /> Half Day</div>
-            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-purple-500" /> Special</div>
-            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-slate-200 dark:bg-slate-700" /> Weekend</div>
+          {/* Legend — §15 R2 Hebrew-first labels match the HR engine's
+              day-type naming so the admin + HR surfaces agree. */}
+          <div className="flex items-center gap-4 text-[11px] text-slate-500 dark:text-slate-400">
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500" /> חג</div>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-500" /> יום מנוחה</div>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-blue-500" /> ערב חג</div>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-purple-500" /> חוה״מ</div>
+            <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-slate-200 dark:bg-slate-700" /> סופ״ש</div>
           </div>
 
           {/* Calendar Grid */}
@@ -603,12 +606,17 @@ export function CalendarDaysPage() {
             </div>
             <div className="w-48">
               <label className="block text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1">Type</label>
+              {/* §15 R2 (2026-10-18) — 4 user-pickable CalendarDayType
+                  values. REGULAR is excluded on purpose: the HR
+                  engine implicitly defaults missing dates to REGULAR,
+                  so a materialised REGULAR row would be a lie. The HR
+                  monthly engine depends on these exact enum values. */}
               <select value={formType} onChange={(e) => setFormType(e.target.value)}
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
-                <option value="HOLIDAY">Holiday</option>
-                <option value="REST">Company Day Off</option>
-                <option value="HOLIDAY_EVE">Half Day</option>
-                <option value="CHOL_HAMOED">Special</option>
+                <option value="HOLIDAY">חג · Holiday</option>
+                <option value="HOLIDAY_EVE">ערב חג · Holiday eve</option>
+                <option value="CHOL_HAMOED">חוה״מ · Chol-hamoed</option>
+                <option value="REST">יום מנוחה · Rest / Company day off</option>
               </select>
             </div>
             <button type="submit" disabled={!formName.trim() || createMutation.isPending}

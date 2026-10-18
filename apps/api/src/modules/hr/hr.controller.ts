@@ -34,8 +34,8 @@ import { UpdateHrEmployeeDto } from './dto/update-employee.dto';
 import { CreateEligibilityDto } from './dto/create-eligibility.dto';
 import { UpdateEligibilityDto } from './dto/update-eligibility.dto';
 import { UpdateHrSettingsDto } from './dto/update-hr-settings.dto';
-import { CreateHrCalendarDayDto } from './dto/create-calendar-day.dto';
-import { UpdateHrCalendarDayDto } from './dto/update-calendar-day.dto';
+// §15 R2 (2026-10-18) — calendar-day CRUD DTOs removed with the
+// endpoints; Admin → Calendar is the single source of truth now.
 import {
   CreateAbsenceTypeDto,
   UpdateAbsenceTypeDto,
@@ -94,50 +94,11 @@ export class HrController {
     return this.hr.updateSettings(dto, user.id);
   }
 
-  // ─── CalendarDay admin CRUD ─────────────────────────────────────────
-
-  @Get('calendar-days')
-  @RequirePermissions({ module: 'hr', action: 'read' })
-  @ApiOperation({ summary: 'List calendar exceptions for a year.' })
-  @ApiQuery({ name: 'year', required: true, type: Number })
-  listCalendarDays(@Query('year') yearRaw: string) {
-    const year = Number(yearRaw);
-    if (!Number.isFinite(year)) {
-      throw new BadRequestException('year is required (yyyy)');
-    }
-    return this.hr.listCalendarDays(year);
-  }
-
-  @Post('calendar-days')
-  @RequirePermissions({ module: 'hr', action: 'write' })
-  @ApiOperation({ summary: 'Create a calendar exception (REGULAR days are never materialised).' })
-  createCalendarDay(
-    @CurrentUser() user: any,
-    @Body() dto: CreateHrCalendarDayDto,
-  ) {
-    return this.hr.createCalendarDay(dto, user.id);
-  }
-
-  @Patch('calendar-days/:id')
-  @RequirePermissions({ module: 'hr', action: 'write' })
-  @ApiOperation({ summary: 'Patch a calendar exception.' })
-  updateCalendarDay(
-    @CurrentUser() user: any,
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateHrCalendarDayDto,
-  ) {
-    return this.hr.updateCalendarDay(id, dto, user.id);
-  }
-
-  @Delete('calendar-days/:id')
-  @RequirePermissions({ module: 'hr', action: 'write' })
-  @ApiOperation({ summary: 'Hard-delete a calendar exception.' })
-  deleteCalendarDay(
-    @CurrentUser() user: any,
-    @Param('id', ParseIntPipe) id: number,
-  ) {
-    return this.hr.deleteCalendarDay(id, user.id);
-  }
+  // §15 R2 (2026-10-18) — CalendarDay CRUD under /hr/calendar-days was
+  // removed. Admin → Calendar (`/calendar/*`) is the sole source of
+  // truth for calendar exceptions now; the HR engine still reads the
+  // same `CalendarDay` table via PrismaService, so the enum remap
+  // (HOLIDAY / HOLIDAY_EVE / CHOL_HAMOED / REST) stays intact.
 
   // ─── AbsenceType admin CRUD ─────────────────────────────────────────
 
