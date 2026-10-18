@@ -9,6 +9,8 @@ import { SeniorityHistorySection } from './seniority-history-section';
 import { UserRateModal } from './user-rate-modal';
 import { Modal } from '@/components/shared/modal';
 import { TextField, SelectField } from '@/components/shared/field';
+import { Tabs, type TabItem } from '@/components/shared/tabs';
+import { EmployeeHrPanel } from '@/features/hr/employee-hr-panel';
 import { cn } from '@/lib/utils';
 
 /**
@@ -58,6 +60,24 @@ export function EditPersonModal({
   // QA3 round-3 item 3a — cost-rate override entry point.
   const showCostOverride = !isPartner && can('finance', 'read');
   const [showOverrideModal, setShowOverrideModal] = useState(false);
+  // §15 R1 (2026-10-18) — HR panel folds into the Admin edit modal as a
+  // second tab. Visible only when the user is an employee (or both)
+  // AND the caller can('hr','read'); partners never see it. Hidden by
+  // omission so no empty tab shell leaks when either gate is false.
+  const showHrTab =
+    (user.userType === 'employee' || user.userType === 'both') &&
+    can('hr', 'read');
+  type EditTab = 'details' | 'hr';
+  const [activeTab, setActiveTab] = useState<EditTab>('details');
+  const tabItems = useMemo<TabItem<EditTab>[]>(() => {
+    const items: TabItem<EditTab>[] = [
+      { value: 'details', label: 'Details · פרטים' },
+    ];
+    if (showHrTab) {
+      items.push({ value: 'hr', label: 'HR · העסקה' });
+    }
+    return items;
+  }, [showHrTab]);
   // M4a.4 — toDateInput slices ISO to YYYY-MM-DD so <input type=date> accepts it.
   const toDateInput = (v: string | null | undefined) => (v ? String(v).slice(0, 10) : '');
   const initialForm = useMemo(() => ({
@@ -159,34 +179,77 @@ export function EditPersonModal({
         onClose={onClose}
         title={`Edit ${isPartner ? 'External User' : 'Employee'}`}
         closeLabel={`Close edit dialog for ${user.firstName ?? ''} ${user.lastName ?? ''}`.trim()}
-        widthClass="w-[480px] max-w-[92vw]"
-        isDirty={isDirty}
+        widthClass={cn(
+          'max-w-[94vw]',
+          showHrTab ? 'w-[720px]' : 'w-[480px]',
+        )}
+        isDirty={isDirty && activeTab === 'details'}
         initialFocusRef={firstFieldRef}
         footer={
-          <>
+          activeTab === 'details' ? (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                form="edit-person-form"
+                disabled={update.isPending}
+                className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
+              >
+                {update.isPending ? 'Saving...' : 'Save Changes'}
+              </button>
+            </>
+          ) : (
+            // §15 R1 — HR tab's sections (employment / eligibilities /
+            // absences / documents) own their own save controls. The
+            // modal footer only needs a Close button here.
             <button
               type="button"
               onClick={onClose}
               className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
             >
-              Cancel
+              Close
             </button>
-            <button
-              type="submit"
-              form="edit-person-form"
-              disabled={update.isPending}
-              className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
-            >
-              {update.isPending ? 'Saving...' : 'Save Changes'}
-            </button>
-          </>
+          )
         }
       >
+        {showHrTab && (
+          <div className="mb-5">
+            <Tabs<EditTab>
+              items={tabItems}
+              value={activeTab}
+              onChange={setActiveTab}
+              variant="underline"
+              ariaLabel="Edit employee sections"
+            />
+          </div>
+        )}
+
+        {/* HR tab — mounted lazily so the /hr/employees/:id fetch
+            doesn't fire until the admin actually opens the tab, and
+            unmounted when the admin flips back so React Query holds
+            just one copy. */}
+        {activeTab === 'hr' && showHrTab && (
+          <div className="pt-1">
+            <EmployeeHrPanel userId={user.id} />
+          </div>
+        )}
+
         {/* People UX U1 (E-01) — the override modal is rendered OUTSIDE
             this <form> (as a sibling of the outer Modal below) so its
             buttons can never submit the employee form. Every button in
             UserRateModal is type="button" for the same reason. */}
-        <form id="edit-person-form" onSubmit={handleSubmit} className="space-y-4" noValidate>
+        <form
+          id="edit-person-form"
+          onSubmit={handleSubmit}
+          className={cn('space-y-4', activeTab !== 'details' && 'hidden')}
+          noValidate
+        >
           <div className="grid grid-cols-2 gap-4">
             <TextField
               ref={firstFieldRef}

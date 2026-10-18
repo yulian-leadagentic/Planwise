@@ -25,75 +25,61 @@ import {
 } from './api/hr.api';
 
 /**
- * HR Phase A4 (2026-10-15) — employee drawer. Hosts two surfaces:
+ * HR §15 R1 (2026-10-18) — HR panel embedded inside Admin→Employees edit
+ * (previously the stand-alone /hr/employees drawer; the roster page was
+ * removed when HR consolidated into Admin). Hosts four surfaces:
  *   1. HR employment fields (employmentType, accountingEmployeeNumber,
  *      dailyStandardHours, employmentDate, employmentEndDate) — editable
- *      only when the role carries `hr:write`.
- *   2. "זכאויות B" list — current + inactive bucket eligibilities,
- *      with an inline "+ Add eligibility" dialog restricted to active
+ *      only when the caller carries `hr:write`.
+ *   2. "זכאויות B" — current + inactive bucket eligibilities, with an
+ *      inline "+ Add eligibility" dialog restricted to active
  *      B-behaviour buckets (per §3.6).
+ *   3. "היעדרויות · Absences" — per-year absence log + create/edit.
+ *   4. "מסמכים · Documents" — per-employee file attachments.
+ *
+ * Rendered inside a parent modal (Admin→Users edit), so the panel owns
+ * no modal shell of its own — just the four stacked sections. Secondary
+ * modals (AddEligibilityDialog, AbsenceModal) still open on top via
+ * portal, matching how UserRateModal nests on the Admin page already.
  *
  * SpecialHourBucket catalog is fetched client-side (one small list) and
- * cached; the drawer only grants rows HR already set up server-side.
+ * cached; the panel only grants rows HR already set up server-side.
  */
-export interface EmployeeDrawerProps {
+export interface EmployeeHrPanelProps {
   userId: number;
-  onClose: () => void;
 }
 
-export function EmployeeDrawer({ userId, onClose }: EmployeeDrawerProps) {
+export function EmployeeHrPanel({ userId }: EmployeeHrPanelProps) {
   const qc = useQueryClient();
   const { can } = usePermissions();
   // HR data is behind hr:write — Clerks (hr:read only) see a read-only
-  // drawer. The guard on the API side is the authority; this just hides
+  // panel. The guard on the API side is the authority; this just hides
   // destructive controls so a Clerk can browse without seeing dead UI.
   const canWrite = can('hr', 'write');
 
-  const { data: employee } = useQuery<HrEmployeeDetail>({
+  const { data: employee, isLoading } = useQuery<HrEmployeeDetail>({
     queryKey: ['hr', 'employees', userId],
     queryFn: () => hrApi.getEmployee(userId),
   });
 
-  if (!employee) {
+  if (isLoading || !employee) {
     return (
-      <Modal
-        open
-        onClose={onClose}
-        title="Loading…"
-        widthClass="w-[640px] max-w-[94vw]"
-      >
-        <div className="py-10 text-center text-sm text-slate-400 dark:text-slate-500">
-          Loading employee…
-        </div>
-      </Modal>
+      <div className="py-10 text-center text-sm text-slate-400 dark:text-slate-500">
+        Loading employee…
+      </div>
     );
   }
 
   return (
-    <Modal
-      open
-      onClose={onClose}
-      title={
-        <div className="flex items-center gap-2">
-          <span>{employee.firstName} {employee.lastName}</span>
-          {!employee.isActive && (
-            <span className="rounded-[5px] bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Inactive
-            </span>
-          )}
-        </div>
-      }
-      description={employee.email}
-      widthClass="w-[760px] max-w-[94vw]"
-    >
+    <div className="space-y-6">
       <EmploymentFieldsSection employee={employee} canWrite={canWrite} qc={qc} />
-      <div className="my-6 h-px bg-slate-100 dark:bg-slate-800" />
+      <div className="h-px bg-slate-100 dark:bg-slate-800" />
       <EligibilitiesSection employee={employee} canWrite={canWrite} qc={qc} />
-      <div className="my-6 h-px bg-slate-100 dark:bg-slate-800" />
+      <div className="h-px bg-slate-100 dark:bg-slate-800" />
       <AbsencesSection employee={employee} canWrite={canWrite} qc={qc} />
-      <div className="my-6 h-px bg-slate-100 dark:bg-slate-800" />
+      <div className="h-px bg-slate-100 dark:bg-slate-800" />
       <DocumentsSection employee={employee} canWrite={canWrite} qc={qc} />
-    </Modal>
+    </div>
   );
 }
 

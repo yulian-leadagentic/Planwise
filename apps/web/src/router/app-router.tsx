@@ -71,11 +71,10 @@ const DrivePage = lazy(() => import('@/features/admin/drive-page').then(m => ({ 
 const ProfilePage = lazy(() => import('@/features/misc/profile-page').then(m => ({ default: m.ProfilePage })));
 const NotFoundPage = lazy(() => import('@/features/misc/not-found-page').then(m => ({ default: m.NotFoundPage })));
 
-// HR Phase A4+B4+C4+D2 — HrLayout owns `/hr/*`. Phase D2 (2026-10-18)
-// replaces the Reports placeholder with the real consolidated
-// accounting export page; the other three tabs ship real pages.
+// HR Phase A4+B4+C4+D2 — HrLayout owns `/hr/*`. §15 R1 (2026-10-18)
+// removes /hr/employees (the HR panel now folds into Admin→Users edit
+// as a tab); /hr/review is the default landing.
 const HrLayout = lazy(() => import('@/features/hr/hr-layout').then(m => ({ default: m.HrLayout })));
-const HrEmployeesPage = lazy(() => import('@/features/hr/employees-page').then(m => ({ default: m.HrEmployeesPage })));
 const HrMonthlyReviewPage = lazy(() => import('@/features/hr/review-page').then(m => ({ default: m.HrMonthlyReviewPage })));
 const HrReportsPage = lazy(() => import('@/features/hr/reports-page').then(m => ({ default: m.HrReportsPage })));
 const HrSettingsPage = lazy(() => import('@/features/hr/settings-page').then(m => ({ default: m.HrSettingsPage })));
@@ -203,19 +202,15 @@ export function AppRouter() {
           <Route path="employees" element={<L><PeoplePage /></L>} />
         </Route>
 
-        {/* HR (Phase A4, 2026-10-15) — nested under HrLayout for the
-            persistent 4-tab sub-nav. RoutePermissionGuard checks
-            `/hr` → `hr:read` before this subtree renders. Only
-            Employees is wired today; the other three tabs render a
-            Coming-soon placeholder so the sub-nav shape stays stable
-            through Phase B/C. */}
+        {/* HR (Phase A4, 2026-10-15; §15 R1, 2026-10-18) — nested under
+            HrLayout for the persistent sub-nav. RoutePermissionGuard
+            checks `/hr` → `hr:read` before this subtree renders. §15
+            folded /hr/employees into Admin→Users edit as an HR tab;
+            Monthly Review is the new default landing, and the stale
+            /hr/employees URL redirects there so bookmarks don't 404. */}
         <Route path="hr" element={<L><HrLayout /></L>}>
-          {/* /hr → /hr/employees (there is no separate hub page today;
-              the Employees tab is the default landing). The sub-nav
-              still shows "Overview" linked to /hr for consistency with
-              Admin/Templates; a Phase B hub page replaces this redirect. */}
-          <Route index element={<Navigate to="/hr/employees" replace />} />
-          <Route path="employees" element={<L><HrEmployeesPage /></L>} />
+          <Route index element={<Navigate to="/hr/review" replace />} />
+          <Route path="employees" element={<Navigate to="/hr/review" replace />} />
           <Route path="review" element={<L><HrMonthlyReviewPage /></L>} />
           <Route path="reports" element={<L><HrReportsPage /></L>} />
           <Route path="settings" element={<L><HrSettingsPage /></L>} />
