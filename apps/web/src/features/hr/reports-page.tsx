@@ -474,19 +474,20 @@ export function HrReportsPage() {
 // ─── Status badge ──────────────────────────────────────────────────
 
 const STATUS_PILL: Record<MonthlyStatus, string> = {
-  OPEN: 'bg-slate-100 dark:bg-slate-800/60 text-slate-700 dark:text-slate-200',
+  OPEN: 'bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-200',
   APPROVED:
-    'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300',
+    'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
   LOCKED:
-    'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300',
-  DRAFT: 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300',
+    'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300',
+  DRAFT:
+    'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
 };
 
 function StatusBadge({ status }: { status: MonthlyStatus }) {
   return (
     <span
       className={cn(
-        'inline-flex items-center text-[11px] font-bold tracking-wide uppercase rounded-[5px] px-1.5 py-0.5',
+        'inline-flex items-center text-[11px] font-bold tracking-wide uppercase rounded-[5px] px-2 py-0.5',
         STATUS_PILL[status],
       )}
     >
@@ -647,7 +648,7 @@ function EmployeeSheet({
                 'יום',
                 'התחלה',
                 'סיום',
-                'סך שעות',
+                'סה"כ שעות',
                 'סוג יום',
               ].map((h) => (
                 <th
