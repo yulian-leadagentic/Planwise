@@ -1,11 +1,13 @@
 import type { LucideIcon } from 'lucide-react';
-import { CalendarCheck, FileSpreadsheet, Settings2 } from 'lucide-react';
+import { CalendarCheck, Settings2 } from 'lucide-react';
 
 /**
- * HR Phase A4 (2026-10-15) — "Coming soon" state for the 3 HR tabs
- * the spec locks for Phase B/C (Monthly Review, Reports, Settings).
- * Keeps the HR module's sub-nav shape identical today vs. tomorrow,
- * so admins don't see the surface shift under them.
+ * HR Phase A4 (2026-10-15) — "Coming soon" state for the HR tabs that
+ * were locked for later phases. Phase D2 (2026-10-18) lit up Reports,
+ * leaving no live callers for the placeholder today — the component
+ * stays exported so a future tab (if any) can reuse the chrome, and
+ * the Monthly Review / Settings exports are kept harmless as safety
+ * nets even though both tabs are now wired to real pages.
  */
 export interface PlaceholderTabProps {
   icon: LucideIcon;
@@ -33,7 +35,9 @@ export function PlaceholderTab({ icon: Icon, title, description }: PlaceholderTa
 }
 
 // ─── Pre-wrapped tabs for the router ──────────────────────────────────
-// Phase B/C replaces each of these with a real page.
+// Phase B/C/D replaced each real tab with a live page. These wrappers
+// stay as fallbacks for any future screen that still needs the
+// placeholder chrome; the current router doesn't import them.
 
 export function HrMonthlyReviewPlaceholder() {
   return (
@@ -41,16 +45,6 @@ export function HrMonthlyReviewPlaceholder() {
       icon={CalendarCheck}
       title="Monthly review"
       description="End-of-month timesheet review + payroll export lands in Phase B."
-    />
-  );
-}
-
-export function HrReportsPlaceholder() {
-  return (
-    <PlaceholderTab
-      icon={FileSpreadsheet}
-      title="Reports"
-      description="HR-specific reports (attendance, bucket consumption, overtime) ship in Phase B."
     />
   );
 }

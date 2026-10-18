@@ -317,6 +317,65 @@ export interface MyMonthlySummary {
   cBucketUsage: CBucketUsage[];
 }
 
+// ─── Consolidated accounting report (Phase D) ─────────────────────────
+
+export type ReportScope =
+  | { kind: 'all-active' }
+  | { kind: 'org-unit'; orgUnitId: number }
+  | { kind: 'manual'; userIds: number[] };
+
+export interface ReportPayloadDay {
+  date: string; // yyyy-MM-dd
+  dayOfWeek: string; // Hebrew: ראשון/שני/.../שבת
+  startTime: string | null;
+  endTime: string | null;
+  totalHours: number;
+  dayType: string;
+}
+
+export interface ReportPayloadEmployee {
+  user: {
+    id: number;
+    firstName: string;
+    lastName: string;
+    firstNameHe: string | null;
+    lastNameHe: string | null;
+    accountingEmployeeNumber: string | null;
+  };
+  header: {
+    monthlyStandard: number;
+    actualHours: number;
+    weightedHours: number;
+    deviation: number;
+    sickDays: number;
+    vacationDays: number;
+  };
+  days: ReportPayloadDay[];
+}
+
+export interface ReportPayload {
+  year: number;
+  month: number;
+  employees: ReportPayloadEmployee[];
+}
+
+/**
+ * MONTHLY_NOT_APPROVED error payload returned by any of the three
+ * endpoints (preview, export/xlsx, export/pdf). The FE catches it on
+ * the preview call and renders a blocker banner before letting the
+ * user try to export.
+ */
+export interface ReportBlockersError {
+  error: 'MONTHLY_NOT_APPROVED';
+  message: string;
+  blockers: Array<{
+    userId: number;
+    firstName: string;
+    lastName: string;
+    status: 'OPEN' | 'LOCKED' | 'MISSING';
+  }>;
+}
+
 // Bucket admin CRUD ───────────────────────────────────────────────────
 export interface CreateBucketPayload {
   code: string;
@@ -501,4 +560,34 @@ export const hrApi = {
     client
       .get('/time-entries/my-monthly-summary', { params: { year, month } })
       .then((r) => unwrap<MyMonthlySummary>(r.data)),
+
+  // ─── Consolidated accounting report (Phase D) ────────────────────
+  previewReport: (year: number, month: number, scope: ReportScope) =>
+    client
+      .post('/hr/reports/preview', { year, month, scope })
+      .then((r) => unwrap<ReportPayload>(r.data)),
+
+  /**
+   * Direct-download helper for the XLSX export. Returns the Blob so
+   * the caller can trigger an <a download> click. 400 responses carry
+   * a MONTHLY_NOT_APPROVED body — the FE translates that via the
+   * standard axios error path.
+   */
+  exportXlsx: (year: number, month: number, scope: ReportScope) =>
+    client
+      .post(
+        '/hr/reports/export/xlsx',
+        { year, month, scope },
+        { responseType: 'blob' },
+      )
+      .then((r) => r.data as Blob),
+
+  exportPdf: (year: number, month: number, scope: ReportScope) =>
+    client
+      .post(
+        '/hr/reports/export/pdf',
+        { year, month, scope },
+        { responseType: 'blob' },
+      )
+      .then((r) => r.data as Blob),
 };

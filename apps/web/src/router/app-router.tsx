@@ -71,13 +71,13 @@ const DrivePage = lazy(() => import('@/features/admin/drive-page').then(m => ({ 
 const ProfilePage = lazy(() => import('@/features/misc/profile-page').then(m => ({ default: m.ProfilePage })));
 const NotFoundPage = lazy(() => import('@/features/misc/not-found-page').then(m => ({ default: m.NotFoundPage })));
 
-// HR Phase A4+B4+C4 — HrLayout owns `/hr/*`. Only Reports stays a
-// placeholder; Employees (A4), Settings (B4) and Monthly Review (C4)
-// all ship real pages.
+// HR Phase A4+B4+C4+D2 — HrLayout owns `/hr/*`. Phase D2 (2026-10-18)
+// replaces the Reports placeholder with the real consolidated
+// accounting export page; the other three tabs ship real pages.
 const HrLayout = lazy(() => import('@/features/hr/hr-layout').then(m => ({ default: m.HrLayout })));
 const HrEmployeesPage = lazy(() => import('@/features/hr/employees-page').then(m => ({ default: m.HrEmployeesPage })));
 const HrMonthlyReviewPage = lazy(() => import('@/features/hr/review-page').then(m => ({ default: m.HrMonthlyReviewPage })));
-const HrReportsPlaceholder = lazy(() => import('@/features/hr/placeholder-tab').then(m => ({ default: m.HrReportsPlaceholder })));
+const HrReportsPage = lazy(() => import('@/features/hr/reports-page').then(m => ({ default: m.HrReportsPage })));
 const HrSettingsPage = lazy(() => import('@/features/hr/settings-page').then(m => ({ default: m.HrSettingsPage })));
 const MonthlySummaryPage = lazy(() => import('@/features/time/monthly-summary-page').then(m => ({ default: m.MonthlySummaryPage })));
 
@@ -217,7 +217,7 @@ export function AppRouter() {
           <Route index element={<Navigate to="/hr/employees" replace />} />
           <Route path="employees" element={<L><HrEmployeesPage /></L>} />
           <Route path="review" element={<L><HrMonthlyReviewPage /></L>} />
-          <Route path="reports" element={<L><HrReportsPlaceholder /></L>} />
+          <Route path="reports" element={<L><HrReportsPage /></L>} />
           <Route path="settings" element={<L><HrSettingsPage /></L>} />
         </Route>
 
