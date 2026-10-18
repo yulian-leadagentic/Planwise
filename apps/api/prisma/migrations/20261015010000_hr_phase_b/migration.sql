@@ -1,52 +1,23 @@
 -- =====================================================
 -- HR Phase B · 20261015010000_hr_phase_b
---
--- Pairs with `docs/bm2/planwise-hr-module-spec.md` §3 (CalendarDay +
--- AbsenceType/Record) and §6 (TimeEntry.bucketId + Eligibility.docFK).
---
--- Additive EXCEPT the CalendarDayType enum remap (step 1). Data-safe
--- expand → UPDATE → narrow dance so no row ever carries an illegal
--- enum value. Verified pre-remap row distribution on staging:
---   holiday         13
---   half_day         1
---   company_day_off  0
---   special          0
--- Target post-remap: HOLIDAY 13 · HOLIDAY_EVE 1 · REST 0 · CHOL_HAMOED 0.
---
--- Design decisions (resolved by Yulian, 2026-10-15):
---   • Q1: holiday→HOLIDAY, half_day→HOLIDAY_EVE,
---         company_day_off→REST, special→CHOL_HAMOED.
---   • Q3: REGULAR is a legal enum value but we never materialize
---         REGULAR rows — the time engine defaults missing dates
---         to REGULAR implicitly.
---   • Q5: AbsenceRecord is event-sourced; no balance snapshots.
---   • All new FKs (AbsenceRecord.documentFileId, Eligibility.documentFileId,
---     TimeEntry.specialHourBucketId) use ON DELETE SET NULL so deleting
---     an attachment or bucket catalog row never cascade-nukes historical
---     absence / eligibility / time entries.
---
--- Written by hand to match the shadow-DB constraint of every BM2
--- migration. Railway's `prisma migrate deploy` on API boot applies it
--- after Yulian backs up staging (already done) and merges the push.
+-- Additive EXCEPT the CalendarDayType enum remap. Data-safe:
+-- transient VARCHAR → UPDATE → final ENUM. Avoids MySQL's
+-- case-insensitive ENUM collation (utf8mb4_unicode_ci) which
+-- rejects an ENUM listing both 'holiday' and 'HOLIDAY'.
 -- =====================================================
 
--- 1) CalendarDayType enum remap ─────────────────────────────────────
+-- 1) CalendarDay enum remap (transient VARCHAR, data-safe)
 
--- 1a. Expand ENUM to accept both old + new values so the UPDATE in
---     step 1b doesn't trip MySQL's strict enum-member check.
-ALTER TABLE `calendar_days`
-  MODIFY COLUMN `type` ENUM(
-    'holiday','company_day_off','half_day','special',
-    'REGULAR','HOLIDAY','HOLIDAY_EVE','CHOL_HAMOED','REST'
-  ) NOT NULL;
+-- 1a. Transient column type — no ENUM constraint during the UPDATEs.
+ALTER TABLE `calendar_days` MODIFY COLUMN `type` VARCHAR(32) NOT NULL;
 
--- 1b. Remap existing rows to the new UPPERCASE signature per Q1.
-UPDATE `calendar_days` SET `type` = 'HOLIDAY'      WHERE `type` = 'holiday';
-UPDATE `calendar_days` SET `type` = 'HOLIDAY_EVE'  WHERE `type` = 'half_day';
-UPDATE `calendar_days` SET `type` = 'REST'         WHERE `type` = 'company_day_off';
-UPDATE `calendar_days` SET `type` = 'CHOL_HAMOED'  WHERE `type` = 'special';
+-- 1b. Remap values (LOWER() guards against any case drift from past manual edits).
+UPDATE `calendar_days` SET `type` = 'HOLIDAY'     WHERE LOWER(`type`) = 'holiday';
+UPDATE `calendar_days` SET `type` = 'HOLIDAY_EVE' WHERE LOWER(`type`) = 'half_day';
+UPDATE `calendar_days` SET `type` = 'REST'        WHERE LOWER(`type`) = 'company_day_off';
+UPDATE `calendar_days` SET `type` = 'CHOL_HAMOED' WHERE LOWER(`type`) = 'special';
 
--- 1c. Narrow ENUM to the final signature (strips the four legacy values).
+-- 1c. Final ENUM signature.
 ALTER TABLE `calendar_days`
   MODIFY COLUMN `type` ENUM('REGULAR','HOLIDAY','HOLIDAY_EVE','CHOL_HAMOED','REST') NOT NULL;
 
