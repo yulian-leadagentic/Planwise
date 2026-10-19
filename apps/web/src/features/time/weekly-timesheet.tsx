@@ -18,6 +18,7 @@ import { useClockStatus, useClockIn, useClockOut, useWeeklyGrid, useDeleteTimeEn
 import { useOverlapConfirm } from './overlap-confirm';
 import { invalidateAfterTimeEntry } from './invalidate-after-time-entry';
 import { BucketPicker } from './bucket-picker';
+import { TimeoffForm } from './timeoff-form';
 import { format, addDays, startOfWeek } from '@/lib/date-utils';
 import { minutesToDisplay } from '@/types';
 import client from '@/api/client';
@@ -291,12 +292,39 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
             <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">{isEditing ? 'Edit Timesheet Entry' : 'Add Timesheet Entry'}</h3>
             <p className="text-[11px] text-slate-400 dark:text-slate-500">{new Date(date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
           </div>
-          {/* Location toggle — 3-way (Home / Office / Site). Historical pre-site
-              behaviour (binary home/office) is preserved via normalizeTimeLocation
-              on the seed value above. */}
-          <LocationToggle value={location} onChange={setLocation} size="md" />
+          {/* Location toggle — 4-way (Home / Office / Site / Timeoff).
+              F6 (2026-10-19): editing an existing TimeEntry row never
+              enters Timeoff mode (the user picked `timeoff` to START a
+              new absence/bucket entry — once saved it isn't a project
+              entry anymore). Historical pre-site behaviour (binary
+              home/office) is preserved via normalizeTimeLocation on the
+              seed value above. */}
+          <LocationToggle
+            value={location}
+            onChange={setLocation}
+            size="md"
+            allowTimeoff={!isEditing}
+          />
         </div>
 
+        {/* F6 (2026-10-19) — Timeoff mode replaces the whole project /
+            task / time-range / bucket branch below with the shared
+            TimeoffForm. Keep the LocationToggle visible in the header
+            so the user can flip back out of Timeoff mode without
+            closing the modal. */}
+        {location === 'timeoff' ? (
+          <div className="p-5">
+            <TimeoffForm
+              defaultDate={date}
+              onSaved={() => {
+                onSaved();
+                onClose();
+              }}
+              onCancel={onClose}
+            />
+          </div>
+        ) : (
+        <>
         <div className="p-5 space-y-4">
           {/* Project selector */}
           <div>
@@ -474,6 +502,8 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
             {submitting ? 'Saving…' : isEditing ? 'Update time entry' : 'Save time entry'}
           </button>
         </div>
+        </>
+        )}
       </div>
       {/* Save-anyway dialog for cross-task time overlaps. Renders only
           when overlap.withConfirm caught a CROSS_TASK_OVERLAP from the

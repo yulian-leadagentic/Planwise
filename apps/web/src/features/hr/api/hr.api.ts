@@ -53,6 +53,35 @@ export interface PickableBucket {
   sortOrder: number;
 }
 
+/**
+ * HR F5 (2026-10-19) — unified time-category catalog entry. One flat
+ * list that combines AbsenceType rows (kind=ABSENCE) with the A/C
+ * SpecialHourBucket rows (kind=WORK_NON_PROJECT / QUOTA). The `kind`
+ * discriminator is DERIVED on the server from existing data — no DB
+ * migration. ENTITLEMENT (B) buckets are intentionally NOT included:
+ * the engine auto-credits those; they are never user-reported through
+ * this picker.
+ *
+ * `absenceTypeId` is set only when kind=ABSENCE; `bucketId` is set only
+ * when kind=WORK_NON_PROJECT or QUOTA. The two never overlap — the FE
+ * uses the `kind` to pick which id to send on save and which endpoint
+ * to call.
+ */
+export type TimeCategoryKind = 'ABSENCE' | 'WORK_NON_PROJECT' | 'QUOTA';
+
+export interface TimeCategory {
+  kind: TimeCategoryKind;
+  absenceTypeId?: number;
+  bucketId?: number;
+  code: string;
+  nameHe: string;
+  unit: AbsenceUnit;
+  requiresDocument: boolean;
+  maxPerYear: number | null;
+  active: true;
+  sortOrder: number;
+}
+
 export interface HrEligibility {
   id: number;
   userId: number;
@@ -390,6 +419,14 @@ export const hrApi = {
    */
   listMyPickableBuckets: () =>
     client.get('/hr/me/pickable-buckets').then((r) => unwrap<PickableBucket[]>(r.data)),
+
+  // F5 (2026-10-19) — unified time-category catalog. Flat list of
+  // AbsenceType rows + A/C SpecialHourBucket rows, tagged with a `kind`
+  // discriminator. QUOTA (C) buckets are only returned when the caller
+  // holds an active eligibility covering today. See
+  // HrService.listTimeCategoriesForCaller.
+  listTimeCategories: () =>
+    client.get('/hr/time-categories').then((r) => unwrap<TimeCategory[]>(r.data)),
 
   // Buckets
   listBuckets: (opts: { behavior?: BucketBehavior; activeOnly?: boolean } = {}) =>

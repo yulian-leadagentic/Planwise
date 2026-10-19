@@ -12,6 +12,7 @@ import client from '@/api/client';
 import { useQuery } from '@tanstack/react-query';
 import { LocationToggle, type TimeLocation } from './location-toggle';
 import { BucketPicker } from './bucket-picker';
+import { TimeoffForm } from './timeoff-form';
 
 interface LogTimeDialogProps {
   open: boolean;
@@ -130,6 +131,26 @@ export function LogTimeDialog({
           </button>
         </div>
 
+        {/* F6 (2026-10-19) — Timeoff mode toggle. The LocationToggle lives
+            inside the form body below for the project/task branch; we
+            surface a slimline toggle at the top of the dialog here so the
+            user can flip to Timeoff mode without picking a project first. */}
+        <div className="flex items-center justify-between border-b border-border px-5 py-3">
+          <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Mode
+          </div>
+          <LocationToggle value={location} onChange={setLocation} size="md" allowTimeoff />
+        </div>
+
+        {location === 'timeoff' ? (
+          <div className="p-5">
+            <TimeoffForm
+              defaultDate={date}
+              onSaved={onClose}
+              onCancel={onClose}
+            />
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-4 p-5">
           {/* Date */}
           <div>
@@ -289,13 +310,10 @@ export function LogTimeDialog({
             </p>
           </div>
 
-          {/* Location — Home / Office / Site. Lands in TimeEntry.location
-              as a free string on save; the backend has no enum/migration
-              gating these values. */}
-          <div>
-            <label className="mb-1 block text-sm font-medium">Location</label>
-            <LocationToggle value={location} onChange={setLocation} size="md" />
-          </div>
+          {/* F6 (2026-10-19) — the LocationToggle moved to the dialog
+              header above so it also controls the Timeoff mode flip.
+              This body no longer renders its own copy; `location` is
+              still bound to the shared state above. */}
 
           {/* Note + preset phrase picker */}
           <div>
@@ -341,6 +359,7 @@ export function LogTimeDialog({
             </button>
           </div>
         </form>
+        )}
       </div>
     </div>
   );
