@@ -476,7 +476,7 @@ export function HrCalendarPage() {
             <div className="text-center">
               <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">{monthName}</h2>
               <p className="text-[12px] text-slate-400 dark:text-slate-500">
-                <span className="font-semibold text-slate-700 dark:text-slate-200">{monthWorkingDays}</span> working days this month
+                <span className="font-mono font-semibold text-slate-700 dark:text-slate-200">{monthWorkingDays}</span> working days this month
               </p>
             </div>
             <button onClick={nextMonth} className="rounded-md p-2 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Next"><ChevronRight className="h-5 w-5"  aria-hidden="true" /></button>
@@ -571,8 +571,8 @@ export function HrCalendarPage() {
             <div className="text-center">
               <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">{viewYear}</h2>
               <p className="text-[12px] text-slate-400 dark:text-slate-500">
-                <span className="font-semibold text-slate-700 dark:text-slate-200">{yearTotalWorking}</span> working days
-                {yearTotalHolidays > 0 && <> · <span className="text-red-500">{yearTotalHolidays} holidays</span></>}
+                <span className="font-mono font-semibold text-slate-700 dark:text-slate-200">{yearTotalWorking}</span> working days
+                {yearTotalHolidays > 0 && <> · <span className="font-mono text-red-500 dark:text-red-400">{yearTotalHolidays} holidays</span></>}
               </p>
             </div>
             <button onClick={() => setViewYear(viewYear + 1)} className="rounded-md p-2 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronRight className="h-5 w-5" /></button>
@@ -589,22 +589,22 @@ export function HrCalendarPage() {
                   <div className="flex items-center justify-between mb-3">
                     <h3 className={cn('text-sm font-semibold', isCurrent ? 'text-blue-600 dark:text-blue-400' : 'text-slate-900 dark:text-slate-100')}>{m.name}</h3>
                     {m.holidays > 0 && (
-                      <span className="text-[10px] font-bold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded px-1.5 py-0.5">{m.holidays}</span>
+                      <span className="text-[10px] font-mono font-bold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-[5px] px-1.5 py-0.5">{m.holidays}</span>
                     )}
                   </div>
 
                   {/* Stats */}
                   <div className="grid grid-cols-3 gap-2 text-center mb-3">
                     <div>
-                      <p className="text-lg font-bold text-slate-700 dark:text-slate-200">{m.working}</p>
+                      <p className="text-lg font-mono font-bold tabular-nums text-slate-700 dark:text-slate-200">{m.working}</p>
                       <p className="text-[9px] text-slate-400 dark:text-slate-500">Working</p>
                     </div>
                     <div>
-                      <p className={cn('text-lg font-bold', m.holidays > 0 ? 'text-red-600 dark:text-red-400' : 'text-slate-300 dark:text-slate-600')}>{m.holidays}</p>
+                      <p className={cn('text-lg font-mono font-bold tabular-nums', m.holidays > 0 ? 'text-red-600 dark:text-red-400' : 'text-slate-300 dark:text-slate-600')}>{m.holidays}</p>
                       <p className="text-[9px] text-slate-400 dark:text-slate-500">Holidays</p>
                     </div>
                     <div>
-                      <p className="text-lg font-bold text-slate-400 dark:text-slate-500">{m.total}</p>
+                      <p className="text-lg font-mono font-bold tabular-nums text-slate-400 dark:text-slate-500">{m.total}</p>
                       <p className="text-[9px] text-slate-400 dark:text-slate-500">Total</p>
                     </div>
                   </div>

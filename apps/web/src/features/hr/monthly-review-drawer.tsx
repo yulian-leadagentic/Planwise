@@ -143,19 +143,21 @@ export function MonthlyReviewDrawer({
             ) : (
               <div className="flex items-center gap-2">
                 {row.status === 'OPEN' && (
+                  // G1b: Approve button was emerald/green — now primary
+                  // blue (confirm CTAs go blue per planwise-design).
                   <button
                     type="button"
                     disabled={!canApprove || approve.isPending}
                     onClick={() => approve.mutate()}
                     className={cn(
-                      'inline-flex items-center gap-1.5 rounded-[5px] px-3 py-1.5 text-[13px] font-semibold transition-colors',
+                      'inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-semibold border-none transition-colors',
                       canApprove
-                        ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                        ? 'bg-blue-600 hover:bg-blue-700 text-white'
                         : 'cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500',
                     )}
                     title={canApprove ? 'Approve this employee' : 'Requires hr:approve'}
                   >
-                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
                     אשר
                   </button>
                 )}

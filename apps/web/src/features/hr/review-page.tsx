@@ -272,6 +272,8 @@ export function HrMonthlyReviewPage() {
               <Calculator className="h-3.5 w-3.5" />
               {recompute.isPending ? 'מחשב...' : 'חישוב מחדש'}
             </button>
+            {/* G1b: Approve-all was emerald/green — now primary blue
+                per planwise-design (confirm CTAs go blue, not green). */}
             <button
               type="button"
               disabled={!canApprove || approveAll.isPending || openCount === 0}
@@ -287,9 +289,9 @@ export function HrMonthlyReviewPage() {
                 }
               }}
               className={cn(
-                'inline-flex items-center gap-1.5 rounded-[5px] px-3 py-1.5 text-[13px] font-semibold transition-colors',
+                'inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-semibold border-none transition-colors',
                 canApprove && openCount > 0
-                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
                   : 'cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500',
               )}
               title={
