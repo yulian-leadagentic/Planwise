@@ -200,6 +200,19 @@ export function HrCalendarPage() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [formName, setFormName] = useState('');
   const [formType, setFormType] = useState('REST');
+  // HR G2 (2026-10-19) — per-type default working hours. HOLIDAY /
+  // REST = 0h (person is off), HOLIDAY_EVE / CHOL_HAMOED = 5h
+  // (historical short-day). The Add form seeds from this; the server
+  // also falls back to the same values if the FE ever omits the key.
+  const WORKING_HOURS_DEFAULT_BY_TYPE: Record<string, number> = {
+    HOLIDAY: 0,
+    HOLIDAY_EVE: 5,
+    CHOL_HAMOED: 5,
+    REST: 0,
+  };
+  const [formWorkingHours, setFormWorkingHours] = useState<string>(
+    String(WORKING_HOURS_DEFAULT_BY_TYPE.REST),
+  );
 
   const { data, isLoading } = useQuery({
     // Keep the ['admin', 'calendar'] queryKey — weekly-timesheet.tsx
@@ -216,8 +229,15 @@ export function HrCalendarPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (payload: { date: string; name: string; type: string }) =>
-      client.post('/calendar', payload).then((r) => r.data),
+    // HR G2 (2026-10-19) — Create payload carries workingHours. Server
+    // falls back to the type default (HOLIDAY_EVE / CHOL_HAMOED = 5,
+    // HOLIDAY / REST = 0) if the key is omitted.
+    mutationFn: (payload: {
+      date: string;
+      name: string;
+      type: string;
+      workingHours?: number | null;
+    }) => client.post('/calendar', payload).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'calendar'] });
       notify.success('Day added to calendar', { code: 'CAL-CREATE-200' });
@@ -225,13 +245,24 @@ export function HrCalendarPage() {
       setSelectedDate(null);
       setFormName('');
       setFormType('REST');
+      setFormWorkingHours(String(WORKING_HOURS_DEFAULT_BY_TYPE.REST));
     },
     onError: (err: any) => notify.apiError(err, 'Failed to add calendar day'),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, ...payload }: { id: number; halfDayUntil?: string; type?: string; notes?: string }) =>
-      client.patch(`/calendar/${id}`, payload).then((r) => r.data),
+    // HR G2 (2026-10-19) — Patch payload carries workingHours. An
+    // explicit null clears the row back to the type default; omitted
+    // key preserves the stored value.
+    mutationFn: ({
+      id,
+      ...payload
+    }: {
+      id: number;
+      workingHours?: number | null;
+      type?: string;
+      notes?: string;
+    }) => client.patch(`/calendar/${id}`, payload).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'calendar'] });
       notify.success('Calendar day updated');
@@ -280,12 +311,40 @@ export function HrCalendarPage() {
     setShowAddForm(true);
     setFormName('');
     setFormType('REST');
+    setFormWorkingHours(String(WORKING_HOURS_DEFAULT_BY_TYPE.REST));
+  };
+
+  const handleFormTypeChange = (newType: string) => {
+    // HR G2 (2026-10-19) — flipping the day type re-seeds the working
+    // hours field to that type's default so the operator doesn't have
+    // to blank + retype. If they later edit the number by hand, their
+    // value stays until they switch type again.
+    setFormType(newType);
+    setFormWorkingHours(String(WORKING_HOURS_DEFAULT_BY_TYPE[newType] ?? 0));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedDate || !formName.trim()) return;
-    createMutation.mutate({ date: selectedDate, name: formName.trim(), type: formType });
+    // HR G2 (2026-10-19) — validate workingHours client-side; same
+    // invariant as the server (0 ≤ v ≤ 24, 2-decimal cap). Empty →
+    // omit the key (server falls back to the type default).
+    const raw = formWorkingHours.trim();
+    let workingHours: number | undefined;
+    if (raw !== '') {
+      const v = Number(raw);
+      if (!Number.isFinite(v) || v < 0 || v > 24) {
+        notify.error('Working hours must be between 0 and 24.', { code: 'CAL-WH-RANGE' });
+        return;
+      }
+      workingHours = v;
+    }
+    createMutation.mutate({
+      date: selectedDate,
+      name: formName.trim(),
+      type: formType,
+      ...(workingHours !== undefined ? { workingHours } : {}),
+    });
   };
 
   // Weekend detection (Fri=5, Sat=6 for Israel)
@@ -293,7 +352,14 @@ export function HrCalendarPage() {
 
   const [importYear, setImportYear] = useState(today.getFullYear());
   const [showImport, setShowImport] = useState(false);
-  const [workingDayEdit, setWorkingDayEdit] = useState<{ id: number; name: string; hours: string } | null>(null);
+  // HR G2 (2026-10-19) — modal now edits `workingHours` directly.
+  // `hours` state key renamed to `workingHours` for clarity.
+  const [workingDayEdit, setWorkingDayEdit] = useState<{
+    id: number;
+    name: string;
+    type: string;
+    workingHours: string;
+  } | null>(null);
 
   // Check which years have calendar days imported. HR F3: the Hebcal-based
   // importer now also lands HOLIDAY_EVE and CHOL_HAMOED rows, so the
@@ -337,10 +403,16 @@ export function HrCalendarPage() {
     for (const ev of events) {
       if (existingDates.has(ev.date)) { skipped++; continue; }
       try {
+        // HR G2 (2026-10-19) — set workingHours per inferred type so
+        // the row lands with a non-null value even on a brand-new DB
+        // where the backfill never ran. The server would also fill
+        // the same default; we send it explicitly so the intent is
+        // obvious in request logs.
         await client.post('/calendar', {
           date: ev.date,
           name: `${ev.nameHe} (${ev.name})`,
           type: ev.type,
+          workingHours: WORKING_HOURS_DEFAULT_BY_TYPE[ev.type] ?? 0,
         });
         added++;
       } catch { skipped++; }
@@ -400,18 +472,47 @@ export function HrCalendarPage() {
   const yearTotalHolidays = yearMonths.reduce((s, m) => s + m.holidays, 0);
 
   const handleSetWorkingDay = (entry: any) => {
-    setWorkingDayEdit({ id: entry.id, name: entry.name, hours: entry.halfDayUntil || '4' });
+    // HR G2 (2026-10-19) — pre-fill with the row's current
+    // workingHours; fall back to the type default when the row still
+    // has null (e.g. a stray REGULAR row written by hand).
+    const current =
+      entry.workingHours != null
+        ? Number(entry.workingHours)
+        : WORKING_HOURS_DEFAULT_BY_TYPE[entry.type] ?? 0;
+    setWorkingDayEdit({
+      id: entry.id,
+      name: entry.name,
+      type: entry.type,
+      workingHours: String(current),
+    });
   };
 
   const saveWorkingDay = () => {
     if (!workingDayEdit) return;
-    updateMutation.mutate({ id: workingDayEdit.id, halfDayUntil: workingDayEdit.hours }, {
-      onSuccess: () => setWorkingDayEdit(null),
-    });
+    const v = Number(workingDayEdit.workingHours);
+    if (!Number.isFinite(v) || v < 0 || v > 24) {
+      notify.error('Working hours must be between 0 and 24.', { code: 'CAL-WH-RANGE' });
+      return;
+    }
+    updateMutation.mutate(
+      { id: workingDayEdit.id, workingHours: v },
+      { onSuccess: () => setWorkingDayEdit(null) },
+    );
   };
 
   const clearWorkingDay = (entry: any) => {
-    updateMutation.mutate({ id: entry.id, halfDayUntil: '' });
+    // HR G2 (2026-10-19) — explicit null tells the BE to clear the
+    // override. The row then shows the type default on next read.
+    updateMutation.mutate({ id: entry.id, workingHours: null });
+  };
+
+  // HR G2 (2026-10-19) — tells us whether a row's workingHours differs
+  // from the type default. Drives the "+Xh" badge on day cells (hidden
+  // when the row already carries the standard value for its type).
+  const isNonDefaultWorkingHours = (entry: any): boolean => {
+    if (entry.workingHours == null) return false;
+    const def = WORKING_HOURS_DEFAULT_BY_TYPE[entry.type] ?? 0;
+    return Number(entry.workingHours) !== def;
   };
 
   return (
@@ -522,34 +623,32 @@ export function HrCalendarPage() {
                     </div>
                     {entries.map((entry: any) => {
                       const style = TYPE_STYLES[entry.type] ?? TYPE_STYLES.CHOL_HAMOED;
-                      const isHoliday = entry.type === 'HOLIDAY';
-                      const hasWorkingHours = isHoliday && entry.halfDayUntil;
+                      // HR G2 (2026-10-19) — the badge + Edit-hours
+                      // affordance work for every type now, not just
+                      // HOLIDAY. The badge shows only when workingHours
+                      // differs from the type default (so a plain
+                      // HOLIDAY_EVE at 5h stays clean).
+                      const showWhBadge = isNonDefaultWorkingHours(entry);
                       return (
-                        <div key={entry.id} className={cn('mt-1 rounded px-1.5 py-0.5 text-[10px] font-medium flex items-center justify-between group', style.bg, style.text)} onClick={(e) => e.stopPropagation()}>
-                          <span className="truncate">
-                            {entry.name}
-                            {hasWorkingHours && <span className="ml-1 text-blue-600 dark:text-blue-400 font-bold">+{entry.halfDayUntil}h</span>}
+                        <div key={entry.id} className={cn('mt-1 rounded-[5px] px-1.5 py-0.5 text-[10px] font-medium flex items-center justify-between group', style.bg, style.text)} onClick={(e) => e.stopPropagation()}>
+                          <span className="truncate flex items-center gap-1">
+                            <span className="truncate">{entry.name}</span>
+                            {showWhBadge && (
+                              <span className="inline-flex items-center rounded-[5px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px] font-mono tabular-nums px-1.5 py-0.5 shrink-0">
+                                {Number(entry.workingHours)}h
+                              </span>
+                            )}
                           </span>
                           {canWrite && (
                             <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
-                              {isHoliday ? (
-                                hasWorkingHours ? (
-                                  <button onClick={() => clearWorkingDay(entry)} title="Remove working hours"
-                                    className="h-4 w-4 flex items-center justify-center rounded hover:bg-white dark:hover:bg-slate-900/50">
-                                    <X className="h-2.5 w-2.5" />
-                                  </button>
-                                ) : (
-                                  <button onClick={() => handleSetWorkingDay(entry)} title="Set as working day"
-                                    className="h-4 flex items-center gap-0.5 rounded px-1 hover:bg-white dark:hover:bg-slate-900/50 text-[9px] font-bold text-blue-700 dark:text-blue-300">
-                                    <Clock className="h-2.5 w-2.5" />Work
-                                  </button>
-                                )
-                              ) : (
-                                <button onClick={async () => { if (await confirm(`Remove "${entry.name}"?`)) deleteMutation.mutate(entry.id); }}
-                                  className="h-4 w-4 flex items-center justify-center rounded hover:bg-white dark:hover:bg-slate-900/50">
-                                  <X className="h-2.5 w-2.5" />
-                                </button>
-                              )}
+                              <button onClick={() => handleSetWorkingDay(entry)} title="Edit working hours"
+                                className="h-4 w-4 flex items-center justify-center rounded hover:bg-white dark:hover:bg-slate-900/50">
+                                <Clock className="h-2.5 w-2.5" />
+                              </button>
+                              <button onClick={async () => { if (await confirm(`Remove "${entry.name}"?`)) deleteMutation.mutate(entry.id); }}
+                                className="h-4 w-4 flex items-center justify-center rounded hover:bg-white dark:hover:bg-slate-900/50">
+                                <X className="h-2.5 w-2.5" />
+                              </button>
                             </div>
                           )}
                         </div>
@@ -692,8 +791,8 @@ export function HrCalendarPage() {
               <X className="h-4 w-4" />
             </button>
           </div>
-          <form onSubmit={handleSubmit} className="flex items-end gap-3">
-            <div className="flex-1">
+          <form onSubmit={handleSubmit} className="flex items-end gap-3 flex-wrap">
+            <div className="flex-1 min-w-[200px]">
               <label className="block text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1">Name *</label>
               <input value={formName} onChange={(e) => setFormName(e.target.value)}
                 placeholder="e.g. Team Building Day, Rosh Hashana"
@@ -706,13 +805,34 @@ export function HrCalendarPage() {
                   engine implicitly defaults missing dates to REGULAR,
                   so a materialised REGULAR row would be a lie. The HR
                   monthly engine depends on these exact enum values. */}
-              <select value={formType} onChange={(e) => setFormType(e.target.value)}
+              <select value={formType} onChange={(e) => handleFormTypeChange(e.target.value)}
                 className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none">
                 <option value="HOLIDAY">חג · Holiday</option>
                 <option value="HOLIDAY_EVE">ערב חג · Holiday eve</option>
                 <option value="CHOL_HAMOED">חוה״מ · Chol-hamoed</option>
                 <option value="REST">יום מנוחה · Rest / Company day off</option>
               </select>
+            </div>
+            {/* HR G2 (2026-10-19) — per-day working hours input. The
+                HR monthly engine credits this many standard-hours
+                against the user's monthlyStandard; 0 = full-day
+                absence. Default seeded from the type on change above. */}
+            <div className="w-44">
+              <label className="block text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                שעות עבודה · Working hours
+              </label>
+              <input
+                type="number"
+                step="0.25"
+                min={0}
+                max={24}
+                value={formWorkingHours}
+                onChange={(e) => setFormWorkingHours(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-mono tabular-nums text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none"
+              />
+              <p className="mt-1 text-[11px] font-medium text-slate-400 dark:text-slate-500">
+                0 = יום מלא היעדרות; עד dailyStandardHours
+              </p>
             </div>
             <button type="submit" disabled={!formName.trim() || createMutation.isPending}
               className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
@@ -722,15 +842,18 @@ export function HrCalendarPage() {
         </div>
       )}
 
-      {/* Working hours modal for holidays — People UX M1 on shared Modal. */}
+      {/* Working hours modal — People UX M1 on shared Modal.
+          HR G2 (2026-10-19) — modal now edits CalendarDay.workingHours
+          directly (replaces the old halfDayUntil-string field) and is
+          reachable for every row type, not just HOLIDAY. */}
       {workingDayEdit && (
         <Modal
           open
           onClose={() => setWorkingDayEdit(null)}
-          title="Set Working Hours on Holiday"
+          title="Set Working Hours"
           description={
             <>
-              Mark <strong>{workingDayEdit.name}</strong> as a working day with reduced hours. It will still display as a holiday.
+              Set the per-day working hours for <strong>{workingDayEdit.name}</strong>. 0 means the day is a full-day absence; the HR engine credits this many standard-hours against the user's monthlyStandard.
             </>
           }
           widthClass="w-full max-w-sm"
@@ -749,24 +872,28 @@ export function HrCalendarPage() {
                 disabled={updateMutation.isPending}
                 className="rounded-lg bg-blue-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
               >
-                {updateMutation.isPending ? 'Saving...' : 'Set Working Hours'}
+                {updateMutation.isPending ? 'Saving...' : 'Save'}
               </button>
             </>
           }
         >
-          <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1.5 block">Working Hours</label>
+          <label className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1.5 block">
+            שעות עבודה · Working hours
+          </label>
           <div className="flex items-center gap-2">
             <input
               type="number"
-              min="1"
-              max="12"
-              step="0.5"
-              value={workingDayEdit.hours}
-              onChange={(e) => setWorkingDayEdit({ ...workingDayEdit, hours: e.target.value })}
-              className="w-20 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-mono text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none"
+              min={0}
+              max={24}
+              step="0.25"
+              value={workingDayEdit.workingHours}
+              onChange={(e) => setWorkingDayEdit({ ...workingDayEdit, workingHours: e.target.value })}
+              className="w-24 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-mono tabular-nums text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none"
               autoFocus
             />
-            <span className="text-[13px] text-slate-500 dark:text-slate-400">hours (standard day = 8h)</span>
+            <span className="text-[13px] text-slate-500 dark:text-slate-400">
+              0 = יום מלא היעדרות; עד dailyStandardHours
+            </span>
           </div>
         </Modal>
       )}
@@ -780,31 +907,37 @@ export function HrCalendarPage() {
             {(data as any[]).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime()).map((d: any) => {
               const style = TYPE_STYLES[d.type] ?? TYPE_STYLES.CHOL_HAMOED;
               const isPast = new Date(d.date) < today;
-              const isHoliday = d.type === 'HOLIDAY';
-              const hasWorkingHours = isHoliday && d.halfDayUntil;
+              // HR G2 (2026-10-19) — show a "Nh" badge whenever the
+              // row's workingHours differs from the type default, for
+              // every type (not just HOLIDAY). Edit affordance is now
+              // visible for every row.
+              const showWhBadge = isNonDefaultWorkingHours(d);
               return (
                 <div key={d.id} className={cn('flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50', isPast && 'opacity-50')}>
                   <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', style.dot)} />
                   <span className="text-[13px] font-medium text-slate-700 dark:text-slate-200 w-32">{new Date(d.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/\s+/g, '-')}</span>
-                  <span className="text-[13px] text-slate-800 dark:text-slate-100 flex-1">
-                    {d.name}
-                    {hasWorkingHours && (
-                      <span className="ml-2 text-[11px] font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 rounded px-1.5 py-0.5">+{d.halfDayUntil}h working</span>
+                  <span className="text-[13px] text-slate-800 dark:text-slate-100 flex-1 flex items-center gap-2">
+                    <span>{d.name}</span>
+                    {showWhBadge && (
+                      <span className="inline-flex items-center rounded-[5px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[11px] font-mono tabular-nums px-1.5 py-0.5">
+                        {Number(d.workingHours)}h
+                      </span>
                     )}
                   </span>
-                  <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold', style.bg, style.text)}>{TYPE_LABEL[d.type] ?? d.type}</span>
-                  {canWrite && (isHoliday ? (
-                    <button onClick={() => handleSetWorkingDay(d)}
-                      className="rounded px-2 py-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
-                      title="Set working hours">
-                      <Clock className="h-3.5 w-3.5 inline mr-1" />{hasWorkingHours ? 'Edit hours' : 'Set working'}
-                    </button>
-                  ) : (
-                    <button onClick={async () => { if (await confirm(`Remove "${d.name}"?`)) deleteMutation.mutate(d.id); }}
-                      className="rounded p-1 text-slate-300 dark:text-slate-600 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  ))}
+                  <span className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide', style.bg, style.text)}>{TYPE_LABEL[d.type] ?? d.type}</span>
+                  {canWrite && (
+                    <>
+                      <button onClick={() => handleSetWorkingDay(d)}
+                        className="rounded px-2 py-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
+                        title="Edit working hours">
+                        <Clock className="h-3.5 w-3.5 inline mr-1" />Edit hours
+                      </button>
+                      <button onClick={async () => { if (await confirm(`Remove "${d.name}"?`)) deleteMutation.mutate(d.id); }}
+                        className="rounded p-1 text-slate-300 dark:text-slate-600 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  )}
                 </div>
               );
             })}

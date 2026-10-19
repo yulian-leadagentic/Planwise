@@ -1,17 +1,20 @@
 import { useState } from 'react';
-import { Clock, FileClock, Boxes } from 'lucide-react';
+import { FileClock, Boxes } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { Tabs, type TabItem } from '@/components/shared/tabs';
-import { ShortDaySection } from './settings/short-day-section';
 import { AbsenceTypesSection } from './settings/absence-types-section';
 import { BucketsSection } from './settings/buckets-section';
 
 /**
- * HR Phase B4 (2026-10-15) · §15 R2+R3 (2026-10-18) · F2 (2026-10-19).
- * F2 reversed §15 R2 and moved Calendar BACK into HR as a sibling
- * tab (/hr/calendar) instead of a jump-link card here. What remains
- * on /hr/settings is the three HR-only knobs: short-day hours,
- * absence types, special buckets.
+ * HR Phase B4 (2026-10-15) · §15 R2+R3 (2026-10-18) · F2 (2026-10-19)
+ * · G2 (2026-10-19).
+ *
+ * G2 moved per-day working hours from the two HrSettings globals
+ * (shortDayHoursHolidayEve + shortDayHoursCholHamoed) onto
+ * CalendarDay.workingHours, so the "Short day" tab is gone — holiday-
+ * eve / chol-hamoed hours are now edited inline on /hr/calendar. What
+ * remains on /hr/settings is the two HR catalogs: absence types and
+ * special buckets.
  *
  * Permissions:
  *   • Route gated by hr:read (RoutePermissionGuard enforces).
@@ -23,22 +26,22 @@ import { BucketsSection } from './settings/buckets-section';
  * cards, no shadows, border-only. Full dark: light + dark branch per
  * the design system.
  */
-type SettingsTab = 'short-day' | 'absence-types' | 'buckets';
+type SettingsTab = 'absence-types' | 'buckets';
 
 const TABS: TabItem<SettingsTab>[] = [
-  { value: 'short-day', label: 'Short day · יום מקוצר' },
   { value: 'absence-types', label: 'Absence types · סוגי היעדרויות' },
   { value: 'buckets', label: 'Special buckets · קופות מיוחדות' },
 ];
 
 const TAB_ICON: Record<SettingsTab, React.ElementType> = {
-  'short-day': Clock,
   'absence-types': FileClock,
   buckets: Boxes,
 };
 
 export function HrSettingsPage() {
-  const [tab, setTab] = useState<SettingsTab>('short-day');
+  // G2 (2026-10-19) — Short-day tab removed; default to the first
+  // remaining tab (absence-types).
+  const [tab, setTab] = useState<SettingsTab>('absence-types');
   const Icon = TAB_ICON[tab];
 
   return (
@@ -70,7 +73,6 @@ export function HrSettingsPage() {
           </h2>
         </div>
         <div className="p-5">
-          {tab === 'short-day' && <ShortDaySection />}
           {tab === 'absence-types' && <AbsenceTypesSection />}
           {tab === 'buckets' && <BucketsSection />}
         </div>

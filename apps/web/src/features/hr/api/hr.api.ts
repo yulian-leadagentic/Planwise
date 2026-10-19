@@ -149,16 +149,16 @@ export interface CreateEligibilityResponse {
 }
 
 // HR Settings ─────────────────────────────────────────────────────────
+// HR Wave 2 G2 (2026-10-19) — shortDayHoursHolidayEve +
+// shortDayHoursCholHamoed removed. Per-day working hours now live on
+// CalendarDay.workingHours; the two globals were dropped from
+// hr_settings by `20261019010000_hr_working_hours/migration.sql`.
 export interface HrSettings {
   id: number;
-  shortDayHoursHolidayEve: number;
-  shortDayHoursCholHamoed: number;
   minHoursPerDay: number;
   updatedAt: string;
 }
 export interface UpdateHrSettingsPayload {
-  shortDayHoursHolidayEve?: number;
-  shortDayHoursCholHamoed?: number;
   minHoursPerDay?: number;
 }
 
@@ -168,7 +168,13 @@ export interface HrCalendarDay {
   date: string;
   name: string;
   type: Exclude<CalendarDayType, 'REGULAR'>;
+  /** @deprecated G2 (2026-10-19) — use `workingHours`. Kept on the type
+   *  for one release so stale caches don't crash on parse. */
   halfDayUntil: string | null;
+  /** HR Wave 2 G2 (2026-10-19) — per-day working hours. Non-null
+   *  post-backfill for every row the HR module writes
+   *  (HOLIDAY / HOLIDAY_EVE / CHOL_HAMOED / REST). */
+  workingHours: number;
   appliesTo: CalendarDayAppliesTo;
   isRecurring: boolean;
   notes: string | null;
@@ -182,7 +188,11 @@ export interface CreateHrCalendarDayPayload {
   type: Exclude<CalendarDayType, 'REGULAR'>;
   name: string;
   appliesTo?: CalendarDayAppliesTo;
+  /** @deprecated G2 (2026-10-19) — use `workingHours`. */
   halfDayUntil?: string | null;
+  /** HR Wave 2 G2 (2026-10-19) — per-day working hours; null / omitted
+   *  = fall back to type default on the server. */
+  workingHours?: number | null;
   notes?: string | null;
   isRecurring?: boolean;
 }
