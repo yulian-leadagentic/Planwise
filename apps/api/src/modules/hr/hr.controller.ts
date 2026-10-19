@@ -211,6 +211,25 @@ export class HrController {
     return this.hr.listPickableBucketsForCaller(user.id);
   }
 
+  // ─── Self-service (any authenticated user, acting for themselves) ──
+  //
+  // G2.2 (2026-10-20) — the HR-manager endpoints under /hr/employees/:id
+  // are gated by hr:write AND assert `userType === 'employee'`, which
+  // correctly blocks on-behalf logging but prevents an admin (or any
+  // non-'employee' userType) from reporting their own time-off. These
+  // `/hr/me/*` paths intentionally bypass both: they always act for the
+  // caller and never for someone else, so the hr:write gate is not the
+  // right primitive here.
+
+  @Post('me/absences')
+  @ApiOperation({ summary: 'Caller logs their own absence record.' })
+  createMyAbsence(
+    @CurrentUser() user: any,
+    @Body() dto: CreateAbsenceRecordDto,
+  ) {
+    return this.hr.createMyAbsence(user.id, dto);
+  }
+
   // ─── Unified time-category catalog (F5, 2026-10-19) ─────────────────
   // Flat list of pickable time categories for the caller, each tagged
   // with a `kind` discriminator (ABSENCE / WORK_NON_PROJECT / QUOTA)

@@ -600,6 +600,28 @@ export class HrService {
 
   async createAbsence(userId: number, dto: CreateAbsenceRecordDto, actorId: number) {
     await this.assertEmployee(userId);
+    return this.createAbsenceCore(userId, dto, actorId);
+  }
+
+  /**
+   * HR G2.2 (2026-10-20) — self-service variant of {@link createAbsence}.
+   * Any authenticated user calling for themselves (actorId === userId).
+   * Does NOT run {@link assertEmployee} because the caller may be any
+   * userType — admins, partners, employees. If they're authenticated and
+   * their HR data exists (minHours, employment date, etc.) they can log
+   * their own absence. The underlying DB write, the type lookup, and the
+   * bereavement auto-expand all stay identical to {@link createAbsence};
+   * we just skip the gate.
+   */
+  async createMyAbsence(callerId: number, dto: CreateAbsenceRecordDto) {
+    return this.createAbsenceCore(callerId, dto, callerId);
+  }
+
+  private async createAbsenceCore(
+    userId: number,
+    dto: CreateAbsenceRecordDto,
+    actorId: number,
+  ) {
     const type = await this.prisma.absenceType.findUnique({
       where: { id: dto.absenceTypeId },
     });
