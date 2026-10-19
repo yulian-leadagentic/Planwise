@@ -438,6 +438,24 @@ export const hrApi = {
   listTimeCategories: () =>
     client.get('/hr/time-categories').then((r) => unwrap<TimeCategory[]>(r.data)),
 
+  // ─── Self-service (caller acts on their own HR records) ──────────────
+  // G2.2 (2026-10-20) — the HR-manager endpoints under /hr/employees/:id
+  // run `assertEmployee` which 404s whenever the caller's userType is not
+  // the literal `'employee'` (admins, partners, …). These `/hr/me/*`
+  // paths bypass that gate and always act for the authenticated caller.
+  createMyAbsence: (payload: CreateAbsencePayload) =>
+    client.post('/hr/me/absences', payload).then((r) => unwrap<AbsenceRecord>(r.data)),
+
+  uploadMyAttachment: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return client
+      .post('/hr/me/attachments', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      .then((r) => unwrap<UploadAttachmentResponse>(r.data));
+  },
+
   // Buckets
   listBuckets: (opts: { behavior?: BucketBehavior; activeOnly?: boolean } = {}) =>
     client

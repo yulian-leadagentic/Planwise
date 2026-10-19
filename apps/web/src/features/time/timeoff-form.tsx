@@ -122,7 +122,10 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
   const uploadMut = useMutation({
     mutationFn: (file: File) => {
       if (!callerId) throw new Error('No current user');
-      return hrApi.uploadAttachment(callerId, file);
+      // G2.2 (2026-10-20) — /hr/me/attachments bypasses the hr:write +
+      // assertEmployee gates so admins/non-'employee' userTypes can
+      // upload their own Timeoff documents.
+      return hrApi.uploadMyAttachment(file);
     },
     onSuccess: (resp) => {
       setDocumentFileId(resp.id);
@@ -146,7 +149,11 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
 
       const amt = Number(amount);
       if (picked.kind === 'ABSENCE') {
-        return hrApi.createAbsence(callerId, {
+        // G2.2 (2026-10-20) — /hr/me/absences bypasses the hr:write +
+        // assertEmployee gates so admins/non-'employee' userTypes can
+        // log their own time-off. `callerId` is still required above
+        // as the authenticated-user sanity check.
+        return hrApi.createMyAbsence({
           absenceTypeId: picked.absenceTypeId!,
           dateFrom,
           dateTo: dateTo !== dateFrom ? dateTo : undefined,
