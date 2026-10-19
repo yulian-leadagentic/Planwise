@@ -255,6 +255,14 @@ export function PeoplePage() {
     } else {
       payload.employerOrgId = Number(form.employerOrgId);
     }
+    // HR F1 (2026-10-19) — dailyStandardHours is NOT NULL + default 8.40.
+    // Empty string → omit so Prisma's `@default(8.40)` applies on INSERT;
+    // non-empty → send as number so the @IsNumber() DTO check passes.
+    if (form.dailyStandardHours === '' || form.dailyStandardHours == null) {
+      delete payload.dailyStandardHours;
+    } else {
+      payload.dailyStandardHours = Number(form.dailyStandardHours);
+    }
     createUser.mutate(payload);
   };
 

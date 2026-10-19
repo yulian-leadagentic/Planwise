@@ -131,6 +131,13 @@ export class UsersService implements OnModuleInit {
 
     const hashedPassword = await bcrypt.hash(dto.password, 12);
 
+    // HR F1 (2026-10-19) — `dailyStandardHours` is NOT NULL + default
+    // 8.40. An explicit `null` from a stale FE must not reach Prisma's
+    // `data`; drop it so the `@default(8.40)` applies on INSERT.
+    if ((dto as any).dailyStandardHours === null) {
+      delete (dto as any).dailyStandardHours;
+    }
+
     // Pull out fields that don't belong on User itself (or we want to handle
     // separately) so the rest can be spread into the User.create.
     const { employerOrgId, businessPartnerId: explicitBpId, ...userData } = dto;
@@ -521,6 +528,15 @@ export class UsersService implements OnModuleInit {
     const emailChanged = 'email' in dto && dto.email !== (existing as any).email;
     if (emailChanged) {
       data.userType = await this.deriveUserType(nextEmail);
+    }
+
+    // HR F1 (2026-10-19) — `dailyStandardHours` is NOT NULL + default
+    // 8.40 in the DB after wave-1. A stale FE that still PATCHes
+    // `dailyStandardHours: null` would otherwise crash on write. Drop
+    // null silently; the Prisma `@default` keeps the existing non-null
+    // value for a no-op patch.
+    if ('dailyStandardHours' in data && data.dailyStandardHours == null) {
+      delete data.dailyStandardHours;
     }
 
     // Coerce date-only strings ("2026-06-14") to Date so Prisma accepts them

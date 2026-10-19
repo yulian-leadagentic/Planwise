@@ -123,8 +123,12 @@ function EmploymentFieldsSection({ employee, canWrite, qc }: EmploymentFieldsSec
       hrApi.updateEmployee(employee.id, {
         employmentType: form.employmentType ? (form.employmentType as 'GLOBAL' | 'HOURLY') : null,
         accountingEmployeeNumber: form.accountingEmployeeNumber.trim() || null,
+        // HR F1 (2026-10-19) — dailyStandardHours is NOT NULL in the DB.
+        // Empty string in the field = "no change" (omit the field so the
+        // service's `in dto` check skips the write). The DB column always
+        // carries a value (default 8.40) after the F1 backfill.
         dailyStandardHours:
-          form.dailyStandardHours.trim() === '' ? null : Number(form.dailyStandardHours),
+          form.dailyStandardHours.trim() === '' ? undefined : Number(form.dailyStandardHours),
         employmentDate: form.employmentDate || null,
         employmentEndDate: form.employmentEndDate || null,
       }),

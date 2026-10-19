@@ -286,7 +286,13 @@ model User {
   taxId              String?         @map("tax_id")
   address            String?
   salaryHourly       Decimal?        @map("salary_hourly") @db.Decimal(10, 2)
-  dailyStandardHours Decimal?        @map("daily_standard_hours") @db.Decimal(4, 2)
+  // HR F1 (2026-10-19) — Yulian-approved: NOT NULL + default 8.40
+  // (per spec `docs/bm2/planwise-hr-fixes-wave1.md`). Migration
+  // `20261019000000_hr_wave1_f1_f3a` backfills the 115 null-or-zero
+  // rows to 8.40 before the ALTER. Prisma's `@default` means INSERT
+  // paths that omit the field now receive 8.40 automatically, so no
+  // backend validation panic on new users.
+  dailyStandardHours Decimal         @default(8.40) @map("daily_standard_hours") @db.Decimal(4, 2)
   employmentDate     DateTime?       @map("employment_date") @db.Date
   employmentEndDate  DateTime?       @map("employment_end_date") @db.Date
   employeeCategory   String?         @map("employee_category")
@@ -3237,6 +3243,13 @@ model HrSettings {
   shortDayHoursHolidayEve  Decimal  @default(5) @map("short_day_hours_holiday_eve") @db.Decimal(4, 2)
   shortDayHoursCholHamoed  Decimal  @default(5) @map("short_day_hours_chol_hamoed") @db.Decimal(4, 2)
   minHoursPerDay           Decimal  @default(5) @map("min_hours_per_day")           @db.Decimal(4, 2)
+  /// HR F3a (2026-10-19) — weekly rest days as JSON int array (JS
+  /// `Date.getDay()` values: 0=Sun … 6=Sat). Default seeded as [5, 6]
+  /// (Fri + Sat per the Israeli work-week). Nullable so cold-start can
+  /// fall back to `[5, 6]` in the engine when the singleton row has
+  /// no value. Overrides the implicit REGULAR fallback for weekend
+  /// dates with no CalendarDay row.
+  weeklyRestDays           Json?    @map("weekly_rest_days")
   updatedAt                DateTime @updatedAt @map("updated_at")
 
   @@map("hr_settings")

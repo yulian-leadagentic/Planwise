@@ -878,8 +878,11 @@ export class HrService {
     if ('employmentType' in dto) data.employmentType = dto.employmentType ?? null;
     if ('accountingEmployeeNumber' in dto)
       data.accountingEmployeeNumber = dto.accountingEmployeeNumber ?? null;
-    if ('dailyStandardHours' in dto)
-      data.dailyStandardHours = dto.dailyStandardHours ?? null;
+    // HR F1 (2026-10-19) — column is NOT NULL + default 8.40. Treat an
+    // explicit null from a stale FE as a no-op (don't try to write null).
+    // The field stays writable with a real number.
+    if ('dailyStandardHours' in dto && dto.dailyStandardHours != null)
+      data.dailyStandardHours = dto.dailyStandardHours;
     if ('employmentDate' in dto)
       data.employmentDate = dto.employmentDate ? new Date(dto.employmentDate) : null;
     if ('employmentEndDate' in dto)
