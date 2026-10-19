@@ -42,7 +42,7 @@ export const TIME_LOCATION_LABELS: Record<TimeLocation, string> = {
   home: 'Home',
   office: 'Office',
   site: 'Site',
-  timeoff: 'חופש',
+  timeoff: 'Timeoff',
 };
 
 export const TIME_LOCATION_EMOJI: Record<TimeLocation, string> = {
