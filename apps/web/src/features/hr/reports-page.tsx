@@ -277,7 +277,10 @@ export function HrReportsPage() {
             <div className="mb-1 text-[11px] uppercase font-semibold text-slate-400 tracking-[0.05em]">
               היקף · Scope
             </div>
-            <div className="inline-flex rounded-[5px] border border-slate-300 dark:border-slate-600 overflow-hidden">
+            {/* G1a: segmented control — track slate-100 / active white
+                pill / inactive muted text. Replaces the previous
+                black-on-white treatment that fought the primary CTA. */}
+            <div className="inline-flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800/50 p-0.5">
               {([
                 { k: 'all-active', label: 'כל העובדים הפעילים' },
                 { k: 'org-unit', label: 'לפי יחידת ארגון' },
@@ -291,10 +294,10 @@ export function HrReportsPage() {
                     setPreviewPayload(null);
                   }}
                   className={cn(
-                    'px-3 py-1.5 text-[13px] transition-colors border-l border-slate-300 dark:border-slate-600 first:border-l-0',
+                    'rounded-md px-3 py-1.5 text-[13px] font-semibold transition-colors',
                     scopeKind === opt.k
-                      ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-semibold'
-                      : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800',
+                      ? 'bg-white shadow-sm text-slate-900 dark:bg-slate-700/80 dark:text-slate-100'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200',
                   )}
                 >
                   {opt.label}
@@ -348,49 +351,56 @@ export function HrReportsPage() {
 
         {/* Action row */}
         <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+          {/* G1a: primary blue CTA — replaces the previous black button
+              that violated the planwise-design primary-button rule. */}
           <button
             type="button"
             disabled={!canExport || !scopeIsReady || preview.isPending}
             onClick={() => preview.mutate()}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-[5px] px-3 py-1.5 text-[13px] font-semibold transition-colors',
+              'inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-semibold border-none transition-colors',
               canExport && scopeIsReady
-                ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 hover:opacity-90'
+                ? 'bg-blue-600 hover:bg-blue-700 text-white'
                 : 'cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500',
             )}
           >
-            <FileText className="h-3.5 w-3.5" />
+            <FileText className="h-3.5 w-3.5" aria-hidden="true" />
             {preview.isPending ? 'טוען…' : 'הפק דוח'}
           </button>
 
           <div className="flex-1" />
 
+          {/* G1a: secondary XLSX export — was emerald/green, now the
+              neutral secondary button so it doesn't compete with the
+              primary CTA. Icon unchanged (FileSpreadsheet 14px). */}
           <button
             type="button"
             disabled={!exportEnabled || exportXlsx.isPending}
             onClick={() => exportXlsx.mutate()}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-[5px] border px-3 py-1.5 text-[13px] font-semibold transition-colors',
+              'inline-flex items-center gap-1.5 rounded-lg border px-3.5 py-2 text-[13px] font-semibold transition-colors',
               exportEnabled
-                ? 'border-emerald-200 dark:border-emerald-800/60 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40'
+                ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200'
                 : 'cursor-not-allowed border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500',
             )}
           >
-            <FileSpreadsheet className="h-3.5 w-3.5" />
+            <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden="true" />
             {exportXlsx.isPending ? 'מייצא…' : 'ייצא XLSX'}
           </button>
+          {/* G1a: secondary PDF export — was rose/pink, now the neutral
+              secondary button. Icon unchanged (FileText 14px). */}
           <button
             type="button"
             disabled={!exportEnabled || exportPdf.isPending}
             onClick={() => exportPdf.mutate()}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-[5px] border px-3 py-1.5 text-[13px] font-semibold transition-colors',
+              'inline-flex items-center gap-1.5 rounded-lg border px-3.5 py-2 text-[13px] font-semibold transition-colors',
               exportEnabled
-                ? 'border-rose-200 dark:border-rose-800/60 bg-rose-50 dark:bg-rose-900/20 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/40'
+                ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200'
                 : 'cursor-not-allowed border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500',
             )}
           >
-            <FileText className="h-3.5 w-3.5" />
+            <FileText className="h-3.5 w-3.5" aria-hidden="true" />
             {exportPdf.isPending ? 'מייצא…' : 'ייצא PDF'}
           </button>
         </div>
