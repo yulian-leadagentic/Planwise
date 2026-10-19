@@ -283,6 +283,122 @@ export class HrService {
     }));
   }
 
+  // ═══ Unified time-category catalog (F5, 2026-10-19) ══════════════════
+  // Composition (NO migration — kind is DERIVED):
+  //   • kind = ABSENCE          → every active AbsenceType
+  //   • kind = WORK_NON_PROJECT → every active SpecialHourBucket where behavior='A'
+  //   • kind = QUOTA            → every active SpecialHourBucket where behavior='C'
+  //                               AND the caller has an active EmployeeBucketEligibility
+  //                               covering today (privacy constraint).
+  // ENTITLEMENT (B) is intentionally omitted — the engine auto-credits
+  // those, they are never user-reported through the time-categories picker.
+  //
+  // Sort order: kind (ABSENCE → WORK_NON_PROJECT → QUOTA) → sortOrder → nameHe.
+  //
+  // Caller gating lives on `TimeEntry`/`AbsenceRecord` create — this
+  // endpoint is UX only. Keep it un-permissioned so every logged-in user
+  // can render their picker.
+  async listTimeCategoriesForCaller(userId: number) {
+    const [absenceTypes, buckets, eligibilities] = await Promise.all([
+      this.prisma.absenceType.findMany({
+        where: { active: true },
+        orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+      }),
+      this.prisma.specialHourBucket.findMany({
+        where: { active: true, behavior: { in: ['A', 'C'] } },
+        orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+      }),
+      this.prisma.employeeBucketEligibility.findMany({
+        where: {
+          userId,
+          active: true,
+          startDate: { lte: todayDateOnly() },
+          endDate: { gte: todayDateOnly() },
+        },
+        select: { bucketId: true },
+      }),
+    ]);
+
+    const callerBucketIds = new Set(eligibilities.map((e) => e.bucketId));
+
+    type TimeCategoryKind = 'ABSENCE' | 'WORK_NON_PROJECT' | 'QUOTA';
+    const rows: Array<{
+      kind: TimeCategoryKind;
+      absenceTypeId?: number;
+      bucketId?: number;
+      code: string;
+      nameHe: string;
+      unit: 'DAY' | 'HOUR';
+      requiresDocument: boolean;
+      maxPerYear: number | null;
+      active: true;
+      sortOrder: number;
+    }> = [];
+
+    for (const t of absenceTypes) {
+      rows.push({
+        kind: 'ABSENCE',
+        absenceTypeId: t.id,
+        code: t.code,
+        nameHe: t.nameHe,
+        unit: t.unit as 'DAY' | 'HOUR',
+        requiresDocument: t.requiresDocument,
+        maxPerYear: t.maxPerYear ?? null,
+        active: true,
+        sortOrder: t.sortOrder,
+      });
+    }
+
+    for (const b of buckets) {
+      if (b.behavior === 'A') {
+        rows.push({
+          kind: 'WORK_NON_PROJECT',
+          bucketId: b.id,
+          code: b.code,
+          nameHe: b.nameHe,
+          unit: b.unit as 'DAY' | 'HOUR',
+          requiresDocument: b.requiresDocument,
+          maxPerYear: b.maxPerYear != null ? Number(b.maxPerYear) : null,
+          active: true,
+          sortOrder: b.sortOrder,
+        });
+      } else if (b.behavior === 'C') {
+        // Privacy constraint — only surface C buckets to users who have
+        // an active eligibility covering today. Users without a grant
+        // never see the bucket in their picker.
+        if (!callerBucketIds.has(b.id)) continue;
+        rows.push({
+          kind: 'QUOTA',
+          bucketId: b.id,
+          code: b.code,
+          nameHe: b.nameHe,
+          unit: b.unit as 'DAY' | 'HOUR',
+          requiresDocument: b.requiresDocument,
+          maxPerYear: b.maxPerYear != null ? Number(b.maxPerYear) : null,
+          active: true,
+          sortOrder: b.sortOrder,
+        });
+      }
+    }
+
+    // Final sort: kind first (ABSENCE → WORK_NON_PROJECT → QUOTA), then
+    // sortOrder, then Hebrew name as the deterministic tiebreak.
+    const kindRank: Record<TimeCategoryKind, number> = {
+      ABSENCE: 0,
+      WORK_NON_PROJECT: 1,
+      QUOTA: 2,
+    };
+    rows.sort((a, b) => {
+      if (kindRank[a.kind] !== kindRank[b.kind]) {
+        return kindRank[a.kind] - kindRank[b.kind];
+      }
+      if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+      return a.nameHe.localeCompare(b.nameHe, 'he');
+    });
+
+    return rows;
+  }
+
   // ═══ HR settings (singleton row id=1) ════════════════════════════════
 
   async getSettings() {

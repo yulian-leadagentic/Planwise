@@ -211,6 +211,24 @@ export class HrController {
     return this.hr.listPickableBucketsForCaller(user.id);
   }
 
+  // ─── Unified time-category catalog (F5, 2026-10-19) ─────────────────
+  // Flat list of pickable time categories for the caller, each tagged
+  // with a `kind` discriminator (ABSENCE / WORK_NON_PROJECT / QUOTA)
+  // derived from the existing AbsenceType and SpecialHourBucket tables.
+  // No DB migration. Intentionally NOT gated on `hr:*` — every logged-in
+  // user needs the picker to log their own time/absences. QUOTA (C) is
+  // further filtered to users who have an active bucket eligibility
+  // covering today (privacy). ENTITLEMENT (B) is auto-credited and never
+  // returned here. See HrService.listTimeCategoriesForCaller.
+  @Get('time-categories')
+  @ApiOperation({
+    summary:
+      'Unified time-category catalog for the caller (ABSENCE + WORK_NON_PROJECT + QUOTA, derived from existing data).',
+  })
+  listTimeCategories(@CurrentUser() user: any) {
+    return this.hr.listTimeCategoriesForCaller(user.id);
+  }
+
   // ─── Employee roster ────────────────────────────────────────────────
 
   @Get('employees')
