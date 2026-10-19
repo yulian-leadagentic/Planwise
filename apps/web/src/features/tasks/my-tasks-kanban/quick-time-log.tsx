@@ -8,7 +8,6 @@ import { queryKeys } from '@/lib/query-keys';
 import { useOverlapConfirm } from '@/features/time/overlap-confirm';
 import { invalidateAfterTimeEntry } from '@/features/time/invalidate-after-time-entry';
 import { LocationToggle, type TimeLocation } from '@/features/time/location-toggle';
-import { BucketPicker } from '@/features/time/bucket-picker';
 import { TimeDropdown } from './time-dropdown';
 
 /**
@@ -38,8 +37,9 @@ export function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskPr
   // Default to `office` — the three valid values are home / office / site;
   // see features/time/location-toggle.tsx.
   const [location, setLocation] = useState<TimeLocation>('office');
-  // HR Phase B4: optional SpecialHourBucket tag (A/C behavior only).
-  const [specialHourBucketId, setSpecialHourBucketId] = useState<number | null>(null);
+  // G5 (2026-10-19): BucketPicker removed — this card-scoped quick-log
+  // only writes regular project/task time. Special-hour entries go
+  // through Timeoff mode (F6 TimeoffForm) in the self-service surfaces.
   const queryClient = useQueryClient();
 
   const [sh, sm] = start.split(':').map(Number);
@@ -85,7 +85,6 @@ export function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskPr
         note: note.trim() || undefined,
         isBillable: true,
         location,
-        specialHourBucketId: specialHourBucketId ?? undefined,
         confirmOverlap,
       }),
       {
@@ -202,8 +201,9 @@ export function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskPr
         <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
           placeholder="Description (optional)…"
           className="w-full px-2 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 text-[12px] focus:border-blue-400 focus:outline-none" />
-        {/* HR Phase B4 — SpecialHourBucket tag (collapsed; A/C only). */}
-        <BucketPicker value={specialHourBucketId} onChange={setSpecialHourBucketId} compact />
+        {/* HR G5 (2026-10-19): BucketPicker removed — special-hour entries
+            go through Timeoff mode (F6 TimeoffForm) in the self-service
+            surfaces. */}
         <div className="flex justify-end gap-1.5 pt-1">
           <button onClick={() => setOpen(false)} className="rounded-md border border-slate-200 dark:border-slate-700 px-3 py-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50">
             Cancel

@@ -11,7 +11,6 @@ import { cn } from '@/lib/utils';
 import client from '@/api/client';
 import { useQuery } from '@tanstack/react-query';
 import { LocationToggle, type TimeLocation } from './location-toggle';
-import { BucketPicker } from './bucket-picker';
 import { TimeoffForm } from './timeoff-form';
 
 interface LogTimeDialogProps {
@@ -39,8 +38,8 @@ export function LogTimeDialog({
   // default (binary office/home with office as the fallback). The three
   // valid values are home / office / site; see `location-toggle.tsx`.
   const [location, setLocation] = useState<TimeLocation>('office');
-  // HR Phase B4: optional SpecialHourBucket tag.
-  const [specialHourBucketId, setSpecialHourBucketId] = useState<number | null>(null);
+  // G5 (2026-10-19): BucketPicker removed — special-hour entries now
+  // go through Timeoff mode (LocationToggle + F6 TimeoffForm).
   const [projectSearch, setProjectSearch] = useState('');
   const [taskSearch, setTaskSearch] = useState('');
 
@@ -59,7 +58,6 @@ export function LogTimeDialog({
       setNote('');
       setIsBillable(true);
       setLocation('office');
-      setSpecialHourBucketId(null);
       setProjectSearch('');
       setTaskSearch('');
     }
@@ -105,7 +103,6 @@ export function LogTimeDialog({
         note: note.trim() || undefined,
         isBillable,
         location,
-        specialHourBucketId: specialHourBucketId ?? undefined,
       },
       {
         onSuccess: () => {
@@ -332,8 +329,9 @@ export function LogTimeDialog({
             />
           </div>
 
-          {/* HR Phase B4 — optional SpecialHourBucket tag (A/C only). */}
-          <BucketPicker value={specialHourBucketId} onChange={setSpecialHourBucketId} />
+          {/* HR G5 (2026-10-19): BucketPicker removed — special-hour
+              entries go through Timeoff mode (LocationToggle "Timeoff"
+              + F6 TimeoffForm). */}
 
           {/* Billable toggle hidden per user feedback 2026-06-22 — the
               column stays in the DB so historical entries keep their flag,

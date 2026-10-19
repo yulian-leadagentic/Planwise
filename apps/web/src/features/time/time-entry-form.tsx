@@ -7,7 +7,6 @@ import { cn } from '@/lib/utils';
 import { useOverlapConfirm } from './overlap-confirm';
 import { invalidateAfterTimeEntry } from './invalidate-after-time-entry';
 import { LocationToggle, type TimeLocation } from './location-toggle';
-import { BucketPicker } from './bucket-picker';
 
 interface TimeEntryFormProps {
   taskId: number;
@@ -49,9 +48,10 @@ export function TimeEntryForm({
   // and legacy rows either carry 'office'/'home' or null; null here
   // normalises to 'office').
   const [location, setLocation] = useState<TimeLocation>('office');
-  // HR Phase B4: optional SpecialHourBucket tag. Starts null; the
-  // picker is collapsed until the user clicks "+ קטגוריה מיוחדת".
-  const [specialHourBucketId, setSpecialHourBucketId] = useState<number | null>(null);
+  // G5 (2026-10-19): BucketPicker removed — this task-scoped form only
+  // writes regular project/task time. Special-hour entries go through
+  // Timeoff mode in the self-service surfaces (weekly timesheet +
+  // log-time dialog) via F6 TimeoffForm.
   const queryClient = useQueryClient();
 
   const [sh, sm] = start.split(':').map(Number);
@@ -81,7 +81,6 @@ export function TimeEntryForm({
           note: note.trim() || undefined,
           isBillable: true,
           location,
-          specialHourBucketId: specialHourBucketId ?? undefined,
           confirmOverlap,
         }),
       {
@@ -180,13 +179,9 @@ export function TimeEntryForm({
         className={cn(inputCls, 'w-full')}
       />
 
-      {/* HR Phase B4 — optional SpecialHourBucket tag. Collapsed by
-          default; renders nothing if the user has no buckets. */}
-      <BucketPicker
-        value={specialHourBucketId}
-        onChange={setSpecialHourBucketId}
-        compact={compact}
-      />
+      {/* HR G5 (2026-10-19): BucketPicker removed — special-hour
+          entries go through Timeoff mode (LocationToggle + F6
+          TimeoffForm) in the self-service surfaces. */}
 
       <div className="flex justify-end">
         <button
