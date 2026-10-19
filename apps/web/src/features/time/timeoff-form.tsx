@@ -265,7 +265,7 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
             <optgroup label="היעדרויות">
               {grouped.absence.map((c) => (
                 <option key={`ABSENCE:${c.absenceTypeId}`} value={`ABSENCE:${c.absenceTypeId}`}>
-                  {c.nameHe} ({c.unit === 'DAY' ? 'ימים' : 'שעות'})
+                  {c.nameHe}
                   {c.requiresDocument ? ' · מסמך חובה' : ''}
                 </option>
               ))}
@@ -275,7 +275,7 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
             <optgroup label="שעות עבודה שאינן על פרויקט">
               {grouped.workNonProject.map((c) => (
                 <option key={`WORK_NON_PROJECT:${c.bucketId}`} value={`WORK_NON_PROJECT:${c.bucketId}`}>
-                  {c.nameHe} ({c.unit === 'DAY' ? 'ימים' : 'שעות'})
+                  {c.nameHe}
                 </option>
               ))}
             </optgroup>
@@ -284,7 +284,7 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
             <optgroup label="מכסות">
               {grouped.quota.map((c) => (
                 <option key={`QUOTA:${c.bucketId}`} value={`QUOTA:${c.bucketId}`}>
-                  {c.nameHe} ({c.unit === 'DAY' ? 'ימים' : 'שעות'})
+                  {c.nameHe}
                 </option>
               ))}
             </optgroup>
