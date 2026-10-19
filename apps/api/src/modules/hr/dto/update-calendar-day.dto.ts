@@ -1,6 +1,17 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { CalendarDayAppliesTo, CalendarDayType } from '@prisma/client';
-import { IsBoolean, IsDateString, IsEnum, IsIn, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsDateString,
+  IsEnum,
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 
 export class UpdateHrCalendarDayDto {
   @ApiPropertyOptional({ description: 'ISO date — yyyy-mm-dd.' })
@@ -27,6 +38,19 @@ export class UpdateHrCalendarDayDto {
   @IsOptional()
   @IsString()
   halfDayUntil?: string | null;
+
+  /**
+   * HR Wave 2 G2 (2026-10-19) — per-day working hours override. An
+   * explicit `null` clears the row back to the type default; an
+   * omitted key preserves the stored value.
+   */
+  @ApiPropertyOptional({ description: 'Working hours on this day; null = use type default.' })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(24)
+  @Type(() => Number)
+  workingHours?: number | null;
 
   @ApiPropertyOptional()
   @IsOptional()

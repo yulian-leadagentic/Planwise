@@ -212,16 +212,22 @@ async function main() {
   // 4) CalendarDay rows for HOLIDAY_EVE + HOLIDAY in the target month.
   //    Upsert on `date` unique → idempotent. Tagged `notes='[demo-hr]'`
   //    so the clean script can target them precisely.
+  // HR Wave 2 G2 (2026-10-19) — carry workingHours on each demo row
+  // (HOLIDAY_EVE = 5h short-day, HOLIDAY = 0h). Matches the migration
+  // backfill defaults so the HR monthly engine credits the correct
+  // monthlyStandard for the demo month out of the box.
   const calDaysSpecs = [
     {
       date: dateUtc(TARGET_YEAR, TARGET_MONTH, HOLIDAY_EVE_DAY),
       name: 'ערב חג דמה',
       type: 'HOLIDAY_EVE' as const,
+      workingHours: 5,
     },
     {
       date: dateUtc(TARGET_YEAR, TARGET_MONTH, HOLIDAY_DAY),
       name: 'חג דמה',
       type: 'HOLIDAY' as const,
+      workingHours: 0,
     },
   ];
   let calDaysWritten = 0;
@@ -232,6 +238,7 @@ async function main() {
         date: c.date,
         name: c.name,
         type: c.type,
+        workingHours: c.workingHours,
         appliesTo: 'all',
         notes: DEMO_CAL_NOTE,
         createdBy: createdById,
@@ -239,6 +246,7 @@ async function main() {
       update: {
         name: c.name,
         type: c.type,
+        workingHours: c.workingHours,
         appliesTo: 'all',
         notes: DEMO_CAL_NOTE,
       },

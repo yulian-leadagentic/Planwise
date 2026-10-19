@@ -4,26 +4,14 @@ import { Type } from 'class-transformer';
 
 /**
  * HR Phase B3 (2026-10-15) — payload for PATCH /hr/settings. Each
- * field is optional; omitted keys preserve the stored value. All
- * three knobs are strict `> 0 && <= 24` per Yulian's Q&A.
+ * field is optional; omitted keys preserve the stored value.
+ *
+ * HR Wave 2 G2 (2026-10-19) — `shortDayHoursHolidayEve` +
+ * `shortDayHoursCholHamoed` removed. Per-day working hours now live
+ * on `CalendarDay.workingHours`; the two globals were dropped from
+ * `hr_settings` by `20261019010000_hr_working_hours/migration.sql`.
  */
 export class UpdateHrSettingsDto {
-  @ApiPropertyOptional({ description: 'Short-day hours on holiday eve.' })
-  @IsOptional()
-  @IsNumber()
-  @Min(0.01)
-  @Max(24)
-  @Type(() => Number)
-  shortDayHoursHolidayEve?: number;
-
-  @ApiPropertyOptional({ description: 'Short-day hours on chol-hamoed.' })
-  @IsOptional()
-  @IsNumber()
-  @Min(0.01)
-  @Max(24)
-  @Type(() => Number)
-  shortDayHoursCholHamoed?: number;
-
   @ApiPropertyOptional({ description: 'Minimum hours per working day.' })
   @IsOptional()
   @IsNumber()

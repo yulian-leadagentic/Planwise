@@ -527,6 +527,9 @@ export class HrMonthlyService {
         this.prisma.hrSettings.findUnique({ where: { id: 1 } }),
         this.prisma.calendarDay.findMany({
           where: { date: { gte: monthStart, lt: monthEnd } },
+          // HR Wave 2 G2 (2026-10-19) — pull `workingHours` so the
+          // engine no longer needs HrSettings.shortDayHours*.
+          select: { date: true, type: true, workingHours: true },
         }),
         this.prisma.timeEntry.findMany({
           where: {
@@ -562,12 +565,8 @@ export class HrMonthlyService {
       month,
       dailyStandard: user?.dailyStandardHours != null ? Number(user.dailyStandardHours) : 0,
       hrSettings: {
-        shortDayHoursHolidayEve: hrSettings
-          ? Number(hrSettings.shortDayHoursHolidayEve)
-          : 5,
-        shortDayHoursCholHamoed: hrSettings
-          ? Number(hrSettings.shortDayHoursCholHamoed)
-          : 5,
+        // HR Wave 2 G2 (2026-10-19) — shortDayHours* keys removed.
+        // The engine reads per-day working hours off CalendarDay now.
         minHoursPerDay: hrSettings ? Number(hrSettings.minHoursPerDay) : 5,
         // HR F3a (2026-10-19) — weekly rest days from HrSettings
         // (nullable JSON column; cold-start → [5, 6] Fri+Sat per
@@ -579,9 +578,14 @@ export class HrMonthlyService {
             )
           : [5, 6],
       },
+      // HR Wave 2 G2 (2026-10-19) — carry per-row `workingHours`.
+      // Non-null post-backfill for HOLIDAY / HOLIDAY_EVE / CHOL_HAMOED
+      // / REST; the engine falls back to defaultForType only when a
+      // stray NULL slips through (defensive).
       calendarDays: calendarDays.map((c) => ({
         date: c.date,
         type: c.type,
+        workingHours: c.workingHours != null ? Number(c.workingHours) : null,
       })),
       timeEntries: timeEntries.map((t) => ({
         id: t.id,
@@ -683,28 +687,31 @@ export class HrMonthlyService {
       !cal && inputs.hrSettings.weeklyRestDays.includes(dow);
 
     // 1) Base day standard.
-    //    HOLIDAY / REST → 0 (person is off; no standard credit either).
-    //    HOLIDAY_EVE / CHOL_HAMOED → short-day knob from HrSettings.
-    //    REGULAR → user.dailyStandardHours (0 when the user has none)
-    //              unless `dow` is a weekly rest day with no row → 0.
-    let dayStandard = 0;
-    if (dayType === CalendarDayType.HOLIDAY_EVE) {
-      dayStandard = inputs.hrSettings.shortDayHoursHolidayEve;
-    } else if (dayType === CalendarDayType.CHOL_HAMOED) {
-      dayStandard = inputs.hrSettings.shortDayHoursCholHamoed;
+    //    HR Wave 2 G2 (2026-10-19) — CalendarDay.workingHours is the
+    //    source of truth for per-day working hours. The engine no
+    //    longer reads HrSettings.shortDayHours*; the two columns were
+    //    dropped by `20261019010000_hr_working_hours/migration.sql`.
+    //
+    //    • A CalendarDay row wins: workingHours comes from the DB
+    //      (non-null post-backfill for HOLIDAY / HOLIDAY_EVE /
+    //      CHOL_HAMOED / REST); defaultForType is a defensive fallback
+    //      for a stray NULL row (e.g. an admin-written REGULAR row).
+    //    • F3a: Fri/Sat (or whatever the admin set) with no CalendarDay
+    //      row is implicit REST → 0.
+    //    • Otherwise: implicit REGULAR → user.dailyStandardHours (0
+    //      when the user has none).
+    let dayStandard: number;
+    if (cal) {
+      dayStandard =
+        cal.workingHours ?? defaultForType(cal.type, inputs.dailyStandard);
     } else if (isImplicitWeeklyRest) {
       // F3a — Fri/Sat (or whatever the admin set) with no CalendarDay
       // row counts as REST. dayStandard stays 0.
       dayStandard = 0;
-    } else if (
-      dayType === CalendarDayType.REGULAR ||
-      // Defensive: a REGULAR row shouldn't exist in the DB (service
-      // rejects it), but tolerate one if it ever does.
-      !cal
-    ) {
+    } else {
+      // Implicit REGULAR day.
       dayStandard = inputs.dailyStandard;
     }
-    // HOLIDAY / REST ⇒ dayStandard stays 0.
 
     // 2) Absence check — "absence day" if ANY AbsenceRecord covers it.
     const coveringAbsences = inputs.absenceRecords.filter(
@@ -863,8 +870,8 @@ interface EngineInputs {
   month: number;
   dailyStandard: number;
   hrSettings: {
-    shortDayHoursHolidayEve: number;
-    shortDayHoursCholHamoed: number;
+    // HR Wave 2 G2 (2026-10-19) — shortDayHours* keys removed. The
+    // engine reads per-day working hours off CalendarDay.workingHours.
     minHoursPerDay: number;
     /**
      * HR F3a (2026-10-19) — weekly rest days as JS `Date.getDay()`
@@ -874,7 +881,14 @@ interface EngineInputs {
      */
      weeklyRestDays: number[];
   };
-  calendarDays: Array<{ date: Date; type: CalendarDayType }>;
+  // HR Wave 2 G2 (2026-10-19) — carry per-row `workingHours`. Non-null
+  // post-backfill for HOLIDAY / HOLIDAY_EVE / CHOL_HAMOED / REST;
+  // defaultForType is the defensive fallback for a stray NULL row.
+  calendarDays: Array<{
+    date: Date;
+    type: CalendarDayType;
+    workingHours: number | null;
+  }>;
   timeEntries: Array<{
     id: number;
     date: Date;
@@ -903,6 +917,34 @@ interface EngineInputs {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
+
+/**
+ * HR Wave 2 G2 (2026-10-19) — defensive fallback for a CalendarDay row
+ * with a NULL `workingHours`. Post-backfill every HOLIDAY / HOLIDAY_EVE
+ * / CHOL_HAMOED / REST row has a non-null value, so this only fires
+ * on an admin-written REGULAR row (rare — the service rejects REGULAR
+ * on create) or a brand-new row inserted before the backfill ran.
+ *
+ * Values match the pre-G2 engine defaults so the fallback is a no-op
+ * on well-formed data.
+ */
+function defaultForType(
+  type: CalendarDayType,
+  regularStd: number,
+): number {
+  switch (type) {
+    case CalendarDayType.HOLIDAY_EVE:
+    case CalendarDayType.CHOL_HAMOED:
+      return 5; // historical AMEC default
+    case CalendarDayType.HOLIDAY:
+    case CalendarDayType.REST:
+      return 0;
+    case CalendarDayType.REGULAR:
+      return regularStd;
+    default:
+      return 0;
+  }
+}
 
 /** Hours → 2-decimal rounded number. Shields against float accumulation. */
 function round2(n: number): number {

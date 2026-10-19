@@ -227,10 +227,15 @@ async function main() {
 
   // HrSettings — singleton row (id=1). update:{} means re-running the
   // seed NEVER overwrites admin-set values.
+  //
+  // HR Wave 2 G2 (2026-10-19) — shortDayHours* columns were dropped
+  // from hr_settings; per-day working hours now live on
+  // CalendarDay.workingHours. Only minHoursPerDay + weeklyRestDays
+  // remain, both default-seeded by the schema.
   await prisma.hrSettings.upsert({
     where: { id: 1 },
     update: {},
-    create: { id: 1 }, // schema defaults (5/5/5) kick in
+    create: { id: 1 }, // schema defaults kick in
   });
   console.log('  Seeded hr_settings singleton');
 

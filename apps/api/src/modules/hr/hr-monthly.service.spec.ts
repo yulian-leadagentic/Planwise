@@ -107,8 +107,10 @@ describe('HrMonthlyService — monthly engine (HR §4 / Phase C2)', () => {
       },
       hrSettings: {
         findUnique: jest.fn().mockResolvedValue({
-          shortDayHoursHolidayEve: 5,
-          shortDayHoursCholHamoed: 5,
+          // HR Wave 2 G2 (2026-10-19) — shortDayHours* keys dropped
+          // from HrSettings. Per-day working hours now live on
+          // CalendarDay.workingHours; tests that need HOLIDAY_EVE /
+          // CHOL_HAMOED math include `workingHours: 5` on the row.
           minHoursPerDay: 5,
           // HR F3a (2026-10-19) — Tests 1–8 pre-date the weekly-rest
           // feature and assert on 31 implicit REGULAR days (no
@@ -178,8 +180,8 @@ describe('HrMonthlyService — monthly engine (HR §4 / Phase C2)', () => {
     const holidayEve = new Date(YEAR, MONTH - 1, 2);
     const cholHamoed = new Date(YEAR, MONTH - 1, 3);
     prisma.calendarDay.findMany.mockResolvedValue([
-      { date: holidayEve, type: 'HOLIDAY_EVE' },
-      { date: cholHamoed, type: 'CHOL_HAMOED' },
+      { date: holidayEve, type: 'HOLIDAY_EVE', workingHours: 5 },
+      { date: cholHamoed, type: 'CHOL_HAMOED', workingHours: 5 },
     ]);
     // No time entries — we only assert on monthlyStandard.
     await service.computeMonth({ userId: USER_ID, year: YEAR, month: MONTH });
@@ -199,7 +201,7 @@ describe('HrMonthlyService — monthly engine (HR §4 / Phase C2)', () => {
 
     prisma.timeEntry.findMany.mockResolvedValue(workDays.map((d) => te(d)));
     prisma.calendarDay.findMany.mockResolvedValue([
-      { date: holiday, type: 'HOLIDAY' },
+      { date: holiday, type: 'HOLIDAY', workingHours: 0 },
     ]);
     prisma.absenceRecord.findMany.mockResolvedValue([
       absence('vacation', vacationStart, vacationEnd, 1),
@@ -244,7 +246,7 @@ describe('HrMonthlyService — monthly engine (HR §4 / Phase C2)', () => {
   it('half-day absence on HOLIDAY_EVE credits 0.5 × 5 = 2.5', async () => {
     const dateStr = new Date(YEAR, MONTH - 1, 2);
     prisma.calendarDay.findMany.mockResolvedValue([
-      { date: dateStr, type: 'HOLIDAY_EVE' },
+      { date: dateStr, type: 'HOLIDAY_EVE', workingHours: 5 },
     ]);
     prisma.absenceRecord.findMany.mockResolvedValue([
       absence('holiday_eve_leave', dateStr, dateStr, 0.5),
@@ -363,8 +365,6 @@ describe('HrMonthlyService — monthly engine (HR §4 / Phase C2)', () => {
 
     it('default [5, 6] (Fri + Sat): standard = 21 × 8.4 for Oct 2026', async () => {
       prisma.hrSettings.findUnique.mockResolvedValue({
-        shortDayHoursHolidayEve: 5,
-        shortDayHoursCholHamoed: 5,
         minHoursPerDay: 5,
         weeklyRestDays: [5, 6],
       });
@@ -379,8 +379,6 @@ describe('HrMonthlyService — monthly engine (HR §4 / Phase C2)', () => {
 
     it('empty [] (7-day work week): standard = 31 × 8.4', async () => {
       prisma.hrSettings.findUnique.mockResolvedValue({
-        shortDayHoursHolidayEve: 5,
-        shortDayHoursCholHamoed: 5,
         minHoursPerDay: 5,
         weeklyRestDays: [],
       });
@@ -395,8 +393,6 @@ describe('HrMonthlyService — monthly engine (HR §4 / Phase C2)', () => {
 
     it('Sunday only [0] (some orgs): standard excludes 4 Sundays for Oct 2026', async () => {
       prisma.hrSettings.findUnique.mockResolvedValue({
-        shortDayHoursHolidayEve: 5,
-        shortDayHoursCholHamoed: 5,
         minHoursPerDay: 5,
         weeklyRestDays: [0],
       });
@@ -414,11 +410,9 @@ describe('HrMonthlyService — monthly engine (HR §4 / Phase C2)', () => {
       // (would be the case if weekly rest overrode CalendarDay rows).
       const friday = new Date(YEAR, MONTH - 1, 2);
       prisma.calendarDay.findMany.mockResolvedValue([
-        { date: friday, type: 'HOLIDAY_EVE' },
+        { date: friday, type: 'HOLIDAY_EVE', workingHours: 5 },
       ]);
       prisma.hrSettings.findUnique.mockResolvedValue({
-        shortDayHoursHolidayEve: 5,
-        shortDayHoursCholHamoed: 5,
         minHoursPerDay: 5,
         weeklyRestDays: [5, 6],
       });

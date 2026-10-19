@@ -937,6 +937,13 @@ model CalendarDay {
   name         String
   type         CalendarDayType
   halfDayUntil String?              @map("half_day_until")
+  /// HR Wave 2 G2 (2026-10-19) — per-day working hours. The HR
+  /// monthly engine reads this directly off the row; HOLIDAY_EVE /
+  /// CHOL_HAMOED / HOLIDAY / REST all get a value from the backfill,
+  /// REGULAR rows (admin-materialized, rare) stay NULL and the
+  /// engine's defaultForType fallback picks the user's
+  /// dailyStandardHours. See docs/bm2/g2-migration-dry-run.md.
+  workingHours Decimal?             @db.Decimal(4, 2) @map("working_hours")
   appliesTo    CalendarDayAppliesTo @default(all) @map("applies_to")
   isRecurring  Boolean              @default(false) @map("is_recurring")
   notes        String?
@@ -3240,8 +3247,12 @@ model DriveFolderLink {
 /// seed — the seeder uses `update: {}`.
 model HrSettings {
   id                       Int      @id @default(autoincrement())
-  shortDayHoursHolidayEve  Decimal  @default(5) @map("short_day_hours_holiday_eve") @db.Decimal(4, 2)
-  shortDayHoursCholHamoed  Decimal  @default(5) @map("short_day_hours_chol_hamoed") @db.Decimal(4, 2)
+  // HR Wave 2 G2 (2026-10-19) — shortDayHoursHolidayEve +
+  // shortDayHoursCholHamoed removed. The HR monthly engine now reads
+  // per-day working hours directly off CalendarDay.workingHours; the
+  // backfill in `20261019010000_hr_working_hours/migration.sql` moved
+  // the admin-configured values onto the matching HOLIDAY_EVE /
+  // CHOL_HAMOED rows before dropping the two columns.
   minHoursPerDay           Decimal  @default(5) @map("min_hours_per_day")           @db.Decimal(4, 2)
   /// HR F3a (2026-10-19) — weekly rest days as JSON int array (JS
   /// `Date.getDay()` values: 0=Sun … 6=Sat). Default seeded as [5, 6]

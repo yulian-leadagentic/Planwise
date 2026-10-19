@@ -411,10 +411,11 @@ export class HrService {
         data: { id: 1 },
       });
     }
+    // HR Wave 2 G2 (2026-10-19) — shortDayHours* keys dropped from
+    // the response. Per-day working hours now live on
+    // CalendarDay.workingHours (edited via /hr/calendar).
     return {
       id: row.id,
-      shortDayHoursHolidayEve: Number(row.shortDayHoursHolidayEve),
-      shortDayHoursCholHamoed: Number(row.shortDayHoursCholHamoed),
       minHoursPerDay: Number(row.minHoursPerDay),
       updatedAt: row.updatedAt,
     };
@@ -425,14 +426,8 @@ export class HrService {
     await this.getSettings();
     const data: Prisma.HrSettingsUpdateInput = {};
     const changed: string[] = [];
-    if (dto.shortDayHoursHolidayEve != null) {
-      data.shortDayHoursHolidayEve = dto.shortDayHoursHolidayEve;
-      changed.push('holidayEve');
-    }
-    if (dto.shortDayHoursCholHamoed != null) {
-      data.shortDayHoursCholHamoed = dto.shortDayHoursCholHamoed;
-      changed.push('cholHamoed');
-    }
+    // HR Wave 2 G2 (2026-10-19) — shortDayHours* keys dropped; only
+    // minHoursPerDay remains as a global HR knob.
     if (dto.minHoursPerDay != null) {
       data.minHoursPerDay = dto.minHoursPerDay;
       changed.push('minHours');
@@ -447,8 +442,6 @@ export class HrService {
     });
     return {
       id: row.id,
-      shortDayHoursHolidayEve: Number(row.shortDayHoursHolidayEve),
-      shortDayHoursCholHamoed: Number(row.shortDayHoursCholHamoed),
       minHoursPerDay: Number(row.minHoursPerDay),
       updatedAt: row.updatedAt,
     };
