@@ -54,7 +54,7 @@ export function HrSettingsPlaceholder() {
     <PlaceholderTab
       icon={Settings2}
       title="Settings"
-      description="Organisation-wide HR knobs (holiday-eve length, min work day) land in Phase C."
+      description="Organisation-wide HR knobs (holiday-eve length, min work day) coming soon."
     />
   );
 }

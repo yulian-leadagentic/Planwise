@@ -177,7 +177,7 @@ function AbsenceTypeRow({
       <Td className="text-center">
         <span
           className="inline-flex items-center gap-1"
-          title="When Phase C ships, these absences count toward the sick balance."
+          title="היעדרות מסוג זה מנוכה מיתרת ימי מחלה · Counts toward sick balance."
         >
           <Flag on={row.deductsFromSick} />
           {row.deductsFromSick && (
@@ -380,7 +380,7 @@ function AbsenceTypeModal({ mode, existing, onClose, onSaved }: ModalProps) {
           />
           <Toggle
             label="Deducts from sick · על חשבון מחלה"
-            help="When Phase C ships, these absences count toward the sick balance."
+            help="היעדרות מסוג זה מנוכה מיתרת ימי מחלה · Counts toward sick balance."
             checked={!!form.deductsFromSick}
             disabled={isSystem}
             onChange={(v) => setForm((f) => ({ ...f, deductsFromSick: v }))}
