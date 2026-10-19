@@ -328,6 +328,27 @@ describe('HrMonthlyService — monthly engine (HR §4 / Phase C2)', () => {
     expect(data.daysOffice).toBe(0);
   });
 
+  // ─── Test 8b — HR F7 (2026-10-19) ────────────────────────────────────
+  // vacation_unpaid (חל"ת) must classify to vacationDays just like the
+  // paid `vacation` code — the engine treats paid/unpaid identically;
+  // the distinction is a payroll concern surfaced on the reports page
+  // by AbsenceType.nameHe.
+  it('F7: vacation_unpaid (חל"ת) classifies to vacationDays like vacation', async () => {
+    const day = new Date(YEAR, MONTH - 1, 6);
+    prisma.absenceRecord.findMany.mockResolvedValue([
+      absence('vacation_unpaid', day, day, 1),
+    ]);
+
+    await service.computeMonth({ userId: USER_ID, year: YEAR, month: MONTH });
+    const data = upsertCreateData();
+
+    // Same math as a 1-day `vacation`: full-day credit (1 × 8.4) +
+    // vacationDays += 1, sickDays untouched.
+    expect(data.weightedHours).toBeCloseTo(8.4, 2);
+    expect(data.vacationDays).toBeCloseTo(1, 2);
+    expect(data.sickDays).toBeCloseTo(0, 2);
+  });
+
   // ─── Test 9 — HR F3a (2026-10-19) ────────────────────────────────────
   // Weekly rest days exclude Fri+Sat from monthly standard. Dates with no
   // CalendarDay row AND whose JS `Date.getDay()` falls in

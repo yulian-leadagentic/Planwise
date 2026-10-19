@@ -50,7 +50,12 @@ import { PrismaService } from '../../prisma/prisma.service';
  *   - sick: AbsenceType.code === 'sick' OR AbsenceType.deductsFromSick
  *     (so `special_child_care_day` rolls into the sick ledger per the
  *     seed's `deductsFromSick=true` flag)
- *   - vacation: code ∈ {vacation, holiday_eve_leave, chol_hamoed_leave}
+ *   - vacation: code ∈ {vacation (paid), vacation_unpaid (חל"ת),
+ *     holiday_eve_leave, chol_hamoed_leave}. HR F7 (2026-10-19): the
+ *     paid-vs-unpaid distinction is a payroll concern — the engine
+ *     treats both as vacation days. The reports page shows each
+ *     AbsenceRecord detail row separately so the accountant can see
+ *     which rows are חל"ת vs חופשה by AbsenceType.nameHe.
  *   - everything else (reserve_duty, bereavement_1st_degree,
  *     reservist_spouse, user-defined codes): advances neither counter.
  *   - amount: for unit=DAY the raw record.amount (0.5 or 1.0); for
@@ -722,6 +727,7 @@ export class HrMonthlyService {
         const isSick = a.typeCode === 'sick' || a.deductsFromSick;
         const isVacation =
           a.typeCode === 'vacation' ||
+          a.typeCode === 'vacation_unpaid' ||
           a.typeCode === 'holiday_eve_leave' ||
           a.typeCode === 'chol_hamoed_leave';
 

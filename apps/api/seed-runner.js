@@ -137,6 +137,7 @@ async function seed() {
       { code: 'holiday_eve_leave',      nameHe: 'חופש בערב חג',                     unit: 'DAY', requiresDocument: false, deductsFromSick: false, maxPerYear: null, halfDay: true,  sortOrder: 10, isSystem: true },
       { code: 'chol_hamoed_leave',      nameHe: 'חופש בחוה"מ',                      unit: 'DAY', requiresDocument: false, deductsFromSick: false, maxPerYear: null, halfDay: true,  sortOrder: 20, isSystem: true },
       { code: 'vacation',               nameHe: 'חופשה',                            unit: 'DAY', requiresDocument: false, deductsFromSick: false, maxPerYear: null, halfDay: false, sortOrder: 30, isSystem: true },
+      { code: 'vacation_unpaid',        nameHe: 'חופשה ללא תשלום (חל"ת)',           unit: 'DAY', requiresDocument: false, deductsFromSick: false, maxPerYear: null, halfDay: false, sortOrder: 35, isSystem: true },
       { code: 'sick',                   nameHe: 'מחלה',                             unit: 'DAY', requiresDocument: true,  deductsFromSick: false, maxPerYear: null, halfDay: false, sortOrder: 40, isSystem: true },
       { code: 'reserve_duty',           nameHe: 'מילואים',                          unit: 'DAY', requiresDocument: true,  deductsFromSick: false, maxPerYear: null, halfDay: false, sortOrder: 50, isSystem: true },
       { code: 'special_child_care_day', nameHe: 'טיפול בילד צרכים מיוחדים',        unit: 'DAY', requiresDocument: true,  deductsFromSick: true,  maxPerYear: 18,   halfDay: false, sortOrder: 60, isSystem: true },
