@@ -81,11 +81,20 @@ async function getIsraeliCalendar(
     }
     const mask = ev.getFlags();
 
+    // Pre-filter false positives: Hebcal attaches EREV to minor-holiday
+    // and major-fast events (Erev Purim, Erev Tish'a B'Av, Chanukah: 1
+    // Candle). None of those are non-working days under AMEC's practice,
+    // so we drop them BEFORE the EREV→HOLIDAY_EVE mapping below. The
+    // only EREV we want to keep is the one tied to a true yom tov
+    // (Erev Pesach / Shavuot / Rosh Hashana / Yom Kippur / Sukkot).
+    if (mask & flags.MINOR_HOLIDAY) continue; // Purim, Chanukah, Lag BaOmer, etc.
+    if (mask & flags.MAJOR_FAST && !(mask & flags.CHAG)) continue; // Tish'a B'Av + eve; Yom Kippur kept via CHAG
+
     // Classification order matters:
     // 1. CHOL_HAMOED beats EREV/CHAG for a day flagged both ways
     //    (Hoshana Rabba is CHOL_HAMOED, keep it as CHOL_HAMOED).
     // 2. EREV beats CHAG so "Erev Pesach" lands as HOLIDAY_EVE even
-    //    though its mask also carries CHAG via the parent Pesach event.
+    //    when its parent Pesach event's mask carries CHAG.
     // 3. CHAG → HOLIDAY (full-day yom tov).
     // 4. MODERN_HOLIDAY → by name: Yom HaAtzma'ut = HOLIDAY, Yom
     //    HaZikaron = HOLIDAY_EVE (half-day in Israeli practice).
@@ -99,7 +108,7 @@ async function getIsraeliCalendar(
       else if (/Yom HaZikaron/i.test(nameEn) || /זיכרון/.test(nameHe)) type = 'HOLIDAY_EVE';
     }
 
-    if (!type) continue; // skip Chanukah / Purim / Lag BaOmer / fasts / Yom HaShoah
+    if (!type) continue; // skip Yom HaShoah, special-shabbat leftovers, etc.
 
     // De-dupe by date: first classified entry wins. CHOL_HAMOED comes
     // from the HebrewCalendar before daily holiday titles when both are
