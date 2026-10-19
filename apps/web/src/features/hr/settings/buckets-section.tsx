@@ -16,10 +16,13 @@ import {
   type SpecialHourBucket,
 } from '../api/hr.api';
 
+// G3 (2026-10-19) — chip visuals (indigo/blue/cyan) stay as a quiet
+// visual aid; A/B/C codes still travel on the wire, but the label text
+// is now the human category name the user actually recognises.
 const BEHAVIOR_LABEL: Record<BucketBehavior, { label: string; cls: string }> = {
-  A: { label: 'A · ניהול',  cls: 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300' },
-  B: { label: 'B · יומי',   cls: 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300' },
-  C: { label: 'C · שנתי',   cls: 'bg-cyan-50 dark:bg-cyan-900/30 text-cyan-600 dark:text-cyan-300' },
+  A: { label: 'היעדרות',       cls: 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300' },
+  B: { label: 'זכאות אישית',  cls: 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300' },
+  C: { label: 'מכסה שנתית',    cls: 'bg-cyan-50 dark:bg-cyan-900/30 text-cyan-600 dark:text-cyan-300' },
 };
 
 export function BucketsSection() {
@@ -50,7 +53,7 @@ export function BucketsSection() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-[13px] text-slate-500 dark:text-slate-400">
-          קופות שעות מיוחדות — A ניהול, B יומי, C שנתי. שורות מערכת
+          קופות שעות מיוחדות — היעדרות · זכאות אישית · מכסה שנתית. שורות מערכת
           נעולות חלקית.
         </p>
         {canWrite && (
@@ -70,7 +73,7 @@ export function BucketsSection() {
             <tr className="bg-[#FAFBFC] dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-700">
               <Th>Name</Th>
               <Th>Code</Th>
-              <Th>Behavior</Th>
+              <Th>Type</Th>
               <Th>Unit</Th>
               <Th className="text-center">Doc</Th>
               <Th className="text-right">Daily</Th>
@@ -357,7 +360,7 @@ function BucketModal({ mode, existing, onClose, onSaved }: ModalProps) {
 
         <div className="grid grid-cols-3 gap-4">
           <SelectField
-            label="Behavior"
+            label="Type · סוג"
             name="behavior"
             disabled={isSystem}
             value={form.behavior}
@@ -365,9 +368,9 @@ function BucketModal({ mode, existing, onClose, onSaved }: ModalProps) {
               setForm((f) => ({ ...f, behavior: e.target.value as BucketBehavior }))
             }
           >
-            <option value="A">A · ניהול (overhead)</option>
-            <option value="B">B · יומי (auto-credit)</option>
-            <option value="C">C · שנתי (annual pool)</option>
+            <option value="A">היעדרות (overhead)</option>
+            <option value="B">זכאות אישית (auto-credit)</option>
+            <option value="C">מכסה שנתית (annual pool)</option>
           </SelectField>
           <SelectField
             label="Unit"

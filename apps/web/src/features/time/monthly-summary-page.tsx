@@ -146,7 +146,7 @@ export function MonthlySummaryPage() {
           <section className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
             <div className="border-b border-slate-100 dark:border-slate-800 px-5 py-3">
               <h2 className="text-[13px] font-bold text-slate-900 dark:text-slate-100">
-                ניצול קופות שנתי · C-bucket YTD usage
+                ניצול מכסה שנתית · Annual quota YTD usage
               </h2>
               <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                 שעות שנצברו השנה מול המקסימום · hours accrued this year vs the
@@ -156,7 +156,7 @@ export function MonthlySummaryPage() {
             <div className="p-5">
               {data.cBucketUsage.length === 0 ? (
                 <p className="text-[13px] text-slate-500 dark:text-slate-400">
-                  לא נוצלו קופות השנה · No C-bucket usage this year.
+                  לא נוצלו מכסות השנה · No annual-quota usage this year.
                 </p>
               ) : (
                 <ul className="space-y-3">

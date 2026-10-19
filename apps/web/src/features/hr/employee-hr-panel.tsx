@@ -270,7 +270,7 @@ function EligibilitiesSection({ employee, canWrite, qc }: EligibilitiesSectionPr
     <section>
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-          זכאויות B · Bucket eligibilities
+          זכאויות אישיות · Personal entitlements
         </h3>
         {canWrite && (
           <button
@@ -473,7 +473,7 @@ function AddEligibilityDialog({ employee, onClose, onSaved }: AddEligibilityDial
       open
       onClose={onClose}
       title="Add bucket eligibility"
-      description="הוספת זכאות שעות מיוחדות (B)"
+      description="הוספת זכאות אישית"
       widthClass="w-[480px] max-w-[92vw]"
       footer={
         warnings.length > 0 ? (
@@ -508,7 +508,7 @@ function AddEligibilityDialog({ employee, onClose, onSaved }: AddEligibilityDial
       <form id="hr-add-eligibility-form" onSubmit={submit} className="space-y-4">
         {catalog.length === 0 ? (
           <div className="rounded-lg border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3 text-[12px] text-amber-800 dark:text-amber-200">
-            No B-behaviour buckets visible yet. Phase B adds a dedicated
+            No personal-entitlement buckets visible yet. Phase B adds a dedicated
             catalog endpoint; today the picker reads from the eligibilities
             already granted to employees in the roster.
           </div>

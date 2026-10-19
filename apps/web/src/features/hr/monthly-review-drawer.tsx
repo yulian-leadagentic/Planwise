@@ -209,7 +209,7 @@ export function MonthlyReviewDrawer({
                   <ThCell align="right">תקן</ThCell>
                   <ThCell align="right">בפועל</ThCell>
                   <ThCell align="right">זיכוי</ThCell>
-                  <ThCell align="right">B·AUTO</ThCell>
+                  <ThCell align="right">AUTO</ThCell>
                   <ThCell>Loc</ThCell>
                 </tr>
               </thead>
