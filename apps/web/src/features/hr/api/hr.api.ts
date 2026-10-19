@@ -441,10 +441,11 @@ export const hrApi = {
   updateSettings: (payload: UpdateHrSettingsPayload) =>
     client.patch('/hr/settings', payload).then((r) => unwrap<HrSettings>(r.data)),
 
-  // §15 R2 (2026-10-18) — Calendar CRUD endpoints removed. Calendar
-  // days are managed solely via Admin → Calendar now (`/calendar/*`
-  // endpoints on the API; see admin/calendar-page.tsx on the FE).
-  // Types `HrCalendarDay` / `CreateHrCalendarDayPayload` /
+  // §15 R2 (2026-10-18) · F2 (2026-10-19) — Calendar CRUD endpoints
+  // stay OUT of this surface. Calendar days are now managed via the
+  // HR sub-tab at /hr/calendar (features/hr/calendar-page.tsx on the
+  // FE); the BE path is still `/calendar/*` and hasn't moved. Types
+  // `HrCalendarDay` / `CreateHrCalendarDayPayload` /
   // `UpdateHrCalendarDayPayload` stay exported because the
   // CalendarDayType shape is still needed by MonthlyAttendance
   // breakdown rows (`DailyBreakdownRow.dayType`).

@@ -75,14 +75,9 @@ const adminCards = [
     module: 'admin/work-schedules',
     color: 'bg-cyan-100 text-cyan-700',
   },
-  {
-    title: 'Calendar Days',
-    description: 'Manage holidays and company days off',
-    icon: Calendar,
-    href: '/admin/calendar',
-    module: 'admin/calendar',
-    color: 'bg-orange-100 text-orange-700',
-  },
+  // HR F2 (2026-10-19) — "Calendar Days" card removed; the editor
+  // now lives at /hr/calendar as an HR sub-tab. `/admin/calendar`
+  // still redirects there for bookmarks.
   {
     title: 'Notification Settings',
     description: 'Configure notification rules, channels, and integrations',

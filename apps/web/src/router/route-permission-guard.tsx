@@ -21,7 +21,13 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
   '/admin/organization': 'org',
   '/admin/activity-log': 'admin/activity-log',
   '/admin/work-schedules': 'admin/work-schedules',
-  '/admin/calendar': 'admin/calendar',
+  // HR F2 (2026-10-19) — '/admin/calendar' is now a pass-through
+  // redirect to '/hr/calendar' (bookmarks). Keep an entry here so
+  // the longer-prefix match in SORTED_PREFIXES wins over the generic
+  // '/admin' → 'admin' mapping: mapping it to 'hr' means an HR
+  // Manager (hr:read, no admin) still reaches the redirect, and the
+  // /hr guard on the destination enforces the real permission.
+  '/admin/calendar': 'hr',
   '/admin/notification-settings': 'admin/notification-settings',
   '/admin/clock-dashboard': 'admin/clock-dashboard',
   '/admin/partner-types': 'admin/partner-types',

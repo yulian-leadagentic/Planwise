@@ -4,10 +4,19 @@ import { useState, useMemo } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { Modal } from '@/components/shared/modal';
+import { usePermissions } from '@/hooks/use-permissions';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+
+// HR F2 (2026-10-19) — Calendar moved from Admin → HR per Yulian's
+// reversal of §15 R2. The file lives at features/hr/calendar-page.tsx,
+// the sibling of /hr/review and /hr/settings. BE endpoint stays at
+// `/calendar/*` (unchanged), and the queryKey stays as
+// `['admin', 'calendar']` so the shared cache with weekly-timesheet
+// (which also reads calendar days to grey-out holidays) keeps hitting
+// the same cache slot — no fetch duplication.
 
 // HR Phase B1 (2026-10-15) — CalendarDayType enum remapped per spec §3.2.
 // Keys here mirror the Prisma enum exactly (UPPERCASE). REGULAR is listed
@@ -37,7 +46,7 @@ const TYPE_LABEL: Record<string, string> = {
 };
 
 // HR F3 (2026-10-19) — real Hebrew-calendar classification via @hebcal/core.
-// Dynamic-imported so the ~500 KB library only loads when the admin
+// Dynamic-imported so the ~500 KB library only loads when the HR Manager
 // actually clicks "Import"; the module isn't needed on the normal
 // Calendar page render. Returns three day types the HR engine knows
 // about: HOLIDAY (full-day yom tov), HOLIDAY_EVE (erev), CHOL_HAMOED
@@ -171,7 +180,15 @@ function formatDateKey(d: Date): string {
 
 type CalendarViewMode = 'month' | 'year';
 
-export function CalendarDaysPage() {
+export function HrCalendarPage() {
+  // HR F2 (2026-10-19) — edit gating. The page is reachable with
+  // `hr:read` (sub-nav + RoutePermissionGuard), but Add / Import /
+  // Delete / Set-working-hours only make sense for someone who can
+  // mutate the catalog. HR Clerk (hr:read only) gets a read-only
+  // calendar — same pattern as /hr/settings sections.
+  const { can } = usePermissions();
+  const canWrite = can('hr', 'write');
+
   const confirm = useConfirm();
   const queryClient = useQueryClient();
   const scrollRef = useStickyHScroll();
@@ -185,6 +202,11 @@ export function CalendarDaysPage() {
   const [formType, setFormType] = useState('REST');
 
   const { data, isLoading } = useQuery({
+    // Keep the ['admin', 'calendar'] queryKey — weekly-timesheet.tsx
+    // reads the SAME cache slot to grey out holidays on the grid.
+    // Renaming it to ['hr', 'calendar'] would fork the cache and
+    // double-fetch; harmless but wasteful. The URL `/calendar` is
+    // unchanged, so a shared key still points at the same data.
     queryKey: ['admin', 'calendar'],
     staleTime: 5 * 60 * 1000,
     queryFn: () => client.get('/calendar').then((r) => {
@@ -251,6 +273,9 @@ export function CalendarDaysPage() {
   };
 
   const handleDateClick = (dateKey: string) => {
+    // Read-only viewers never open the Add form — the empty-day cells
+    // stay inert for them. Matches the pattern in /hr/settings.
+    if (!canWrite) return;
     setSelectedDate(dateKey);
     setShowAddForm(true);
     setFormName('');
@@ -391,7 +416,10 @@ export function CalendarDaysPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Calendar Days" description="Manage holidays, company days off, and non-working days" />
+      <PageHeader
+        title="Calendar Days"
+        description="לוח שנה · Holidays, non-working days, and company days off"
+      />
 
       {/* Controls bar: view toggle + import status */}
       <div className="flex items-center justify-between">
@@ -411,28 +439,31 @@ export function CalendarDaysPage() {
           </div>
         </div>
 
-        {/* Import status + button */}
+        {/* Import status + button — Import button is HR-write-gated so
+            an HR Clerk sees the imported-years chip but no action. */}
         <div className="flex items-center gap-3">
           {importedYears.size > 0 && (
-            <div className="flex items-center gap-1.5 text-[12px] text-emerald-700">
+            <div className="flex items-center gap-1.5 text-[12px] text-emerald-700 dark:text-emerald-400">
               <Check className="h-3.5 w-3.5" />
               <span>Israeli Holidays imported for {Array.from(importedYears).sort().join(', ')}</span>
             </div>
           )}
-          <div className="flex items-center gap-1.5">
-            <select value={importYear} onChange={(e) => setImportYear(Number(e.target.value))}
-              className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5 text-[12px]">
-              {[2025, 2026, 2027, 2028].map((y) => <option key={y} value={y}>{y}</option>)}
-            </select>
-            <button onClick={() => importHolidays(importYear)}
-              className={cn('flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors',
-                importedYears.has(importYear)
-                  ? 'border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                  : 'bg-blue-600 text-white hover:bg-blue-700')}>
-              <Download className="h-3.5 w-3.5" />
-              {importedYears.has(importYear) ? `Re-import ${importYear}` : `Import ${importYear}`}
-            </button>
-          </div>
+          {canWrite && (
+            <div className="flex items-center gap-1.5">
+              <select value={importYear} onChange={(e) => setImportYear(Number(e.target.value))}
+                className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-[12px] text-slate-700 dark:text-slate-200">
+                {[2025, 2026, 2027, 2028].map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+              <button onClick={() => importHolidays(importYear)}
+                className={cn('flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors',
+                  importedYears.has(importYear)
+                    ? 'border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                    : 'bg-blue-600 text-white hover:bg-blue-700')}>
+                <Download className="h-3.5 w-3.5" />
+                {importedYears.has(importYear) ? `Re-import ${importYear}` : `Import ${importYear}`}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -478,10 +509,11 @@ export function CalendarDaysPage() {
                 const isSelected = selectedDate === dateKey;
                 return (
                   <div key={idx} onClick={() => inMonth && handleDateClick(dateKey)}
-                    className={cn('min-h-[90px] border-b border-r border-slate-100 dark:border-slate-800 px-1.5 py-1 cursor-pointer transition-colors',
+                    className={cn('min-h-[90px] border-b border-r border-slate-100 dark:border-slate-800 px-1.5 py-1 transition-colors',
+                      canWrite ? 'cursor-pointer' : 'cursor-default',
                       !inMonth && 'bg-slate-50 dark:bg-slate-800/50 opacity-40', inMonth && weekend && !hasEntries && 'bg-slate-50 dark:bg-slate-800/50',
-                      inMonth && hasEntries && 'bg-red-50/30', isSelected && 'ring-2 ring-inset ring-blue-500 bg-blue-50/30',
-                      inMonth && !hasEntries && !weekend && 'hover:bg-blue-50/20')}>
+                      inMonth && hasEntries && 'bg-red-50/30 dark:bg-red-900/10', isSelected && 'ring-2 ring-inset ring-blue-500 bg-blue-50/30 dark:bg-blue-900/20',
+                      inMonth && !hasEntries && !weekend && canWrite && 'hover:bg-blue-50/20 dark:hover:bg-blue-900/10')}>
                     <div className="flex items-center justify-between">
                       <span className={cn('text-[13px] font-medium', !inMonth ? 'text-slate-300 dark:text-slate-600' : isToday ? 'text-white bg-blue-600 rounded-full w-7 h-7 flex items-center justify-center' : 'text-slate-700 dark:text-slate-200', weekend && inMonth && !isToday && 'text-slate-400 dark:text-slate-500')}>
                         {date.getDate()}
@@ -496,28 +528,30 @@ export function CalendarDaysPage() {
                         <div key={entry.id} className={cn('mt-1 rounded px-1.5 py-0.5 text-[10px] font-medium flex items-center justify-between group', style.bg, style.text)} onClick={(e) => e.stopPropagation()}>
                           <span className="truncate">
                             {entry.name}
-                            {hasWorkingHours && <span className="ml-1 text-blue-600 font-bold">+{entry.halfDayUntil}h</span>}
+                            {hasWorkingHours && <span className="ml-1 text-blue-600 dark:text-blue-400 font-bold">+{entry.halfDayUntil}h</span>}
                           </span>
-                          <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
-                            {isHoliday ? (
-                              hasWorkingHours ? (
-                                <button onClick={() => clearWorkingDay(entry)} title="Remove working hours"
+                          {canWrite && (
+                            <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                              {isHoliday ? (
+                                hasWorkingHours ? (
+                                  <button onClick={() => clearWorkingDay(entry)} title="Remove working hours"
+                                    className="h-4 w-4 flex items-center justify-center rounded hover:bg-white dark:hover:bg-slate-900/50">
+                                    <X className="h-2.5 w-2.5" />
+                                  </button>
+                                ) : (
+                                  <button onClick={() => handleSetWorkingDay(entry)} title="Set as working day"
+                                    className="h-4 flex items-center gap-0.5 rounded px-1 hover:bg-white dark:hover:bg-slate-900/50 text-[9px] font-bold text-blue-700 dark:text-blue-300">
+                                    <Clock className="h-2.5 w-2.5" />Work
+                                  </button>
+                                )
+                              ) : (
+                                <button onClick={async () => { if (await confirm(`Remove "${entry.name}"?`)) deleteMutation.mutate(entry.id); }}
                                   className="h-4 w-4 flex items-center justify-center rounded hover:bg-white dark:hover:bg-slate-900/50">
                                   <X className="h-2.5 w-2.5" />
                                 </button>
-                              ) : (
-                                <button onClick={() => handleSetWorkingDay(entry)} title="Set as working day"
-                                  className="h-4 flex items-center gap-0.5 rounded px-1 hover:bg-white dark:hover:bg-slate-900/50 text-[9px] font-bold text-blue-700">
-                                  <Clock className="h-2.5 w-2.5" />Work
-                                </button>
-                              )
-                            ) : (
-                              <button onClick={async () => { if (await confirm(`Remove "${entry.name}"?`)) deleteMutation.mutate(entry.id); }}
-                                className="h-4 w-4 flex items-center justify-center rounded hover:bg-white dark:hover:bg-slate-900/50">
-                                <X className="h-2.5 w-2.5" />
-                              </button>
-                            )}
-                          </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -549,13 +583,13 @@ export function CalendarDaysPage() {
               const isCurrent = viewYear === today.getFullYear() && m.index === today.getMonth();
               return (
                 <div key={m.index}
-                  className={cn('rounded-[14px] border bg-white dark:bg-slate-900 p-4 cursor-pointer hover:border-blue-300 transition-colors',
-                    isCurrent ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200 dark:border-slate-700')}
+                  className={cn('rounded-[14px] border bg-white dark:bg-slate-900 p-4 cursor-pointer hover:border-blue-300 dark:hover:border-blue-500 transition-colors',
+                    isCurrent ? 'border-blue-300 dark:border-blue-500 ring-2 ring-blue-100 dark:ring-blue-900/40' : 'border-slate-200 dark:border-slate-700')}
                   onClick={() => { setViewMonth(m.index); setViewMode('month'); }}>
                   <div className="flex items-center justify-between mb-3">
-                    <h3 className={cn('text-sm font-semibold', isCurrent ? 'text-blue-600' : 'text-slate-900 dark:text-slate-100')}>{m.name}</h3>
+                    <h3 className={cn('text-sm font-semibold', isCurrent ? 'text-blue-600 dark:text-blue-400' : 'text-slate-900 dark:text-slate-100')}>{m.name}</h3>
                     {m.holidays > 0 && (
-                      <span className="text-[10px] font-bold text-red-600 bg-red-50 rounded px-1.5 py-0.5">{m.holidays}</span>
+                      <span className="text-[10px] font-bold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded px-1.5 py-0.5">{m.holidays}</span>
                     )}
                   </div>
 
@@ -566,7 +600,7 @@ export function CalendarDaysPage() {
                       <p className="text-[9px] text-slate-400 dark:text-slate-500">Working</p>
                     </div>
                     <div>
-                      <p className={cn('text-lg font-bold', m.holidays > 0 ? 'text-red-600' : 'text-slate-300 dark:text-slate-600')}>{m.holidays}</p>
+                      <p className={cn('text-lg font-bold', m.holidays > 0 ? 'text-red-600 dark:text-red-400' : 'text-slate-300 dark:text-slate-600')}>{m.holidays}</p>
                       <p className="text-[9px] text-slate-400 dark:text-slate-500">Holidays</p>
                     </div>
                     <div>
@@ -609,7 +643,7 @@ export function CalendarDaysPage() {
             </div>
             <table className="w-full text-[13px]">
               <thead>
-                <tr className="bg-[#FAFBFC] text-[11px] uppercase text-slate-400 dark:text-slate-500 tracking-[0.05em]">
+                <tr className="bg-[#FAFBFC] dark:bg-slate-800/50 text-[11px] uppercase text-slate-400 dark:text-slate-500 tracking-[0.05em]">
                   <th className="px-5 py-2.5 text-left font-semibold">Month</th>
                   <th className="px-5 py-2.5 text-center font-semibold">Working</th>
                   <th className="px-5 py-2.5 text-center font-semibold">Holidays</th>
@@ -621,12 +655,12 @@ export function CalendarDaysPage() {
                 {yearMonths.map((m) => {
                   const isCurrent = viewYear === today.getFullYear() && m.index === today.getMonth();
                   return (
-                    <tr key={m.index} className={cn('border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer', isCurrent && 'bg-blue-50/30')}
+                    <tr key={m.index} className={cn('border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer', isCurrent && 'bg-blue-50/30 dark:bg-blue-900/20')}
                       onClick={() => { setViewMonth(m.index); setViewMode('month'); }}>
-                      <td className={cn('px-5 py-2.5 font-medium', isCurrent ? 'text-blue-600' : 'text-slate-700 dark:text-slate-200')}>{m.name}</td>
+                      <td className={cn('px-5 py-2.5 font-medium', isCurrent ? 'text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-200')}>{m.name}</td>
                       <td className="px-5 py-2.5 text-center font-mono font-semibold text-slate-700 dark:text-slate-200">{m.working}</td>
                       <td className="px-5 py-2.5 text-center font-mono">
-                        {m.holidays > 0 ? <span className="font-semibold text-red-600">{m.holidays}</span> : <span className="text-slate-300 dark:text-slate-600">0</span>}
+                        {m.holidays > 0 ? <span className="font-semibold text-red-600 dark:text-red-400">{m.holidays}</span> : <span className="text-slate-300 dark:text-slate-600">0</span>}
                       </td>
                       <td className="px-5 py-2.5 text-center font-mono text-slate-400 dark:text-slate-500">{m.weekends}</td>
                       <td className="px-5 py-2.5 text-center font-mono text-slate-400 dark:text-slate-500">{m.total}</td>
@@ -636,7 +670,7 @@ export function CalendarDaysPage() {
                 <tr className="border-t-2 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 font-bold">
                   <td className="px-5 py-2.5 text-slate-900 dark:text-slate-100">Total</td>
                   <td className="px-5 py-2.5 text-center font-mono text-slate-900 dark:text-slate-100">{yearTotalWorking}</td>
-                  <td className="px-5 py-2.5 text-center font-mono text-red-600">{yearTotalHolidays}</td>
+                  <td className="px-5 py-2.5 text-center font-mono text-red-600 dark:text-red-400">{yearTotalHolidays}</td>
                   <td className="px-5 py-2.5 text-center font-mono text-slate-400 dark:text-slate-500">{yearMonths.reduce((s, m) => s + m.weekends, 0)}</td>
                   <td className="px-5 py-2.5 text-center font-mono text-slate-400 dark:text-slate-500">{yearMonths.reduce((s, m) => s + m.total, 0)}</td>
                 </tr>
@@ -646,9 +680,10 @@ export function CalendarDaysPage() {
         </>
       )}
 
-      {/* Add Day Form (appears when a date is clicked) */}
-      {showAddForm && selectedDate && (
-        <div className="rounded-[14px] border border-blue-200 bg-blue-50/30 p-5 space-y-3">
+      {/* Add Day Form (appears when a date is clicked) — only reachable
+          via handleDateClick, which is itself gated on canWrite. */}
+      {showAddForm && selectedDate && canWrite && (
+        <div className="rounded-[14px] border border-blue-200 dark:border-blue-700 bg-blue-50/30 dark:bg-blue-900/20 p-5 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
               Add Non-Working Day — {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
@@ -662,7 +697,7 @@ export function CalendarDaysPage() {
               <label className="block text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1">Name *</label>
               <input value={formName} onChange={(e) => setFormName(e.target.value)}
                 placeholder="e.g. Team Building Day, Rosh Hashana"
-                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none" autoFocus />
             </div>
             <div className="w-48">
               <label className="block text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1">Type</label>
@@ -672,7 +707,7 @@ export function CalendarDaysPage() {
                   so a materialised REGULAR row would be a lie. The HR
                   monthly engine depends on these exact enum values. */}
               <select value={formType} onChange={(e) => setFormType(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none">
                 <option value="HOLIDAY">חג · Holiday</option>
                 <option value="HOLIDAY_EVE">ערב חג · Holiday eve</option>
                 <option value="CHOL_HAMOED">חוה״מ · Chol-hamoed</option>
@@ -736,7 +771,8 @@ export function CalendarDaysPage() {
         </Modal>
       )}
 
-      {/* All Non-Working Days list */}
+      {/* All Non-Working Days list — read-only viewers see the list but
+          no row-level edit / delete controls. */}
       {(data ?? []).length > 0 && (
         <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
           <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-3">All Non-Working Days</h3>
@@ -753,22 +789,22 @@ export function CalendarDaysPage() {
                   <span className="text-[13px] text-slate-800 dark:text-slate-100 flex-1">
                     {d.name}
                     {hasWorkingHours && (
-                      <span className="ml-2 text-[11px] font-bold text-blue-600 bg-blue-50 rounded px-1.5 py-0.5">+{d.halfDayUntil}h working</span>
+                      <span className="ml-2 text-[11px] font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 rounded px-1.5 py-0.5">+{d.halfDayUntil}h working</span>
                     )}
                   </span>
                   <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold', style.bg, style.text)}>{TYPE_LABEL[d.type] ?? d.type}</span>
-                  {isHoliday ? (
+                  {canWrite && (isHoliday ? (
                     <button onClick={() => handleSetWorkingDay(d)}
-                      className="rounded px-2 py-1 text-[11px] font-semibold text-blue-600 hover:bg-blue-50 transition-colors"
+                      className="rounded px-2 py-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
                       title="Set working hours">
                       <Clock className="h-3.5 w-3.5 inline mr-1" />{hasWorkingHours ? 'Edit hours' : 'Set working'}
                     </button>
                   ) : (
                     <button onClick={async () => { if (await confirm(`Remove "${d.name}"?`)) deleteMutation.mutate(d.id); }}
-                      className="rounded p-1 text-slate-300 dark:text-slate-600 hover:text-red-600 hover:bg-red-50">
+                      className="rounded p-1 text-slate-300 dark:text-slate-600 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
-                  )}
+                  ))}
                 </div>
               );
             })}

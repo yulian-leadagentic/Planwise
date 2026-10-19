@@ -42,7 +42,8 @@ const ADMIN_ITEMS: SubNavItem[] = [
   { label: 'Project Role Types',     href: '/admin/project-role-types',        icon: Briefcase,     module: 'admin/project-role-types', group: 'People Config' },
 
   { label: 'Work Schedules',         href: '/admin/work-schedules',            icon: Calendar,      module: 'admin/work-schedules',     group: 'Time & Attendance' },
-  { label: 'Calendar Days',          href: '/admin/calendar',                  icon: Calendar,      module: 'admin/calendar',           group: 'Time & Attendance' },
+  // HR F2 (2026-10-19) — "Calendar Days" moved to the HR sub-nav
+  // (/hr/calendar); it was the §15 R2 experiment that got reversed.
   { label: 'Team Clock Dashboard',   href: '/admin/clock-dashboard',           icon: Clock,         module: 'admin/clock-dashboard',    group: 'Time & Attendance' },
   { label: 'Time-log Phrases',       href: '/admin/time-note-phrases',         icon: ListChecks,    module: 'admin',                    group: 'Time & Attendance' },
 

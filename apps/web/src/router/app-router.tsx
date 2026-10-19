@@ -60,7 +60,6 @@ const ProjectRoleTypesPage = lazy(() => import('@/features/admin/project-role-ty
 const ActivityLogPage = lazy(() => import('@/features/admin/activity-log-page').then(m => ({ default: m.ActivityLogPage })));
 const ModelAlignmentReportsPage = lazy(() => import('@/features/admin/model-alignment-reports-page').then(m => ({ default: m.ModelAlignmentReportsPage })));
 const WorkSchedulesPage = lazy(() => import('@/features/admin/work-schedules-page').then(m => ({ default: m.WorkSchedulesPage })));
-const CalendarDaysPage = lazy(() => import('@/features/admin/calendar-page').then(m => ({ default: m.CalendarDaysPage })));
 const DataImportPage = lazy(() => import('@/features/data-import/data-import-page').then(m => ({ default: m.DataImportPage })));
 const ImportHistoryPage = lazy(() => import('@/features/data-import/import-history-page').then(m => ({ default: m.ImportHistoryPage })));
 const ProjectStatusBoardPage = lazy(() => import('@/features/project-status-board/project-status-board-page').then(m => ({ default: m.ProjectStatusBoardPage })));
@@ -78,6 +77,9 @@ const HrLayout = lazy(() => import('@/features/hr/hr-layout').then(m => ({ defau
 const HrMonthlyReviewPage = lazy(() => import('@/features/hr/review-page').then(m => ({ default: m.HrMonthlyReviewPage })));
 const HrReportsPage = lazy(() => import('@/features/hr/reports-page').then(m => ({ default: m.HrReportsPage })));
 const HrSettingsPage = lazy(() => import('@/features/hr/settings-page').then(m => ({ default: m.HrSettingsPage })));
+// HR F2 (2026-10-19) — Calendar moved from Admin → HR. `/admin/calendar`
+// redirects below so bookmarks keep working.
+const HrCalendarPage = lazy(() => import('@/features/hr/calendar-page').then(m => ({ default: m.HrCalendarPage })));
 const MonthlySummaryPage = lazy(() => import('@/features/time/monthly-summary-page').then(m => ({ default: m.MonthlySummaryPage })));
 
 // DnD-heavy (kept lazy to avoid @dnd-kit React version conflicts)
@@ -182,7 +184,11 @@ export function AppRouter() {
           <Route path="activity-log" element={<L><ActivityLogPage /></L>} />
           <Route path="reports/model-alignment" element={<L><ModelAlignmentReportsPage /></L>} />
           <Route path="work-schedules" element={<L><WorkSchedulesPage /></L>} />
-          <Route path="calendar" element={<L><CalendarDaysPage /></L>} />
+          {/* HR F2 (2026-10-19) — the Calendar editor lives under /hr
+              now. Keep this URL alive as a redirect so old bookmarks
+              (and the §15 R2 "link card" that used to point here)
+              land on the new tab instead of 404-ing. */}
+          <Route path="calendar" element={<Navigate to="/hr/calendar" replace />} />
           <Route path="notification-settings" element={<L><NotificationSettingsPage /></L>} />
           <Route path="time-note-phrases" element={<L><TimeNotePhrasesPage /></L>} />
           <Route path="clock-dashboard" element={<L><ClockDashboardPage /></L>} />
@@ -212,6 +218,8 @@ export function AppRouter() {
           <Route index element={<Navigate to="/hr/review" replace />} />
           <Route path="employees" element={<Navigate to="/hr/review" replace />} />
           <Route path="review" element={<L><HrMonthlyReviewPage /></L>} />
+          {/* HR F2 (2026-10-19) — Calendar editor, moved from /admin/calendar. */}
+          <Route path="calendar" element={<L><HrCalendarPage /></L>} />
           <Route path="reports" element={<L><HrReportsPage /></L>} />
           <Route path="settings" element={<L><HrSettingsPage /></L>} />
         </Route>
