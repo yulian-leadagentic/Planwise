@@ -230,6 +230,25 @@ export class HrController {
     return this.hr.createMyAbsence(user.id, dto);
   }
 
+  @Post('me/attachments')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+    },
+  })
+  @ApiOperation({ summary: 'Caller uploads a document to their own HR attachment store.' })
+  uploadMyAttachment(
+    @CurrentUser() user: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.hr.uploadMyAttachment(user.id, file);
+  }
+
   // ─── Unified time-category catalog (F5, 2026-10-19) ─────────────────
   // Flat list of pickable time categories for the caller, each tagged
   // with a `kind` discriminator (ABSENCE / WORK_NON_PROJECT / QUOTA)

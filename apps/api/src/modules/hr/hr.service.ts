@@ -825,6 +825,26 @@ export class HrService {
     file: Express.Multer.File,
   ) {
     await this.assertEmployee(userId);
+    return this.uploadEmployeeAttachmentCore(userId, actorId, file);
+  }
+
+  /**
+   * HR G2.2 (2026-10-20) — self-service variant of
+   * {@link uploadEmployeeAttachment}. Any authenticated user uploads
+   * to their own HR attachment store (callerId === actorId). Skips the
+   * `assertEmployee` gate for the same reason as {@link createMyAbsence}:
+   * the Timeoff self-service surface is called by admins + partners too,
+   * not only `userType === 'employee'` rows.
+   */
+  async uploadMyAttachment(callerId: number, file: Express.Multer.File) {
+    return this.uploadEmployeeAttachmentCore(callerId, callerId, file);
+  }
+
+  private async uploadEmployeeAttachmentCore(
+    userId: number,
+    actorId: number,
+    file: Express.Multer.File,
+  ) {
     if (!file) throw new BadRequestException('No file provided');
 
     // Reuse the central FilesService — the 'hr' folder was allow-
