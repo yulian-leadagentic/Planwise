@@ -564,6 +564,15 @@ export class HrMonthlyService {
           ? Number(hrSettings.shortDayHoursCholHamoed)
           : 5,
         minHoursPerDay: hrSettings ? Number(hrSettings.minHoursPerDay) : 5,
+        // HR F3a (2026-10-19) — weekly rest days from HrSettings
+        // (nullable JSON column; cold-start → [5, 6] Fri+Sat per
+        // Israeli work-week). An empty array = no weekly rest (every
+        // day of the week is implicitly REGULAR / 7-day work week).
+        weeklyRestDays: Array.isArray(hrSettings?.weeklyRestDays)
+          ? (hrSettings!.weeklyRestDays as number[]).filter(
+              (n) => Number.isInteger(n) && n >= 0 && n <= 6,
+            )
+          : [5, 6],
       },
       calendarDays: calendarDays.map((c) => ({
         date: c.date,
@@ -658,15 +667,30 @@ export class HrMonthlyService {
     const cal = inputs.calendarDays.find((c) => sameYMD(c.date, date));
     const dayType: CalendarDayType = cal?.type ?? CalendarDayType.REGULAR;
 
+    // HR F3a (2026-10-19) — treat days-of-week in HrSettings.weeklyRestDays
+    // as implicit REST when no CalendarDay row materializes the date.
+    // A CalendarDay row ALWAYS wins (admin may have overridden the Friday
+    // or Saturday to a working day, or marked a non-rest day as a RESTday).
+    // Default `weeklyRestDays = [5, 6]` (Fri + Sat per Israeli work-week);
+    // empty array disables the override entirely (7-day work week).
+    const dow = date.getDay();
+    const isImplicitWeeklyRest =
+      !cal && inputs.hrSettings.weeklyRestDays.includes(dow);
+
     // 1) Base day standard.
     //    HOLIDAY / REST → 0 (person is off; no standard credit either).
     //    HOLIDAY_EVE / CHOL_HAMOED → short-day knob from HrSettings.
-    //    REGULAR → user.dailyStandardHours (0 when the user has none).
+    //    REGULAR → user.dailyStandardHours (0 when the user has none)
+    //              unless `dow` is a weekly rest day with no row → 0.
     let dayStandard = 0;
     if (dayType === CalendarDayType.HOLIDAY_EVE) {
       dayStandard = inputs.hrSettings.shortDayHoursHolidayEve;
     } else if (dayType === CalendarDayType.CHOL_HAMOED) {
       dayStandard = inputs.hrSettings.shortDayHoursCholHamoed;
+    } else if (isImplicitWeeklyRest) {
+      // F3a — Fri/Sat (or whatever the admin set) with no CalendarDay
+      // row counts as REST. dayStandard stays 0.
+      dayStandard = 0;
     } else if (
       dayType === CalendarDayType.REGULAR ||
       // Defensive: a REGULAR row shouldn't exist in the DB (service
@@ -836,6 +860,13 @@ interface EngineInputs {
     shortDayHoursHolidayEve: number;
     shortDayHoursCholHamoed: number;
     minHoursPerDay: number;
+    /**
+     * HR F3a (2026-10-19) — weekly rest days as JS `Date.getDay()`
+     * values (0 = Sun … 6 = Sat). Default [5, 6] (Fri + Sat) per
+     * the Israeli work-week; configurable per-tenant via
+     * `HrSettings.weeklyRestDays`.
+     */
+     weeklyRestDays: number[];
   };
   calendarDays: Array<{ date: Date; type: CalendarDayType }>;
   timeEntries: Array<{

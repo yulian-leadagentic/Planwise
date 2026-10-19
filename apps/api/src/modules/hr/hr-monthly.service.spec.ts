@@ -110,6 +110,13 @@ describe('HrMonthlyService — monthly engine (HR §4 / Phase C2)', () => {
           shortDayHoursHolidayEve: 5,
           shortDayHoursCholHamoed: 5,
           minHoursPerDay: 5,
+          // HR F3a (2026-10-19) — Tests 1–8 pre-date the weekly-rest
+          // feature and assert on 31 implicit REGULAR days (no
+          // weekend subtraction). Default this mock to `[]` so those
+          // tests keep passing on their original math; the real-DB
+          // default is `[5, 6]` (seeded by the F3a migration) and
+          // Test 9 overrides this to exercise every branch.
+          weeklyRestDays: [],
         }),
       },
       calendarDay: { findMany: jest.fn().mockResolvedValue([]) },
@@ -319,5 +326,91 @@ describe('HrMonthlyService — monthly engine (HR §4 / Phase C2)', () => {
     expect(data.sickDays).toBeCloseTo(0, 2);
     // And the day does NOT appear in daysOffice (absence day).
     expect(data.daysOffice).toBe(0);
+  });
+
+  // ─── Test 9 — HR F3a (2026-10-19) ────────────────────────────────────
+  // Weekly rest days exclude Fri+Sat from monthly standard. Dates with no
+  // CalendarDay row AND whose JS `Date.getDay()` falls in
+  // `HrSettings.weeklyRestDays` are treated as implicit REST (dayStandard
+  // = 0). A materialized CalendarDay row still wins.
+  describe('F3a — HrSettings.weeklyRestDays excludes weekly rest from standard', () => {
+    // October 2026 Day-of-Week breakdown (JS Date.getDay(), Sun=0):
+    //   Fridays (dow=5):   2, 9, 16, 23, 30   → 5 days
+    //   Saturdays (dow=6): 3, 10, 17, 24, 31  → 5 days
+    //   Sundays (dow=0):   4, 11, 18, 25      → 4 days
+    //   Working (Sun-Thu): 31 − 10 Fri/Sat    = 21 days
+
+    it('default [5, 6] (Fri + Sat): standard = 21 × 8.4 for Oct 2026', async () => {
+      prisma.hrSettings.findUnique.mockResolvedValue({
+        shortDayHoursHolidayEve: 5,
+        shortDayHoursCholHamoed: 5,
+        minHoursPerDay: 5,
+        weeklyRestDays: [5, 6],
+      });
+
+      await service.computeMonth({ userId: USER_ID, year: YEAR, month: MONTH });
+      const data = upsertCreateData();
+
+      // 5 Fri + 5 Sat = 10 implicit REST days at 0h; remaining 21 days
+      // × 8.4 = 176.4. monthlyStandard excludes the weekend.
+      expect(data.monthlyStandard).toBeCloseTo(21 * 8.4, 2);
+    });
+
+    it('empty [] (7-day work week): standard = 31 × 8.4', async () => {
+      prisma.hrSettings.findUnique.mockResolvedValue({
+        shortDayHoursHolidayEve: 5,
+        shortDayHoursCholHamoed: 5,
+        minHoursPerDay: 5,
+        weeklyRestDays: [],
+      });
+
+      await service.computeMonth({ userId: USER_ID, year: YEAR, month: MONTH });
+      const data = upsertCreateData();
+
+      // Every day of the week counts as REGULAR — matches Tests 1-8's
+      // historical default. 31 × 8.4 = 260.4.
+      expect(data.monthlyStandard).toBeCloseTo(31 * 8.4, 2);
+    });
+
+    it('Sunday only [0] (some orgs): standard excludes 4 Sundays for Oct 2026', async () => {
+      prisma.hrSettings.findUnique.mockResolvedValue({
+        shortDayHoursHolidayEve: 5,
+        shortDayHoursCholHamoed: 5,
+        minHoursPerDay: 5,
+        weeklyRestDays: [0],
+      });
+
+      await service.computeMonth({ userId: USER_ID, year: YEAR, month: MONTH });
+      const data = upsertCreateData();
+
+      // 4 Sundays in Oct 2026 at 0h; remaining 27 days × 8.4 = 226.8.
+      expect(data.monthlyStandard).toBeCloseTo(27 * 8.4, 2);
+    });
+
+    it('explicit CalendarDay row overrides implicit weekly rest', async () => {
+      // Admin materialized a HOLIDAY_EVE row on a Friday (Oct 2, dow=5).
+      // Expected: that Fri counts as 5h (HOLIDAY_EVE short-day), NOT 0
+      // (would be the case if weekly rest overrode CalendarDay rows).
+      const friday = new Date(YEAR, MONTH - 1, 2);
+      prisma.calendarDay.findMany.mockResolvedValue([
+        { date: friday, type: 'HOLIDAY_EVE' },
+      ]);
+      prisma.hrSettings.findUnique.mockResolvedValue({
+        shortDayHoursHolidayEve: 5,
+        shortDayHoursCholHamoed: 5,
+        minHoursPerDay: 5,
+        weeklyRestDays: [5, 6],
+      });
+
+      await service.computeMonth({ userId: USER_ID, year: YEAR, month: MONTH });
+      const data = upsertCreateData();
+
+      // 21 implicit REGULAR Sun-Thu × 8.4
+      //  + 4 implicit-rest Fri (Oct 9, 16, 23, 30) × 0
+      //  + 5 implicit-rest Sat × 0
+      //  + 1 explicit HOLIDAY_EVE on Fri Oct 2 × 5
+      //  = 176.4 + 0 + 0 + 5 = 181.4
+      expect(data.monthlyStandard).toBeCloseTo(21 * 8.4 + 5, 2);
+    });
   });
 });
