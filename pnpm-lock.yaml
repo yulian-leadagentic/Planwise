@@ -271,6 +271,9 @@ importers:
       '@dnd-kit/utilities':
         specifier: ^3.2.2
         version: 3.2.2(react@18.3.1)
+      '@hebcal/core':
+        specifier: ^6.14.5
+        version: 6.14.5
       '@hookform/resolvers':
         specifier: ^3.9.1
         version: 3.10.0(react-hook-form@7.72.0)
@@ -1244,6 +1247,27 @@ packages:
       lodash.isnil: 4.0.0
       lodash.isundefined: 3.0.1
       lodash.uniq: 4.5.0
+    dev: false
+
+  /@hebcal/core@6.14.5:
+    resolution: {integrity: sha512-iB9/k5YjYiJbyNs+7nQSooD9IalVLo9FT46EQzFyleQB6fvUFwebQagMidevavhOtjz5dB+NbNEok2DvLltwpg==}
+    engines: {node: '>= 18'}
+    dependencies:
+      '@hebcal/hdate': 0.23.1
+      '@hebcal/noaa': 0.12.4
+      quick-lru: 7.3.0
+      temporal-polyfill: 1.0.6
+    dev: false
+
+  /@hebcal/hdate@0.23.1:
+    resolution: {integrity: sha512-lpvYpDc1Oe23XPClptNH6XEe2NA8Tb8iaUJ9/5Er1k04H9iHYB5YQnWsAg83R8l5SPOEUQnybeYizvSRSbBKCg==}
+    dev: false
+
+  /@hebcal/noaa@0.12.4:
+    resolution: {integrity: sha512-M7bkeWUP54+h34OMlkyuu0ZuUV9URnEbG9dxakeA1totMhvIvHrVEVzKznmpykMbKkystC4C3BDg1fG7Qfl2pA==}
+    engines: {node: '>=18'}
+    dependencies:
+      temporal-polyfill: 1.0.6
     dev: false
 
   /@hookform/resolvers@3.10.0(react-hook-form@7.72.0):
@@ -10518,6 +10542,11 @@ packages:
     engines: {node: '>=10'}
     dev: true
 
+  /quick-lru@7.3.0:
+    resolution: {integrity: sha512-k9lSsjl36EJdK7I06v7APZCbyGT2vMTsYSRX1Q2nbYmnkBqgUhRkAuzH08Ciotteu/PLJmIF2+tti7o3C/ts2g==}
+    engines: {node: '>=18'}
+    dev: false
+
   /range-parser@1.2.1:
     resolution: {integrity: sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg==}
     engines: {node: '>= 0.6'}
@@ -11706,6 +11735,21 @@ packages:
       minizlib: 2.1.2
       mkdirp: 1.0.4
       yallist: 4.0.0
+    dev: false
+
+  /temporal-polyfill@1.0.6:
+    resolution: {integrity: sha512-tYyEry1HLGUDbm2356W3iYD0OZdo7rlP7h98Zr/EnjqLZQwTAfcBDUvJnJbfA15v/vQad57hJZScG5O0W2oKEA==}
+    dependencies:
+      temporal-spec: 1.0.1
+      temporal-utils: 1.0.3
+    dev: false
+
+  /temporal-spec@1.0.1:
+    resolution: {integrity: sha512-wxVoanmDeavXie1vu2JaQ3WIc3JZnWAOYFBsJyATaVsXsycKYUflGsyBmrRSnoCpZJpwPyr38VpgSUlQ8CbFxg==}
+    dev: false
+
+  /temporal-utils@1.0.3:
+    resolution: {integrity: sha512-9jbTSX3HvkOWvDpNpFzwX/d1mkCrgQgwLmVTOEiuocZGKHsrQJtttGZFmybJ2zYP5zCSZuU5ZyeS8+eOEPABiQ==}
     dev: false
 
   /terser-webpack-plugin@5.4.0(@swc/core@1.15.21)(webpack@5.97.1):

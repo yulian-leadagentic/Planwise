@@ -36,58 +36,80 @@ const TYPE_LABEL: Record<string, string> = {
   REGULAR:     'רגיל',
 };
 
-// Israeli national holidays — generates dates for any given year
-function getIsraeliHolidays(year: number): Array<{ date: string; name: string; nameHe: string }> {
-  // These are approximate Gregorian dates — in production would use Hebrew calendar library
-  // Dates shift each year based on the Hebrew calendar
-  const holidays: Record<number, Array<{ date: string; name: string; nameHe: string }>> = {
-    2025: [
-      { date: `2025-03-14`, name: 'Purim', nameHe: 'פורים' },
-      { date: `2025-04-13`, name: 'Pesach (1st)', nameHe: 'פסח (יום א)' },
-      { date: `2025-04-14`, name: 'Pesach (2nd)', nameHe: 'פסח (יום ב)' },
-      { date: `2025-04-19`, name: 'Pesach (7th)', nameHe: 'פסח (יום ז)' },
-      { date: `2025-04-24`, name: 'Yom HaShoah', nameHe: 'יום השואה' },
-      { date: `2025-05-01`, name: 'Yom HaZikaron', nameHe: 'יום הזיכרון' },
-      { date: `2025-05-02`, name: 'Yom HaAtzmaut', nameHe: 'יום העצמאות' },
-      { date: `2025-06-02`, name: 'Shavuot', nameHe: 'שבועות' },
-      { date: `2025-09-23`, name: 'Rosh Hashana (1st)', nameHe: 'ראש השנה (יום א)' },
-      { date: `2025-09-24`, name: 'Rosh Hashana (2nd)', nameHe: 'ראש השנה (יום ב)' },
-      { date: `2025-10-02`, name: 'Yom Kippur', nameHe: 'יום כיפור' },
-      { date: `2025-10-07`, name: 'Sukkot (1st)', nameHe: 'סוכות (יום א)' },
-      { date: `2025-10-14`, name: 'Simchat Torah', nameHe: 'שמחת תורה' },
-    ],
-    2026: [
-      { date: `2026-03-03`, name: 'Purim', nameHe: 'פורים' },
-      { date: `2026-04-02`, name: 'Pesach (1st)', nameHe: 'פסח (יום א)' },
-      { date: `2026-04-03`, name: 'Pesach (2nd)', nameHe: 'פסח (יום ב)' },
-      { date: `2026-04-08`, name: 'Pesach (7th)', nameHe: 'פסח (יום ז)' },
-      { date: `2026-04-16`, name: 'Yom HaShoah', nameHe: 'יום השואה' },
-      { date: `2026-04-23`, name: 'Yom HaZikaron', nameHe: 'יום הזיכרון' },
-      { date: `2026-04-24`, name: 'Yom HaAtzmaut', nameHe: 'יום העצמאות' },
-      { date: `2026-05-22`, name: 'Shavuot', nameHe: 'שבועות' },
-      { date: `2026-09-12`, name: 'Rosh Hashana (1st)', nameHe: 'ראש השנה (יום א)' },
-      { date: `2026-09-13`, name: 'Rosh Hashana (2nd)', nameHe: 'ראש השנה (יום ב)' },
-      { date: `2026-09-21`, name: 'Yom Kippur', nameHe: 'יום כיפור' },
-      { date: `2026-09-26`, name: 'Sukkot (1st)', nameHe: 'סוכות (יום א)' },
-      { date: `2026-10-03`, name: 'Simchat Torah', nameHe: 'שמחת תורה' },
-    ],
-    2027: [
-      { date: `2027-03-23`, name: 'Purim', nameHe: 'פורים' },
-      { date: `2027-04-22`, name: 'Pesach (1st)', nameHe: 'פסח (יום א)' },
-      { date: `2027-04-23`, name: 'Pesach (2nd)', nameHe: 'פסח (יום ב)' },
-      { date: `2027-04-28`, name: 'Pesach (7th)', nameHe: 'פסח (יום ז)' },
-      { date: `2027-05-06`, name: 'Yom HaShoah', nameHe: 'יום השואה' },
-      { date: `2027-05-13`, name: 'Yom HaZikaron', nameHe: 'יום הזיכרון' },
-      { date: `2027-05-14`, name: 'Yom HaAtzmaut', nameHe: 'יום העצמאות' },
-      { date: `2027-06-11`, name: 'Shavuot', nameHe: 'שבועות' },
-      { date: `2027-10-02`, name: 'Rosh Hashana (1st)', nameHe: 'ראש השנה (יום א)' },
-      { date: `2027-10-03`, name: 'Rosh Hashana (2nd)', nameHe: 'ראש השנה (יום ב)' },
-      { date: `2027-10-11`, name: 'Yom Kippur', nameHe: 'יום כיפור' },
-      { date: `2027-10-16`, name: 'Sukkot (1st)', nameHe: 'סוכות (יום א)' },
-      { date: `2027-10-23`, name: 'Simchat Torah', nameHe: 'שמחת תורה' },
-    ],
-  };
-  return holidays[year] ?? holidays[2026] ?? [];
+// HR F3 (2026-10-19) — real Hebrew-calendar classification via @hebcal/core.
+// Dynamic-imported so the ~500 KB library only loads when the admin
+// actually clicks "Import"; the module isn't needed on the normal
+// Calendar page render. Returns three day types the HR engine knows
+// about: HOLIDAY (full-day yom tov), HOLIDAY_EVE (erev), CHOL_HAMOED
+// (intermediate days of Pesach / Sukkot). Minor fasts, Rosh Chodesh,
+// special Shabbatot and Yom HaShoah are skipped — they are not non-
+// working days under AMEC's practice.
+type CalendarDayType = 'HOLIDAY' | 'HOLIDAY_EVE' | 'CHOL_HAMOED';
+
+async function getIsraeliCalendar(
+  year: number,
+): Promise<Array<{ date: string; name: string; nameHe: string; type: CalendarDayType }>> {
+  const { HebrewCalendar, flags } = await import('@hebcal/core');
+
+  const events = HebrewCalendar.calendar({
+    year,
+    isHebrewYear: false,
+    il: true, // Israeli schedule (single-day yom tov)
+    sedrot: false,
+    omer: false,
+    molad: false,
+    yomKippurKatan: false,
+    noHolidays: false,
+    noMinorFast: true,
+    noModern: false, // include Yom HaAtzma'ut + Yom HaZikaron
+    noRoshChodesh: true,
+    noSpecialShabbat: true,
+  });
+
+  const out: Array<{ date: string; name: string; nameHe: string; type: CalendarDayType }> = [];
+  const seen = new Set<string>();
+
+  for (const ev of events) {
+    const greg = ev.getDate().greg();
+    const dateStr = `${greg.getFullYear()}-${String(greg.getMonth() + 1).padStart(2, '0')}-${String(greg.getDate()).padStart(2, '0')}`;
+    const nameEn = ev.render('en');
+    let nameHe: string;
+    try {
+      nameHe = ev.render('he');
+    } catch {
+      nameHe = nameEn;
+    }
+    const mask = ev.getFlags();
+
+    // Classification order matters:
+    // 1. CHOL_HAMOED beats EREV/CHAG for a day flagged both ways
+    //    (Hoshana Rabba is CHOL_HAMOED, keep it as CHOL_HAMOED).
+    // 2. EREV beats CHAG so "Erev Pesach" lands as HOLIDAY_EVE even
+    //    though its mask also carries CHAG via the parent Pesach event.
+    // 3. CHAG → HOLIDAY (full-day yom tov).
+    // 4. MODERN_HOLIDAY → by name: Yom HaAtzma'ut = HOLIDAY, Yom
+    //    HaZikaron = HOLIDAY_EVE (half-day in Israeli practice).
+    //    Yom HaShoah is NOT a non-working day — skipped.
+    let type: CalendarDayType | null = null;
+    if (mask & flags.CHOL_HAMOED) type = 'CHOL_HAMOED';
+    else if (mask & flags.EREV) type = 'HOLIDAY_EVE';
+    else if (mask & flags.CHAG) type = 'HOLIDAY';
+    else if (mask & flags.MODERN_HOLIDAY) {
+      if (/Yom HaAtzma/i.test(nameEn) || /עצמאות/.test(nameHe)) type = 'HOLIDAY';
+      else if (/Yom HaZikaron/i.test(nameEn) || /זיכרון/.test(nameHe)) type = 'HOLIDAY_EVE';
+    }
+
+    if (!type) continue; // skip Chanukah / Purim / Lag BaOmer / fasts / Yom HaShoah
+
+    // De-dupe by date: first classified entry wins. CHOL_HAMOED comes
+    // from the HebrewCalendar before daily holiday titles when both are
+    // present; keeping the first entry is the correct behavior.
+    if (seen.has(dateStr)) continue;
+    seen.add(dateStr);
+    out.push({ date: dateStr, name: nameEn, nameHe, type });
+  }
+
+  return out;
 }
 
 function countMonthWorkingDays(year: number, month: number, holidays: Set<string>): number {
@@ -239,11 +261,15 @@ export function CalendarDaysPage() {
   const [showImport, setShowImport] = useState(false);
   const [workingDayEdit, setWorkingDayEdit] = useState<{ id: number; name: string; hours: string } | null>(null);
 
-  // Check which years have holidays imported
+  // Check which years have calendar days imported. HR F3: the Hebcal-based
+  // importer now also lands HOLIDAY_EVE and CHOL_HAMOED rows, so the
+  // "imported" chip can't be gated on HOLIDAY alone — count a year as
+  // imported when ANY row for that year is one of the three types the
+  // importer writes.
   const importedYears = useMemo(() => {
     const years = new Set<number>();
     for (const d of (data ?? [])) {
-      if (d.type === 'HOLIDAY' && d.date) {
+      if ((d.type === 'HOLIDAY' || d.type === 'HOLIDAY_EVE' || d.type === 'CHOL_HAMOED') && d.date) {
         const yr = new Date(d.date).getFullYear();
         years.add(yr);
       }
@@ -252,23 +278,48 @@ export function CalendarDaysPage() {
   }, [data]);
 
   const importHolidays = async (year: number) => {
-    const holidays = getIsraeliHolidays(year);
-    // Use the SAME local date-key as holidayDates below. Previously this branch
-    // used UTC (toISOString), so for a negative-UTC user the key was shifted a
-    // day and existing holidays weren't detected — they got POSTed again (the
-    // errors were then swallowed and the "added" count was misleading).
-    const existingDates = new Set((data ?? []).map((d: any) => typeof d.date === 'string' ? d.date.split('T')[0] : formatDateKey(new Date(d.date))));
+    // HR F3 (2026-10-19) — hebcal-based classification. The importer now
+    // posts the day's real type (HOLIDAY / HOLIDAY_EVE / CHOL_HAMOED) so
+    // the HR monthly engine credits the correct short-day hours. Still
+    // idempotent: any date that already has ANY calendar row is skipped
+    // (second-click = no-op).
+    let events: Array<{ date: string; name: string; nameHe: string; type: CalendarDayType }>;
+    try {
+      events = await getIsraeliCalendar(year);
+    } catch (err: any) {
+      notify.apiError(err, 'Failed to load Hebrew calendar');
+      return;
+    }
+    // Local-date keys match the Set in `holidayDates` below. UTC-based
+    // keys would shift a day for negative-UTC users; the backend writes
+    // the Date as plain Y-M-D so we compare on the same shape.
+    const existingDates = new Set(
+      (data ?? []).map((d: any) =>
+        typeof d.date === 'string' ? d.date.split('T')[0] : formatDateKey(new Date(d.date)),
+      ),
+    );
     let added = 0;
-    for (const h of holidays) {
-      if (existingDates.has(h.date)) continue;
+    let skipped = 0;
+    for (const ev of events) {
+      if (existingDates.has(ev.date)) { skipped++; continue; }
       try {
-        await client.post('/calendar', { date: h.date, name: `${h.nameHe} (${h.name})`, type: 'HOLIDAY' });
+        await client.post('/calendar', {
+          date: ev.date,
+          name: `${ev.nameHe} (${ev.name})`,
+          type: ev.type,
+        });
         added++;
-      } catch { /* skip duplicates */ }
+      } catch { skipped++; }
     }
     queryClient.invalidateQueries({ queryKey: ['admin', 'calendar'] });
-    if (added > 0) notify.success(`Imported ${added} Israeli holidays for ${year}`, { code: 'CAL-IMPORT-200' });
-    else notify.info(`All ${year} holidays already exist`);
+    if (added > 0) {
+      notify.success(
+        `יובאו ${added} ימי לוח ישראלי לשנת ${year}${skipped > 0 ? ` (${skipped} כבר קיימים)` : ''}`,
+        { code: 'CAL-IMPORT-200' },
+      );
+    } else {
+      notify.info(`כל ימי ${year} כבר קיימים`);
+    }
     setShowImport(false);
   };
 
