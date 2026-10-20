@@ -437,6 +437,18 @@ export function HrCalendarPage() {
     return set;
   }, [data]);
 
+  // HR Wave 3 A (2026-10-20) — list filters + nearest-upcoming sort for
+  // the "All Non-Working Days" table at the bottom of the page. Yulian
+  // asked for sort-by-nearest-upcoming + per-column filters (date range,
+  // name search, type dropdown) because the list grew long enough that
+  // scrolling to find a specific event was friction. Inline edit was
+  // intentionally left as a separate follow-up — the "Edit hours" button
+  // already opens the modal, which is enough for this wave.
+  const [listNameFilter, setListNameFilter] = useState('');
+  const [listTypeFilter, setListTypeFilter] = useState<string>('all');
+  const [listDateFrom, setListDateFrom] = useState<string>('');
+  const [listDateTo, setListDateTo] = useState<string>('');
+
   const monthWorkingDays = countMonthWorkingDays(viewYear, viewMonth, holidayDates);
 
   // Year view data
@@ -899,51 +911,159 @@ export function HrCalendarPage() {
       )}
 
       {/* All Non-Working Days list — read-only viewers see the list but
-          no row-level edit / delete controls. */}
-      {(data ?? []).length > 0 && (
-        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-3">All Non-Working Days</h3>
-          <div className="space-y-1.5">
-            {(data as any[]).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime()).map((d: any) => {
-              const style = TYPE_STYLES[d.type] ?? TYPE_STYLES.CHOL_HAMOED;
-              const isPast = new Date(d.date) < today;
-              // HR G2 (2026-10-19) — show a "Nh" badge whenever the
-              // row's workingHours differs from the type default, for
-              // every type (not just HOLIDAY). Edit affordance is now
-              // visible for every row.
-              const showWhBadge = isNonDefaultWorkingHours(d);
-              return (
-                <div key={d.id} className={cn('flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50', isPast && 'opacity-50')}>
-                  <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', style.dot)} />
-                  <span className="text-[13px] font-medium text-slate-700 dark:text-slate-200 w-32">{new Date(d.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/\s+/g, '-')}</span>
-                  <span className="text-[13px] text-slate-800 dark:text-slate-100 flex-1 flex items-center gap-2">
-                    <span>{d.name}</span>
-                    {showWhBadge && (
-                      <span className="inline-flex items-center rounded-[5px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[11px] font-mono tabular-nums px-1.5 py-0.5">
-                        {Number(d.workingHours)}h
-                      </span>
+          no row-level edit / delete controls.
+          Wave 3 A (2026-10-20) — sort nearest-upcoming first, then past
+          chronologically; filters for name/type/date-range above. */}
+      {(data ?? []).length > 0 && (() => {
+        const todayStart = new Date(today);
+        todayStart.setHours(0, 0, 0, 0);
+        const nameNeedle = listNameFilter.trim().toLowerCase();
+        const fromMs = listDateFrom ? new Date(listDateFrom + 'T00:00:00').getTime() : -Infinity;
+        const toMs = listDateTo ? new Date(listDateTo + 'T23:59:59.999').getTime() : Infinity;
+        const filtered = (data as any[]).filter((d) => {
+          if (listTypeFilter !== 'all' && d.type !== listTypeFilter) return false;
+          if (nameNeedle && !(d.name ?? '').toLowerCase().includes(nameNeedle)) return false;
+          const dMs = new Date(d.date).getTime();
+          if (dMs < fromMs || dMs > toMs) return false;
+          return true;
+        });
+        const sorted = [...filtered].sort((a, b) => {
+          const aMs = new Date(a.date).getTime();
+          const bMs = new Date(b.date).getTime();
+          const aFuture = aMs >= todayStart.getTime();
+          const bFuture = bMs >= todayStart.getTime();
+          if (aFuture !== bFuture) return aFuture ? -1 : 1;
+          return aMs - bMs;
+        });
+        const hasFilters = nameNeedle !== '' || listTypeFilter !== 'all' || listDateFrom !== '' || listDateTo !== '';
+        return (
+          <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">All Non-Working Days</h3>
+              <p className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
+                <span className="font-mono tabular-nums text-slate-500 dark:text-slate-400">{sorted.length}</span>
+                {hasFilters && (
+                  <> / <span className="font-mono tabular-nums text-slate-400 dark:text-slate-500">{(data as any[]).length}</span></>
+                )}{' '}days
+              </p>
+            </div>
+
+            {/* Filter row — planwise-design form inputs. */}
+            <div className="flex flex-wrap items-end gap-2 mb-3">
+              <div className="flex-1 min-w-[180px]">
+                <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
+                  Name
+                </label>
+                <input
+                  type="text"
+                  value={listNameFilter}
+                  onChange={(e) => setListNameFilter(e.target.value)}
+                  placeholder="Search by event name…"
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div className="w-44">
+                <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
+                  Type
+                </label>
+                <select
+                  value={listTypeFilter}
+                  onChange={(e) => setListTypeFilter(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="all">All types</option>
+                  <option value="HOLIDAY">חג · Holiday</option>
+                  <option value="HOLIDAY_EVE">ערב חג · Eve</option>
+                  <option value="CHOL_HAMOED">חוה״מ · Chol-hamoed</option>
+                  <option value="REST">יום מנוחה · Rest</option>
+                  <option value="REGULAR">רגיל · Regular</option>
+                </select>
+              </div>
+              <div className="w-40">
+                <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
+                  From
+                </label>
+                <input
+                  type="date"
+                  value={listDateFrom}
+                  onChange={(e) => setListDateFrom(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-mono tabular-nums text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div className="w-40">
+                <label className="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">
+                  To
+                </label>
+                <input
+                  type="date"
+                  value={listDateTo}
+                  min={listDateFrom || undefined}
+                  onChange={(e) => setListDateTo(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-mono tabular-nums text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              {hasFilters && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setListNameFilter('');
+                    setListTypeFilter('all');
+                    setListDateFrom('');
+                    setListDateTo('');
+                  }}
+                  className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-[12px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              {sorted.length === 0 ? (
+                <p className="py-6 text-center text-[13px] text-slate-400 dark:text-slate-500">
+                  No non-working days match these filters.
+                </p>
+              ) : sorted.map((d: any) => {
+                const style = TYPE_STYLES[d.type] ?? TYPE_STYLES.CHOL_HAMOED;
+                const isPast = new Date(d.date) < todayStart;
+                // HR G2 (2026-10-19) — show a "Nh" badge whenever the
+                // row's workingHours differs from the type default, for
+                // every type (not just HOLIDAY). Edit affordance is now
+                // visible for every row.
+                const showWhBadge = isNonDefaultWorkingHours(d);
+                return (
+                  <div key={d.id} className={cn('flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50', isPast && 'opacity-50')}>
+                    <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', style.dot)} />
+                    <span className="text-[13px] font-medium text-slate-700 dark:text-slate-200 w-32">{new Date(d.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/\s+/g, '-')}</span>
+                    <span className="text-[13px] text-slate-800 dark:text-slate-100 flex-1 flex items-center gap-2">
+                      <span>{d.name}</span>
+                      {showWhBadge && (
+                        <span className="inline-flex items-center rounded-[5px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[11px] font-mono tabular-nums px-1.5 py-0.5">
+                          {Number(d.workingHours)}h
+                        </span>
+                      )}
+                    </span>
+                    <span className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide', style.bg, style.text)}>{TYPE_LABEL[d.type] ?? d.type}</span>
+                    {canWrite && (
+                      <>
+                        <button onClick={() => handleSetWorkingDay(d)}
+                          className="rounded px-2 py-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
+                          title="Edit working hours">
+                          <Clock className="h-3.5 w-3.5 inline mr-1" />Edit hours
+                        </button>
+                        <button onClick={async () => { if (await confirm(`Remove "${d.name}"?`)) deleteMutation.mutate(d.id); }}
+                          className="rounded p-1 text-slate-300 dark:text-slate-600 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </>
                     )}
-                  </span>
-                  <span className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide', style.bg, style.text)}>{TYPE_LABEL[d.type] ?? d.type}</span>
-                  {canWrite && (
-                    <>
-                      <button onClick={() => handleSetWorkingDay(d)}
-                        className="rounded px-2 py-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
-                        title="Edit working hours">
-                        <Clock className="h-3.5 w-3.5 inline mr-1" />Edit hours
-                      </button>
-                      <button onClick={async () => { if (await confirm(`Remove "${d.name}"?`)) deleteMutation.mutate(d.id); }}
-                        className="rounded p-1 text-slate-300 dark:text-slate-600 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </>
-                  )}
-                </div>
-              );
-            })}
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
