@@ -124,27 +124,38 @@ export function ProjectFormPage() {
 
   // Customer organizations — orgs with the "customer" role. The seeded
   // "Internal" org is included for projects with no external customer.
+  // B4 (2026-10-20): swapped from `/business-partners?...roleType=customer`
+  // (gated by `partners:read`) to `/lookups/customer-orgs` (gated by
+  // `projects:write`) so a tester with only `projects:write` can fill
+  // the required Customer picker. Response envelope + row shape are
+  // identical — the backend route proxies the same service.findAll.
   const { data: customers = [] } = useQuery<any[]>({
     queryKey: ['customer-orgs'],
     staleTime: 5 * 60 * 1000,
-    queryFn: () => client.get('/business-partners?partnerType=organization&roleType=customer&perPage=200').then((r) => {
+    queryFn: () => client.get('/lookups/customer-orgs').then((r) => {
       const d = r.data?.data ?? r.data;
       return Array.isArray(d) ? d : (d?.data ?? []);
     }),
   });
 
   // QA4 Round-1 · A2 (2026-09-28) — OrgUnit picker feed. Returns the
-  // FLAT tree from `GET /org-units`; we filter to
+  // FLAT tree from `GET /lookups/org-units`; we filter to
   // `assignableToProjects === true` and render it hierarchically via
   // the shared `buildTree` helper the admin Organization page uses.
   // 'org-units' is a legitimate root query key here (Organization
   // admin uses ['org', 'tree']) — the picker is a separate consumer
   // and shouldn't get bulk-invalidated by unrelated admin mutations.
+  // B4 (2026-10-20): swapped from `/org-units` (gated by `org:read`,
+  // admin-only) to `/lookups/org-units` (gated by `projects:write`)
+  // so non-admin project creators can pick an org unit. The admin
+  // Organization page keeps using `/org-units` directly. Payload
+  // shape is unchanged — the backend route calls the same
+  // `OrgUnitService.getTree()`.
   const { data: orgUnitsAll = [] } = useQuery<any[]>({
     queryKey: ['org-units'],
     staleTime: 5 * 60 * 1000,
     queryFn: () =>
-      client.get('/org-units').then((r) => {
+      client.get('/lookups/org-units').then((r) => {
         const d = r.data?.data ?? r.data;
         return Array.isArray(d) ? d : [];
       }),

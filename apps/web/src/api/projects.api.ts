@@ -137,7 +137,11 @@ export const projectsApi = {
     client.get<ApiResponse<AssigneeCandidate[]>>(`/projects/${projectId}/assignee-candidates`)
       .then((r) => r.data.data ?? (r.data as unknown as AssigneeCandidate[])),
 
-  // Project types
+  // Project types — read-only lookup for the New Project form. Served
+  // under /lookups so a tester with `projects:write` (but no
+  // `admin:read`) can still populate the required Category picker.
+  // Admin CRUD surfaces (project-types-page, templates/types-page) keep
+  // using /admin/config/project-types. See B4 WORKORDER.
   listTypes: () =>
-    client.get<ApiResponse<ProjectType[]>>('/admin/config/project-types').then((r) => r.data.data),
+    client.get<ApiResponse<ProjectType[]>>('/lookups/project-types').then((r) => r.data.data),
 };
