@@ -20,7 +20,7 @@ import type { Response } from 'express';
 import { DataImportMode, DataImportTarget } from '@prisma/client';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser, userHasModulePermission } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -75,14 +75,15 @@ export class DataImportController {
    * The permission for each target is a dedicated module — we check it
    * here rather than via @RequirePermissions because the target comes
    * from the URL param, not the route definition.
+   *
+   * Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B3) — uses the
+   * shared `userHasModulePermission` helper so a grant on the parent
+   * `data-import` route satisfies this check (same parent-fallback as
+   * the main guard's expandModule). Previously exact-match-only,
+   * which left top-level matrix grants not reaching the child.
    */
   private assertCanImport(user: any, target: DataImportTarget) {
-    const required = `data-import/${target}`;
-    const hasIt = user?.roleModules?.some((rm: any) => {
-      const route = rm.module?.route ?? '';
-      return (route === required || route === `/${required}`) && rm.canWrite;
-    });
-    if (!hasIt) {
+    if (!userHasModulePermission(user, `data-import/${target}`, 'write')) {
       throw new ForbiddenException(
         `You need "data-import/${target}" permission to import ${target}.`,
       );

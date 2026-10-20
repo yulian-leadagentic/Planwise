@@ -16,7 +16,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../../common/guards/roles.guard';
+import { RolesGuard, userHasModulePermission } from '../../../common/guards/roles.guard';
 import { RequirePermissions } from '../../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 
@@ -55,13 +55,19 @@ export class ContactsImportController {
   ) {}
 
   /** Extra defense — the guard covers `data-import/contacts`; make sure
-   *  the caller specifically has WRITE on that path (not merely READ). */
+   *  the caller specifically has WRITE on that path (not merely READ).
+   *
+   *  Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B3) — uses the
+   *  shared `userHasModulePermission` helper so a grant on the parent
+   *  `data-import` route satisfies this check (same parent-fallback as
+   *  the main guard's expandModule). Previously exact-match-only,
+   *  which meant a top-level matrix grant did not reach this child —
+   *  inconsistent with the guard and the UI.
+   */
   private assertCanImport(user: any) {
-    const has = (user?.roleModules ?? []).some((rm: any) => {
-      const route = rm.module?.route ?? '';
-      return (route === 'data-import/contacts' || route === '/data-import/contacts') && rm.canWrite;
-    });
-    if (!has) throw new ForbiddenException('You need "data-import/contacts" write permission.');
+    if (!userHasModulePermission(user, 'data-import/contacts', 'write')) {
+      throw new ForbiddenException('You need "data-import/contacts" write permission.');
+    }
   }
 
   /**

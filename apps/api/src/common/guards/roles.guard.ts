@@ -100,7 +100,17 @@ export class RolesGuard implements CanActivate {
   }
 }
 
-function expandModule(module: string): string[] {
+/**
+ * Expand a module path into [most-specific, …, parent] candidates for
+ * permission lookup. Used by the guard above AND, since Phase 1 RBAC
+ * Hardening (2026-10-20 WORKORDER — B3), by the data-import
+ * controllers' assertCanImport so a grant on the parent `data-import`
+ * route satisfies the child `data-import/<target>` the same way the
+ * guard does. Any controller that gates a nested path manually MUST
+ * use this helper instead of exact-match route comparisons so the
+ * matrix stays consistent.
+ */
+export function expandModule(module: string): string[] {
   const candidates = [module];
   const path = module.startsWith('/') ? module : `/${module}`;
   const parts = path.split('/').filter(Boolean);
@@ -108,6 +118,46 @@ function expandModule(module: string): string[] {
     candidates.push(parts.slice(0, i).join('/'));
   }
   return candidates;
+}
+
+/**
+ * Does the user's merged roleModules grant `action` on `module`, with
+ * the same parent-fallback semantics as the main guard? True iff some
+ * row for the module (or any parent path) has the action flag set.
+ *
+ * Carved out of `canActivate` so controllers that gate dynamic paths
+ * (today: the data-import importers' assertCanImport) can share the
+ * exact same lookup. Keeps the matrix UI, the guard, and the
+ * controllers from drifting apart.
+ */
+export function userHasModulePermission(
+  user: any,
+  module: string,
+  action: 'read' | 'write' | 'delete' | 'approve' | 'export',
+): boolean {
+  const roleModules: any[] = user?.roleModules ?? [];
+  if (roleModules.length === 0) return false;
+  const findEntry = (key: string) => {
+    const lc = key.toLowerCase();
+    return roleModules.find((rm: any) => {
+      const route = rm.module?.route || '';
+      const name = rm.module?.name?.toLowerCase() || '';
+      return route === key || route === `/${key}` || name === lc;
+    });
+  };
+  for (const candidate of expandModule(module)) {
+    const rm = findEntry(candidate);
+    if (!rm) continue;
+    switch (action) {
+      case 'read':    return !!rm.canRead;
+      case 'write':   return !!rm.canWrite;
+      case 'delete':  return !!rm.canDelete;
+      case 'approve': return !!rm.canApprove;
+      case 'export':  return !!rm.canExport;
+      default:        return false;
+    }
+  }
+  return false;
 }
 
 /**
