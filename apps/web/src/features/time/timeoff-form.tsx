@@ -4,8 +4,9 @@ import { Calendar, FileText, Upload, X } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth.store';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
-import { hrApi, type TimeCategory, type TimeCategoryKind } from '@/features/hr/api/hr.api';
+import { hrApi, type TimeCategory, type TimeCategoryKind, type HrCalendarDay, type AbsenceRecord } from '@/features/hr/api/hr.api';
 import { timeApi } from '@/api/time.api';
+import client from '@/api/client';
 import { invalidateAfterTimeEntry } from './invalidate-after-time-entry';
 
 /**
@@ -93,6 +94,13 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Wave 3 F (2026-10-20) — tracks the last auto-computed working-days
+  // count. Any time the amount input still matches this value (or the
+  // initial '1' prefill), the next computation is allowed to overwrite
+  // it. The moment the user types a different number, autoAmount stops
+  // matching and the auto-fill stays out of the way.
+  const [autoAmount, setAutoAmount] = useState<string | null>(null);
+
   // Reset dateTo to match dateFrom whenever dateFrom moves ahead of it,
   // and whenever a HOUR-unit category is picked (single-day lock).
   useEffect(() => {
@@ -113,11 +121,143 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
       if (prev !== '') return prev; // don't overwrite a user-typed value
       return picked.unit === 'DAY' ? '1' : '';
     });
+    // Reset the auto-amount tracker when switching categories: the
+    // range-based computation only applies to DAY units, and we want
+    // the next multi-day pick to re-fill freely.
+    setAutoAmount(picked.unit === 'DAY' ? '1' : null);
     // Clear any upload the user attached for a prior category — a doc
     // for one absence type should never bleed into another.
     setDocumentFileId(null);
     setDocumentName(null);
   }, [picked?.kind, picked?.absenceTypeId, picked?.bucketId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Wave 3 F (2026-10-20) — multi-day DAY-unit auto-count. When the user
+  // picks a DAY category and a dateFrom < dateTo range, prefill `amount`
+  // with the WORKING-days count in the inclusive range (minus weekly
+  // rest days, HOLIDAY/REST calendar rows, workingHours=0 rows, and days
+  // already covered by existing absences).
+  //
+  // Weekly rest days: hardcoded [5, 6] (Fri + Sat) to match the engine's
+  // default — `HrSettings.weeklyRestDays` isn't yet exposed on the
+  // `/hr/settings` response (follow-up to surface it).
+  //
+  // We reuse the ['admin','calendar'] cache key the Admin Calendar page
+  // populates so this is a single shared fetch across the app.
+  const WEEKLY_REST_DAYS = useMemo(() => [5, 6], []);
+
+  const { data: calendarDays = [] } = useQuery({
+    queryKey: ['admin', 'calendar'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () =>
+      client.get('/calendar').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? (d as HrCalendarDay[]) : ([] as HrCalendarDay[]);
+      }),
+    // Only needed when the picker is on a DAY-unit category — but the
+    // cache is shared and almost always warm (weekly timesheet reads
+    // it), so the useQuery call is cheap. Leaving `enabled` on the
+    // default `true` keeps the shared cache populated.
+  });
+
+  // Pull the caller's existing absences for the year(s) the range spans.
+  // Prevents double-booking a day that's already in the ledger.
+  const yearFrom = Number(dateFrom?.slice(0, 4));
+  const yearTo = Number(dateTo?.slice(0, 4));
+  const spanYears = useMemo(() => {
+    const ys: number[] = [];
+    if (Number.isFinite(yearFrom)) ys.push(yearFrom);
+    if (Number.isFinite(yearTo) && yearTo !== yearFrom) ys.push(yearTo);
+    return ys;
+  }, [yearFrom, yearTo]);
+  const { data: myAbsencesByYear = {} as Record<number, AbsenceRecord[]> } = useQuery({
+    queryKey: ['hr', 'me', 'absences', spanYears.join(',')],
+    enabled: !!callerId && spanYears.length > 0,
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const result: Record<number, AbsenceRecord[]> = {};
+      for (const y of spanYears) {
+        try {
+          result[y] = await hrApi.listMyAbsences({ year: y });
+        } catch {
+          result[y] = [];
+        }
+      }
+      return result;
+    },
+  });
+
+  // Compact pseudocode (what the auto-count does):
+  //   workingDays = [dateFrom..dateTo]
+  //     .filter(d => !WEEKLY_REST_DAYS.includes(d.getDay()))
+  //     .filter(d => calMap[d]?.type !== HOLIDAY && !== REST)
+  //     .filter(d => calMap[d]?.workingHours !== 0)
+  //     .filter(d => !absencesByDate.has(d))
+  //     .length
+  const autoCount = useMemo(() => {
+    if (!picked || picked.unit !== 'DAY') return null;
+    if (!dateFrom || !dateTo) return null;
+    if (dateTo <= dateFrom) return null;
+    const from = new Date(dateFrom + 'T00:00:00');
+    const to = new Date(dateTo + 'T00:00:00');
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null;
+
+    const fmt = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    // Build a date→CalendarDay lookup across every row the shared cache
+    // holds (CalendarDay rows are a few hundred per year — cheap).
+    const calByDate = new Map<string, HrCalendarDay>();
+    for (const c of calendarDays) {
+      if (!c?.date) continue;
+      const key = typeof c.date === 'string' ? (c.date as string).split('T')[0] : fmt(new Date(c.date));
+      calByDate.set(key, c);
+    }
+
+    // Build a set of dates the caller is already absent on, across the
+    // span's year(s). Covers inclusive ranges.
+    const absenceDates = new Set<string>();
+    for (const y of spanYears) {
+      for (const rec of myAbsencesByYear[y] ?? []) {
+        const f = new Date((rec.dateFrom as string).slice(0, 10) + 'T00:00:00');
+        const t = new Date((rec.dateTo as string).slice(0, 10) + 'T00:00:00');
+        for (let d = new Date(f); d <= t; d.setDate(d.getDate() + 1)) {
+          absenceDates.add(fmt(d));
+        }
+      }
+    }
+
+    let count = 0;
+    let totalDays = 0;
+    for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+      totalDays++;
+      const dow = d.getDay(); // 0=Sun..6=Sat
+      if (WEEKLY_REST_DAYS.includes(dow)) continue;
+      const cal = calByDate.get(fmt(d));
+      if (cal?.type === 'HOLIDAY' || cal?.type === 'REST') continue;
+      if (cal && Number(cal.workingHours) === 0) continue;
+      if (absenceDates.has(fmt(d))) continue;
+      count++;
+    }
+    return { count, totalDays, skipped: totalDays - count };
+  }, [picked, dateFrom, dateTo, calendarDays, myAbsencesByYear, spanYears, WEEKLY_REST_DAYS]);
+
+  // Apply the auto-count to `amount` ONLY when the user hasn't manually
+  // overridden the previous auto value. The guard also allows the
+  // initial '1' prefill to be overwritten so the first multi-day pick
+  // fills immediately, not after a stray change. `autoAmount` is only
+  // bumped when we actually wrote the new value — otherwise it stays
+  // pinned at the last auto value the user accepted, so a later date
+  // tweak still recognises a manual override.
+  useEffect(() => {
+    if (!picked || picked.unit !== 'DAY') return;
+    if (!autoCount) return;
+    const next = String(autoCount.count);
+    const isUntouched = amount === '' || amount === '1' || amount === autoAmount;
+    if (!isUntouched) return;
+    if (amount === next) return;
+    setAmount(next);
+    setAutoAmount(next);
+  }, [autoCount, picked?.unit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const uploadMut = useMutation({
     mutationFn: (file: File) => {
@@ -349,34 +489,44 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
         <label className="mb-1 block text-[12px] font-semibold text-slate-600 dark:text-slate-300">
           כמות · Amount ({picked?.unit === 'HOUR' ? 'שעות · hours' : 'ימים · days'}) *
         </label>
-        {picked?.unit === 'DAY' && (
-          <div className="mb-2 flex gap-2">
-            <button
-              type="button"
-              onClick={() => setAmount('0.5')}
-              className={cn(
-                'flex-1 rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold',
-                amount === '0.5'
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300'
-                  : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400',
-              )}
-            >
-              חצי יום · 0.5
-            </button>
-            <button
-              type="button"
-              onClick={() => setAmount('1')}
-              className={cn(
-                'flex-1 rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold',
-                amount === '1'
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300'
-                  : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400',
-              )}
-            >
-              יום מלא · 1
-            </button>
-          </div>
-        )}
+        {picked?.unit === 'DAY' && (() => {
+          // Wave 3 F (2026-10-20) — multi-day DAY-unit auto-fill. When a
+          // range is picked, the full-day button shows the working-days
+          // count (e.g. "ימי עבודה · 5") and sets amount to that count.
+          const multi = autoCount && autoCount.totalDays > 1;
+          const fullLabel = multi && autoCount && autoCount.count > 1
+            ? `ימי עבודה · ${autoCount.count}`
+            : `יום מלא · ${multi && autoCount ? autoCount.count : 1}`;
+          const fullValue = multi && autoCount ? String(autoCount.count) : '1';
+          return (
+            <div className="mb-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setAmount('0.5')}
+                className={cn(
+                  'flex-1 rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold',
+                  amount === '0.5'
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300'
+                    : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400',
+                )}
+              >
+                חצי יום · 0.5
+              </button>
+              <button
+                type="button"
+                onClick={() => setAmount(fullValue)}
+                className={cn(
+                  'flex-1 rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold',
+                  amount === fullValue
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300'
+                    : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400',
+                )}
+              >
+                {fullLabel}
+              </button>
+            </div>
+          );
+        })()}
         <input
           type="number"
           step={picked?.unit === 'HOUR' ? '0.25' : '0.5'}
@@ -386,6 +536,14 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
           className="w-full rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm font-mono focus:border-blue-500 focus:outline-none"
           placeholder={picked?.unit === 'HOUR' ? 'e.g. 2.5' : 'e.g. 1'}
         />
+        {/* Wave 3 F — show how the range breaks down. Rendered only
+            when the auto-count skipped at least one day (otherwise the
+            number already equals the span and the hint is noise). */}
+        {picked?.unit === 'DAY' && autoCount && autoCount.totalDays > 1 && autoCount.skipped > 0 && (
+          <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+            מתוך {autoCount.totalDays} ימים · {autoCount.skipped} ימי מנוחה/חג דולגו
+          </p>
+        )}
       </div>
 
       {/* Note */}
