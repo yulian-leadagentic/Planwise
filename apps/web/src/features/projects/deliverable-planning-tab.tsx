@@ -2268,6 +2268,133 @@ function GanttView({
     });
   };
 
+  // DPG-3 (2026-10-20) · Rollup-bar drag state. Tracks the group being
+  // dragged + the current delta in days so the floating "+N days" badge
+  // can render over the dragging bar. `null` means no drag in flight;
+  // the badge is only visible while a pointer is down on the bar.
+  const [rollupDragInfo, setRollupDragInfo] = useState<null | { groupKey: string; deltaDays: number }>(null);
+
+  // DPG-3 · Start a cascade drag on a group's rollup bar. Every child
+  // row with a resolved target gets its target shifted by the SAME
+  // delta (snap-to-7-days so bars still land on Sunday), proportions
+  // between children preserved by construction. Writes to the existing
+  // `targetDateDrafts` map — Save-all persists exactly the same way a
+  // single-row drag already does, so no new persistence path.
+  //
+  //   • Past-date revert: if the earliest resulting target lands before
+  //     TODAY, roll every row back to its pre-drag draft and open the
+  //     existing PastDateConfirmModal; Confirm re-applies.
+  //   • Click vs drag: a near-zero drag (< 3 px) collapses/expands the
+  //     group (same affordance the bar had before DPG-3; replaces its
+  //     former `onClick={toggle}`).
+  //   • Live delta badge: `rollupDragInfo` ticks each move; the floating
+  //     "+N days" chip renders inside the bar's track, pointer-events
+  //     disabled so it never swallows the pointer.
+  const startRollupDrag = (slot: GanttGroup) => (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Snapshot each child's PRIOR state (resolved target + any explicit
+    // draft already in place) so a mid-drag re-render — triggered by
+    // our own setTargetDateDrafts — doesn't poison the baseline we add
+    // the delta to. Children with no target at all are tracked but
+    // skipped on apply (there's nothing to shift).
+    const snapshot = slot.zones.map((z: any) => {
+      const curTargetIso = targetDateDrafts[z.key] || computePreview(drafts[z.key] ?? '') || z.savedDate;
+      const curTargetMs = curTargetIso ? new Date(curTargetIso).getTime() : null;
+      const priorDraft = targetDateDrafts[z.key] ?? '';
+      return { key: z.key, curTargetMs, priorDraft };
+    });
+    const initClientX = e.clientX;
+    const msPerPx = 86_400_000 / PX_PER_DAY;
+    let finalDeltaDays = 0;
+    // Last-committed per-child iso map — reused inside the past-date
+    // confirm callback so the modal's Apply re-plays the exact deltas
+    // the user let go of.
+    const appliedTargets = new Map<string, string>();
+
+    const isoDayOf = (ms: number) => {
+      const d = new Date(ms);
+      d.setUTCHours(0, 0, 0, 0);
+      return d.toISOString().slice(0, 10);
+    };
+
+    setRollupDragInfo({ groupKey: slot.key, deltaDays: 0 });
+
+    const onMove = (ev: PointerEvent) => {
+      const dxPx = ev.clientX - initClientX;
+      const dxDays = Math.round((dxPx * msPerPx) / 86_400_000);
+      // Snap to the nearest 7 days so every child's new target still
+      // lands on a Sunday (bars + server both expect Sunday-aligned
+      // dates). A sub-7-day pointer wiggle resolves to 0 — no draft
+      // writes, no visible movement.
+      const snapped = Math.round(dxDays / 7) * 7;
+      if (snapped === finalDeltaDays) return;
+      finalDeltaDays = snapped;
+      setRollupDragInfo({ groupKey: slot.key, deltaDays: snapped });
+      const next: Record<string, string> = {};
+      appliedTargets.clear();
+      for (const s of snapshot) {
+        if (s.curTargetMs == null) continue;
+        const newMs = s.curTargetMs + snapped * 86_400_000;
+        const iso = isoDayOf(newMs);
+        next[s.key] = iso;
+        appliedTargets.set(s.key, iso);
+      }
+      setTargetDateDrafts((prev) => ({ ...prev, ...next }));
+    };
+
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      setRollupDragInfo(null);
+
+      // Treat a near-zero drag as a plain click → toggle collapse.
+      // CLICK_SLOP matches GanttRow's middle-drag threshold so the
+      // feel is consistent between per-row and rollup clicks.
+      const CLICK_SLOP = 3;
+      const totalDx = Math.abs(ev.clientX - initClientX);
+      if (totalDx < CLICK_SLOP && finalDeltaDays === 0) {
+        onToggleCollapse(slot.key);
+        return;
+      }
+      if (finalDeltaDays === 0) return;
+
+      // Past-date revert. If any resulting target would land before
+      // TODAY, roll every child back to its pre-drag draft and open
+      // the existing modal; Confirm re-plays the deltas.
+      const todayMs = Date.now();
+      let earliestNew = Infinity;
+      for (const s of snapshot) {
+        if (s.curTargetMs == null) continue;
+        const newMs = s.curTargetMs + finalDeltaDays * 86_400_000;
+        if (newMs < earliestNew) earliestNew = newMs;
+      }
+      if (earliestNew < todayMs) {
+        setTargetDateDrafts((prev) => {
+          const copy = { ...prev };
+          for (const s of snapshot) {
+            if (s.priorDraft) copy[s.key] = s.priorDraft;
+            else delete copy[s.key];
+          }
+          return copy;
+        });
+        setPastDateConfirm({
+          rowKey: slot.key,
+          newTargetMs: earliestNew,
+          kind: 'move',
+          apply: () => {
+            setTargetDateDrafts((prev) => ({ ...prev, ...Object.fromEntries(appliedTargets) }));
+          },
+        });
+      }
+      // Otherwise: drafts already written during onMove — nothing else
+      // to do here. Save-all picks them up unchanged.
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
 
   // Empty state — rendered AFTER all hooks so the hook count stays
   // constant across renders (see note above).
@@ -2587,6 +2714,7 @@ function GanttView({
                 const progressPct = slot.taskTotal > 0
                   ? Math.min(100, Math.max(0, (slot.taskDone / slot.taskTotal) * 100))
                   : 0;
+                const isDragging = rollupDragInfo?.groupKey === slot.key;
                 return (
                   <div
                     key={`gtrack-${slot.key}`}
@@ -2603,12 +2731,19 @@ function GanttView({
                           'bg-slate-200 dark:bg-slate-700',
                           'ring-1 ring-slate-300/70 dark:ring-slate-600/70',
                           'hover:bg-slate-300/70 dark:hover:bg-slate-600 transition-colors duration-150',
-                          'cursor-pointer select-none',
+                          // DPG-3 — drag handle on the entire bar.
+                          // A near-zero drag still toggles collapse (see
+                          // startRollupDrag.onUp), so the bar replaces
+                          // its pre-DPG-3 `onClick={toggle}` with a
+                          // pointer-down drag that falls through to a
+                          // toggle on no-move releases.
+                          'cursor-grab active:cursor-grabbing select-none',
                           isPast && 'ring-2 ring-red-400/70',
+                          isDragging && 'ring-2 ring-blue-500',
                         )}
                         style={{ left: leftPx, width: widthPx }}
-                        onClick={() => onToggleCollapse(slot.key)}
-                        title={`${slot.label} — click to ${slot.isCollapsed ? 'expand' : 'collapse'}`}
+                        onPointerDown={startRollupDrag(slot)}
+                        title={`${slot.label} — drag to shift all ${slot.zoneCount} rows together · click to ${slot.isCollapsed ? 'expand' : 'collapse'}`}
                       >
                         {/* Progress fill — slate-400/500 so it reads as a
                             quiet aggregate signal, not a status color. */}
@@ -2627,6 +2762,17 @@ function GanttView({
                             <span className="font-mono tabular-nums">· {slot.taskDone}/{slot.taskTotal}</span>
                           )}
                         </div>
+                      </div>
+                    )}
+                    {/* DPG-3 · live delta badge. Renders inside the
+                        track strip so vertical alignment matches the
+                        bar; pointer-events disabled so it never
+                        swallows the drag. */}
+                    {isDragging && rollupDragInfo && rollupDragInfo.deltaDays !== 0 && (
+                      <div
+                        className="absolute top-0.5 right-2 rounded-[5px] px-1.5 py-0.5 text-[10px] font-bold tabular-nums bg-blue-600 text-white pointer-events-none z-10"
+                      >
+                        {rollupDragInfo.deltaDays > 0 ? '+' : ''}{rollupDragInfo.deltaDays} days
                       </div>
                     )}
                   </div>
