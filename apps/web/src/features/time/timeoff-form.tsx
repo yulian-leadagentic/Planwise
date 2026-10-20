@@ -498,20 +498,28 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
             ? `ימי עבודה · ${autoCount.count}`
             : `יום מלא · ${multi && autoCount ? autoCount.count : 1}`;
           const fullValue = multi && autoCount ? String(autoCount.count) : '1';
+          // Wave W1 (2026-10-20) — hide the half-day shortcut when a
+          // date RANGE is picked. 0.5 only makes sense for a single
+          // calendar day; across a span it's a 0.5-day total that
+          // conflicts with the working-days auto-count. The full-day
+          // button fills the row on its own when half-day is hidden.
+          const isSingleDay = dateFrom === dateTo;
           return (
             <div className="mb-2 flex gap-2">
-              <button
-                type="button"
-                onClick={() => setAmount('0.5')}
-                className={cn(
-                  'flex-1 rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold',
-                  amount === '0.5'
-                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300'
-                    : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400',
-                )}
-              >
-                חצי יום · 0.5
-              </button>
+              {isSingleDay && (
+                <button
+                  type="button"
+                  onClick={() => setAmount('0.5')}
+                  className={cn(
+                    'flex-1 rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold',
+                    amount === '0.5'
+                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300'
+                      : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400',
+                  )}
+                >
+                  חצי יום · 0.5
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setAmount(fullValue)}
