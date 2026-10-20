@@ -142,6 +142,46 @@ export class TemplatesController {
     return this.templatesService.removeTask(taskId);
   }
 
+  // T1-2 (2026-10-20) — Order + Dependencies at the template level.
+  //
+  // These three routes carry the Deliverable Template screen's new
+  // Order column (drag) and Predecessor(s) picker. They stay behind
+  // the same `templates` module gate the sibling task mutations use
+  // (write for reorder + predecessors, read for the GET), with the
+  // sub-module assertion deferred to the sibling `assertByTemplateId`
+  // flow once we know the template id — only possible for reorder,
+  // which carries it in the URL. The predecessor routes work on a
+  // taskId and already share the parent `templates:write` gate.
+
+  @Post(':id/tasks/reorder')
+  @RequirePermissions({ module: 'templates', action: 'read' })
+  @ApiOperation({ summary: 'Reorder template tasks (renumbers sortOrder in 10s)' })
+  async reorderTasks(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) templateId: number,
+    @Body() body: { taskIds: number[] },
+  ) {
+    await this.assertByTemplateId(user, templateId, 'write');
+    return this.templatesService.reorderTasks(templateId, body.taskIds ?? []);
+  }
+
+  @Get('tasks/:taskId/predecessors')
+  @RequirePermissions({ module: 'templates', action: 'read' })
+  @ApiOperation({ summary: 'List predecessors for a template task' })
+  getTaskPredecessors(@Param('taskId', ParseIntPipe) taskId: number) {
+    return this.templatesService.getTaskPredecessors(taskId);
+  }
+
+  @Post('tasks/:taskId/predecessors')
+  @RequirePermissions({ module: 'templates', action: 'write' })
+  @ApiOperation({ summary: 'Replace the predecessor set for a template task' })
+  setTaskPredecessors(
+    @Param('taskId', ParseIntPipe) taskId: number,
+    @Body() body: { predecessorIds: number[] },
+  ) {
+    return this.templatesService.setTaskPredecessors(taskId, body.predecessorIds ?? []);
+  }
+
   // Zone management within a template — implies zone-templates permission
   @Post(':id/zones')
   @RequirePermissions({ module: 'templates/zone', action: 'write' })

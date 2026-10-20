@@ -249,6 +249,16 @@ export class TemplatesService {
             serviceType: true,
             phase: true,
             deliverableTemplate: { select: deliverableSelect },
+            // T1-2 (2026-10-20) — surface the template-task predecessor
+            // graph so the FE can render chips without a per-row round
+            // trip. `dependsOnTemplateTask` carries just the id/name so
+            // the chip label is self-contained.
+            predecessors: {
+              include: {
+                dependsOnTemplateTask: { select: { id: true, name: true, code: true } },
+              },
+              orderBy: { id: 'asc' },
+            },
           },
           orderBy: { sortOrder: 'asc' },
         },
@@ -394,6 +404,158 @@ export class TemplatesService {
   async removeTask(taskId: number) {
     await this.prisma.templateTask.delete({ where: { id: taskId } });
     return { message: 'Template task removed' };
+  }
+
+  // ─── T1-2 · Order + Predecessors (2026-10-20) ───────────────────
+  //
+  // Reorder every TemplateTask inside a template to a user-chosen
+  // sequence, renumbering `sortOrder` to 10, 20, 30… so individual
+  // inline edits don't force cascading renumbers later. One tx so a
+  // partial reorder can't leave the template in a split state.
+  //
+  // The caller sends the FULL ordered list of taskIds for the
+  // template; any id that doesn't belong to this template is rejected
+  // (prevents a stale FE from reordering tasks across templates).
+  async reorderTasks(templateId: number, orderedTaskIds: number[]) {
+    const existing = await this.prisma.templateTask.findMany({
+      where: { templateId },
+      select: { id: true },
+    });
+    const existingIds = new Set(existing.map((t) => t.id));
+    for (const id of orderedTaskIds) {
+      if (!existingIds.has(id)) {
+        throw new BadRequestException(`Task ${id} does not belong to template ${templateId}`);
+      }
+    }
+    await this.prisma.$transaction(
+      orderedTaskIds.map((id, i) =>
+        this.prisma.templateTask.update({
+          where: { id },
+          data: { sortOrder: (i + 1) * 10 },
+        }),
+      ),
+    );
+    return { message: 'Template tasks reordered', count: orderedTaskIds.length };
+  }
+
+  // List this task's predecessors — small enough that the FE just
+  // reads them off the parent template fetch, but the explicit
+  // endpoint is handy for optimistic replacement + verification.
+  async getTaskPredecessors(taskId: number) {
+    const task = await this.prisma.templateTask.findUnique({ where: { id: taskId } });
+    if (!task) throw new NotFoundException('Template task not found');
+    return this.prisma.templateTaskDependency.findMany({
+      where: { templateTaskId: taskId },
+      include: {
+        dependsOnTemplateTask: { select: { id: true, name: true, code: true } },
+      },
+      orderBy: { id: 'asc' },
+    });
+  }
+
+  // Replace the whole predecessor set for a TemplateTask in one call.
+  // Guards:
+  //   • self-dependency (p === taskId) — rejected inline.
+  //   • cross-template edges (p's template != this task's template) —
+  //     rejected inline.
+  //   • cycle detection — DFS over the proposed graph; if adding any
+  //     of the new edges would make `taskId` reachable from itself,
+  //     reject with the offending path for debugging.
+  async setTaskPredecessors(taskId: number, predecessorIds: number[]) {
+    const task = await this.prisma.templateTask.findUnique({
+      where: { id: taskId },
+      select: { id: true, templateId: true },
+    });
+    if (!task) throw new NotFoundException('Template task not found');
+
+    // Normalize + dedupe, drop self-refs defensively (also hard-rejected below).
+    const proposed = Array.from(new Set(predecessorIds.filter((p) => Number.isFinite(p))));
+    if (proposed.includes(taskId)) {
+      throw new BadRequestException('A task cannot depend on itself');
+    }
+    if (proposed.length > 0) {
+      const siblings = await this.prisma.templateTask.findMany({
+        where: { id: { in: proposed } },
+        select: { id: true, templateId: true },
+      });
+      if (siblings.length !== proposed.length) {
+        throw new BadRequestException('One or more predecessor tasks do not exist');
+      }
+      for (const s of siblings) {
+        if (s.templateId !== task.templateId) {
+          throw new BadRequestException(
+            `Predecessor task ${s.id} belongs to a different template`,
+          );
+        }
+      }
+    }
+
+    // Build the proposed graph: existing deps for every other task in
+    // the template + the new set for THIS task. If a DFS starting from
+    // `taskId` can reach `taskId`, there is a cycle.
+    const otherDeps = await this.prisma.templateTaskDependency.findMany({
+      where: {
+        templateTask: { templateId: task.templateId },
+        NOT: { templateTaskId: taskId },
+      },
+      select: { templateTaskId: true, dependsOnTemplateTaskId: true },
+    });
+    const adj = new Map<number, number[]>();
+    const push = (from: number, to: number) => {
+      if (!adj.has(from)) adj.set(from, []);
+      adj.get(from)!.push(to);
+    };
+    for (const d of otherDeps) push(d.templateTaskId, d.dependsOnTemplateTaskId);
+    for (const p of proposed) push(taskId, p);
+
+    // DFS from taskId; a path back to taskId = cycle. We track the
+    // actual path so the error is debuggable, not just "there is a cycle".
+    const WHITE = 0;
+    const GREY = 1;
+    const BLACK = 2;
+    const color = new Map<number, number>();
+    const path: number[] = [];
+    const detect = (node: number): number[] | null => {
+      color.set(node, GREY);
+      path.push(node);
+      for (const next of adj.get(node) ?? []) {
+        if (color.get(next) === GREY) {
+          // Found a cycle. Trim the path to the loop section.
+          const start = path.indexOf(next);
+          return path.slice(start).concat(next);
+        }
+        if (color.get(next) === WHITE || color.get(next) === undefined) {
+          const found = detect(next);
+          if (found) return found;
+        }
+      }
+      path.pop();
+      color.set(node, BLACK);
+      return null;
+    };
+    const cycle = detect(taskId);
+    if (cycle) {
+      throw new BadRequestException(`Dependency cycle detected: ${cycle.join(' → ')}`);
+    }
+
+    // Replace the set in one tx: delete the old rows for THIS task,
+    // then write the new ones. Dedupe + self-ref already filtered.
+    await this.prisma.$transaction([
+      this.prisma.templateTaskDependency.deleteMany({
+        where: { templateTaskId: taskId },
+      }),
+      ...(proposed.length > 0
+        ? [
+            this.prisma.templateTaskDependency.createMany({
+              data: proposed.map((p) => ({
+                templateTaskId: taskId,
+                dependsOnTemplateTaskId: p,
+              })),
+            }),
+          ]
+        : []),
+    ]);
+    return this.getTaskPredecessors(taskId);
   }
 
   async addZone(templateId: number, body: any) {
