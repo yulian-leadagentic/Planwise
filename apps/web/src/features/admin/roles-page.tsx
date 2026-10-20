@@ -118,9 +118,12 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
   const [editDesc, setEditDesc] = useState(role.description ?? '');
   const queryClient = useQueryClient();
   const modules = role.roleModules ?? [];
-  // §14 RBAC multi-role (2026-10-18) — isSystem rows are read-only.
-  // The seed re-asserts their role_modules grid on every run; the
-  // backend returns 403 (ROLE_IS_SYSTEM) on module edits for them.
+  // Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B2c) — isSystem
+  // rows ARE editable in the matrix now. Backend accepts POST/DELETE
+  // /:id/modules on system roles (seed is additive — admin edits
+  // survive subsequent boots). The role NAME and the DELETE-ROLE
+  // affordance are still gated: the seed joins on name and would
+  // re-create the role, so we keep both locked in the header.
   const isSystem: boolean = !!role.isSystem;
 
   // Fetch all system modules (for adding new module permissions)
@@ -227,7 +230,7 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
                 {isSystem && (
                   <span
                     className="inline-flex items-center gap-1 rounded-full bg-slate-500/10 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:text-slate-300"
-                    title="קבוצת מערכת — לא ניתנת לעריכה. הרשאות הקבוצה מנוהלות ע״י הקוד (apps/api/prisma/seed.ts §14.1 grid)."
+                    title="קבוצת מערכת — ניתן לערוך הרשאות; שם הקבוצה והמחיקה חסומים (apps/api/prisma/seed.ts §14.1 grid)."
                   >
                     <Lock className="h-2.5 w-2.5" />
                     system group
@@ -240,10 +243,13 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
         </div>
         <span className="text-xs text-slate-400 dark:text-slate-500 shrink-0">{modules.length} modules &middot; {role._count?.users ?? 0} users</span>
         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-          {/* §14 — edit + delete are hidden on system rows. The name
-              and description belong to the code (seed.ts §14.1) and
-              deleting a system role would just come back on next
-              seed. Non-system rows keep both affordances. */}
+          {/* Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B2c) —
+              rename + delete stay hidden on system rows. The seed
+              joins on name and would re-create a deleted system
+              role on next boot, so both affordances are blocked
+              by the backend (PATCH + DELETE /roles/:id return 403
+              with ROLE_IS_SYSTEM when they'd change name or wipe
+              the role). The matrix cells BELOW are now editable. */}
           {!isSystem && (
             <>
               <button onClick={() => { setEditName(role.name); setEditDesc(role.description ?? ''); setEditingHeader(true); }}
@@ -264,17 +270,12 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
         <div className="border-t border-slate-200 dark:border-slate-700 px-5 pb-5 pt-4">
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">Module Permissions</h4>
-            {/* §14 — swap the "click to toggle" hint for a lock
-                notice on system rows so an admin isn't confused by
-                checkboxes that don't respond. */}
-            {isSystem ? (
-              <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 inline-flex items-center gap-1">
-                <Lock className="h-2.5 w-2.5" />
-                קבוצת מערכת — לא ניתנת לעריכה
-              </p>
-            ) : (
-              <p className="text-[11px] text-slate-400 dark:text-slate-500">Click checkboxes to toggle permissions</p>
-            )}
+            {/* Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B2c) —
+                matrix is editable on system rows now. The hint stays
+                a plain affordance; the system-group badge in the
+                header is the sole indicator that the role name /
+                delete are gated. */}
+            <p className="text-[11px] text-slate-400 dark:text-slate-500">Click checkboxes to toggle permissions</p>
           </div>
 
           <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
@@ -302,34 +303,35 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
                   <tr key={rm.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50">
                     <td className="px-4 py-2.5 font-medium text-slate-800 dark:text-slate-100">{rm.module?.name ?? `Module ${rm.moduleId}`}</td>
                     <td className="px-4 py-2.5 text-center">
-                      <PermCheckbox checked={rm.canRead} onChange={() => handleToggle(rm, 'canRead')} disabled={togglePermission.isPending || isSystem} />
+                      <PermCheckbox checked={rm.canRead} onChange={() => handleToggle(rm, 'canRead')} disabled={togglePermission.isPending} />
                     </td>
                     <td className="px-4 py-2.5 text-center">
-                      <PermCheckbox checked={rm.canWrite} onChange={() => handleToggle(rm, 'canWrite')} disabled={togglePermission.isPending || isSystem} />
+                      <PermCheckbox checked={rm.canWrite} onChange={() => handleToggle(rm, 'canWrite')} disabled={togglePermission.isPending} />
                     </td>
                     <td className="px-4 py-2.5 text-center">
-                      <PermCheckbox checked={rm.canDelete} onChange={() => handleToggle(rm, 'canDelete')} disabled={togglePermission.isPending || isSystem} />
+                      <PermCheckbox checked={rm.canDelete} onChange={() => handleToggle(rm, 'canDelete')} disabled={togglePermission.isPending} />
                     </td>
                     <td className="px-4 py-2.5 text-center">
-                      <PermCheckbox checked={rm.canApprove ?? false} onChange={() => handleToggle(rm, 'canApprove')} disabled={togglePermission.isPending || isSystem} />
+                      <PermCheckbox checked={rm.canApprove ?? false} onChange={() => handleToggle(rm, 'canApprove')} disabled={togglePermission.isPending} />
                     </td>
                     <td className="px-4 py-2.5 text-center">
-                      <PermCheckbox checked={rm.canExport ?? false} onChange={() => handleToggle(rm, 'canExport')} disabled={togglePermission.isPending || isSystem} />
+                      <PermCheckbox checked={rm.canExport ?? false} onChange={() => handleToggle(rm, 'canExport')} disabled={togglePermission.isPending} />
                     </td>
                     <td className="px-4 py-2.5 text-center">
-                      {/* §14 — module-remove hidden on system rows.
-                          The seed re-asserts the whole grid; a
-                          "delete-then-seed-restore" flicker helps
-                          nobody. */}
-                      {!isSystem && (
-                        <button
-                          onClick={() => removeModule.mutate(rm.moduleId)}
-                          className="p-1 rounded hover:bg-red-50 text-slate-300 dark:text-slate-600 hover:text-red-500"
-                          title="Remove module from role"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      )}
+                      {/* Phase 1 RBAC Hardening (2026-10-20 WORKORDER
+                          — B2c) — module-remove is enabled on system
+                          rows now. If the row is still listed in the
+                          §14.1 grid, the seed will re-add it with
+                          grid defaults on next boot (additive catch-
+                          up). To "deny" a grant permanently, leave
+                          the row with 0 permissions. */}
+                      <button
+                        onClick={() => removeModule.mutate(rm.moduleId)}
+                        className="p-1 rounded hover:bg-red-50 text-slate-300 dark:text-slate-600 hover:text-red-500"
+                        title="Remove module from role"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -337,10 +339,13 @@ function RoleCard({ role, onDelete }: { role: any; onDelete: () => void }) {
             </table>
           </div>
 
-          {/* §14 — Add-module dropdown hidden on system rows (grid
-              is managed by seed.ts §14.1 — adding a module here
-              would be reverted on next deploy). */}
-          {!isSystem && unassignedModules.length > 0 && (
+          {/* Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B2c) —
+              Add-module dropdown is now shown on system rows too.
+              Adding a module writes a row the seed will preserve
+              on next boot (additive mode). The seed only touches
+              rows that DON'T exist — once an admin creates one here
+              it is theirs. */}
+          {unassignedModules.length > 0 && (
             <div className="mt-3 flex items-center gap-2">
               <select
                 id={`add-module-${role.id}`}

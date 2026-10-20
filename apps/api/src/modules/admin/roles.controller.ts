@@ -73,6 +73,24 @@ export class RolesController {
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { name?: string; description?: string },
   ) {
+    // Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B2b) — system
+    // roles stay NON-RENAMABLE. The role name is the join key the
+    // seed uses to re-assert grants, and the FE's isSystem rendering
+    // depends on stable names ("HR Manager", "Admin", …). Changing
+    // description is still allowed so admins can relabel the group
+    // without breaking the seed contract.
+    if (body.name !== undefined) {
+      const role = await this.prisma.role.findUnique({
+        where: { id },
+        select: { id: true, name: true, isSystem: true },
+      });
+      if (!role) throw new ForbiddenException('Role not found');
+      if (role.isSystem && body.name !== role.name) {
+        throw new ForbiddenException(
+          `ROLE_IS_SYSTEM: "${role.name}" is a system group — its name is managed by code (apps/api/prisma/seed.ts §14.1 grid). You can edit the description, or create a non-system role with a different name.`,
+        );
+      }
+    }
     return this.prisma.role.update({
       where: { id },
       data: body,
@@ -83,6 +101,22 @@ export class RolesController {
   @RequirePermissions({ module: 'admin/roles', action: 'delete' })
   @ApiOperation({ summary: 'Delete a role' })
   async remove(@Param('id', ParseIntPipe) id: number) {
+    // Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B2b) — system
+    // roles stay NON-DELETABLE. The seed would just re-create them
+    // on next boot (upsert by name) and silently re-grant their
+    // grid; a delete here would also strand any user currently
+    // assigned to that role. Non-system roles delete normally.
+    const role = await this.prisma.role.findUnique({
+      where: { id },
+      select: { id: true, name: true, isSystem: true },
+    });
+    if (!role) throw new ForbiddenException('Role not found');
+    if (role.isSystem) {
+      throw new ForbiddenException(
+        `ROLE_IS_SYSTEM: "${role.name}" is a system group — it cannot be deleted. The seed would re-create it on next boot. Edit its permissions in the matrix instead, or move its users to a different role first.`,
+      );
+    }
+
     // Clean up all related records before deleting the role.
     // RoleStageTransition and ResourceOverride have onDelete:Cascade
     // in the schema, but RoleModule does not — must delete manually.
@@ -103,21 +137,19 @@ export class RolesController {
     @Param('id', ParseIntPipe) roleId: number,
     @Body() body: { moduleId: number; canRead: boolean; canWrite: boolean; canDelete: boolean; canApprove?: boolean; canExport?: boolean },
   ) {
-    // §14 RBAC multi-role (2026-10-18) — a role flagged `isSystem=true`
-    // is read-only via the matrix UI: its grid is re-asserted by the
-    // seed on every run, so any edits via /admin/roles would be
-    // silently reverted the next deploy. Explicit 403 so the admin
-    // (and the FE's locked-row rendering) see the intent clearly.
+    // Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B2b) — module
+    // grants on system roles ARE editable. The previous
+    // ROLE_IS_SYSTEM block here was blocking admins from managing
+    // permissions in the UI, which pushed them to hand-edit the DB
+    // or add workaround module groups. The seed is additive now
+    // (seed.ts §14 — never deletes an existing row), so admin edits
+    // persist across boots. Role rename / delete are still gated —
+    // see PATCH + DELETE above.
     const role = await this.prisma.role.findUnique({
       where: { id: roleId },
       select: { id: true, name: true, isSystem: true },
     });
     if (!role) throw new ForbiddenException('Role not found');
-    if (role.isSystem) {
-      throw new ForbiddenException(
-        `ROLE_IS_SYSTEM: "${role.name}" is a system group — its permissions are managed by code (apps/api/prisma/seed.ts §14.1 grid). Create a non-system role or combine groups on the user instead.`,
-      );
-    }
 
     const existing = await this.prisma.roleModule.findFirst({
       where: { roleId, moduleId: body.moduleId },
@@ -152,17 +184,18 @@ export class RolesController {
     @Param('id', ParseIntPipe) roleId: number,
     @Param('moduleId', ParseIntPipe) moduleId: number,
   ) {
-    // §14 — same system-role lock as POST above.
+    // Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B2b) — removing
+    // a module from a system role is now allowed. Note the seed will
+    // re-add the row with its grid defaults on next boot IF the
+    // grid lists this module for this role (that is the additive-
+    // catch-up behavior; to "deny" a grant, leave the row with 0
+    // permissions instead of deleting it). See seed.ts §14 for the
+    // full contract.
     const role = await this.prisma.role.findUnique({
       where: { id: roleId },
       select: { id: true, name: true, isSystem: true },
     });
     if (!role) throw new ForbiddenException('Role not found');
-    if (role.isSystem) {
-      throw new ForbiddenException(
-        `ROLE_IS_SYSTEM: "${role.name}" is a system group — its permissions are managed by code (apps/api/prisma/seed.ts §14.1 grid).`,
-      );
-    }
 
     const existing = await this.prisma.roleModule.findFirst({
       where: { roleId, moduleId },

@@ -414,17 +414,30 @@ async function main() {
 
   // ───────────────────────────────────────────────────────────────────
   // §14 RBAC multi-role — default system role groups (2026-10-18).
-  // Idempotent: upserts each system role by name, marks it isSystem=true,
-  // then RE-ASSERTS its role_modules per the §14.1 LOCKED grid. The
-  // seed WIPES-AND-RECREATES the role_modules of every isSystem=true
-  // role on each run so manual drift via /admin/roles can never win
-  // against code. Legacy / admin-created roles (isSystem=false) are
-  // NEVER touched here — the seed re-creates the Admin / HR Manager /
-  // HR Clerk rows seeded above only if they already exist on the DB
-  // under those exact names (`upsert where: { name }` matches). The
-  // existing legacy "Admin" row on staging (id=1) therefore gets
-  // isSystem=true AND its grants re-asserted per the grid on first
-  // run. Approved by Yulian 2026-10-18.
+  //
+  // Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B2a) — the seed is
+  // now ADDITIVE for system roles instead of WIPE-and-recreate:
+  //   • Missing role → create role + seed every (role, module) grant
+  //     from the §14.1 grid.
+  //   • Existing role → NEVER delete or update existing role_modules
+  //     rows. Only add rows for modules in the grid that have NO row
+  //     at all for that role (true "additive catch-up" for genuinely
+  //     new modules introduced after a role was first seeded).
+  //
+  // Why: the previous WIPE-and-recreate (deleteMany of role_modules
+  // per isSystem role on every boot) silently reverted any grant an
+  // admin edited via /admin/roles — most recently it nuked the Admin
+  // grants on data-import/contacts (regression B1). Admin edits must
+  // survive subsequent seed runs; the trade-off is that intentionally
+  // DELETING a system-role's module row (via UI) will re-create it
+  // with grid defaults on next boot. To "deny" a grant, leave the row
+  // with 0 permissions instead of removing it.
+  //
+  // Legacy / admin-created roles (isSystem=false) are NEVER touched
+  // here — the seed re-creates the Admin / HR Manager / HR Clerk rows
+  // seeded above only if they already exist on the DB under those
+  // exact names (`upsert where: { name }` matches). Approved by
+  // Yulian 2026-10-18; additive-mode approved 2026-10-20.
   // ───────────────────────────────────────────────────────────────────
 
   type SystemRoleGrantFlag = { R?: boolean; W?: boolean; D?: boolean; A?: boolean; E?: boolean };
@@ -535,20 +548,36 @@ async function main() {
     moduleByName.set(m.name, m);
   }
 
+  // Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B2a) — additive
+  // only. "Already present" = any role_module row for this {role,
+  // module} pair, regardless of actions. If a row exists we don't
+  // touch it (admin's chosen actions win). If no row at all → write
+  // the grid defaults (catches genuinely new modules introduced
+  // after a role was first seeded).
+  let additiveAdded = 0;
+  let additivePreserved = 0;
   for (const def of SYSTEM_ROLES) {
     const role = await prisma.role.upsert({
       where: { name: def.name },
       update: { description: def.description, isSystem: true },
       create: { name: def.name, description: def.description, isSystem: true },
     });
-    // Re-assert grid: delete this role's existing module grants, re-
-    // create per the §14.1 locked table. Only wipes rows for this
-    // (isSystem=true) role — legacy / non-system roles are untouched.
-    await prisma.roleModule.deleteMany({ where: { roleId: role.id } });
+    const existingRows = await prisma.roleModule.findMany({
+      where: { roleId: role.id },
+      select: { moduleId: true },
+    });
+    const existingModuleIds = new Set<number>(existingRows.map((r) => r.moduleId));
     for (const [moduleName, flags] of Object.entries(def.grants)) {
       const mod = moduleByName.get(moduleName);
       if (!mod) {
         console.warn(`  [rbac seed] module not found for grant: ${moduleName} (role ${def.name})`);
+        continue;
+      }
+      if (existingModuleIds.has(mod.id)) {
+        // Row exists for this (role, module) — NEVER touch it. Admin
+        // edits to the actions win. This is the behavior change from
+        // the pre-2026-10-20 WIPE-and-recreate seeder.
+        additivePreserved++;
         continue;
       }
       await prisma.roleModule.create({
@@ -562,9 +591,12 @@ async function main() {
           canExport:  flags.E ?? false,
         },
       });
+      additiveAdded++;
     }
   }
-  console.log(`  Seeded ${SYSTEM_ROLES.length} system role groups (isSystem=true, grid re-asserted)`);
+  console.log(
+    `  Seeded ${SYSTEM_ROLES.length} system role groups (isSystem=true, additive mode — ${additiveAdded} new rows added, ${additivePreserved} existing rows preserved, 0 deleted)`,
+  );
 
   // Admin User
   const adminExists = await prisma.user.findUnique({ where: { email: 'admin@amec.com' } });
