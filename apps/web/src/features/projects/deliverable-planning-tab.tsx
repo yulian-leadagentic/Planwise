@@ -1814,6 +1814,25 @@ function GanttView({
     try { localStorage.setItem(orderKey, JSON.stringify(rowOrder)); } catch { /* ignore */ }
   }, [rowOrder]);
 
+  // DPG-4 (2026-10-20) · Timeline-window selector — how many years the
+  // Gantt should show at a time (1 / 2 / 3). Replaces the hardcoded
+  // `const VISIBLE_YEARS = 3` that used to live further down. Persisted
+  // under a NON-per-project key (`planwise:gantt:visible-years`): the
+  // user picks a comfortable zoom once and it sticks across projects
+  // and sessions. Every localStorage access is try/catch-guarded —
+  // private-browsing / cleared site data can throw on access.
+  const VISIBLE_YEARS_KEY = 'planwise:gantt:visible-years';
+  const [visibleYears, setVisibleYears] = useState<1 | 2 | 3>(() => {
+    try {
+      const raw = localStorage.getItem(VISIBLE_YEARS_KEY);
+      const n = raw ? parseInt(raw, 10) : NaN;
+      return n === 1 || n === 2 || n === 3 ? (n as 1 | 2 | 3) : 3;
+    } catch { return 3; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(VISIBLE_YEARS_KEY, String(visibleYears)); } catch { /* ignore */ }
+  }, [visibleYears]);
+
   // Ordered rows for display, matching rowOrder.
   const orderedRows = useMemo(() => {
     const byKey = new Map(rows.map((r) => [r.key, r]));
@@ -1920,7 +1939,8 @@ function GanttView({
   // can still pan for anything past 3 yr.
   const PX_PER_WEEK = 8;
   const PX_PER_DAY = PX_PER_WEEK / 7;
-  const VISIBLE_YEARS = 3;
+  // DPG-4 (2026-10-20) · `visibleYears` is now component state (1/2/3)
+  // persisted to localStorage — see the hook at the top of the component.
 
   // Compute the timeline span. Base is `baseDate`; end is 3 months
   // past the latest target (or 3 years from base, whichever is bigger)
@@ -1942,7 +1962,7 @@ function GanttView({
   const PAST_BUFFER_DAYS = 365;
   const startMs = baseDateMs - PAST_BUFFER_DAYS * 86_400_000;
   const latestTargetMs = targets.length ? Math.max(...targets.map((d) => new Date(d).getTime())) : baseDateMs;
-  const threeYearMs = baseDateMs + VISIBLE_YEARS * 365 * 86_400_000;
+  const threeYearMs = baseDateMs + visibleYears * 365 * 86_400_000;
   const endMs = Math.max(latestTargetMs + 90 * 86_400_000, threeYearMs);
   const spanDays = Math.max(30, Math.round((endMs - startMs) / 86_400_000));
   const totalTimelineWidth = spanDays * PX_PER_DAY;
@@ -2077,6 +2097,32 @@ function GanttView({
           <button type="button" onClick={() => scrollByDays(30)} className="flex items-center gap-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300" title="Scroll forward one month">Month ▶</button>
           <button type="button" onClick={() => scrollByDays(365)} className="flex items-center gap-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300" title="Scroll forward one year">Year ▶</button>
         </div>
+        {/* DPG-4 (2026-10-20) · Timeline-window selector. Picks how
+            many years of calendar the Gantt shows at a time (1 / 2 / 3).
+            Persisted via `visibleYears` state above — survives reloads
+            under localStorage key `planwise:gantt:visible-years`. */}
+        <div className="ml-3 inline-flex items-center gap-1.5" role="group" aria-label="Timeline range in years">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">טווח · Years</span>
+          <div className="inline-flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800/50 p-0.5">
+            {([1, 2, 3] as const).map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setVisibleYears(n)}
+                className={cn(
+                  'rounded-md px-2.5 py-1 text-[12px] font-semibold tabular-nums transition-all duration-150',
+                  visibleYears === n
+                    ? 'bg-white shadow-sm text-slate-900 dark:bg-slate-700/80 dark:text-slate-100'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200',
+                )}
+                aria-pressed={visibleYears === n}
+                title={`Show ~${n} ${n === 1 ? 'year' : 'years'} at a time`}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
         {/* Progress legend — client meeting 2026-08-04. Bars are
             colored by aggregate task status: blue = nothing started,
             amber = at least one in progress, emerald = all done.
@@ -2091,7 +2137,7 @@ function GanttView({
           <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm ring-2 ring-red-300 ring-inset bg-white dark:bg-slate-900" />Past target</span>
         </div>
         <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">
-          Showing ~{VISIBLE_YEARS} years at a time · drag rows to reorder
+          Showing ~{visibleYears} {visibleYears === 1 ? 'year' : 'years'} at a time · drag rows to reorder
         </span>
       </div>
 
