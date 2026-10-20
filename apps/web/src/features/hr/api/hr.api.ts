@@ -460,6 +460,14 @@ export const hrApi = {
       })
       .then((r) => unwrap<AbsenceRecord[]>(r.data)),
 
+  // W2 (2026-10-20) — self-service PATCH for an absence record. Pairs
+  // with the Timeoff edit-mode form (click a Timesheet absence badge
+  // to open it for edit).
+  updateMyAbsence: (recordId: number, payload: UpdateAbsencePayload) =>
+    client
+      .patch(`/hr/me/absences/${recordId}`, payload)
+      .then((r) => unwrap<AbsenceRecord>(r.data)),
+
   deleteMyAbsence: (recordId: number) =>
     client
       .delete(`/hr/me/absences/${recordId}`)

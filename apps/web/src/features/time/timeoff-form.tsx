@@ -8,6 +8,7 @@ import { hrApi, type TimeCategory, type TimeCategoryKind, type HrCalendarDay, ty
 import { timeApi } from '@/api/time.api';
 import client from '@/api/client';
 import { invalidateAfterTimeEntry } from './invalidate-after-time-entry';
+import { useConfirm } from '@/components/shared/confirm-dialog';
 
 /**
  * HR F6 (2026-10-19) — shared Timeoff mode form.
@@ -46,11 +47,21 @@ export interface TimeoffFormProps {
   defaultDate: string;
   onSaved: () => void;
   onCancel: () => void;
+  /**
+   * W2 (2026-10-20) — when set, the form opens in EDIT mode against an
+   * existing absence record. The category picker locks to ABSENCE
+   * (bucket entries are TimeEntry rows, which have their own editor);
+   * every field is prefilled from `editing`; Save calls
+   * `/hr/me/absences/:id` (PATCH) instead of POST; a Delete button is
+   * rendered next to Cancel.
+   */
+  editing?: AbsenceRecord | null;
 }
 
-export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps) {
+export function TimeoffForm({ defaultDate, onSaved, onCancel, editing }: TimeoffFormProps) {
   const callerId = useAuthStore((s) => s.user?.id) as number | undefined;
   const queryClient = useQueryClient();
+  const confirm = useConfirm();
 
   const { data: categories = [], isLoading } = useQuery<TimeCategory[]>({
     queryKey: ['hr', 'time-categories'],
@@ -68,10 +79,18 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
     return { absence, workNonProject, quota };
   }, [categories]);
 
+  // W2 (2026-10-20) — edit mode. When `editing` is set we're PATCHing
+  // an existing AbsenceRecord; the picker's category defaults to that
+  // record's absenceType and non-ABSENCE optgroups are hidden (bucket
+  // entries live in TimeEntry, not in absence_records).
+  const isEditing = !!editing;
+
   // Composite picker value: `${kind}:${id}` so the three groups don't
   // alias ids across tables (an AbsenceType id and a SpecialHourBucket
   // id are two different id spaces).
-  const [pickedKey, setPickedKey] = useState<string>('');
+  const [pickedKey, setPickedKey] = useState<string>(
+    editing ? `ABSENCE:${editing.absenceTypeId}` : '',
+  );
   const picked = useMemo<TimeCategory | null>(() => {
     if (!pickedKey) return null;
     const [kind, idRaw] = pickedKey.split(':');
@@ -85,12 +104,28 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
     );
   }, [pickedKey, categories]);
 
-  const [dateFrom, setDateFrom] = useState(defaultDate);
-  const [dateTo, setDateTo] = useState(defaultDate);
-  const [amount, setAmount] = useState<string>('');
-  const [note, setNote] = useState('');
-  const [documentFileId, setDocumentFileId] = useState<number | null>(null);
-  const [documentName, setDocumentName] = useState<string | null>(null);
+  // Normalise ISO strings coming back from the API to pure yyyy-MM-dd.
+  // `AbsenceRecord.dateFrom` is a UTC-offset ISO string; split on 'T'
+  // keeps the FE on the DB-local calendar day.
+  const asDateInput = (iso: string): string =>
+    typeof iso === 'string' ? iso.slice(0, 10) : iso;
+
+  const [dateFrom, setDateFrom] = useState(
+    editing ? asDateInput(editing.dateFrom) : defaultDate,
+  );
+  const [dateTo, setDateTo] = useState(
+    editing ? asDateInput(editing.dateTo) : defaultDate,
+  );
+  const [amount, setAmount] = useState<string>(
+    editing ? String(editing.amount) : '',
+  );
+  const [note, setNote] = useState(editing?.note ?? '');
+  const [documentFileId, setDocumentFileId] = useState<number | null>(
+    editing?.documentFileId ?? null,
+  );
+  const [documentName, setDocumentName] = useState<string | null>(
+    editing?.document?.fileName ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -115,8 +150,13 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
   // Prefill amount sensibly when picking a category:
   //   • DAY unit → 1 day (user can toggle 0.5 / 1 or type a sum)
   //   • HOUR unit → leave blank; the user types their hours
+  // In edit mode we skip the "clear doc + reset" branch because the
+  // picker never changes category (it's locked to the row's absenceType);
+  // tripping this effect would wipe the row's attached document on the
+  // first render.
   useEffect(() => {
     if (!picked) return;
+    if (isEditing) return;
     setAmount((prev) => {
       if (prev !== '') return prev; // don't overwrite a user-typed value
       return picked.unit === 'DAY' ? '1' : '';
@@ -129,7 +169,7 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
     // for one absence type should never bleed into another.
     setDocumentFileId(null);
     setDocumentName(null);
-  }, [picked?.kind, picked?.absenceTypeId, picked?.bucketId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [picked?.kind, picked?.absenceTypeId, picked?.bucketId, isEditing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Wave 3 F (2026-10-20) — multi-day DAY-unit auto-count. When the user
   // picks a DAY category and a dateFrom < dateTo range, prefill `amount`
@@ -289,6 +329,19 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
 
       const amt = Number(amount);
       if (picked.kind === 'ABSENCE') {
+        // W2 (2026-10-20) — EDIT branch. The row id came in via `editing`;
+        // we PATCH it through /hr/me/absences/:id, which skips
+        // assertEmployee the same way createMyAbsence does.
+        if (isEditing && editing) {
+          return hrApi.updateMyAbsence(editing.id, {
+            absenceTypeId: picked.absenceTypeId!,
+            dateFrom,
+            dateTo: dateTo !== dateFrom ? dateTo : dateFrom,
+            amount: amt,
+            documentFileId: documentFileId ?? undefined,
+            note: note.trim() || undefined,
+          });
+        }
         // G2.2 (2026-10-20) — /hr/me/absences bypasses the hr:write +
         // assertEmployee gates so admins/non-'employee' userTypes can
         // log their own time-off. `callerId` is still required above
@@ -335,8 +388,15 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
       // the picker refresh without a reload.
       invalidateAfterTimeEntry(queryClient);
       queryClient.invalidateQueries({ queryKey: ['hr'] });
-      notify.success(picked?.kind === 'ABSENCE' ? 'Absence logged' : 'Time entry created', {
-        code: picked?.kind === 'ABSENCE' ? 'HR-ABSENCE-200' : 'TIME-CREATE-200',
+      const msg = isEditing
+        ? 'Absence updated'
+        : picked?.kind === 'ABSENCE'
+          ? 'Absence logged'
+          : 'Time entry created';
+      notify.success(msg, {
+        code: picked?.kind === 'ABSENCE'
+          ? (isEditing ? 'HR-ABSENCE-PATCH-200' : 'HR-ABSENCE-200')
+          : 'TIME-CREATE-200',
       });
       onSaved();
     },
@@ -371,13 +431,31 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
     save.mutate();
   };
 
+  // W2 — self-service DELETE wired to the Delete button in edit mode.
+  // We invalidate ['hr'] on success so every absence surface (weekly
+  // Timesheet badge, Month chip, YearView count, HR drawer) refetches.
+  const deleteMut = useMutation({
+    mutationFn: () => {
+      if (!editing) throw new Error('No absence to delete');
+      return hrApi.deleteMyAbsence(editing.id);
+    },
+    onSuccess: () => {
+      invalidateAfterTimeEntry(queryClient);
+      queryClient.invalidateQueries({ queryKey: ['hr'] });
+      notify.success('Absence deleted', { code: 'HR-ABSENCE-DEL-200' });
+      onSaved();
+    },
+    onError: (e: any) => notify.apiError(e, 'Failed to delete absence'),
+  });
+
   const canSave =
     !!picked &&
     !!dateFrom &&
     Number(amount) > 0 &&
     !(picked.requiresDocument && documentFileId == null) &&
     !save.isPending &&
-    !uploadMut.isPending;
+    !uploadMut.isPending &&
+    !deleteMut.isPending;
 
   return (
     <form onSubmit={submit} className="space-y-4">
@@ -405,6 +483,7 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
             !pickedKey
               ? 'border-red-300 dark:border-red-500/60 focus:border-red-500'
               : 'border-slate-200 dark:border-slate-700 focus:border-blue-500',
+            isEditing && 'opacity-80 cursor-not-allowed',
           )}
         >
           <option value="">— בחר קטגוריה —</option>
@@ -418,7 +497,12 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
               ))}
             </optgroup>
           )}
-          {grouped.workNonProject.length > 0 && (
+          {/* W2 (2026-10-20) — bucket optgroups are hidden in edit mode:
+              `absence_records` only hosts ABSENCE rows, so a switch to
+              WORK_NON_PROJECT / QUOTA on an existing absence record is
+              nonsensical (the user would need to create a new TimeEntry
+              instead). The absence optgroup above is enough. */}
+          {!isEditing && grouped.workNonProject.length > 0 && (
             <optgroup label="שעות עבודה שאינן על פרויקט">
               {grouped.workNonProject.map((c) => (
                 <option key={`WORK_NON_PROJECT:${c.bucketId}`} value={`WORK_NON_PROJECT:${c.bucketId}`}>
@@ -427,7 +511,7 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
               ))}
             </optgroup>
           )}
-          {grouped.quota.length > 0 && (
+          {!isEditing && grouped.quota.length > 0 && (
             <optgroup label="מכסות">
               {grouped.quota.map((c) => (
                 <option key={`QUOTA:${c.bucketId}`} value={`QUOTA:${c.bucketId}`}>
@@ -630,21 +714,52 @@ export function TimeoffForm({ defaultDate, onSaved, onCancel }: TimeoffFormProps
         <p className="text-[12px] font-medium text-red-600 dark:text-red-400">{error}</p>
       )}
 
-      <div className="flex items-center justify-end gap-2 pt-1">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-lg border border-slate-200 dark:border-slate-700 px-4 py-2 text-[13px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={!canSave}
-          className="rounded-lg bg-blue-600 px-5 py-2 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {save.isPending ? 'Saving…' : 'Save'}
-        </button>
+      <div className="flex items-center justify-between gap-2 pt-1">
+        {/* W2 (2026-10-20) — Delete button lives on the left in edit
+            mode so it never collides with the Save CTA on the right.
+            Styled per planwise-design "danger" (white bg, red border
+            + text; red-50 hover). Clicking → useConfirm() → DELETE
+            /hr/me/absences/:id. */}
+        {isEditing ? (
+          <button
+            type="button"
+            onClick={async () => {
+              const ok = await confirm('למחוק חופשה זו?', {
+                title: 'למחוק חופשה זו?',
+                description:
+                  'הפעולה תמחק את רישום החופשה. ניתן להוסיף אותה שוב במידת הצורך.',
+                confirmLabel: 'מחק',
+                cancelLabel: 'ביטול',
+                variant: 'danger',
+              });
+              if (ok) deleteMut.mutate();
+            }}
+            disabled={deleteMut.isPending || save.isPending}
+            className="rounded-lg bg-white dark:bg-slate-900 border border-red-200 dark:border-red-500/40 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 text-[13px] font-semibold px-3.5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {deleteMut.isPending ? 'מוחק…' : 'מחק · Delete'}
+          </button>
+        ) : (
+          <span /> /* keeps justify-between layout balanced on create */
+        )}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-lg border border-slate-200 dark:border-slate-700 px-4 py-2 text-[13px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!canSave}
+            className="rounded-lg bg-blue-600 px-5 py-2 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {save.isPending
+              ? (isEditing ? 'מעדכן…' : 'Saving…')
+              : (isEditing ? 'עדכן · Update' : 'Save')}
+          </button>
+        </div>
       </div>
     </form>
   );
