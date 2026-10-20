@@ -265,6 +265,36 @@ describe('HrMonthlyService — monthly engine (HR §4 / Phase C2)', () => {
     expect(data.sickDays).toBeCloseTo(0, 2);
   });
 
+  // ─── Test 5b ────────────────────────────────────────────────────────
+  // HR Wave 3 C (2026-10-20) — Yulian's spec: "ביום של 5 שעות עבודה
+  // אנחנו נוריד לו 5 שעות עבודה". A full-day vacation (amount=1,
+  // unit=DAY) on a HOLIDAY_EVE with workingHours=5 must credit 5h, NOT
+  // the user's dailyStandardHours (8.4). Test 5 already covers the
+  // half-day case; this test locks the full-day path specifically.
+  // Engine site: hr-monthly.service.ts §Daily step 1 (around line 703)
+  // reads `cal.workingHours ?? defaultForType(cal.type, inputs.dailyStandard)`.
+  it('full-day vacation on HOLIDAY_EVE credits workingHours (5h), not dailyStandardHours', async () => {
+    const dateStr = new Date(YEAR, MONTH - 1, 2);
+    prisma.calendarDay.findMany.mockResolvedValue([
+      { date: dateStr, type: 'HOLIDAY_EVE', workingHours: 5 },
+    ]);
+    prisma.absenceRecord.findMany.mockResolvedValue([
+      absence('vacation', dateStr, dateStr, 1),
+    ]);
+
+    await service.computeMonth({ userId: USER_ID, year: YEAR, month: MONTH });
+    const data = upsertCreateData();
+
+    // Monthly standard: 30 REGULAR × 8.4 + 1 HOLIDAY_EVE × 5
+    expect(data.monthlyStandard).toBeCloseTo(30 * 8.4 + 5, 2);
+    // Absence credits 1 × 5 = 5 (NOT 1 × 8.4). This is the invariant.
+    expect(data.weightedHours).toBeCloseTo(5, 2);
+    expect(data.actualHours).toBeCloseTo(0, 2);
+    // Vacation classification: 1 day for a DAY-unit absence of amount=1.
+    expect(data.vacationDays).toBeCloseTo(1, 2);
+    expect(data.sickDays).toBeCloseTo(0, 2);
+  });
+
   // ─── Test 6 ─────────────────────────────────────────────────────────
   it('bereavement 7-day span credits every day at REGULAR standard', async () => {
     // Oct 11 2026 is a Sunday — our engine does not know "weekend", so
