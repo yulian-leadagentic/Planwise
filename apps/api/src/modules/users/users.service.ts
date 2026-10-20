@@ -57,18 +57,33 @@ export class UsersService implements OnModuleInit {
   /**
    * Sync the `employee` BusinessPartnerRole on the linked BP so it
    * matches the derived userType. Add-or-remove — idempotent.
+   *
+   * B5-1 (2026-10-20): bumped from `private` to `public` so the
+   * users-importer path (`users-importer.service.ts`) and the
+   * `/admin/backfills/backfill/user-business-partner` endpoint can
+   * reuse the same logic after they call `ensureBpForUser` — the
+   * create flow has always done this pair, imports now do too, and
+   * the backfill fixes historical rows that skipped both.
+   *
+   * The optional `tx` arg lets a caller running inside a
+   * `$transaction` scope the role write to the same transaction as
+   * the sibling BP/user writes. Omitting it keeps the pre-B5
+   * behavior (reads/writes via `this.prisma`), which is what the
+   * `UsersService.create` path still does.
    */
-  private async syncEmployeeBpRole(
+  async syncEmployeeBpRole(
     businessPartnerId: number | null | undefined,
     derived: UserType,
+    tx?: Prisma.TransactionClient,
   ): Promise<void> {
     if (!businessPartnerId) return;
-    const employeeRole = await this.prisma.partnerRoleType.findUnique({
+    const client = tx ?? this.prisma;
+    const employeeRole = await client.partnerRoleType.findUnique({
       where: { code: 'employee' },
     });
     if (!employeeRole) return;
     if (derived === 'employee') {
-      await this.prisma.businessPartnerRole.upsert({
+      await client.businessPartnerRole.upsert({
         where: {
           businessPartnerId_roleTypeId: {
             businessPartnerId,
@@ -79,10 +94,102 @@ export class UsersService implements OnModuleInit {
         update: {},
       });
     } else {
-      await this.prisma.businessPartnerRole.deleteMany({
+      await client.businessPartnerRole.deleteMany({
         where: { businessPartnerId, roleTypeId: employeeRole.id },
       });
     }
+  }
+
+  /**
+   * B5-1 (2026-10-20) · Ensure a `BusinessPartner` exists for a User
+   * row, reusing by email when possible or creating fresh otherwise.
+   * Extracted from `UsersService.create`'s inline BP-ensure block so
+   * the users-importer (`users-importer.service.ts`) and the
+   * `/admin/backfills/backfill/user-business-partner` endpoint share
+   * exactly the same lookup rules. Zero-regression target: the
+   * `create` path still produces the same BP ids on reuse and the
+   * same BP shape on create.
+   *
+   * Rules (match `create`'s inline block byte-for-byte, plus one
+   * explicit edge the backfill hits):
+   *   1. Lookup an existing person BP by email (deletedAt null).
+   *      Returns `{ bpId, outcome: 'reused' }` on hit — unless …
+   *   2. … the existing BP is already linked to a DIFFERENT active
+   *      User (`User.businessPartnerId` is `@unique`). In that case
+   *      we create a fresh BP instead of stealing — a reuse would
+   *      collide with the unique constraint and crash the whole
+   *      transaction. Returns `{ outcome: 'created' }`.
+   *   3. No existing BP → create a fresh person BP with the same
+   *      shape (`displayName`, name fields, email, phone,
+   *      `source='manual'`) that `create` has always written.
+   *      Returns `{ outcome: 'created' }`.
+   *
+   * `source` is hard-coded to `'manual'` to match the existing
+   * `UsersService.create` behavior exactly. The backfill and the
+   * importer both reuse the same value — fine, since the admin
+   * running the backfill is also "manual" from the data-provenance
+   * angle and the importer's own `createdByImportId` on the User
+   * row is the real link to the import job.
+   *
+   * The call is `tx`-aware — all reads/writes go through the passed
+   * `Prisma.TransactionClient` so a caller wrapping this in a
+   * `$transaction` sees atomic commit of the BP create + the
+   * subsequent `user.update({ businessPartnerId })`.
+   */
+  async ensureBpForUser(
+    tx: Prisma.TransactionClient,
+    input: {
+      email: string;
+      firstName: string;
+      lastName: string;
+      firstNameHe?: string | null;
+      lastNameHe?: string | null;
+      phone?: string | null;
+    },
+  ): Promise<{ bpId: number; outcome: 'reused' | 'created' }> {
+    // 1. Lookup an existing person BP by email. `partnerType=person`
+    //    filters out any accidental org row that would collide; the
+    //    legacy inline block in `create` matched on email alone, but
+    //    all the historical reuses have been persons (orgs with the
+    //    same email as a login user is pathological).
+    const existing = await tx.businessPartner.findFirst({
+      where: {
+        email: input.email,
+        partnerType: 'person',
+        deletedAt: null,
+      },
+    });
+    if (existing) {
+      // 2. @unique collision guard — if that BP already has a user
+      //    pointing at it, we cannot reuse (the next `user.update`
+      //    would hit the unique constraint). Fall through to create.
+      const alreadyLinked = await tx.user.findFirst({
+        where: { businessPartnerId: existing.id, deletedAt: null },
+        select: { id: true },
+      });
+      if (!alreadyLinked) {
+        return { bpId: existing.id, outcome: 'reused' };
+      }
+      // fall through
+    }
+    // 3. Create a fresh BP. Shape mirrors the inline block in
+    //    `create` so the regression DoD holds — a `create` call
+    //    without a prior BP hits this branch with the same inputs
+    //    and lands the same row.
+    const created = await tx.businessPartner.create({
+      data: {
+        partnerType: 'person',
+        displayName: `${input.firstName} ${input.lastName}`.trim() || input.email,
+        firstName: input.firstName,
+        lastName: input.lastName,
+        firstNameHe: input.firstNameHe ?? null,
+        lastNameHe: input.lastNameHe ?? null,
+        email: input.email,
+        phone: input.phone ?? null,
+        source: 'manual',
+      },
+    });
+    return { bpId: created.id, outcome: 'created' };
   }
 
   /**
@@ -147,6 +254,15 @@ export class UsersService implements OnModuleInit {
     //       and not soft-deleted, and not already linked to another User).
     //    b. A BP with the same email already exists → link to it.
     //    c. Otherwise, create a fresh BP from the user's name/email/phone.
+    //
+    // B5-1 (2026-10-20): paths (b) and (c) delegate to
+    // `ensureBpForUser` so the importer + the backfill endpoint share
+    // the same lookup rules. Zero-regression: an admin creating a
+    // user still lands the same BP id on reuse and the same BP shape
+    // on create. The method is run via `this.prisma.$transaction`
+    // with a single-step callback — matches the previous call shape
+    // (non-tx `this.prisma.businessPartner.*`) at the DB level while
+    // giving the extracted helper its required tx client.
     let businessPartnerId: number;
     if (explicitBpId) {
       const explicit = await this.prisma.businessPartner.findFirst({
@@ -166,30 +282,17 @@ export class UsersService implements OnModuleInit {
       }
       businessPartnerId = explicit.id;
     } else {
-      const existingBp = await this.prisma.businessPartner.findFirst({
-        where: { email: dto.email, deletedAt: null },
-      });
-      if (existingBp) {
-        businessPartnerId = existingBp.id;
-      } else {
-        const bp = await this.prisma.businessPartner.create({
-          data: {
-            partnerType: 'person',
-            displayName: `${dto.firstName} ${dto.lastName}`.trim() || dto.email,
-            firstName: dto.firstName,
-            lastName: dto.lastName,
-            // Mirror Hebrew names onto the linked BP so the bilingual
-            // search hits work from either entry point (People page or
-            // Contacts page). T3.3, 2026-06-28.
-            firstNameHe: dto.firstNameHe ?? null,
-            lastNameHe: dto.lastNameHe ?? null,
-            email: dto.email,
-            phone: dto.phone ?? null,
-            source: 'manual',
-          },
-        });
-        businessPartnerId = bp.id;
-      }
+      const { bpId } = await this.prisma.$transaction(async (tx) =>
+        this.ensureBpForUser(tx, {
+          email: dto.email,
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          firstNameHe: dto.firstNameHe ?? null,
+          lastNameHe: dto.lastNameHe ?? null,
+          phone: dto.phone ?? null,
+        }),
+      );
+      businessPartnerId = bpId;
     }
 
     // 2) Phase 4 · Stage 1c — derive userType from the D1 rule. The DTO
