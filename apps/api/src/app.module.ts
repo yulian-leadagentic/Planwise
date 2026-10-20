@@ -32,6 +32,7 @@ import { TemplatesModule } from './modules/templates/templates.module';
 import { MessagesModule } from './modules/messages/messages.module';
 import { ExecutionPlanningModule } from './modules/execution-planning/execution-planning.module';
 import { ExecutionBoardModule } from './modules/execution-board/execution-board.module';
+import { SchedulingModule } from './modules/scheduling/scheduling.module';
 import { HealthModule } from './modules/health/health.module';
 import { PresenceModule } from './modules/presence/presence.module';
 import { NumberRangesModule } from './modules/number-ranges/number-ranges.module';
@@ -119,6 +120,7 @@ import { HrModule } from './modules/hr/hr.module';
     MessagesModule,
     ExecutionPlanningModule,
     ExecutionBoardModule,
+    SchedulingModule,
     HealthModule,
     PresenceModule,
     NumberRangesModule,

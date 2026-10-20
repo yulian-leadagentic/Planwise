@@ -1495,7 +1495,12 @@ export class ExecutionPlanningService {
    *     [from, to] on a weekday. A Fri/Sat holiday is already excluded
    *     by the weekend check — it doesn't double-count.
    */
-  private countWorkingDays(from: Date, to: Date, holidays: Set<string>): number {
+  /**
+   * T3 (2026-10-20) — flipped from `private` to `public` so the Scheduler
+   * service can reuse this single implementation instead of duplicating
+   * the closed-form loop. Behaviour unchanged.
+   */
+  countWorkingDays(from: Date, to: Date, holidays: Set<string>): number {
     const dayMs = 86400000;
     const totalDays = Math.max(0, Math.floor((to.getTime() - from.getTime()) / dayMs) + 1);
     if (totalDays === 0) return 0;
