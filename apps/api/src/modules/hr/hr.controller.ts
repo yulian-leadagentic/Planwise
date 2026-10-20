@@ -247,6 +247,16 @@ export class HrController {
     });
   }
 
+  @Patch('me/absences/:recordId')
+  @ApiOperation({ summary: 'Caller updates their own absence record.' })
+  updateMyAbsence(
+    @CurrentUser() user: any,
+    @Param('recordId', ParseIntPipe) recordId: number,
+    @Body() dto: UpdateAbsenceRecordDto,
+  ) {
+    return this.hr.updateMyAbsence(user.id, recordId, dto);
+  }
+
   @Delete('me/absences/:recordId')
   @ApiOperation({ summary: 'Caller deletes their own absence record.' })
   deleteMyAbsence(

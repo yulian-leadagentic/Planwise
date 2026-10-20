@@ -816,6 +816,27 @@ export class HrService {
     return { ...updated, amount: Number(updated.amount) };
   }
 
+  /**
+   * HR W2 (2026-10-20) — self-service variant of {@link updateAbsence}.
+   * Any authenticated caller can patch their own absence record, no
+   * `assertEmployee` gate (same reason as the other `/hr/me/*` routes:
+   * admins and partners also log their own time-off).
+   *
+   * Ownership is enforced inside {@link updateAbsence} via
+   * `findFirst({ id, userId })` — a row that doesn't belong to the
+   * caller returns `NotFoundException`, which keeps us from leaking
+   * the existence of someone else's absence by returning 403 vs 404.
+   * `updateAbsence` itself contains no `assertEmployee` call, so the
+   * self-service path never trips the userType gate.
+   */
+  async updateMyAbsence(
+    callerId: number,
+    recordId: number,
+    dto: UpdateAbsenceRecordDto,
+  ) {
+    return this.updateAbsence(callerId, recordId, dto, callerId);
+  }
+
   async deleteAbsence(userId: number, recordId: number, actorId: number) {
     const existing = await this.prisma.absenceRecord.findFirst({
       where: { id: recordId, userId },
