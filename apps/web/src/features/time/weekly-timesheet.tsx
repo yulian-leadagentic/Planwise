@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Plus, Clock, Pencil, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Clock, Calendar as CalendarIcon, Pencil, Trash2 } from 'lucide-react';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
 import {
   LocationToggle,
@@ -11,6 +11,7 @@ import {
 } from './location-toggle';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { PageHeader } from '@/components/shared/page-header';
+import { Modal } from '@/components/shared/modal';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { timeApi, type TimeEntryPayload } from '@/api/time.api';
@@ -587,8 +588,17 @@ const ISRAELI_HOLIDAYS_2026 = [
 
 function WeekView() {
   const confirm = useConfirm();
+  const queryClient = useQueryClient();
   const [weekOffset, setWeekOffset] = useState(0);
   const [showEntryForm, setShowEntryForm] = useState<{ date: string; startTime: string; endTime: string } | null>(null);
+  // W2 (2026-10-20) — absence currently being edited. Opened by
+  // clicking an amber absence badge on a day header; mounts TimeoffForm
+  // in edit mode inside a shared Modal.
+  const [editingAbsence, setEditingAbsence] = useState<AbsenceRecord | null>(null);
+  // W4 (2026-10-20) — the "+ חופש" quick-create modal next to the
+  // Clock In button. Opens TimeoffForm with today's date (user picks
+  // any future date inside the form).
+  const [showTimeoffQuickAdd, setShowTimeoffQuickAdd] = useState(false);
   // QA4 B5: entry currently being edited via the pencil affordance.
   // Non-null means the popup opens in edit mode against this row (see
   // TimeEntryFormPopup — it hits PATCH /time-entries/:id instead of
@@ -923,6 +933,19 @@ function WeekView() {
           <Clock className="h-4 w-4" />
           {clockStatus?.isClockedIn ? 'Clock Out' : 'Clock In'}
         </button>
+        {/* W4 (2026-10-20) — Timeoff quick-add CTA. Sits next to Clock
+            In (which is an "I'm starting now" action) as a sibling
+            "I need to plan time off" action. Secondary style per
+            planwise-design: white bg, slate border, slate text — subtler
+            than the primary blue + Add Entry so the eye still lands on
+            the main CTA. Opens TimeoffForm; the form itself allows any
+            future date (half-day hidden on range per W1). */}
+        <button
+          onClick={() => setShowTimeoffQuickAdd(true)}
+          className="flex items-center gap-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 transition-colors">
+          <CalendarIcon className="h-3.5 w-3.5" aria-hidden="true" />
+          + חופש · Timeoff
+        </button>
         <button onClick={() => setShowEntryForm({ date: todayKey, startTime: '09:00', endTime: '10:00' })}
           className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
           <Plus className="h-4 w-4" /> Add Entry
@@ -978,22 +1001,29 @@ function WeekView() {
                     rather than time_entries, so the hourly grid below is
                     empty even when the user has a logged vacation day.
                     Status-pill shape per planwise-design: rounded-[5px],
-                    text-[11px] font-bold tracking-wide, amber tokens. */}
+                    text-[11px] font-bold tracking-wide, amber tokens.
+                    W2 (2026-10-20): clicking the badge opens TimeoffForm
+                    in edit mode. If a day has multiple absences we open
+                    the FIRST one (the title tooltip still lists them
+                    all); multi-select picker is tracked as a follow-up. */}
                 {dayAbsences.length > 0 && (() => {
                   const primary = dayAbsences[0];
                   const extraCount = dayAbsences.length - 1;
                   const unitLabel = (u: 'DAY' | 'HOUR') => (u === 'DAY' ? 'd' : 'h');
                   const title = dayAbsences
                     .map((a) => `${a.absenceType.nameHe} (${a.amount}${unitLabel(a.absenceType.unit)})`)
-                    .join('\n');
+                    .join('\n') + '\n\nלחץ לעריכה';
                   return (
-                    <div
-                      className="mt-1 rounded-[5px] bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 text-[10px] font-bold tracking-[0.03em] px-1.5 py-0.5 truncate max-w-full"
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setEditingAbsence(primary); }}
+                      className="mt-1 w-full rounded-[5px] bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 text-[10px] font-bold tracking-[0.03em] px-1.5 py-0.5 truncate max-w-full hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors cursor-pointer"
                       title={title}
+                      aria-label={`ערוך חופשה: ${primary.absenceType.nameHe}`}
                     >
                       {primary.absenceType.nameHe}
                       {extraCount > 0 ? ` · +${extraCount}` : ''}
-                    </div>
+                    </button>
                   );
                 })()}
                 {total > 0 && (
@@ -1286,6 +1316,52 @@ function WeekView() {
           onSaved={invalidate}
         />
       )}
+
+      {/* W2 (2026-10-20) — ABSENCE EDIT MODAL. Mounted when the user
+          clicks an amber absence badge on a day header. TimeoffForm
+          runs in edit mode (prefilled fields, Delete button, PATCH on
+          save). It invalidates ['hr'] + the shared time keys on
+          success, so the badge + weekly grid refresh without a reload. */}
+      {editingAbsence && (
+        <Modal
+          open
+          onClose={() => setEditingAbsence(null)}
+          title={`עריכת חופשה · ${editingAbsence.absenceType.nameHe}`}
+          widthClass="w-[520px] max-w-[94vw]"
+        >
+          <TimeoffForm
+            editing={editingAbsence}
+            defaultDate={editingAbsence.dateFrom.slice(0, 10)}
+            onSaved={() => {
+              setEditingAbsence(null);
+              queryClient.invalidateQueries({ queryKey: ['hr'] });
+              queryClient.invalidateQueries({ queryKey: ['time'] });
+            }}
+            onCancel={() => setEditingAbsence(null)}
+          />
+        </Modal>
+      )}
+
+      {/* W4 (2026-10-20) — QUICK TIMEOFF ADD. The "+ חופש" secondary
+          button next to Clock In opens this modal with today as the
+          default date; the user is free to pick any future date inside
+          the form. onSaved closes the modal + leans on TimeoffForm's
+          own invalidation. */}
+      {showTimeoffQuickAdd && (
+        <Modal
+          open
+          onClose={() => setShowTimeoffQuickAdd(false)}
+          title="+ חופש · Add Timeoff"
+          description="דיווח חופש לכל תאריך — גם בעתיד"
+          widthClass="w-[520px] max-w-[94vw]"
+        >
+          <TimeoffForm
+            defaultDate={todayKey}
+            onSaved={() => setShowTimeoffQuickAdd(false)}
+            onCancel={() => setShowTimeoffQuickAdd(false)}
+          />
+        </Modal>
+      )}
     </div>
   );
 }
@@ -1305,6 +1381,44 @@ function MonthView() {
     queryFn: () => client.get('/calendar').then((r) => { const d = r.data?.data ?? r.data; return Array.isArray(d) ? d : []; }),
   });
 
+  // W3 (2026-10-20) — pull the caller's absences for the viewed month's
+  // year so covered days can render an amber chip under the holiday
+  // chip. Shares the ['hr', 'my-absences', years] key format WeekView
+  // uses so a Timeoff save on the week screen invalidates this one too
+  // (TimeoffForm.onSuccess invalidates ['hr']).
+  const { data: absenceRecords = [] } = useQuery<AbsenceRecord[]>({
+    queryKey: ['hr', 'my-absences', [viewYear]],
+    queryFn: () => hrApi.listMyAbsences({ year: viewYear }),
+    staleTime: 60 * 1000,
+    retry: false,
+  });
+
+  // Expand [dateFrom, dateTo] spans → per-day map, same shape WeekView
+  // uses. One record can be looked up on every day it covers.
+  const absencesByDay = useMemo(() => {
+    const map = new Map<string, AbsenceRecord[]>();
+    const toLocalDay = (iso: string): Date => {
+      const raw = new Date(iso);
+      return new Date(raw.getFullYear(), raw.getMonth(), raw.getDate());
+    };
+    for (const rec of absenceRecords) {
+      const start = toLocalDay(rec.dateFrom);
+      const end = toLocalDay(rec.dateTo);
+      if (end.getTime() < start.getTime()) {
+        const key = format(start, 'yyyy-MM-dd');
+        map.set(key, [...(map.get(key) ?? []), rec]);
+        continue;
+      }
+      let d = start;
+      while (d.getTime() <= end.getTime()) {
+        const key = format(d, 'yyyy-MM-dd');
+        map.set(key, [...(map.get(key) ?? []), rec]);
+        d = addDays(d, 1);
+      }
+    }
+    return map;
+  }, [absenceRecords]);
+
   const holidayDates = useMemo(() => {
     const set = new Set<string>();
     for (const d of calendarDays) { if (d.date) set.add(typeof d.date === 'string' ? d.date.split('T')[0] : new Date(d.date).toISOString().split('T')[0]); }
@@ -1312,6 +1426,20 @@ function MonthView() {
   }, [calendarDays]);
 
   const workingDays = countWorkingDays(viewYear, viewMonth, holidayDates);
+
+  // W3 — count distinct calendar days inside the viewed month that are
+  // covered by at least one absence (dedup via `absencesByDay` keys),
+  // so a 7-day bereavement span counts as 7 days once. Only rendered
+  // when > 0 — the header line stays quiet otherwise.
+  const monthAbsenceDays = useMemo(() => {
+    const prefix = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-`;
+    let n = 0;
+    for (const key of absencesByDay.keys()) {
+      if (key.startsWith(prefix)) n++;
+    }
+    return n;
+  }, [absencesByDay, viewYear, viewMonth]);
+
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const firstDow = (() => { const d = new Date(viewYear, viewMonth, 1).getDay() - 1; return d < 0 ? 6 : d; })();
   const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -1322,7 +1450,11 @@ function MonthView() {
         <button onClick={() => setMonthOffset((o) => o - 1)} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronLeft className="h-5 w-5" /></button>
         <div className="text-center">
           <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{monthName}</p>
-          <p className="text-[11px] text-slate-400 dark:text-slate-500"><span className="font-semibold text-slate-700 dark:text-slate-200">{workingDays.working}</span> working days{workingDays.holidays > 0 && <span> · <span className="text-red-500">{workingDays.holidays} holidays</span></span>}</p>
+          <p className="text-[11px] text-slate-400 dark:text-slate-500">
+            <span className="font-semibold text-slate-700 dark:text-slate-200">{workingDays.working}</span> working days
+            {workingDays.holidays > 0 && <span> · <span className="text-red-500">{workingDays.holidays} holidays</span></span>}
+            {monthAbsenceDays > 0 && <span> · <span className="text-amber-600 dark:text-amber-400">{monthAbsenceDays} ימי חופש</span></span>}
+          </p>
         </div>
         <button onClick={() => setMonthOffset((o) => o + 1)} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronRight className="h-5 w-5" /></button>
       </div>
@@ -1340,10 +1472,35 @@ function MonthView() {
             const isHoliday = holidayDates.has(dateStr);
             const isToday = dateStr === format(today, 'yyyy-MM-dd');
             const holiday = calendarDays.find((h: any) => (typeof h.date === 'string' ? h.date.split('T')[0] : new Date(h.date).toISOString().split('T')[0]) === dateStr);
+            const dayAbsences = absencesByDay.get(dateStr) ?? [];
             return (
-              <div key={d} className={cn('min-h-[80px] border-b border-r border-slate-100 dark:border-slate-800 p-1.5', isWeekend && 'bg-slate-50/50 dark:bg-slate-800/50', isHoliday && 'bg-red-50/30')}>
+              <div key={d} className={cn('min-h-[80px] border-b border-r border-slate-100 dark:border-slate-800 p-1.5', isWeekend && 'bg-slate-50/50 dark:bg-slate-800/50', isHoliday && 'bg-red-50/30', dayAbsences.length > 0 && !isHoliday && 'bg-amber-50/30 dark:bg-amber-900/10')}>
                 <span className={cn('text-[13px] font-medium', isToday ? 'text-white bg-blue-600 rounded-full w-7 h-7 inline-flex items-center justify-center' : 'text-slate-700 dark:text-slate-200', isWeekend && !isToday && 'text-slate-400 dark:text-slate-500')}>{d}</span>
-                {isHoliday && holiday && <div className="mt-1 rounded px-1 py-0.5 bg-red-100 text-[9px] font-medium text-red-700 truncate">{holiday.name}</div>}
+                {isHoliday && holiday && <div className="mt-1 rounded-[5px] px-1 py-0.5 bg-red-100 dark:bg-red-900/30 text-[9px] font-medium text-red-700 dark:text-red-300 truncate" title={holiday.name}>{holiday.name}</div>}
+                {/* W3 (2026-10-20) — absence chip. Rendered BELOW the
+                    holiday chip (mt-0.5) when both share a day; stacks
+                    the extra count on top-right when a user has multiple
+                    absences on one calendar day. */}
+                {dayAbsences.length > 0 && (() => {
+                  const primary = dayAbsences[0];
+                  const extraCount = dayAbsences.length - 1;
+                  const unitLabel = (u: 'DAY' | 'HOUR') => (u === 'DAY' ? 'd' : 'h');
+                  const title = dayAbsences
+                    .map((a) => `${a.absenceType.nameHe} (${a.amount}${unitLabel(a.absenceType.unit)})`)
+                    .join('\n');
+                  return (
+                    <div
+                      className={cn(
+                        'rounded-[5px] bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 text-[10px] font-bold px-1.5 py-0.5 truncate max-w-full',
+                        isHoliday && holiday ? 'mt-0.5' : 'mt-1',
+                      )}
+                      title={title}
+                    >
+                      {primary.absenceType.nameHe}
+                      {extraCount > 0 ? ` · +${extraCount}` : ''}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
@@ -1366,20 +1523,54 @@ function YearView() {
     queryFn: () => client.get('/calendar').then((r) => { const d = r.data?.data ?? r.data; return Array.isArray(d) ? d : []; }),
   });
 
+  // W3 (2026-10-20) — pull every absence record for the viewed year so
+  // each month card can show "N ימי חופש". Shares the my-absences key
+  // with WeekView + MonthView so a Timeoff save refreshes all three.
+  const { data: absenceRecords = [] } = useQuery<AbsenceRecord[]>({
+    queryKey: ['hr', 'my-absences', [viewYear]],
+    queryFn: () => hrApi.listMyAbsences({ year: viewYear }),
+    staleTime: 60 * 1000,
+    retry: false,
+  });
+
   const holidayDates = useMemo(() => {
     const set = new Set<string>();
     for (const d of calendarDays) { if (d.date) set.add(typeof d.date === 'string' ? d.date.split('T')[0] : new Date(d.date).toISOString().split('T')[0]); }
     return set;
   }, [calendarDays]);
 
+  // Dedup per calendar day so a multi-day span counts as its real
+  // number of covered days per month, not record count.
+  const absenceDaysByMonth = useMemo(() => {
+    const buckets: Set<string>[] = Array.from({ length: 12 }, () => new Set<string>());
+    const toLocalDay = (iso: string): Date => {
+      const raw = new Date(iso);
+      return new Date(raw.getFullYear(), raw.getMonth(), raw.getDate());
+    };
+    for (const rec of absenceRecords) {
+      const start = toLocalDay(rec.dateFrom);
+      const end = toLocalDay(rec.dateTo);
+      const to = end.getTime() < start.getTime() ? start : end;
+      let d = start;
+      while (d.getTime() <= to.getTime()) {
+        if (d.getFullYear() === viewYear) {
+          buckets[d.getMonth()].add(format(d, 'yyyy-MM-dd'));
+        }
+        d = addDays(d, 1);
+      }
+    }
+    return buckets.map((s) => s.size);
+  }, [absenceRecords, viewYear]);
+
   const MONTHS = Array.from({ length: 12 }, (_, i) => {
     const name = new Date(viewYear, i).toLocaleDateString('en-US', { month: 'long' });
     const wd = countWorkingDays(viewYear, i, holidayDates);
-    return { index: i, name, ...wd };
+    return { index: i, name, ...wd, absenceDays: absenceDaysByMonth[i] ?? 0 };
   });
 
   const totalWorking = MONTHS.reduce((s, m) => s + m.working, 0);
   const totalHolidays = MONTHS.reduce((s, m) => s + m.holidays, 0);
+  const totalAbsence = MONTHS.reduce((s, m) => s + m.absenceDays, 0);
 
   return (
     <div className="space-y-4">
@@ -1387,7 +1578,11 @@ function YearView() {
         <button onClick={() => setYearOffset((o) => o - 1)} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronLeft className="h-5 w-5" /></button>
         <div className="text-center">
           <p className="text-lg font-bold text-slate-900 dark:text-slate-100">{viewYear}</p>
-          <p className="text-[11px] text-slate-400 dark:text-slate-500"><span className="font-semibold text-slate-700 dark:text-slate-200">{totalWorking}</span> working days · <span className="text-red-500">{totalHolidays} holidays</span></p>
+          <p className="text-[11px] text-slate-400 dark:text-slate-500">
+            <span className="font-semibold text-slate-700 dark:text-slate-200">{totalWorking}</span> working days ·{' '}
+            <span className="text-red-500">{totalHolidays} holidays</span>
+            {totalAbsence > 0 && <span> · <span className="text-amber-600 dark:text-amber-400">{totalAbsence} ימי חופש</span></span>}
+          </p>
         </div>
         <button onClick={() => setYearOffset((o) => o + 1)} className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronRight className="h-5 w-5" /></button>
       </div>
@@ -1402,6 +1597,14 @@ function YearView() {
                 <div><p className={cn('text-lg font-bold', m.holidays > 0 ? 'text-red-600' : 'text-slate-300 dark:text-slate-600')}>{m.holidays}</p><p className="text-[9px] text-slate-400 dark:text-slate-500">Holidays</p></div>
                 <div><p className="text-lg font-bold text-slate-400 dark:text-slate-500">{m.total}</p><p className="text-[9px] text-slate-400 dark:text-slate-500">Total</p></div>
               </div>
+              {/* W3 (2026-10-20) — absence line under the counters.
+                  Only renders when the user has at least one absence
+                  day in the month; empty months stay quiet. */}
+              {m.absenceDays > 0 && (
+                <p className="mt-2 text-center text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                  {m.absenceDays} ימי חופש
+                </p>
+              )}
               <div className="mt-2 w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
                 <div className="h-full bg-blue-500 rounded-full" style={{ width: `${(m.working / m.total) * 100}%` }} />
               </div>
