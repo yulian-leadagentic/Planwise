@@ -16,10 +16,16 @@ import { GroupControl, dpGroupDimLabel, type DPGroupDim } from '@/features/plann
  * and a human label (shown in the group header or sub-row). The key is
  * namespaced per-dim so a zoneId and a deliverableId can never collide
  * when the user flips the primary dim mid-session.
+ *
+ * DPG-1 (2026-10-20) · Zone grouping rolls up to the TOP-LEVEL ancestor
+ * — rows carry `topLevelZoneId` + `topLevelZoneName` precomputed by the
+ * parent (see `topLevelZoneInfo`), so a sub-zone row buckets under its
+ * root zone instead of standing alone. `zoneId=null` rows (orphan root
+ * tasks, no-zones projects) key to `zone:root` with label "Project Root".
  */
 function rowDimKey(r: any, dim: DPGroupDim): string {
   if (dim === 'deliverable') return `del:${r.deliverableId}`;
-  if (dim === 'zone') return `zone:${r.zoneId ?? 'root'}`;
+  if (dim === 'zone') return `zone:${r.topLevelZoneId ?? 'root'}`;
   // service — Phase name is a string, nullable. Treat null/empty as a
   // dedicated "no service" bucket so rows don't get spread into the
   // default group silently.
@@ -27,7 +33,7 @@ function rowDimKey(r: any, dim: DPGroupDim): string {
 }
 function rowDimLabel(r: any, dim: DPGroupDim): string {
   if (dim === 'deliverable') return r.deliverableName ?? `Deliverable #${r.deliverableId}`;
-  if (dim === 'zone') return r.zoneName ?? '—';
+  if (dim === 'zone') return r.topLevelZoneName ?? '—';
   return (r.serviceName ?? '').trim() || 'No service';
 }
 
@@ -204,6 +210,34 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     return out;
   }, [planningData?.zones]);
 
+  // DPG-1 (2026-10-20) · Zone-tree ancestry — maps every zone id to its
+  // TOP-LEVEL ancestor's id + name. Deliverable Planning v1 scope: when
+  // grouping by Zone, sub-zones (building → level → area) all roll up
+  // to the top-level root they descend from, so the Gantt shows one
+  // bucket per top-level zone instead of a flat list of every sub-zone.
+  // Nested rollups (per-level drill-down) are deferred to v2.
+  //
+  // Shape: `idMap` has every zone id → its root ancestor's id, `nameMap`
+  // has each root id → its own name. Walked from the SAME zone-tree
+  // `zonesFlat` reads, so there's no risk of a mismatch between the
+  // flattened list and the ancestry decision.
+  const topLevelZoneInfo = useMemo(() => {
+    const idMap = new Map<number, number>();   // zoneId → top-level ancestor id
+    const nameMap = new Map<number, string>(); // top-level id → top-level name
+    const roots: ZoneNode[] = Array.isArray(planningData?.zones) ? planningData.zones : [];
+    const walk = (z: ZoneNode, topId: number) => {
+      idMap.set(z.id, topId);
+      if (Array.isArray(z.children) && z.children.length) {
+        for (const c of z.children) walk(c, topId);
+      }
+    };
+    for (const r of roots) {
+      nameMap.set(r.id, r.name);
+      walk(r, r.id);
+    }
+    return { idMap, nameMap };
+  }, [planningData?.zones]);
+
   // Build (zone × deliverable) rows from the CROSS PRODUCT of the
   // project's zones and its deliverables — so every combination shows
   // even before any tasks exist (bm2 fix #1). Task counts still overlay
@@ -219,6 +253,14 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     // Zone type enum (DP-4). Optional — the synthetic "Project Root"
     // pseudo-row emitted for projects with no zones has no type.
     zoneType?: string;
+    // DPG-1 (2026-10-20) — Top-level zone ancestor id + name. Rows
+    // whose zone descends from a root (e.g. "Area 3" under "Building A")
+    // share these fields with their root parent so a Zone grouping
+    // folds them into one bucket. `zoneId=null` → `topLevelZoneId=null`
+    // and `topLevelZoneName='Project Root'`; a root zone's row has
+    // these equal to its own `zoneId` + `zoneName`.
+    topLevelZoneId: number | null;
+    topLevelZoneName: string;
     serviceName: string | null;
     // Current server target (either from zoneTargets[zoneId] or the deliverable-level fallback)
     savedMonths: number | null;
@@ -346,6 +388,18 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         endDate: t.endDate ? String(t.endDate).slice(0, 10) : null,
         status: t.status,
       }));
+      // DPG-1 · Compute the top-level zone ancestor for this row. The
+      // `idMap` falls back to the zone's own id when the zone IS a root
+      // (so a root row's topLevelZoneId === zoneId). `zoneId=null` rows
+      // (orphan tasks, no-zones projects) bucket to the "Project Root"
+      // group — one group label everywhere no matter how many rows have
+      // zoneId=null.
+      const topLevelId: number | null = zoneId == null
+        ? null
+        : (topLevelZoneInfo.idMap.get(zoneId) ?? zoneId);
+      const topLevelName: string = topLevelId == null
+        ? 'Project Root'
+        : (topLevelZoneInfo.nameMap.get(topLevelId) ?? zoneName);
       list.push({
         key,
         deliverableId: dId,
@@ -353,6 +407,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         zoneId,
         zoneName,
         zoneType,
+        topLevelZoneId: topLevelId,
+        topLevelZoneName: topLevelName,
         // Read-time fallback (2026-09-29): when the ProjectDeliverable
         // row's `service` is null (historical rows created before the
         // Template.phaseId inheritance was reliable), fall back to the
@@ -450,7 +506,11 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       if (zNc !== 0) return zNc;
       return a.deliverableName.localeCompare(b.deliverableName);
     });
-  }, [tasks, zonesFlat, deliverables]);
+    // DPG-1 — `topLevelZoneInfo` participates in each row's bucket key
+    // (via `topLevelZoneId` / `topLevelZoneName`), so a zone-tree edit
+    // (new root / re-parent) invalidates and recomputes rows the same
+    // frame the planning payload lands.
+  }, [tasks, zonesFlat, deliverables, topLevelZoneInfo]);
 
   // Seed drafts from server values whenever rows change.
   useEffect(() => {
@@ -1293,6 +1353,20 @@ function TableView({
     else if (sort.col === 'hours') groups.sort((a, b) => cmp(effectiveHours(a.zones[0]), effectiveHours(b.zones[0])));
     else if (sort.col === 'target') groups.sort((a, b) => cmp(effectiveDate(a.zones[0]) || '', effectiveDate(b.zones[0]) || ''));
 
+    // DPG-1c (2026-10-20) — Pin "Project Root" (orphan tasks, zoneId=null)
+    // to the TOP of a Zone grouping, regardless of the active column sort.
+    // The group only EXISTS when at least one row has `topLevelZoneId=null`,
+    // so pinning this way never conjures an empty synthetic row: no root
+    // tasks ⇒ no `zone:root` group in `map` ⇒ nothing to hoist. Idempotent
+    // on repeated sorts because `splice` removes before `unshift` re-adds.
+    if (outerDim === 'zone') {
+      const rootIdx = groups.findIndex((g) => g.key === 'zone:root');
+      if (rootIdx > 0) {
+        const [root] = groups.splice(rootIdx, 1);
+        groups.unshift(root);
+      }
+    }
+
     // Sort zone rows within each group
     for (const g of groups) {
       const zsign = sort.dir === 'asc' ? 1 : -1;
@@ -1886,6 +1960,16 @@ function GanttView({
     latestTargetMs: number | null;
     earliestStartMs: number | null;
     latestTargetIso: string | null;
+    // DPG-1b (2026-10-20) — Rolled-up task counts across the group's
+    // children. Drives the rollup bar's progress fill + "{done}/{total}"
+    // label and matches the per-row counts already carried on each Row.
+    // `spanWeeks` is the DURATION of the rollup (earliest → latest in
+    // calendar weeks), used in the bar label; this is a SPAN, not a sum
+    // of per-row durations (sum would double-count parallel work).
+    taskTotal: number;
+    taskStarted: number;
+    taskDone: number;
+    spanWeeks: number;
     // DP-EMPTY-3 — true when every row in this group is a synthetic
     // (marker/template-only) row. Only meaningful when outerDim is
     // 'deliverable' (zone/service buckets can mix real + synthetic).
@@ -1905,6 +1989,18 @@ function GanttView({
       }
       groupZones.get(k)!.push({ z: r, zoneIdx: idx });
     });
+    // DPG-1c (2026-10-20) — Pin "Project Root" group (orphan tasks with
+    // `topLevelZoneId=null`) to the top of a Zone grouping, so the PM
+    // sees unassigned tasks before per-zone rollups. The group only
+    // exists when at least one row keyed to `zone:root`, so this never
+    // introduces an empty synthetic row.
+    if (outerDim === 'zone') {
+      const idx = groupOrder.indexOf('zone:root');
+      if (idx > 0) {
+        groupOrder.splice(idx, 1);
+        groupOrder.unshift('zone:root');
+      }
+    }
     const out: GanttSlot[] = [];
     for (const gKey of groupOrder) {
       const entries = groupZones.get(gKey)!;
@@ -1916,8 +2012,17 @@ function GanttView({
       let latestTgt = -Infinity;
       let earliestStart = Infinity;
       let hoursSum = 0;
+      // DPG-1b (2026-10-20) · aggregate task counts for the rollup bar's
+      // progress fill + "{done}/{total}" chip. Mirrors GanttRow's local
+      // `total/started/done`, just summed across the group's children.
+      let taskTotal = 0;
+      let taskStarted = 0;
+      let taskDone = 0;
       for (const z of zonesArr) {
         hoursSum += Number(z.hours || 0);
+        taskTotal += Number(z.taskTotal || 0);
+        taskStarted += Number(z.taskStarted || 0);
+        taskDone += Number(z.taskDone || 0);
         const tIso = targetDateDrafts[z.key] || computePreview(drafts[z.key] ?? '') || z.savedDate;
         if (!tIso) continue;
         const tMs = new Date(tIso).getTime();
@@ -1929,6 +2034,11 @@ function GanttView({
       }
       const latestTargetMs = latestTgt === -Infinity ? null : latestTgt;
       const earliestStartMs = earliestStart === Infinity ? null : earliestStart;
+      // Span in calendar weeks (not a sum of per-row durations — that
+      // would double-count parallel work and read wrong on the bar).
+      const spanWeeks = (latestTargetMs != null && earliestStartMs != null)
+        ? Math.max(0, Math.round((latestTargetMs - earliestStartMs) / (7 * 86_400_000)))
+        : 0;
       // DP-EMPTY-3 — only honest when outerDim='deliverable'; otherwise
       // zero out so a mixed zone/service bucket doesn't inherit a bogus
       // "not yet planned" badge from its first row.
@@ -1946,6 +2056,10 @@ function GanttView({
         latestTargetMs,
         earliestStartMs,
         latestTargetIso: latestTargetMs ? new Date(latestTargetMs).toISOString().slice(0, 10) : null,
+        taskTotal,
+        taskStarted,
+        taskDone,
+        spanWeeks,
         readOnly: groupReadOnly,
         readOnlyReason: groupReadOnlyReason,
       });
@@ -2154,6 +2268,7 @@ function GanttView({
     });
   };
 
+
   // Empty state — rendered AFTER all hooks so the hook count stays
   // constant across renders (see note above).
   if (orderedRows.length === 0) {
@@ -2330,9 +2445,11 @@ function GanttView({
           column scrolls HORIZONTALLY on its own.
 
           DP-5 · The two columns iterate `displaySlots` in lockstep so
-          a `group` slot's label sits alongside its group track (rolled-
-          up bar when collapsed, empty divider when expanded), and each
-          `zone` slot's label sits alongside its GanttRow. */}
+          a `group` slot's label sits alongside its group track and
+          each `zone` slot's label sits alongside its GanttRow.
+          DPG-1b (2026-10-20) — the group track now ALWAYS shows a
+          slate rollup bar (expanded + collapsed), so the user sees
+          the aggregate span whether or not children are visible. */}
       <div className="grid grid-cols-[260px_1fr]">
         {/* Labels column */}
         <div className="divide-y divide-slate-100 dark:divide-slate-800 border-r border-slate-200 dark:border-slate-700">
@@ -2447,47 +2564,69 @@ function GanttView({
             )}
             {displaySlots.map((slot) => {
               if (slot.kind === 'group') {
-                // DP-5 · Group track. Collapsed → single rolled-up bar
-                // spanning earliest start → latest target across the
-                // deliverable's zones, styled distinctly (taller, ring
-                // + darker fill) so it reads as an aggregate rather
-                // than a normal per-zone bar. Expanded → a thin muted
-                // divider strip so the label's chevron still lines up
-                // with a visible track (the zone bars follow below).
-                if (!slot.isCollapsed) {
-                  return (
-                    <div
-                      key={`gtrack-${slot.key}`}
-                      className="relative h-8 bg-slate-50 dark:bg-slate-800/60"
-                    />
-                  );
-                }
+                // DPG-1b (2026-10-20) · Group track = ALWAYS-visible
+                // rollup bar spanning earliest start → latest target
+                // across the group's children (replaces the DP-5 split
+                // where expanded groups rendered an empty divider). The
+                // bar reads as a SUMMARY — quieter slate palette, no
+                // shadow, lighter progress fill — so it never competes
+                // visually with the per-zone bars below.
+                //
+                // DPG-3 (2026-10-20) · Grabbing the bar starts a cascade
+                // drag: every child row shifts by the same delta (snap
+                // to 7 days so Sunday alignment holds), proportions
+                // preserved by construction. A near-zero drag toggles
+                // the group's collapse state — same affordance the
+                // label row has on the left column.
                 const hasSpan = slot.earliestStartMs != null && slot.latestTargetMs != null;
                 const rightPx = hasSpan ? ((slot.latestTargetMs! - startMs) / 86_400_000) * PX_PER_DAY : 0;
                 const leftPx = hasSpan ? ((slot.earliestStartMs! - startMs) / 86_400_000) * PX_PER_DAY : 0;
                 const widthPx = Math.max(6, rightPx - leftPx);
                 const todayMsLocal = Date.now();
                 const isPast = hasSpan && slot.latestTargetMs! < todayMsLocal;
+                const progressPct = slot.taskTotal > 0
+                  ? Math.min(100, Math.max(0, (slot.taskDone / slot.taskTotal) * 100))
+                  : 0;
                 return (
                   <div
                     key={`gtrack-${slot.key}`}
-                    className="relative h-8 bg-slate-50 dark:bg-slate-800/60 cursor-pointer"
-                    onClick={() => onToggleCollapse(slot.key)}
-                    title={`${slot.label} — click to expand`}
+                    className="relative h-8 bg-slate-50 dark:bg-slate-800/60"
                   >
                     {hasSpan && (
                       <div
                         className={cn(
-                          'absolute top-1.5 h-5 rounded-md shadow-md flex items-center overflow-hidden',
-                          'bg-slate-700/90 hover:bg-slate-800 dark:bg-slate-500/90 dark:hover:bg-slate-400',
-                          'ring-1 ring-slate-900/20 dark:ring-slate-100/20',
+                          'absolute top-1.5 h-5 rounded-[5px] overflow-hidden',
+                          // planwise-design slate palette — summary bar,
+                          // visually quieter than the blue/amber/emerald
+                          // per-zone bars below. No shadow (borders +
+                          // ring carry the chrome).
+                          'bg-slate-200 dark:bg-slate-700',
+                          'ring-1 ring-slate-300/70 dark:ring-slate-600/70',
+                          'hover:bg-slate-300/70 dark:hover:bg-slate-600 transition-colors duration-150',
+                          'cursor-pointer select-none',
                           isPast && 'ring-2 ring-red-400/70',
                         )}
                         style={{ left: leftPx, width: widthPx }}
+                        onClick={() => onToggleCollapse(slot.key)}
+                        title={`${slot.label} — click to ${slot.isCollapsed ? 'expand' : 'collapse'}`}
                       >
-                        <span className="text-white text-[10px] font-bold tabular-nums whitespace-nowrap px-1.5 truncate">
-                          {slot.hoursSum > 0 ? `Σ ${slot.hoursSum}h · ` : ''}{slot.latestTargetIso ?? ''}
-                        </span>
+                        {/* Progress fill — slate-400/500 so it reads as a
+                            quiet aggregate signal, not a status color. */}
+                        {slot.taskTotal > 0 && (
+                          <div
+                            className="absolute inset-y-0 left-0 bg-slate-400/60 dark:bg-slate-500/60 pointer-events-none"
+                            style={{ width: `${progressPct}%` }}
+                          />
+                        )}
+                        <div className="relative h-full flex items-center justify-center px-1.5 text-[10px] font-semibold text-slate-700 dark:text-slate-200 whitespace-nowrap gap-1.5 truncate pointer-events-none">
+                          <span className="truncate">{slot.label}</span>
+                          {slot.spanWeeks > 0 && (
+                            <span className="font-mono tabular-nums">· {slot.spanWeeks}w</span>
+                          )}
+                          {slot.taskTotal > 0 && (
+                            <span className="font-mono tabular-nums">· {slot.taskDone}/{slot.taskTotal}</span>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>
