@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -565,6 +566,28 @@ export class HrService {
     opts: { year?: number; typeId?: number } = {},
   ) {
     await this.assertEmployee(userId);
+    return this.listAbsencesForEmployeeCore(userId, opts);
+  }
+
+  /**
+   * HR G2.3 (2026-10-20) — self-service variant of {@link listAbsencesForEmployee}.
+   * Any authenticated user can list their own absence records regardless of
+   * `userType`. Skips the `assertEmployee` gate for the same reason as
+   * {@link createMyAbsence}: the Timeoff self-service surface is used by
+   * admins + partners too. The caller's identity is pinned server-side so
+   * no one can enumerate anyone else's absences through this route.
+   */
+  async listMyAbsences(
+    callerId: number,
+    opts: { year?: number; typeId?: number } = {},
+  ) {
+    return this.listAbsencesForEmployeeCore(callerId, opts);
+  }
+
+  private async listAbsencesForEmployeeCore(
+    userId: number,
+    opts: { year?: number; typeId?: number } = {},
+  ) {
     const where: Prisma.AbsenceRecordWhereInput = { userId };
     if (opts.year != null && Number.isFinite(opts.year)) {
       const start = new Date(opts.year, 0, 1);
@@ -813,6 +836,44 @@ export class HrService {
         `Deleted absence "${existing.absenceType.nameHe}"` +
         ` from ${existing.dateFrom.toISOString().slice(0, 10)}` +
         ` for employee ${userId}`,
+    });
+    return { ok: true, id: recordId };
+  }
+
+  /**
+   * HR G2.3 (2026-10-20) — self-service variant of {@link deleteAbsence}.
+   * Looks the record up by id (not scoped to a userId path param, since
+   * this endpoint is `/hr/me/absences/:recordId`), then enforces
+   * ownership: anyone trying to delete someone else's row gets a 403
+   * rather than a leak-sensitive 404. Writes the same audit event as
+   * the manager-side delete; the self-service path has no
+   * `assertEmployee` gate, matching the other `/hr/me/*` routes.
+   */
+  async deleteMyAbsence(callerId: number, recordId: number) {
+    const existing = await this.prisma.absenceRecord.findUnique({
+      where: { id: recordId },
+      include: { absenceType: { select: { nameHe: true } } },
+    });
+    if (!existing) {
+      throw new NotFoundException(`Absence ${recordId} not found`);
+    }
+    if (existing.userId !== callerId) {
+      throw new ForbiddenException(
+        'You can only delete your own absence records.',
+      );
+    }
+    await this.prisma.absenceRecord.delete({ where: { id: recordId } });
+    this.writeAudit({
+      actorId: callerId,
+      action: 'hr.absence.deleted',
+      entityType: 'absence_record',
+      entityId: recordId,
+      entityName: existing.absenceType.nameHe,
+      severity: 'warn',
+      description:
+        `Self-deleted absence "${existing.absenceType.nameHe}"` +
+        ` from ${existing.dateFrom.toISOString().slice(0, 10)}` +
+        ` (user ${callerId})`,
     });
     return { ok: true, id: recordId };
   }

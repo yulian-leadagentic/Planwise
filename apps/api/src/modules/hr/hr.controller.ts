@@ -230,6 +230,32 @@ export class HrController {
     return this.hr.createMyAbsence(user.id, dto);
   }
 
+  @Get('me/absences')
+  @ApiOperation({ summary: 'Caller lists their own absence records (optional year/typeId filter).' })
+  @ApiQuery({ name: 'year', required: false, type: Number })
+  @ApiQuery({ name: 'typeId', required: false, type: Number })
+  listMyAbsences(
+    @CurrentUser() user: any,
+    @Query('year') yearRaw?: string,
+    @Query('typeId') typeIdRaw?: string,
+  ) {
+    const year = yearRaw != null ? Number(yearRaw) : undefined;
+    const typeId = typeIdRaw != null ? Number(typeIdRaw) : undefined;
+    return this.hr.listMyAbsences(user.id, {
+      year: Number.isFinite(year) ? year : undefined,
+      typeId: Number.isFinite(typeId) ? typeId : undefined,
+    });
+  }
+
+  @Delete('me/absences/:recordId')
+  @ApiOperation({ summary: 'Caller deletes their own absence record.' })
+  deleteMyAbsence(
+    @CurrentUser() user: any,
+    @Param('recordId', ParseIntPipe) recordId: number,
+  ) {
+    return this.hr.deleteMyAbsence(user.id, recordId);
+  }
+
   @Post('me/attachments')
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
