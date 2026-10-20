@@ -2540,19 +2540,13 @@ function GanttRow({
           title="Drag to change target date"
         />
       </div>
-      {total > 0 && (
-        <div
-          className="absolute top-1 flex items-center gap-1 text-[10px] font-bold tabular-nums text-slate-600 dark:text-slate-300 bg-white/90 rounded px-1 pointer-events-none"
-          style={{ left: rightPx + 6 }}
-          title={`${total} tasks · ${started} started · ${done} done`}
-        >
-          <span className="text-slate-700 dark:text-slate-200">{total}</span>
-          <span className="text-slate-300 dark:text-slate-600">·</span>
-          <span className="text-blue-600">{started}</span>
-          <span className="text-slate-300 dark:text-slate-600">·</span>
-          <span className="text-emerald-600">{done}</span>
-        </div>
-      )}
+      {/* DPG-2 (2026-10-20) — the 3-numbers badge (total · started · done)
+          that used to render to the right of the bar was removed per
+          client request. The counts remain available via the row's
+          click-to-open task modal (DeliverableTasksModal below) and
+          the bar's own color (blue / amber / emerald) already encodes
+          aggregate task-status progress. `total`/`started`/`done`
+          above are kept because they still drive `barStatus`. */}
     </div>
   );
 }
