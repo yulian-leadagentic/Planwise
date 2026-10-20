@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+import { UsersService } from '../users/users.service';
 import {
   extractServiceMarker,
   resolvePhasesByMarkerNames,
@@ -37,7 +38,14 @@ import {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('admin/backfills')
 export class BackfillsController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // B5-3 (2026-10-20) — the user-business-partner backfill
+    // reuses `UsersService.ensureBpForUser` + `syncEmployeeBpRole`
+    // so historical orphan users land the exact same BP shape
+    // that `UsersService.create` writes today, with no drift.
+    private readonly usersService: UsersService,
+  ) {}
 
   /**
    * Labor Category rename — Phase 2 Commit A (2026-09-28).
@@ -2022,6 +2030,168 @@ export class BackfillsController {
       alreadyPresent,
       sample,
       totals: { insertedOrSkipped },
+    };
+  }
+
+  /**
+   * B5-3 (2026-10-20) — Backfill the `User.businessPartnerId` link
+   * for active users that are missing one. Fixes the ~43% of active
+   * employees on staging whose Qualifications section was silently
+   * hidden by the `businessPartnerId != null` gate on the People
+   * edit modal (verified 26 of 61 active users, all imported before
+   * B5-2 landed).
+   *
+   * Per user, inside a per-row `$transaction`:
+   *   1. `UsersService.ensureBpForUser(tx, {…})` — reuses the person
+   *      BP with the matching email when one exists and isn't
+   *      already linked to another user, else creates a fresh BP.
+   *      Shape matches `UsersService.create`'s own writes exactly
+   *      so no new drift is introduced.
+   *   2. `tx.user.update({ businessPartnerId })` — points the row.
+   *   3. `UsersService.syncEmployeeBpRole(bpId, user.userType, tx)`
+   *      — tags the BP with the `employee` role when the user's
+   *      type says so (idempotent upsert on the unique pair).
+   *
+   * dryRun uses the SAME transactional path so the prediction can't
+   * drift from the real run. Inside the tx the counters update,
+   * then a sentinel `__DRY_RUN_ROLLBACK__` throw forces Prisma to
+   * roll back every write. Caught just below the tx so the loop
+   * continues. The outer `try/catch` wrapping the whole per-user
+   * block pushes any genuine error onto the `errors` array —
+   * failures of one user never roll back another.
+   *
+   * Idempotent — once a user is linked, the WHERE filter excludes
+   * them on the next scan, so a re-run after a successful run
+   * returns `{ scanned: 0 }`.
+   *
+   * Response shape (both dryRun + real):
+   *   {
+   *     dryRun: boolean,
+   *     scanned: number,              // active users with no BP
+   *     alreadyLinked: 0,             // reserved — WHERE excludes
+   *     reusedExistingBp: number,     // email hit, no @unique collision
+   *     createdBp: number,            // nothing found, or hit + collision
+   *     linked: number,               // reused + created
+   *     skippedConflicts: 0,          // reserved — ensureBp handles conflict by creating
+   *     errors: Array<{ userId; email; message }>,
+   *   }
+   */
+  @Post('backfill/user-business-partner')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'B5-3 · Backfill User.businessPartnerId for active users missing one (idempotent; ?dryRun=true for plan-only)',
+  })
+  @ApiQuery({ name: 'dryRun', required: false, type: String, description: 'Truthy → plan only, no writes' })
+  async runBackfillUserBusinessPartner(@Query('dryRun') dryRunRaw?: string) {
+    const dryRun =
+      typeof dryRunRaw === 'string' &&
+      ['1', 'true', 'yes', 'on'].includes(dryRunRaw.toLowerCase());
+
+    // 1. Scan — active, non-deleted users whose BP link is NULL.
+    //    Select every field `ensureBpForUser` needs plus `userType`
+    //    for `syncEmployeeBpRole`.
+    const users = await this.prisma.user.findMany({
+      where: {
+        isActive: true,
+        deletedAt: null,
+        businessPartnerId: null,
+      },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        firstNameHe: true,
+        lastNameHe: true,
+        phone: true,
+        userType: true,
+      },
+      orderBy: { id: 'asc' },
+    });
+
+    const scanned = users.length;
+    let reusedExistingBp = 0;
+    let createdBp = 0;
+    let linked = 0;
+    const errors: Array<{ userId: number; email: string; message: string }> = [];
+
+    // Early-return shape so the caller can distinguish "nothing to
+    // do" from "we found users but every one errored".
+    if (scanned === 0) {
+      return {
+        dryRun,
+        scanned: 0,
+        alreadyLinked: 0,
+        reusedExistingBp: 0,
+        createdBp: 0,
+        linked: 0,
+        skippedConflicts: 0,
+        errors: [],
+      };
+    }
+
+    // 2. Per-user transaction. A single failure (bad data, race on
+    //    @unique) only aborts that user; siblings keep going.
+    const DRY_RUN_SENTINEL = '__B5_BACKFILL_DRY_RUN_ROLLBACK__';
+    for (const user of users) {
+      // Captured BEFORE the throw so the catch block knows which
+      // bucket to increment on a dryRun rollback.
+      let predicted: 'reused' | 'created' | null = null;
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          const { bpId, outcome } = await this.usersService.ensureBpForUser(tx, {
+            email: user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            firstNameHe: user.firstNameHe ?? null,
+            lastNameHe: user.lastNameHe ?? null,
+            phone: user.phone ?? null,
+          });
+          predicted = outcome;
+          await tx.user.update({
+            where: { id: user.id },
+            data: { businessPartnerId: bpId },
+          });
+          await this.usersService.syncEmployeeBpRole(bpId, user.userType, tx);
+          if (dryRun) {
+            // Force rollback — the tx-aware strategy keeps dryRun's
+            // predicted path byte-identical to the real path.
+            throw new Error(DRY_RUN_SENTINEL);
+          }
+        });
+        // Real run reached here cleanly.
+        if (predicted === 'reused') reusedExistingBp++;
+        else createdBp++;
+        linked++;
+      } catch (err: any) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message === DRY_RUN_SENTINEL && predicted) {
+          // Expected dryRun rollback — count the predicted outcome.
+          if (predicted === 'reused') reusedExistingBp++;
+          else createdBp++;
+          linked++;
+          continue;
+        }
+        errors.push({ userId: user.id, email: user.email, message });
+      }
+    }
+
+    return {
+      dryRun,
+      scanned,
+      // Always 0 — the WHERE filter excludes users that already
+      // have a BP; this stays in the response shape for parity with
+      // the backfill-report conventions.
+      alreadyLinked: 0,
+      reusedExistingBp,
+      createdBp,
+      linked,
+      // Reserved for a future stricter policy — ensureBpForUser's
+      // @unique-collision guard currently creates a fresh BP rather
+      // than skipping, so nothing lands here today.
+      skippedConflicts: 0,
+      errors,
     };
   }
 }
