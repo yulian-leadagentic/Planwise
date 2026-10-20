@@ -5,6 +5,7 @@ import * as crypto from 'crypto';
 import ExcelJS from 'exceljs';
 
 import { PrismaService } from '../../../prisma/prisma.service';
+import { UsersService } from '../../users/users.service';
 import {
   CommitResult,
   EntityImporter,
@@ -72,7 +73,15 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
   readonly target: DataImportTarget = 'users';
   readonly templateColumns = [...COLUMNS];
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // B5-2 (2026-10-20) — reuse the BP-ensure + employee-role sync
+    // helpers so an imported User gets a linked BusinessPartner (+
+    // employee role tag on it) in the same transaction as the user
+    // row. Prevents the "orphan User with no BP" shape that hid the
+    // Qualifications section on 26/61 active employees.
+    private readonly usersService: UsersService,
+  ) {}
 
   async generateTemplate(): Promise<Buffer> {
     const wb = new ExcelJS.Workbook();
@@ -387,9 +396,20 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
           throw new Error(`Mode "${mode}" not implemented yet — coming in M2.`);
         }
 
-        // Insert path. Wrap user + seniority history in one prisma
-        // transaction so we never have a user without their initial
-        // seniority row (or vice versa).
+        // Insert path. Wrap user + BP ensure + employee role sync +
+        // seniority history in one prisma transaction so we never
+        // have a user without their initial seniority row or without
+        // a linked BP (or vice versa).
+        //
+        // B5-2 (2026-10-20) — the create block used to skip the BP
+        // ensure step that `UsersService.create` always does, which
+        // left imported users (and their row) with `businessPartnerId
+        // = NULL`. The edit-person modal gates the Qualifications
+        // section on `businessPartnerId != null`, so the section
+        // silently vanished for 26/61 active employees. The fix calls
+        // the extracted `ensureBpForUser` + `syncEmployeeBpRole`
+        // inside the SAME `tx` so a failure rolls back the user row
+        // too and we never end up with an orphan either way.
         const created = await this.prisma.$transaction(async (tx) => {
           const passwordHash = await bcrypt.hash(r.data!.generatedPassword, 10);
           const user = await tx.user.create({
@@ -415,6 +435,37 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
             },
           });
 
+          // B5-2 (2026-10-20) — ensure a linked BP exists (reused by
+          // email when possible, else freshly created) and point the
+          // just-created user at it. `ensureBpForUser` guards the
+          // User.businessPartnerId @unique by creating a fresh BP
+          // whenever the found-by-email row already belongs to
+          // another active user, so an admin re-importing a user
+          // with a shared email can't crash the whole row.
+          const { bpId } = await this.usersService.ensureBpForUser(tx, {
+            email: r.data!.email,
+            firstName: r.data!.firstName,
+            lastName: r.data!.lastName,
+            // Hebrew names + phone aren't on the Employees-import
+            // template today; pass null/undefined so the BP shape
+            // still matches what `UsersService.create` writes.
+            firstNameHe: null,
+            lastNameHe: null,
+            phone: r.data!.phone ?? null,
+          });
+          await tx.user.update({
+            where: { id: user.id },
+            data: { businessPartnerId: bpId },
+          });
+          // Mirror the `UsersService.create` ordering — sync the BP
+          // `employee` role tag against the row's own userType. Uses
+          // the just-written User's userType (file value), not the
+          // D1-derived rule, so an import respects an admin's
+          // explicit choice when the sheet says "partner" on an
+          // @amec.co.il row. The tx-aware overload keeps the role
+          // write inside this transaction.
+          await this.usersService.syncEmployeeBpRole(bpId, user.userType, tx);
+
           // Seniority history row — date-effective. Open-ended (endDate
           // null) so it's the current row. Cost calculations from
           // employmentDate onward will use this seniority level.
@@ -430,7 +481,7 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
             });
           }
 
-          return user;
+          return { ...user, businessPartnerId: bpId };
         });
 
         // Strip the password BEFORE writing to afterJson — we DO want
