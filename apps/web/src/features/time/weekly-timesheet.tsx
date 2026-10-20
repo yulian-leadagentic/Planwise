@@ -18,6 +18,7 @@ import { useClockStatus, useClockIn, useClockOut, useWeeklyGrid, useDeleteTimeEn
 import { useOverlapConfirm } from './overlap-confirm';
 import { invalidateAfterTimeEntry } from './invalidate-after-time-entry';
 import { TimeoffForm } from './timeoff-form';
+import { hrApi, type AbsenceRecord } from '@/features/hr/api/hr.api';
 import { format, addDays, startOfWeek } from '@/lib/date-utils';
 import { minutesToDisplay } from '@/types';
 import client from '@/api/client';
@@ -655,6 +656,69 @@ function WeekView() {
     return count;
   }, [weekStart, holidayDates]);
 
+  // ─── Absence records (HR G2.3, 2026-10-20) ─────────────────────────
+  // F6 persists Timeoff saves to `absence_records` (ABSENCE kind), but
+  // the weekly grid above only reads `time_entries` — so without this
+  // query a saved vacation renders as an empty cell. Fetch the caller's
+  // own absence rows for every year the current week touches (99% of
+  // weeks: one year; Dec/Jan rollover: two). The TimeoffForm's save
+  // invalidates `['hr']` prefix, so this cache refreshes automatically.
+  const yearsInWeek = useMemo(() => {
+    const s = new Set<number>();
+    for (const d of weekDays) s.add(d.getFullYear());
+    return Array.from(s).sort((a, b) => a - b);
+  }, [weekDays]);
+
+  const { data: absenceRecords = [] } = useQuery<AbsenceRecord[]>({
+    queryKey: ['hr', 'my-absences', yearsInWeek],
+    // Single query that fans out server-side with one request per year.
+    // Two years max (week-spans-NYE), so cost is negligible and keeps
+    // the hook count stable across renders.
+    queryFn: async () => {
+      const perYear = await Promise.all(
+        yearsInWeek.map((y) => hrApi.listMyAbsences({ year: y })),
+      );
+      return perYear.flat();
+    },
+    staleTime: 60 * 1000,
+    // Non-'employee' userTypes can hit this surface too; the self-service
+    // endpoint accepts any authenticated caller, so a 403/404 would be a
+    // real bug — don't retry it into noise.
+    retry: false,
+  });
+
+  // Expand each [dateFrom, dateTo] span into a per-day map so the day
+  // header for every covered date can look its badges up by key.
+  // Prisma serializes the DB-local-midnight date to a UTC-offset ISO
+  // string; parsing it back through `new Date()` lands on the correct
+  // local calendar day, which we then normalize to pure midnight so
+  // the <= comparison is day-granular (never off-by-one via time).
+  const absencesByDay = useMemo(() => {
+    const map = new Map<string, AbsenceRecord[]>();
+    const toLocalDay = (iso: string): Date => {
+      const raw = new Date(iso);
+      return new Date(raw.getFullYear(), raw.getMonth(), raw.getDate());
+    };
+    for (const rec of absenceRecords) {
+      const start = toLocalDay(rec.dateFrom);
+      const end = toLocalDay(rec.dateTo);
+      let d = start;
+      // Guard: a corrupt record with end < start would otherwise
+      // infinite-loop. Treat it as single-day on `start`.
+      if (end.getTime() < start.getTime()) {
+        const key = format(start, 'yyyy-MM-dd');
+        map.set(key, [...(map.get(key) ?? []), rec]);
+        continue;
+      }
+      while (d.getTime() <= end.getTime()) {
+        const key = format(d, 'yyyy-MM-dd');
+        map.set(key, [...(map.get(key) ?? []), rec]);
+        d = addDays(d, 1);
+      }
+    }
+    return map;
+  }, [absenceRecords]);
+
   // Fetch entries for the week via the weekly grid endpoint
   const { data: breakdownRaw, error: weeklyError } = useWeeklyGrid({ weekStart: weekStartStr });
 
@@ -898,6 +962,7 @@ function WeekView() {
             const isHoliday = holidayDates.has(dateKey);
             const holidayName = isHoliday ? calendarDays.find((h: any) => (typeof h.date === 'string' ? h.date.split('T')[0] : new Date(h.date).toISOString().split('T')[0]) === dateKey)?.name : null;
             const total = dailyTotals[dateKey] ?? 0;
+            const dayAbsences = absencesByDay.get(dateKey) ?? [];
             return (
               <div key={i} className={cn('px-2 py-3 text-center border-l border-slate-200 dark:border-slate-700', isWeekend && 'bg-slate-100/50 dark:bg-slate-800/50', isHoliday && 'bg-red-50/50')}>
                 <p className={cn('text-[11px] font-semibold', isToday ? 'text-blue-600' : 'text-slate-500 dark:text-slate-400')}>
@@ -908,6 +973,29 @@ function WeekView() {
                     <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white">{day.getDate()}</span>
                   ) : day.getDate()}
                 </p>
+                {/* HR G2.3 (2026-10-20) — absence badge. Covers F6 Timeoff
+                    saves (ABSENCE kind), which land in absence_records
+                    rather than time_entries, so the hourly grid below is
+                    empty even when the user has a logged vacation day.
+                    Status-pill shape per planwise-design: rounded-[5px],
+                    text-[11px] font-bold tracking-wide, amber tokens. */}
+                {dayAbsences.length > 0 && (() => {
+                  const primary = dayAbsences[0];
+                  const extraCount = dayAbsences.length - 1;
+                  const unitLabel = (u: 'DAY' | 'HOUR') => (u === 'DAY' ? 'd' : 'h');
+                  const title = dayAbsences
+                    .map((a) => `${a.absenceType.nameHe} (${a.amount}${unitLabel(a.absenceType.unit)})`)
+                    .join('\n');
+                  return (
+                    <div
+                      className="mt-1 rounded-[5px] bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 text-[10px] font-bold tracking-[0.03em] px-1.5 py-0.5 truncate max-w-full"
+                      title={title}
+                    >
+                      {primary.absenceType.nameHe}
+                      {extraCount > 0 ? ` · +${extraCount}` : ''}
+                    </div>
+                  );
+                })()}
                 {total > 0 && (
                   <p className="text-[10px] font-medium text-slate-400 dark:text-slate-500 mt-0.5">{minutesToDisplay(total)}</p>
                 )}

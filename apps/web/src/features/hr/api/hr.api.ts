@@ -446,6 +446,25 @@ export const hrApi = {
   createMyAbsence: (payload: CreateAbsencePayload) =>
     client.post('/hr/me/absences', payload).then((r) => unwrap<AbsenceRecord>(r.data)),
 
+  // G2.3 (2026-10-20) — self-service list + delete for absence records.
+  // Returns ONLY the caller's own rows (server pins the user id), so the
+  // weekly timesheet can render absence badges without needing an
+  // `userType === 'employee'` check or the hr:write gate.
+  listMyAbsences: (opts: { year?: number; typeId?: number } = {}) =>
+    client
+      .get('/hr/me/absences', {
+        params: {
+          ...(opts.year != null ? { year: opts.year } : {}),
+          ...(opts.typeId != null ? { typeId: opts.typeId } : {}),
+        },
+      })
+      .then((r) => unwrap<AbsenceRecord[]>(r.data)),
+
+  deleteMyAbsence: (recordId: number) =>
+    client
+      .delete(`/hr/me/absences/${recordId}`)
+      .then((r) => unwrap<{ ok: true; id: number }>(r.data)),
+
   uploadMyAttachment: (file: File) => {
     const form = new FormData();
     form.append('file', file);
