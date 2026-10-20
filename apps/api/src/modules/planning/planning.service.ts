@@ -73,10 +73,14 @@ export class PlanningService {
       }
     }
 
-    // Tasks. Order by sortOrder FIRST so drag-reorder actually persists in
-    // the planning view (POST /tasks/reorder writes sortOrder; this endpoint
-    // is what the planning UI reads back). createdAt is a stable tie-breaker
-    // for tasks that haven't been reordered yet (sortOrder is still 0).
+    // Tasks. T1-4 (2026-10-20) — order by `sortOrder` ASC then `id`
+    // ASC. Deliverable Templates now own the explicit task order (new
+    // Order column + drag), and `applyTaskTemplate` /
+    // `applyProjectTemplate` carry that order forward into
+    // `Task.sortOrder` plus the matching `TaskDependency` edges. The
+    // template is the source of truth; the Planning tab reads it back
+    // via sortOrder. No more `typicalRank` secondary sort — that
+    // branch is dormant (see `recomputeTaskTypicalRanks` below).
     const tasks = await this.prisma.task.findMany({
       where: { projectId, deletedAt: null, isArchived: false },
       include: {
@@ -120,7 +124,7 @@ export class PlanningService {
         // card can render the comment bubble + count on every task.
         _count: { select: { comments: true } },
       },
-      orderBy: [{ zoneId: 'asc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
     });
 
     // Project members
@@ -302,48 +306,14 @@ export class PlanningService {
       return null;
     };
 
-    // QA5 UI-15 — typical-rank lookup for the Planning tab's
-    // learned-order secondary sort. One batched read of the
-    // pre-computed `TaskTypicalRank` table (populated by
-    // `recomputeTaskTypicalRanks` — never in a request path). We only
-    // ask for the identities actually in this project's task set, so
-    // this is bounded by the project size and does not scan the whole
-    // table. Missing rows just produce a null `typicalRank` — the FE
-    // falls back to stable sortOrder for those.
-    const typicalRankLookup = await (async () => {
-      const map = new Map<string, number>();
-      const identities = new Set<string>();
-      for (const t of tasks) {
-        if (t.deliverableTemplateId == null) continue;
-        identities.add(`${t.deliverableTemplateId}|${taskIdentityKey(t.name)}`);
-      }
-      if (identities.size === 0) return map;
-      // Group identities by deliverableTemplateId so we send one
-      // compact query per template rather than a huge OR chain.
-      const byTemplate = new Map<number, string[]>();
-      for (const key of identities) {
-        const sep = key.indexOf('|');
-        const tplId = Number(key.slice(0, sep));
-        const identity = key.slice(sep + 1);
-        if (!byTemplate.has(tplId)) byTemplate.set(tplId, []);
-        byTemplate.get(tplId)!.push(identity);
-      }
-      // Prisma doesn't support tuple-IN on MySQL, so we fan out one
-      // query per template. Template counts per project are small
-      // (ten-ish at the extreme), so this stays cheap.
-      await Promise.all(
-        Array.from(byTemplate.entries()).map(async ([tplId, ids]) => {
-          const rows = await this.prisma.taskTypicalRank.findMany({
-            where: { deliverableTemplateId: tplId, taskIdentity: { in: ids } },
-            select: { taskIdentity: true, medianRank: true },
-          });
-          for (const r of rows) {
-            map.set(`${tplId}|${r.taskIdentity}`, r.medianRank);
-          }
-        }),
-      );
-      return map;
-    })();
+    // T1-4 (2026-10-20) — the QA5 UI-15 typical-rank lookup used to
+    // sit here, computing a learned median rank per `(deliverableTemplate,
+    // task-identity)` and attaching it as `typicalRank` to every task
+    // for a FE secondary sort. The explicit `TemplateTask.sortOrder`
+    // (now editable + drag-reorderable per T1-2) plus the materialized
+    // `TaskDependency` graph are the new source of truth, so the
+    // learned-order path is dormant. See `recomputeTaskTypicalRanks`
+    // below for the matching note on the write side.
 
     // Attach loggedMinutes + zoneBreadcrumb to each task. Breadcrumb
     // walks the zone.path (a slash-separated list of zone ids from
@@ -377,13 +347,6 @@ export class PlanningService {
       // QA5 UI-4: expose a flat `commentCount` the FE card can read
       // without depending on Prisma's `_count` shape.
       const commentCount = (t as any)._count?.comments ?? 0;
-      // QA5 UI-15 — the median relative rank learned from dated
-      // occurrences of this (deliverableTemplate, name) across all
-      // projects. Null when no history exists; the FE falls back to
-      // stable sortOrder/name for those.
-      const typicalRank = t.deliverableTemplateId == null
-        ? null
-        : typicalRankLookup.get(`${t.deliverableTemplateId}|${taskIdentityKey(t.name)}`) ?? null;
       return {
         ...t,
         loggedMinutes: loggedByTask.get(t.id) ?? 0,
@@ -396,7 +359,12 @@ export class PlanningService {
         // JOIN available in one place. Nullable when nothing resolves.
         service: resolveTaskService(t),
         commentCount,
-        typicalRank,
+        // T1-4 (2026-10-20) — the server no longer learns a typical
+        // rank for the Planning sort (template.sortOrder is the source
+        // of truth). Hard-null kept on the shape so the FE's defensive
+        // fallback path (sortOrder + name) kicks in for every row
+        // without the FE needing a release of its own.
+        typicalRank: null as number | null,
       };
     });
 
@@ -426,6 +394,14 @@ export class PlanningService {
   }
 
   // ─── QA5 UI-15 — TaskTypicalRank recompute ────────────────────────
+  //
+  // T1-4 (2026-10-20): DORMANT. `TemplateTask.sortOrder` + the
+  // materialized `TaskDependency` edges are now the source of truth
+  // for the Planning sort; `getPlanningData` no longer reads
+  // `TaskTypicalRank`. The model + this recompute + its admin
+  // endpoint stay in the codebase so a rollback is a one-line restore
+  // of the lookup block in `getPlanningDataImpl`. Removal is a later
+  // cleanup once T1 is proven on staging.
   //
   // Learn the typical ordering of each task-identity inside its
   // Deliverable Template from the DATED occurrences across the whole
