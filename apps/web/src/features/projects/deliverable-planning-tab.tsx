@@ -1833,6 +1833,30 @@ function GanttView({
     try { localStorage.setItem(VISIBLE_YEARS_KEY, String(visibleYears)); } catch { /* ignore */ }
   }, [visibleYears]);
 
+  // DPG-5 (2026-10-20) · Grid granularity — controls the DENSITY of the
+  // timeline grid-lines + header ticks. Bars themselves still snap to
+  // Sunday (calendar-week resolution), so the FUNCTIONAL geometry of a
+  // bar is unchanged across granularities — only the pixel scale and
+  // tick labels change:
+  //   • month → ~1.14 px/day (one tick per month, label "Oct")
+  //   • week  → ~4 px/day   (one tick per week,  label "W40 · Oct 5")
+  //   • day   → 24 px/day   (one tick per day,   label "20\nT")
+  // The timeline is a single horizontal scroller (sticky left-column
+  // labels already); day-view makes it long, user scrolls. Persisted
+  // under `planwise:gantt:granularity`, non-per-project (same user
+  // preference everywhere).
+  type Granularity = 'month' | 'week' | 'day';
+  const GRANULARITY_KEY = 'planwise:gantt:granularity';
+  const [granularity, setGranularity] = useState<Granularity>(() => {
+    try {
+      const raw = localStorage.getItem(GRANULARITY_KEY);
+      return raw === 'month' || raw === 'week' || raw === 'day' ? raw : 'month';
+    } catch { return 'month'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(GRANULARITY_KEY, granularity); } catch { /* ignore */ }
+  }, [granularity]);
+
   // Ordered rows for display, matching rowOrder.
   const orderedRows = useMemo(() => {
     const byKey = new Map(rows.map((r) => [r.key, r]));
@@ -1932,13 +1956,20 @@ function GanttView({
     return out;
   }, [orderedRows, collapsed, drafts, durationDrafts, targetDateDrafts, computePreview, outerDim]);
 
-  // Compact scale so 3 years fit in one viewport (client feedback
-  // 2026-08-02 item 5). 8 px/week × 156 weeks (3 yr) ≈ 1250px, which
-  // fits a typical laptop timeline column (viewport − 260px label
-  // column ≈ 1000-1400px). Shorter than the old 30 px/week; users
-  // can still pan for anything past 3 yr.
-  const PX_PER_WEEK = 8;
-  const PX_PER_DAY = PX_PER_WEEK / 7;
+  // Compact scale so 3 years fit in one viewport at MONTH granularity
+  // (client feedback 2026-08-02 item 5). 8 px/week × 156 weeks (3 yr)
+  // ≈ 1250px, which fits a typical laptop timeline column (viewport −
+  // 260px label column ≈ 1000-1400px).
+  //
+  // DPG-5 (2026-10-20) · `PX_PER_DAY` now scales with the grid
+  // granularity so week and day views have readable column headers.
+  // Bars themselves still represent the same date range in every mode
+  // (snap to Sunday, week-level math) — they just render wider / per-
+  // day as the scale grows. Totals (in order of growing density):
+  //   month ≈ 1.14 px/day  (one month ≈ 34 px, current behavior)
+  //   week  = 4    px/day  (one week  = 28 px, fits "W40")
+  //   day   = 24   px/day  (one day   = 24 px, fits "20\nT")
+  const PX_PER_DAY = granularity === 'day' ? 24 : granularity === 'week' ? 4 : 8 / 7;
   // DPG-4 (2026-10-20) · `visibleYears` is now component state (1/2/3)
   // persisted to localStorage — see the hook at the top of the component.
 
@@ -1977,7 +2008,8 @@ function GanttView({
   // gets its year/month labels too (client feedback 2026-08-02).
   // Anchor to the FIRST DAY of the month containing startMs so ticks
   // land on month boundaries, then step month-by-month until we reach
-  // the end of the timeline.
+  // the end of the timeline. `monthTicks` always drives the top year-
+  // band row regardless of DPG-5 granularity.
   const monthTicks: { px: number; year: number; month: number }[] = [];
   const tickAnchor = new Date(startMs);
   tickAnchor.setUTCDate(1);
@@ -2000,6 +2032,70 @@ function GanttView({
     }
   }
   const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  // DOW_LETTERS indexed by Date.getUTCDay() (0=Sun..6=Sat).
+  const DOW_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+  // DPG-5 (2026-10-20) · `innerTicks` are the labels for the SECOND
+  // header row — month in month-view, week in week-view, day in day-
+  // view. Each tick carries a px position (relative to timeline start)
+  // and a one- or two-line label. The year band on top uses the SAME
+  // `yearBands` array in every granularity, so year context is never
+  // lost.
+  type InnerTick = { px: number; label: string; sublabel?: string; emphasize?: boolean };
+  // Sunday-aligned week number since Jan 1 of the same year. Chosen
+  // over ISO (Mon-based) because bars in this Gantt snap to Sunday —
+  // the week number the UI shows then matches the bar's start.
+  const sundayWeekOf = (d: Date): number => {
+    const yearStart = Date.UTC(d.getUTCFullYear(), 0, 1);
+    const dayOfYear = Math.floor((d.getTime() - yearStart) / 86_400_000);
+    const yearStartDow = new Date(yearStart).getUTCDay();
+    return Math.floor((dayOfYear + yearStartDow) / 7) + 1;
+  };
+  const innerTicks: InnerTick[] = (() => {
+    const out: InnerTick[] = [];
+    if (granularity === 'month') {
+      for (const t of monthTicks) out.push({ px: t.px, label: MONTH_NAMES[t.month - 1] });
+      return out;
+    }
+    if (granularity === 'week') {
+      // Walk Sunday-by-Sunday starting from the Sunday on-or-before
+      // startMs. Each tick labels "W{N} · {MMM D}" so the user has
+      // both the ordinal (handy for sprint speak) and the calendar
+      // anchor on a single line.
+      const anchor = new Date(startMs);
+      anchor.setUTCHours(0, 0, 0, 0);
+      anchor.setUTCDate(anchor.getUTCDate() - anchor.getUTCDay()); // back to Sunday
+      const totalDays = Math.ceil(spanDays) + 7;
+      for (let i = 0; i < Math.ceil(totalDays / 7) + 1; i++) {
+        const d = new Date(anchor);
+        d.setUTCDate(d.getUTCDate() + i * 7);
+        const px = ((d.getTime() - startMs) / 86_400_000) * PX_PER_DAY;
+        if (px < 0 || px > totalTimelineWidth) continue;
+        const wk = sundayWeekOf(d);
+        out.push({ px, label: `W${wk}`, sublabel: `${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCDate()}` });
+      }
+      return out;
+    }
+    // 'day' — one tick per day. Day-1-of-month gets a bolder label so
+    // the user still sees month context without a third header row.
+    const dayAnchor = new Date(startMs);
+    dayAnchor.setUTCHours(0, 0, 0, 0);
+    for (let i = 0; i <= Math.ceil(spanDays) + 1; i++) {
+      const d = new Date(dayAnchor);
+      d.setUTCDate(d.getUTCDate() + i);
+      const px = ((d.getTime() - startMs) / 86_400_000) * PX_PER_DAY;
+      if (px < 0 || px > totalTimelineWidth) continue;
+      const dayNum = d.getUTCDate();
+      const isMonthStart = dayNum === 1;
+      out.push({
+        px,
+        label: isMonthStart ? `${MONTH_NAMES[d.getUTCMonth()]} ${dayNum}` : String(dayNum),
+        sublabel: DOW_LETTERS[d.getUTCDay()],
+        emphasize: isMonthStart,
+      });
+    }
+    return out;
+  })();
 
   // Today marker (client feedback 2026-08-02).
   const todayMs = Date.now();
@@ -2123,6 +2219,38 @@ function GanttView({
             ))}
           </div>
         </div>
+        {/* DPG-5 (2026-10-20) · Grid granularity selector. Picks the
+            density of the timeline grid-lines + header ticks (month /
+            week / day). Bar geometry stays calendar-week-based in every
+            mode — only the pixel scale and header labels change.
+            Persisted via `granularity` state under localStorage key
+            `planwise:gantt:granularity`. */}
+        <div className="ml-2 inline-flex items-center gap-1.5" role="group" aria-label="Grid granularity">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">גריד · Grid</span>
+          <div className="inline-flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800/50 p-0.5">
+            {([
+              { v: 'month', label: 'חודש · Month' },
+              { v: 'week', label: 'שבוע · Week' },
+              { v: 'day', label: 'יום · Day' },
+            ] as const).map(({ v, label }) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setGranularity(v)}
+                className={cn(
+                  'rounded-md px-2.5 py-1 text-[12px] font-semibold transition-all duration-150',
+                  granularity === v
+                    ? 'bg-white shadow-sm text-slate-900 dark:bg-slate-700/80 dark:text-slate-100'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200',
+                )}
+                aria-pressed={granularity === v}
+                title={label}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         {/* Progress legend — client meeting 2026-08-04. Bars are
             colored by aggregate task status: blue = nothing started,
             amber = at least one in progress, emerald = all done.
@@ -2166,14 +2294,29 @@ function GanttView({
                 </div>
               ))}
             </div>
-            <div className="relative h-6">
-              {monthTicks.map((t, i) => (
+            {/* DPG-5 · Inner tick row. Density + label vary by
+                granularity: month names (month), "W40 · Oct 5" (week),
+                "20\nT" with month-start emphasis (day). The year band
+                above stays identical across all three. */}
+            <div className={cn('relative', granularity === 'day' ? 'h-8' : granularity === 'week' ? 'h-8' : 'h-6')}>
+              {innerTicks.map((t, i) => (
                 <div
                   key={i}
-                  className="absolute top-0 h-full flex items-center border-l border-slate-100 dark:border-slate-800 pl-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400"
+                  className={cn(
+                    'absolute top-0 h-full flex flex-col justify-center pl-1 text-[10px] border-l',
+                    t.emphasize
+                      ? 'font-bold text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-600'
+                      : 'font-semibold text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800',
+                  )}
                   style={{ left: t.px }}
+                  title={t.sublabel ? `${t.label} · ${t.sublabel}` : t.label}
                 >
-                  {MONTH_NAMES[t.month - 1]}
+                  <span className="leading-tight tabular-nums whitespace-nowrap">{t.label}</span>
+                  {t.sublabel && (
+                    <span className="leading-tight text-[9px] font-medium text-slate-400 dark:text-slate-500 tabular-nums whitespace-nowrap">
+                      {t.sublabel}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
