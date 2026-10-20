@@ -460,10 +460,24 @@ async function main() {
         Reports:   { R: true, E: true },
         Templates: { R: true, W: true, D: true, A: true, E: true },
         Admin:     { R: true, W: true, D: true, A: true, E: true },
-        // Module name here is "Data Import" (space), not the route
-        // ("data-import") — see migration 20260520000000_data_import_module
-        // which inserts the row with `name='Data Import'`.
-        'Data Import': { R: true, W: true },
+        // Module names here are the DB `name` column, not the route.
+        // See migration 20260520000000_data_import_module:
+        //   parent  → name='Data Import',       route='data-import'
+        //   child   → name='Import Employees',  route='data-import/users'
+        //   child   → name='Import Partners',   route='data-import/partners'
+        //   child   → name='Import Contacts',   route='data-import/contacts'
+        //
+        // Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B1-audit) —
+        // Admin now gets EXPLICIT {R,W} on each data-import sub-module
+        // in addition to the parent. Needed because the three sub-
+        // module routes are in NO_ADMIN_BYPASS (roles.guard.ts:48)
+        // AND the importer controllers' assertCanImport used to be
+        // exact-match (fixed in B3). Keeping the explicit grants is
+        // defense in depth: if B3 regresses, Admin still works.
+        'Data Import':      { R: true, W: true },
+        'Import Employees': { R: true, W: true },
+        'Import Partners':  { R: true, W: true },
+        'Import Contacts':  { R: true, W: true },
       },
     },
     {
