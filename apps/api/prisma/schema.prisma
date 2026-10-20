@@ -1871,7 +1871,36 @@ model TemplateTask {
   phase               Phase?       @relation(fields: [phaseId], references: [id])
   deliverableTemplate Template?    @relation("TemplateTaskDeliverableTemplate", fields: [deliverableTemplateId], references: [id], onDelete: SetNull)
 
+  // T1-1 (2026-10-20) — template-level dependency join. Mirrors
+  // `TaskDependency` at the project level. `predecessors` are the
+  // rows where THIS task is the dependent one; `successors` are the
+  // rows where THIS task is the one being depended on. Both cascade
+  // when the TemplateTask is deleted (via the FKs on the join row).
+  predecessors        TemplateTaskDependency[] @relation("TemplateTaskPredecessors")
+  successors          TemplateTaskDependency[] @relation("TemplateTaskSuccessors")
+
   @@map("template_tasks")
+}
+
+/// T1-1 (2026-10-20) — explicit per-template task dependencies.
+/// Mirrors `TaskDependency` at the project level so the Deliverable
+/// Template screen can define a predecessor graph that
+/// `zones.applyTaskTemplate` / `applyProjectTemplate` materializes
+/// into real `TaskDependency` rows at apply-time. onDelete Cascade
+/// from BOTH FKs — removing either endpoint drops the join row.
+model TemplateTaskDependency {
+  id                      Int          @id @default(autoincrement())
+  templateTaskId          Int
+  dependsOnTemplateTaskId Int
+  createdAt               DateTime     @default(now())
+
+  templateTask          TemplateTask @relation("TemplateTaskPredecessors", fields: [templateTaskId], references: [id], onDelete: Cascade)
+  dependsOnTemplateTask TemplateTask @relation("TemplateTaskSuccessors", fields: [dependsOnTemplateTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([templateTaskId, dependsOnTemplateTaskId])
+  @@index([templateTaskId])
+  @@index([dependsOnTemplateTaskId])
+  @@map("template_task_dependencies")
 }
 
 model TemplateZone {
