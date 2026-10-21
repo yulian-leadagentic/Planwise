@@ -326,15 +326,26 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     readOnlyReason?: string;
   };
   const rows: Row[] = useMemo(() => {
-    // Group tasks by (deliverable, zone) so counts + endDate lists can
-    // overlay onto rows generated from the deliverable × zone cross
-    // product below.
+    // Group tasks by (deliverable, TOP-LEVEL zone) so counts + endDate
+    // lists overlay onto the (deliverable × top-level-zone) rows the
+    // loop below emits.
+    //
+    // DP-DUPS (2026-10-21) · Prior to this change the loop iterated
+    // every zone in zonesFlat (DFS of the whole tree) and this map was
+    // keyed by raw (deliverable, zone) — one row per sub-zone, which
+    // inflated the grid 3-4× for projects with sub-zones. We now roll
+    // every task up to its TOP-LEVEL zone (via topLevelZoneInfo.idMap,
+    // which falls back to the zone's own id for a childless root), so
+    // sub-zone tasks and top-zone tasks aggregate onto one bucket.
     const grouped = new Map<string, any[]>();
     for (const t of tasks) {
       const dId = t.projectDeliverableId;
       if (dId == null) continue;
-      const zoneId = t.zoneId ?? null;
-      const key = `${dId}:${zoneId ?? 'root'}`;
+      const rawZoneId = t.zoneId ?? null;
+      const topZoneId: number | null = rawZoneId == null
+        ? null
+        : (topLevelZoneInfo.idMap.get(rawZoneId) ?? rawZoneId);
+      const key = topZoneId == null ? `${dId}:root` : `${dId}:topzone-${topZoneId}`;
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key)!.push(t);
     }
@@ -386,30 +397,103 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         };
         syntheticByName.set(resolved.name, syn);
       }
-      const zoneId = t.zoneId ?? null;
-      const gKey = `${syn.id}:${zoneId ?? 'root'}`;
+      const rawZoneId = t.zoneId ?? null;
+      // DP-DUPS (2026-10-21) · Match the top-level roll-up used for
+      // real deliverables above so synthetic rows also render once per
+      // (deliverable × top-zone) instead of once per sub-zone.
+      const topZoneId: number | null = rawZoneId == null
+        ? null
+        : (topLevelZoneInfo.idMap.get(rawZoneId) ?? rawZoneId);
+      const gKey = topZoneId == null ? `${syn.id}:root` : `${syn.id}:topzone-${topZoneId}`;
       if (!syntheticGrouped.has(gKey)) syntheticGrouped.set(gKey, []);
       syntheticGrouped.get(gKey)!.push(t);
+    }
+
+    // DP-DUPS (2026-10-21) · Inverse of topLevelZoneInfo.idMap — for
+    // each top-level zone id, the set of its descendant zone ids
+    // (INCLUDING itself — the idMap entry maps `topId → topId` for a
+    // root, so a direct ZDT on the top-zone is picked up by the subtree
+    // walk). Used by `emit` below to aggregate per-sub-zone
+    // ZoneDeliverableTarget rows onto the one top-zone row.
+    const descendantsByTopZone = new Map<number, Set<number>>();
+    for (const [subId, topId] of topLevelZoneInfo.idMap) {
+      let set = descendantsByTopZone.get(topId);
+      if (!set) { set = new Set<number>(); descendantsByTopZone.set(topId, set); }
+      set.add(subId);
     }
 
     const list: Row[] = [];
     const emitted = new Set<string>();
     const emit = (
       dId: number,
+      // Post DP-DUPS (2026-10-21): `zoneId` is ALWAYS a top-level zone
+      // id (or null for the Project Root bucket). The main cross-
+      // product loop iterates `topLevelZones` directly; the overlay and
+      // synthetic loops below translate their raw task zoneIds to the
+      // top-level ancestor before calling emit.
       deliverable: any,
       zoneId: number | null,
       zoneName: string,
       zoneType?: string,
       opts?: { readOnly?: boolean; readOnlyReason?: string; taskOverride?: any[] },
     ) => {
-      const key = `${dId}:${zoneId ?? 'root'}`;
+      const key = zoneId == null ? `${dId}:root` : `${dId}:topzone-${zoneId}`;
       if (emitted.has(key)) return;
       emitted.add(key);
       const group = opts?.taskOverride ?? grouped.get(key) ?? [];
-      const zoneTargetRow = deliverable?.zoneTargets?.find((zt: any) => zt.zoneId === zoneId);
-      const savedMonths = zoneTargetRow?.targetMonths ?? deliverable?.targetMonths ?? null;
-      const savedDate = zoneTargetRow?.targetDate ?? deliverable?.targetDate ?? null;
-      const savedDurationWeeks = zoneTargetRow?.estimatedDurationWeeks ?? deliverable?.estimatedDurationWeeks ?? null;
+
+      // DP-DUPS (2026-10-21) · Aggregate ZoneDeliverableTarget rows
+      // across the top-zone's subtree. Pre-existing per-sub-zone ZDT
+      // rows live in the DB from before this change; they stay there
+      // untouched (no cleanup, no deletes). Reads fold every ZDT whose
+      // zoneId belongs to this top-zone's subtree (incl. the top-zone
+      // itself) into one aggregate:
+      //   • savedDate            → MIN  (earliest promise wins).
+      //   • savedMonths          → MIN  (same order as the date).
+      //   • savedDurationWeeks   → MAX  (longest planned span).
+      // Fall back to the deliverable-level default when no ZDT in the
+      // subtree carries that field. New saves write only against the
+      // top-zone id (the save payload uses r.zoneId, which is now the
+      // top-zone id by construction), so the aggregation converges to
+      // a single row per (deliverable × top-zone) over time.
+      const zoneTargets: any[] = Array.isArray(deliverable?.zoneTargets) ? deliverable.zoneTargets : [];
+      let aggDate: string | null = null;
+      let aggMonths: number | null = null;
+      let aggDurationWeeks: number | null = null;
+      if (zoneId == null) {
+        // Project Root bucket — match on zoneId=null only.
+        const match = zoneTargets.find((zt: any) => zt.zoneId == null);
+        aggDate = match?.targetDate ? String(match.targetDate).slice(0, 10) : null;
+        aggMonths = match?.targetMonths ?? null;
+        aggDurationWeeks = match?.estimatedDurationWeeks ?? null;
+      } else {
+        const descendants = descendantsByTopZone.get(zoneId);
+        for (const zt of zoneTargets) {
+          if (zt.zoneId == null) continue;
+          // In-subtree test: belongs to this top-zone's descendant set
+          // OR is the top-zone itself (defensive — a childless root may
+          // not appear in idMap, but descendantsByTopZone adds it via
+          // the self-mapping idMap entry; keep the explicit top-zone
+          // comparison so a stale map still rolls up correctly).
+          const inSubtree = zt.zoneId === zoneId || (descendants ? descendants.has(zt.zoneId) : false);
+          if (!inSubtree) continue;
+          if (zt.targetDate) {
+            const d = String(zt.targetDate).slice(0, 10);
+            if (aggDate == null || d < aggDate) aggDate = d;
+          }
+          if (zt.targetMonths != null) {
+            const m = Number(zt.targetMonths);
+            if (!Number.isNaN(m) && (aggMonths == null || m < aggMonths)) aggMonths = m;
+          }
+          if (zt.estimatedDurationWeeks != null) {
+            const w = Number(zt.estimatedDurationWeeks);
+            if (!Number.isNaN(w) && (aggDurationWeeks == null || w > aggDurationWeeks)) aggDurationWeeks = w;
+          }
+        }
+      }
+      const savedMonths = aggMonths ?? deliverable?.targetMonths ?? null;
+      const savedDate = aggDate ?? deliverable?.targetDate ?? null;
+      const savedDurationWeeks = aggDurationWeeks ?? deliverable?.estimatedDurationWeeks ?? null;
       const taskTotal = group.length;
       const taskDone = group.filter((t) => t.status === 'done').length;
       const taskStarted = group.filter((t) => t.status !== 'to_do' && t.status !== 'blocked').length;
@@ -464,48 +548,86 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       });
     };
 
-    // Cross product of deliverables × zones (bm2 fix #1). When the
-    // project has no zones, emit a single "Project Root" row per
-    // deliverable so the grid isn't empty.
+    // DP-DUPS (2026-10-21) · Iterate TOP-LEVEL zones only — the prior
+    // `zonesFlat` cross-product (which included every sub-zone from the
+    // DFS walk) multiplied each deliverable by every zone-tree node,
+    // producing 3-4 duplicate rows per deliverable in projects with
+    // sub-zones (see docs/bm2/dp-duplicates-investigation.md). Per-sub-
+    // zone ZDT rows and per-sub-zone task counts aggregate onto the
+    // single top-zone row via the subtree walks earlier in this memo.
+    //
+    // When the project has no zones at all we still emit a single
+    // "Project Root" row per deliverable so the grid isn't empty (bm2
+    // fix #1). Orphan tasks with zoneId=null fall through the overlay
+    // loop below, which also emits a Project Root row.
+    const topLevelZones: ZoneNode[] = Array.isArray(planningData?.zones) ? planningData.zones : [];
     for (const d of deliverables) {
-      if (zonesFlat.length === 0) {
+      if (topLevelZones.length === 0) {
         emit(d.id, d, null, 'Project Root');
       } else {
-        for (const z of zonesFlat) emit(d.id, d, z.id, z.name, z.zoneType);
+        for (const z of topLevelZones) emit(d.id, d, z.id, z.name, z.zoneType);
       }
     }
 
     // Overlay any task-only groups that didn't match a known deliverable
     // (e.g. deliverable was deleted but tasks still reference it) or
     // that landed on the synthetic root zone even when zones exist —
-    // preserves the pre-fix behavior for those edge cases.
-    for (const [key, group] of grouped) {
-      if (emitted.has(key)) continue;
+    // preserves the pre-fix behavior for those edge cases. Because
+    // `grouped` is now keyed by top-level zone id (see roll-up above),
+    // we translate the task's raw zoneId to its top-level ancestor so
+    // the emitted row sits in the right bucket and matches the key
+    // format emit uses internally.
+    for (const [groupKey, group] of grouped) {
+      if (emitted.has(groupKey)) continue;
       const first = group[0];
       const dId: number = first.projectDeliverableId;
-      const zoneId: number | null = first.zoneId ?? null;
-      const zone = zonesFlat.find((z) => z.id === zoneId);
+      const rawZoneId: number | null = first.zoneId ?? null;
+      const topZoneId: number | null = rawZoneId == null
+        ? null
+        : (topLevelZoneInfo.idMap.get(rawZoneId) ?? rawZoneId);
+      const topZone = topZoneId == null ? null : topLevelZones.find((z) => z.id === topZoneId);
       const deliverable = deliverables.find((d) => d.id === dId);
-      emit(dId, deliverable, zoneId, zone?.name ?? (zoneId == null ? 'Project Root' : `Zone #${zoneId}`), zone?.zoneType);
+      emit(
+        dId,
+        deliverable,
+        topZoneId,
+        topZone?.name ?? (topZoneId == null ? 'Project Root' : `Zone #${topZoneId}`),
+        topZone?.zoneType,
+      );
     }
 
     // DP-EMPTY-3 — emit synthetic (read-only) rows for marker/template-
-    // only tasks. Zoned tasks get one row per zone that actually holds
+    // only tasks. Zoned tasks get one row per TOP-LEVEL zone that holds
     // a matching task (no cross-product — we don't know which zones
     // the PM intends to plan against until they materialize the row).
     // Root tasks (zoneId=null) get a "Project Root" row.
+    //
+    // DP-DUPS (2026-10-21) · `syntheticGrouped` is now keyed by top-
+    // zone (see roll-up above), so the zone lookup here uses the task's
+    // top-level ancestor. Previously a synthetic row was emitted per
+    // sub-zone, same multiplier as the real-row bug.
     for (const [gKey, group] of syntheticGrouped) {
       const first = group[0];
-      const zoneId: number | null = first.zoneId ?? null;
-      const zone = zonesFlat.find((z) => z.id === zoneId);
+      const rawZoneId: number | null = first.zoneId ?? null;
+      const topZoneId: number | null = rawZoneId == null
+        ? null
+        : (topLevelZoneInfo.idMap.get(rawZoneId) ?? rawZoneId);
+      const topZone = topZoneId == null ? null : topLevelZones.find((z) => z.id === topZoneId);
       const dId = Number(gKey.split(':')[0]);
       const syn = Array.from(syntheticByName.values()).find((s) => s.id === dId);
       if (!syn) continue;
-      emit(dId, syn, zoneId, zone?.name ?? (zoneId == null ? 'Project Root' : `Zone #${zoneId}`), zone?.zoneType, {
-        readOnly: true,
-        readOnlyReason: syn.readOnlyReason,
-        taskOverride: group,
-      });
+      emit(
+        dId,
+        syn,
+        topZoneId,
+        topZone?.name ?? (topZoneId == null ? 'Project Root' : `Zone #${topZoneId}`),
+        topZone?.zoneType,
+        {
+          readOnly: true,
+          readOnlyReason: syn.readOnlyReason,
+          taskOverride: group,
+        },
+      );
     }
     // Sort: Commit 8 · Model B (drag-authoritative). Render order is
     // ProjectDeliverable.sortOrder ASC, then Zone.sortOrder ASC as a
@@ -2048,6 +2170,13 @@ function GanttView({
     zones: any[];
     isCollapsed: boolean;
     zoneCount: number;
+    // DP-DUPS (2026-10-21) · Count of DISTINCT deliverables in this
+    // bucket. After the per-sub-zone row dedup `zoneCount` should equal
+    // this value for Zone-grouping buckets (one row per deliverable),
+    // but keep both: the Zone-header pill reads this field so a future
+    // regression that re-introduces per-sub-zone rows still shows a
+    // sane "N deliverables" count instead of inflated row count.
+    uniqueDeliverableCount: number;
     hoursSum: number;
     latestTargetMs: number | null;
     earliestStartMs: number | null;
@@ -2166,6 +2295,10 @@ function GanttView({
         zones: zonesArr,
         isCollapsed,
         zoneCount: zonesArr.length,
+        // DP-DUPS (2026-10-21) · Unique deliverable count for the
+        // Zone-grouping header pill — see the field comment on
+        // GanttGroup for why it's separate from zoneCount.
+        uniqueDeliverableCount: new Set(zonesArr.map((z: any) => z.deliverableId)).size,
         hoursSum,
         latestTargetMs,
         earliestStartMs,
@@ -2794,7 +2927,14 @@ function GanttView({
                     </span>
                   )}
                   <span className="ml-auto text-[10px] font-medium text-slate-500 dark:text-slate-400 tabular-nums whitespace-nowrap">
-                    {slot.zoneCount}{outerDim === 'deliverable' ? 'z' : ''}{slot.hoursSum > 0 ? ` · ${slot.hoursSum}h` : ''}
+                    {/* DP-DUPS (2026-10-21) · For a Zone bucket show
+                        the UNIQUE deliverable count (what the PM reads
+                        as "N deliverables"); for the other dims
+                        (deliverable, service) the row count is the
+                        correct quantity. */}
+                    {outerDim === 'zone' ? slot.uniqueDeliverableCount : slot.zoneCount}
+                    {outerDim === 'deliverable' ? 'z' : ''}
+                    {slot.hoursSum > 0 ? ` · ${slot.hoursSum}h` : ''}
                   </span>
                 </div>
               );
